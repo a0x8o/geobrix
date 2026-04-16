@@ -38,7 +38,7 @@ dev = [
 test = [
     "pytest>=7.0",
     "shapely>=2.0.0",
-    "rasterio>=1.3.0",
+    "rasterio>=1.4.4",
     "numpy>=1.24.0",
 ]
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
