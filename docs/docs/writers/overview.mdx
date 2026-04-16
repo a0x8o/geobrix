@@ -1,0 +1,25 @@
+---
+sidebar_position: 1
+---
+
+# Writers Overview
+
+GeoBrix ships a single raster writer, `gdal`, registered automatically whenever the GeoBrix JAR is on the classpath. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
+
+## Available Writers
+
+| Writer | Format Name | Description |
+|--------|-------------|-------------|
+| [GDAL Writer](./gdal) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+
+## At a Glance
+
+- **Input schema:** exactly `(source: string, tile: struct)` — the reader's default schema. Don't `.select()` or add columns.
+- **Mode:** `.mode("append")` only.
+- **Format on disk:** comes from the `driver` stored in each tile's metadata. `ext` controls the filename suffix only.
+- **Target directory:** must already exist; the writer does not create Volume roots.
+
+## Next Steps
+
+- [GDAL Writer](./gdal) — full details, options, and examples.
+- [Readers Overview](../readers/overview) — the corresponding read path.

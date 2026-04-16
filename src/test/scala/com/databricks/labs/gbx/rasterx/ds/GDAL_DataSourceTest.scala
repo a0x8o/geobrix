@@ -11,6 +11,7 @@ import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 import java.nio.file.{Files, Paths}
 import scala.jdk.CollectionConverters.ListHasAsScala
+import org.apache.spark.sql.functions.{concat, lit, monotonically_increasing_id}
 
 class GDAL_DataSourceTest extends PlanTest with SilentSparkSession {
 
@@ -74,6 +75,50 @@ class GDAL_DataSourceTest extends PlanTest with SilentSparkSession {
 
         //        while (true) {}
 
+    }
+
+    test("GDAL Data Source nameCol option controls output filename prefix") {
+        functions.register(spark)
+
+        val tifPath = this.getClass.getResource("/modis/").toString
+        val outDir = Files.createTempDirectory("gdal_namecol_out_").toString
+
+        try {
+            // nameCol must reference a column that exists in the table's fixed
+            // (source, tile) schema. Overwriting 'source' with a deterministic
+            // string keeps arity correct and gives the writer a filename to use.
+            val df = spark.read
+                .format("gdal")
+                .option("sizeInMB", "1")
+                .load(tifPath)
+                .withColumn("source", concat(lit("named_"), monotonically_increasing_id()))
+
+            df.write
+                .format("gdal")
+                .option("nameCol", "source")
+                .option("ext", "tif")
+                .mode("append")
+                .save(outDir)
+
+            val tifs = Files.list(Paths.get(outDir)).toList.asScala
+                .filter(p => p.toString.endsWith(".tif"))
+                .toList
+            assert(tifs.nonEmpty, "expected at least one .tif output")
+            // every file should carry the nameCol prefix, not the default MurmurHash3 one
+            tifs.foreach(p => assert(p.getFileName.toString.startsWith("named_"),
+                s"expected nameCol prefix on ${p.getFileName}"))
+
+            // validate at least one written file is a readable GDAL dataset
+            val ds = gdal.Open(tifs.head.toString)
+            assert(ds != null, s"GDAL could not open ${tifs.head}")
+            ds.GetRasterBand(1).AsMDArray().GetStatistics().getValid_count should be >= 0L
+        } finally {
+            val p = Paths.get(outDir)
+            if (Files.exists(p)) {
+                Files.list(p).toList.asScala.foreach(Files.deleteIfExists)
+                Files.deleteIfExists(p)
+            }
+        }
     }
 
 }
