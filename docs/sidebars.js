@@ -22,6 +22,14 @@ const sidebars = {
     'beta-release-notes',
     {
       type: 'category',
+      label: 'Notebooks',
+      collapsed: false,
+      items: [
+        'notebooks/eo-series',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Sample Data',
       collapsed: false,
       items: [
