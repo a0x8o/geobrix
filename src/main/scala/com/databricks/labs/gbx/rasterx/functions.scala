@@ -214,4 +214,46 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
     def rst_worldtorastercoordy(tileExpr: Column, worldX: Column, worldY: Column): Column =
         ColumnAdapter(RST_WorldToRasterCoordY.name, Seq(tileExpr, worldX, worldY))
 
+    // Scalar-literal overloads — so users can pass plain values for non-Column params
+    // (e.g. rst_clip(tile, clip, true) instead of rst_clip(tile, clip, lit(true))).
+    // Column params (tile, geometry, kernel, tiles, content) stay as Column.
+    def rst_bandmetadata(tileExpr: Column, band: Int): Column = rst_bandmetadata(tileExpr, lit(band))
+    def rst_getsubdataset(tileExpr: Column, subsetName: String): Column = rst_getsubdataset(tileExpr, lit(subsetName))
+    def rst_fromcontent(content: Column, driver: String): Column = rst_fromcontent(content, lit(driver))
+    def rst_fromfile(path: String, driver: String): Column = rst_fromfile(lit(path), lit(driver))
+    def rst_fromfile(path: Column, driver: String): Column = rst_fromfile(path, lit(driver))
+    def rst_h3_tessellate(tileExpr: Column, resolution: Int): Column = rst_h3_tessellate(tileExpr, lit(resolution))
+    def rst_maketiles(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =
+        rst_maketiles(tileExpr, lit(tileWidth), lit(tileHeight))
+    def rst_retile(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =
+        rst_retile(tileExpr, lit(tileWidth), lit(tileHeight))
+    def rst_tooverlappingtiles(tileExpr: Column, tileWidth: Int, tileHeight: Int, overlap: Int): Column =
+        rst_tooverlappingtiles(tileExpr, lit(tileWidth), lit(tileHeight), lit(overlap))
+    def rst_h3_rastertogridavg(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridavg(tileExpr, lit(resolution))
+    def rst_h3_rastertogridcount(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridcount(tileExpr, lit(resolution))
+    def rst_h3_rastertogridmax(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmax(tileExpr, lit(resolution))
+    def rst_h3_rastertogridmin(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmin(tileExpr, lit(resolution))
+    def rst_h3_rastertogridmedian(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmedian(tileExpr, lit(resolution))
+    def rst_asformat(tileExpr: Column, newFormat: String): Column = rst_asformat(tileExpr, lit(newFormat))
+    def rst_clip(tileExpr: Column, clip: Column, cutlineAllTouched: Boolean): Column =
+        rst_clip(tileExpr, clip, lit(cutlineAllTouched))
+    def rst_filter(tileExpr: Column, kernelSize: Int, operation: String): Column =
+        rst_filter(tileExpr, lit(kernelSize), lit(operation))
+    def rst_mapalgebra(tiles: Column, expression: String): Column = rst_mapalgebra(tiles, lit(expression))
+    def rst_ndvi(tileExpr: Column, redBand: Int, nirBand: Int): Column = rst_ndvi(tileExpr, lit(redBand), lit(nirBand))
+    def rst_rastertoworldcoord(tileExpr: Column, pixelX: Int, pixelY: Int): Column =
+        rst_rastertoworldcoord(tileExpr, lit(pixelX), lit(pixelY))
+    def rst_rastertoworldcoordx(tileExpr: Column, pixelX: Int, pixelY: Int): Column =
+        rst_rastertoworldcoordx(tileExpr, lit(pixelX), lit(pixelY))
+    def rst_rastertoworldcoordy(tileExpr: Column, pixelX: Int, pixelY: Int): Column =
+        rst_rastertoworldcoordy(tileExpr, lit(pixelX), lit(pixelY))
+    def rst_transform(tileExpr: Column, targetSrid: Int): Column = rst_transform(tileExpr, lit(targetSrid))
+    def rst_updatetype(tileExpr: Column, newType: String): Column = rst_updatetype(tileExpr, lit(newType))
+    def rst_worldtorastercoord(tileExpr: Column, worldX: Double, worldY: Double): Column =
+        rst_worldtorastercoord(tileExpr, lit(worldX), lit(worldY))
+    def rst_worldtorastercoordx(tileExpr: Column, worldX: Double, worldY: Double): Column =
+        rst_worldtorastercoordx(tileExpr, lit(worldX), lit(worldY))
+    def rst_worldtorastercoordy(tileExpr: Column, worldX: Double, worldY: Double): Column =
+        rst_worldtorastercoordy(tileExpr, lit(worldX), lit(worldY))
+
 }

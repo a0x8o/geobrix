@@ -20,13 +20,20 @@ object RasterAccessors {
         }
     }
 
-    /** Returns the size in bytes (file size or vsimem buffer length). */
+    /** Returns the size in bytes (file size or vsimem buffer length), or -1 if not determinable.
+      *
+      * Uses `startsWith("/vsimem/")` — a loose `contains` would match subdataset selectors like
+      * `NetCDF:/vsimem/xxx.nc:prAdjust`, where `GetMemFileBuffer` returns null and `.length` NPEs.
+      * For selectors and other non-filesystem descriptions, returns -1 (caller's failure sentinel). */
     def memSize(ds: Dataset): Long = {
         val srcPath = ds.GetDescription()
-        if (srcPath.contains("/vsimem/")) {
-            gdal.GetMemFileBuffer(srcPath).length.toLong
+        if (srcPath.startsWith("/vsimem/")) {
+            val buf = gdal.GetMemFileBuffer(srcPath)
+            if (buf == null) -1L else buf.length.toLong
+        } else if (srcPath.startsWith("/")) {
+            Try(Files.size(Paths.get(srcPath))).getOrElse(-1L)
         } else {
-            Files.size(Paths.get(srcPath))
+            -1L
         }
     }
 
@@ -37,12 +44,17 @@ object RasterAccessors {
         (1 to n).forall(i => BandAccessors.isEmpty(ds.GetRasterBand(i)))
     }
 
-    /** Releases the dataset and, if vsimem, unlinks the buffer; otherwise delegates to RasterDriver. */
+    /** Releases the dataset and, if vsimem, unlinks the buffer; otherwise delegates to RasterDriver.
+      *
+      * Uses `startsWith("/vsimem/")` — a loose `contains` would match subdataset selectors like
+      * `NetCDF:/vsimem/xxx.nc:prAdjust`, where `Unlink(selector)` is a silent no-op and the real
+      * underlying vsimem file leaks. Falling through to `releaseDataset` for that case walks
+      * `GetFileList` and unlinks the actual file(s). */
     def unlink(ds: Dataset): Unit = {
         // TODO: move to RasterDriver
         if (ds == null) return
         val srcPath = ds.GetDescription()
-        if (srcPath.contains("/vsimem/")) {
+        if (srcPath.startsWith("/vsimem/")) {
             ds.delete() // release the dataset
             gdal.Unlink(srcPath)
         } else {

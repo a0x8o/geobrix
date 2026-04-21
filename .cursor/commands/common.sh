@@ -63,12 +63,21 @@ resolve_log_path() {
 # scripts that tee a subprocess only—those must truncate explicitly (: > "$LOG_PATH").
 setup_log_file() {
     local log_path="$1"
-    
+
     if [ -n "$log_path" ]; then
         mkdir -p "$(dirname "$log_path")"
         : > "$log_path"
         echo -e "${CYAN}📝 Logging to: ${YELLOW}$log_path${NC}"
-        exec > >(tee -a "$log_path") 2>&1
+        # Process substitution `>(tee ...)` is bash-only. If this file is sourced by POSIX
+        # `sh` (e.g. `sh gbx-test-python.sh` on macOS runs bash-in-POSIX-mode), the parser
+        # errors at this line and aborts sourcing — defining NONE of the functions below it.
+        # Wrap in `eval` to defer parsing, and fall back to plain append redirection if we're
+        # not in real bash (POSIX sh still gets a log file, just no live stdout via tee).
+        if [ -n "${BASH_VERSION:-}" ] && ! shopt -qo posix 2>/dev/null; then
+            eval 'exec > >(tee -a "$log_path") 2>&1'
+        else
+            exec >>"$log_path" 2>&1
+        fi
     fi
 }
 
@@ -123,3 +132,10 @@ generate_timestamp() {
 print_banner() { show_banner "$@"; }
 print_separator() { show_separator "$@"; }
 setup_log() { setup_log_file "$@"; }
+
+# Export helpers + color vars so they survive any subshell that doesn't re-source this file
+# (observed on macOS bash 3.2: "show_separator: command not found" mid-script).
+export RED GREEN YELLOW BLUE CYAN NC DOCKER_MAVEN_ENV
+export -f check_docker resolve_log_path setup_log_file show_banner show_separator \
+          print_report_link open_report generate_timestamp \
+          print_banner print_separator setup_log 2>/dev/null || true

@@ -50,6 +50,48 @@ This makes it easy to:
 - Distinguish from Databricks built-in `st_*` functions
 - Track usage and attribution
 
+## Scalar values vs `lit(...)` wrapping
+
+Previously, every non-Column argument had to be wrapped in `f.lit(...)` (Python) or `lit(...)` (Scala). That was a regression from Mosaic/DBR built-ins, where booleans and numerics can be passed as plain values. In 0.3.0, plain scalars are accepted across Python, Scala, and SQL bindings.
+
+**Python** — wrappers accept `Column` or scalar (`bool`/`int`/`float`/`bytes`); non-string scalars are auto-wrapped with `f.lit(...)`. Strings still follow pyspark's column-reference convention (bare string ≈ `f.col(name)`); wrap in `f.lit("...")` to pass a string literal.
+
+```python
+# ✅ Before 0.3.0 — required f.lit for every value
+rx.rst_clip("tile", "geom", f.lit(True))
+rx.rst_transform("tile", f.lit(4326))
+bx.bng_pointascell("pt", f.lit(1))
+bx.bng_pointascell("pt", f.lit("1km"))
+
+# ✅ 0.3.0 — scalars accepted directly
+rx.rst_clip("tile", "geom", True)
+rx.rst_transform("tile", 4326)
+bx.bng_pointascell("pt", 1)
+bx.bng_pointascell("pt", f.lit("1km"))   # string literal — still wrap in f.lit
+```
+
+**Scala** — typed overloads added for `Boolean` / `Int` / `Double` / `String` value parameters. Column args (e.g. geometry, tile) still take `Column`.
+
+```scala
+// ✅ 0.3.0 — scalar overloads resolve without lit(...)
+rst_clip(col("tile"), col("geom"), cutlineAllTouched = true)
+rst_transform(col("tile"), 4326)
+bng_pointascell(col("pt"), 1)
+bng_pointascell(col("pt"), "1km")
+```
+
+**SQL** — values are already natively accepted by Spark SQL; no change needed:
+
+```sql
+SELECT gbx_rst_clip(tile, geom, true) FROM ...;
+SELECT gbx_bng_pointascell(pt, 1) FROM ...;
+SELECT gbx_bng_pointascell(pt, '1km') FROM ...;
+```
+
+**When you still need `f.lit(...)` in Python:**
+- **String literals**: `rx.rst_fromfile(f.lit("/path/to.tif"), f.lit("GTiff"))` — a bare string is treated as a column reference.
+- **Nulls / explicit typing**: e.g. `f.lit(None).cast("double")`.
+
 ## Registration
 
 Before using GeoBrix functions in Python or SQL, you must register them:

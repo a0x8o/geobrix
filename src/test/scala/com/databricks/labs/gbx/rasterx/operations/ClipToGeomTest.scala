@@ -130,7 +130,7 @@ class ClipToGeomTest extends AnyFunSuite with BeforeAndAfterAll {
     test("ClipToGeom should handle geometry without SRID") {
         val wkt = "POLYGON((-8900000 2220000, -8900000 2200000, -8880000 2200000, -8880000 2220000, -8900000 2220000))"
         val geom = JTS.fromWKT(wkt)
-        
+
         // Pass null for geomSR - should use raster's SR
         val (resultDs, _) = ClipToGeom.clip(ds, Map.empty, geom, null, cutlineAllTouched = true)
 
@@ -139,6 +139,44 @@ class ClipToGeomTest extends AnyFunSuite with BeforeAndAfterAll {
         resultDs.GetRasterYSize should be > 0
 
         resultDs.delete()
+    }
+
+    test("ClipToGeom should reproject geometry when geomSR differs from raster CRS") {
+        // Raster is World Sinusoidal; build a WGS84 polygon inside the raster's WGS84 footprint
+        // (lon [-85..-71], lat [10..20] — see gdalinfo). Polygon is a ~3° × 3° box around (-78, 15).
+        // Coordinates are in traditional GIS order (x=lon, y=lat) — the JTS/WKB convention.
+        // GDAL 3+ defaults EPSG:4326 to authority-compliant (lat, lon) order, so if we don't
+        // flip the axis mapping, GDAL would interpret (-80, 14) as lat=-80 (near south pole),
+        // the cutline would miss the raster, and the output would be an all-black TIFF.
+        val wkt = "POLYGON((-80 14, -80 17, -77 17, -77 14, -80 14))"
+        val geom = JTS.fromWKT(wkt)
+
+        val geomSR = new SpatialReference()
+        geomSR.ImportFromEPSG(4326)
+
+        val (resultDs, _) = ClipToGeom.clip(ds, Map.empty, geom, geomSR, cutlineAllTouched = true)
+
+        resultDs should not be null
+        // The reprojected cutline should cover a chunk of the raster — many pixels each way.
+        resultDs.GetRasterXSize should be > 100
+        resultDs.GetRasterYSize should be > 100
+
+        // Guard against axis-order bugs: a mis-transformed cutline can still leave a non-empty
+        // bounding box (GDAL warp pads to the requested window) but fills it entirely with
+        // NoData / zeros. Read a sample of pixels and require meaningful variability — the
+        // MODIS surface-reflectance band is not uniformly zero over a 3° x 3° Caribbean box.
+        val band = resultDs.GetRasterBand(1)
+        val sampleW = math.min(64, resultDs.GetRasterXSize)
+        val sampleH = math.min(64, resultDs.GetRasterYSize)
+        val buf = new Array[Short](sampleW * sampleH)
+        band.ReadRaster(0, 0, sampleW, sampleH, sampleW, sampleH, org.gdal.gdalconst.gdalconstConstants.GDT_Int16, buf)
+        val nonZero = buf.count(_ != 0)
+        withClue(s"clipped raster contains $nonZero non-zero pixels out of ${buf.length} — expected > 10% non-zero, indicates an all-black clip") {
+            nonZero should be > (buf.length / 10)
+        }
+
+        resultDs.delete()
+        geomSR.delete()
     }
 
 }

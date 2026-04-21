@@ -48,10 +48,21 @@ def main() -> int:
         return 2
 
     project_root = TESTS_DIR.parent.parent
-    print("Running: mvn clean package -DskipTests ...")
-    rc = subprocess.run(["mvn", "clean", "package", "-DskipTests"], cwd=project_root, capture_output=False)
+    # Corp firewall blocks repo.maven.apache.org on the host; the geobrix-dev container
+    # has the db-maven-proxy mirror wired up via scripts/docker/m2/settings.xml.
+    mvn_cmd = (
+        'unset JAVA_TOOL_OPTIONS && export JUPYTER_PLATFORM_DIRS=1 && '
+        'export MAVEN_OPTS="-Xmx4G -XX:+UseG1GC" && '
+        'cd /root/geobrix && mvn clean package -DskipTests'
+    )
+    print("Running in geobrix-dev: mvn clean package -DskipTests ...")
+    rc = subprocess.run(
+        ["docker", "exec", "geobrix-dev", "/bin/bash", "-c", mvn_cmd],
+        cwd=project_root,
+        capture_output=False,
+    )
     if rc.returncode != 0:
-        print("Maven build failed", file=sys.stderr)
+        print("Maven build failed (is the geobrix-dev container running? try gbx:docker:start)", file=sys.stderr)
         return 1
 
     target = project_root / "target"

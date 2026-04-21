@@ -56,12 +56,12 @@ def _geobrix_version() -> str:
             for line in f:
                 line = line.strip()
                 if line.startswith("__version__"):
-                    # __version__ = "0.2.0"
+                    # __version__ = "0.3.0"
                     if "=" in line:
                         v = line.split("=", 1)[1].strip().strip("'\"").strip()
                         if v:
                             return v
-    return "0.2.0"
+    return "0.3.0"
 
 
 def _notebook_json(

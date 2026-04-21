@@ -135,27 +135,28 @@ object RasterDriver {
         }
     }
 
-    /** Encode a Dataset to bytes (vsimem then GetMemFileBuffer); uses GDALTranslate when not already in memory. */
+    /** Encode a Dataset to bytes: always translates to a fresh /vsimem/ path so the output
+      * Dataset is closed (via res.delete()) before GetMemFileBuffer reads it. Skipping the
+      * close on the caller's writable Dataset leaves GTiff IFD/strip structures unfinalized
+      * and GetMemFileBuffer returns a ~422-byte empty-header stub. The temp vsimem file is
+      * unlinked after reading to avoid leaking memory across long-running jobs (e.g. many clips). */
     def writeToBytes(ds: Dataset, options: Map[String, String]): Array[Byte] = {
         val isZip = options.getOrElse("isZip", "false").toBoolean
         val driverName = options.getOrElse("driver", "GTiff")
         val extension = GDAL.getExtension(driverName)
         val uuid = java.util.UUID.randomUUID().toString.replace("-", "_")
-        val isInMem = ds.GetDescription().contains("/vsimem/")
+        val tempPath =
+            if (isZip) s"/vsizip//vsimem/$uuid.zip/$uuid.$extension"
+            else s"/vsimem/temp_raster_$uuid.$extension"
         ds.FlushCache()
-        if (isInMem) {
-            // Just return the buffer if the dataset is already in memory
-            gdal.GetMemFileBuffer(ds.GetDescription())
-        } else {
-            val tempPath =
-                if (isZip) s"/vsizip//vsimem/$uuid.zip/$uuid.$extension"
-                else s"/vsimem/temp_raster_$uuid.$extension"
-            // Create a copy via gdal_translate to ensure proper format, compression, etc.
-            val (res, _) = GDALTranslate.executeTranslate(tempPath, ds, "gdal_translate", options)
-            res.FlushCache()
-            res.delete()
-            gdal.GetMemFileBuffer(tempPath)
-        }
+        // Create a copy via gdal_translate to ensure proper format/compression AND a clean
+        // close of the output handle (required to finalize GTiff headers in vsimem).
+        val (res, _) = GDALTranslate.executeTranslate(tempPath, ds, "gdal_translate", options)
+        res.FlushCache()
+        res.delete()
+        val bytes = gdal.GetMemFileBuffer(tempPath)
+        gdal.Unlink(tempPath)
+        bytes
     }
 
 }

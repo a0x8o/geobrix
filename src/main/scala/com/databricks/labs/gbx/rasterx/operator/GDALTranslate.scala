@@ -34,7 +34,7 @@ object GDALTranslate {
           "all_parents" -> s"$sourcePath;${options.getOrElse("all_parents", "")}",
           "size" -> size.toString, // For in memory we always return -1
           "format" -> raster.GetDriver().getShortName,
-          "compression" -> options.getOrElse("compression", "ZSTD"),
+          "compression" -> options.getOrElse("compression", "DEFLATE"),
           "isZipped" -> "false",
           "isSubset" -> "false"
         )

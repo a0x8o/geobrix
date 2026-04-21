@@ -468,7 +468,11 @@ Transform and analyze rasters (20 total).
 
 ### rst_clip
 
-**Signature:** `rst_clip(tile: Column, clip: Column, cutlineAllTouched: Column): Column` — Clip by geometry. The `clip` argument must be **WKT** (string) or **WKB** (binary); do not use `st_geomfromtext()` or other DBR native geometry.
+**Signature:** `rst_clip(tile: Column, clip: Column, cutlineAllTouched: Column): Column` — Clip by geometry. The `clip` argument must be **WKT** (string), **EWKT** (SRID-prefixed string), **WKB** (binary), or **EWKB** (SRID-embedded binary); do not use `st_geomfromtext()` or other DBR native geometry.
+
+**CRS handling:**
+- **EWKT** (`SRID=4326;POLYGON(...)`) or **EWKB** (SRID encoded in the byte header) — the SRID is read, and if it differs from the raster's CRS the cutline is reprojected before clipping. Use this form whenever the geometry and raster may be in different CRSs.
+- **Plain WKT / WKB** (no SRID) — the geometry is assumed to already be in the raster's CRS. If that assumption is wrong (for example, lon/lat polygons against a UTM raster), the cutline will land outside the raster and you'll get an empty or blank output. Either switch to EWKT/EWKB, or reproject the geometry to the raster's CRS first.
 
 **SQL:**
 
@@ -556,7 +560,7 @@ Transform and analyze rasters (20 total).
 
 ### rst_transform
 
-**Signature:** `rst_transform(tile: Column, targetSrid: Column): Column` — Reproject to target CRS.
+**Signature:** `rst_transform(tile: Column, targetSrid: Column): Column` — Reproject to target CRS. `targetSrid` must be a positive EPSG code; `0` or an unknown code is rejected with a clear error.
 
 **SQL:**
 

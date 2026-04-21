@@ -4,10 +4,27 @@ Thin wrappers for legacy (Mosaic-compatible) vector functions. Register with
 the appropriate module then use on geometry columns. For full descriptions
 and examples, see the API docs or SQL:
   DESCRIBE FUNCTION EXTENDED gbx_st_legacyaswkb;
+
+Arg types: every wrapper accepts either a pyspark ``Column`` or a plain
+Python scalar. Non-string scalars (``bool``/``int``/``float``/``bytes``) are
+auto-wrapped with ``f.lit(...)``; strings and ``Column`` values pass through
+(pyspark treats a bare string as a dataframe column reference). Wrap in
+``f.lit(...)`` to pass a string literal.
 """
+
+from typing import Union
 
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
+
+ColLike = Union[Column, str, bool, int, float, bytes]
+
+
+def _col(x: ColLike) -> Union[Column, str]:
+    """Auto-wrap bool/int/float/bytes scalars via f.lit(); pass strings and Columns through."""
+    if isinstance(x, Column) or isinstance(x, str):
+        return x
+    return f.lit(x)
 
 
 def register(_spark: SparkSession) -> None:
@@ -25,7 +42,7 @@ def register(_spark: SparkSession) -> None:
     ).load().collect()
 
 
-def st_legacyaswkb(geom: Column) -> Column:
+def st_legacyaswkb(geom: ColLike) -> Column:
     """Return the legacy vector geometry as Well-Known Binary.
 
     Converts the internal legacy geometry format (e.g. from Mosaic) to WKB
@@ -37,4 +54,4 @@ def st_legacyaswkb(geom: Column) -> Column:
     Returns:
         Column of WKB (binary).
     """
-    return f.call_function("gbx_st_legacyaswkb", geom)
+    return f.call_function("gbx_st_legacyaswkb", _col(geom))

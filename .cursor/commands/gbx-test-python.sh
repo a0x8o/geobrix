@@ -14,8 +14,11 @@ show_help() {
     echo -e "${CYAN}Options:${NC}"
     echo -e "  ${GREEN}--path <dir>${NC}           Specific test directory or file"
     echo -e "  ${GREEN}--log <path>${NC}           Write output to log file"
-    echo -e "  ${GREEN}--markers <marker>${NC}     Run tests with specific markers (e.g., '-m slow')"
+    echo -e "  ${GREEN}--with-integration${NC}     Include ${YELLOW}@pytest.mark.integration${NC} tests (network downloads, slow); excluded by default"
+    echo -e "  ${GREEN}--markers <expr>${NC}        Override marker filter with a pytest expression (e.g. 'not slow'); disables the default 'not integration' filter"
     echo -e "  ${GREEN}--help${NC}                 Show this help"
+    echo ""
+    echo -e "${CYAN}Default marker filter:${NC} ${YELLOW}not integration${NC} (matches CI; opt in with ${GREEN}--with-integration${NC} or override with ${GREEN}--markers${NC})"
     echo ""
     echo -e "${CYAN}Log Path Behavior:${NC}"
     echo -e "  ${YELLOW}filename.log${NC}           → test-logs/filename.log"
@@ -23,7 +26,8 @@ show_help() {
     echo -e "  ${YELLOW}/abs/path/file.log${NC}     → /abs/path/file.log"
     echo ""
     echo -e "${CYAN}Examples:${NC}"
-    echo -e "  ${YELLOW}gbx:test:python${NC}"
+    echo -e "  ${YELLOW}gbx:test:python${NC}                                     ${CYAN}# unit tests only (default)${NC}"
+    echo -e "  ${YELLOW}gbx:test:python --with-integration${NC}                  ${CYAN}# unit + integration (network)${NC}"
     echo -e "  ${YELLOW}gbx:test:python --path python/geobrix/test/rasterx/${NC}"
     echo -e "  ${YELLOW}gbx:test:python --markers 'not slow' --log python-tests.log${NC}"
     echo ""
@@ -32,7 +36,8 @@ show_help() {
 # Parse arguments
 TEST_PATH="/root/geobrix/python/geobrix/test/"
 LOG_PATH=""
-MARKERS=""
+# Default: exclude integration tests (network downloads); matches CI's python_build action.
+MARKERS="-m 'not integration'"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -43,6 +48,10 @@ while [[ $# -gt 0 ]]; do
         --log)
             LOG_PATH=$(resolve_log_path "$2")
             shift 2
+            ;;
+        --with-integration)
+            MARKERS=""
+            shift
             ;;
         --markers)
             MARKERS="-m '$2'"
@@ -70,6 +79,8 @@ setup_log_file "$LOG_PATH"
 echo -e "${CYAN}🎯 Test path: ${YELLOW}$TEST_PATH${NC}"
 if [ -n "$MARKERS" ]; then
     echo -e "${CYAN}🏷️  Markers: ${YELLOW}$MARKERS${NC}"
+else
+    echo -e "${CYAN}🏷️  Markers: ${YELLOW}(none — including integration tests)${NC}"
 fi
 
 echo ""

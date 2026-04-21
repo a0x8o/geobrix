@@ -12,14 +12,24 @@ bash .cursor/commands/gbx-test-python.sh [OPTIONS]
 
 - `--path <path>` - Run specific test file or directory
 - `--log <path>` - Write output to log file (supports filename, relative, or absolute path)
-- `--markers <markers>` - Run tests matching pytest markers (e.g., "not slow")
+- `--with-integration` - Include `@pytest.mark.integration` tests (network downloads, slow). Excluded by default.
+- `--markers <expr>` - Override marker filter with a custom pytest expression (e.g. `"not slow"`). Disables the default `not integration` filter.
 - `--help` - Display help message
+
+## Default marker filter
+
+By default the script runs with `-m "not integration"`, matching CI's `python_build` action. This excludes `python/geobrix/test/sample/test_sample_bundle.py::test_run_*_bundle_returns_dict_shape`, which download hundreds of MB of sample data.
+
+Opt in with `--with-integration` (drops the filter entirely) or `--markers <expr>` (replaces it with your own expression).
 
 ## Examples
 
 ```bash
-# Run all Python unit tests
+# Unit tests only (default — fast, matches CI)
 bash .cursor/commands/gbx-test-python.sh
+
+# Include integration tests (network downloads)
+bash .cursor/commands/gbx-test-python.sh --with-integration
 
 # Run specific test file
 bash .cursor/commands/gbx-test-python.sh --path python/geobrix/test/rasterx/test_operations.py
@@ -27,7 +37,7 @@ bash .cursor/commands/gbx-test-python.sh --path python/geobrix/test/rasterx/test
 # Run with logging
 bash .cursor/commands/gbx-test-python.sh --log python-tests.log
 
-# Run fast tests only
+# Custom marker expression (overrides the default)
 bash .cursor/commands/gbx-test-python.sh --markers "not slow"
 ```
 

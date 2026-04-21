@@ -79,9 +79,20 @@ class ConstructorExpressionsTest extends AnyFunSuite {
         expr.dataType shouldBe a[StructType]
     }
 
+    test("RST_FromFile raster field should be BinaryType") {
+        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
+        val tile = expr.dataType.asInstanceOf[StructType]
+        tile("raster").dataType shouldBe BinaryType
+    }
+
     test("RST_FromFile should be nullable") {
         val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
         expr.nullable shouldBe true
+    }
+
+    test("RST_FromFile should have correct prettyName") {
+        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
+        expr.prettyName shouldBe "gbx_rst_fromfile"
     }
 
     test("RST_FromFile should create replacement") {

@@ -41,7 +41,7 @@ object GDALRasterize {
         val outputPath = s"/vsimem/clip_to_geom_$uuid.$extension"
 
         val createOptionsVec = new JVector[String]()
-        createOptionsVec.addAll(Seq("COMPRESS=ZSTD", "TILED=YES").asJava)
+        createOptionsVec.addAll(Seq("COMPRESS=DEFLATE", "TILED=YES").asJava)
 
         val newRaster = driver.Create(outputPath, xWidth, yWidth, 1, gdalconstConstants.GDT_Float64, createOptionsVec)
         val rasterCRS = if (geoms.isEmpty) SpatialRefOps.fromEPSGCode(origin.getSRID) else SpatialRefOps.fromEPSGCode(geoms.head.getSRID)

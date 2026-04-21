@@ -10,40 +10,40 @@ Proper patterns for working with GDAL resources to prevent memory leaks and erro
 ## Core Principles
 
 1. **Always release GDAL resources** - Datasets, bands, arrays must be explicitly released
-2. **Use `rst_fromcontent` over `rst_fromfile`** - Avoids temp file lifecycle issues
+2. **Prefer `rst_fromcontent` + `binaryFile` when you already have bytes** - Skips a redundant read
 3. **Proper API usage** - Use correct GDAL method signatures
 4. **Handle errors appropriately** - Suppress expected warnings, surface real errors
 
-## Pattern 1: Load Rasters with Binary Format
+## Pattern 1: Load Rasters into Binary Tiles
 
-### ✅ GOOD: Use `rst_fromcontent` with `binaryFile`
+Both `rst_fromfile` and `rst_fromcontent` produce tiles whose `raster` field is `BinaryType`
+(the full file content in memory). Pick by input shape.
+
+### ✅ GOOD: Use `rst_fromcontent` with `binaryFile` when you already have bytes
 
 **Python:**
 ```python
 from databricks.labs.gbx.rasterx import functions as rx
 from pyspark.sql import functions as f
 
-# Read raster as binary content
 df = (spark.read
     .format("binaryFile")
     .load("/path/to/raster.tif")
-    .withColumn("tile", rx.rst_fromcontent("content", f.lit("GTiff")))
+    .withColumn("tile", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")))
 )
 ```
 
-**Benefits:**
-- ✅ Keeps raster data in memory
-- ✅ Avoids temp file cleanup race conditions
-- ✅ More reliable in distributed environments
-- ✅ Prevents `NullPointerException` from temp file issues
-
-### ❌ BAD: Using `rst_fromfile` with temp files
+### ✅ GOOD: Use `rst_fromfile` when you only have a path column
 
 ```python
-# Temp files may be cleaned up before GDAL accesses them
-df = df.withColumn("tile", rx.rst_fromfile("path"))
-# Can cause: NullPointerException, file not found errors
+df = df.withColumn("tile", rx.rst_fromfile(f.col("path"), f.lit("GTiff")))
+# rst_fromfile now reads the file bytes into the tile.raster field (BinaryType).
 ```
+
+**Benefits (of both):**
+- ✅ Keeps raster data in memory
+- ✅ Avoids temp-file cleanup races on executors
+- ✅ Downstream operators (`rst_clip`, `rst_transform`, ...) stay on binary content end-to-end
 
 ## Pattern 2: Proper GDAL API Usage
 

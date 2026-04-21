@@ -177,7 +177,7 @@ Doc tests use the **in-repo minimal bundle** (no download step). Generate it onc
 
 | Command | When to use | What it does |
 |---------|-------------|--------------|
-| `gbx:ci:push` | Initiate remote build on current branch (e.g. beta/0.2.0) | Pushes branch to origin, then watches the **build main** workflow run |
+| `gbx:ci:push` | Initiate remote build on current branch (e.g. beta/0.3.0) | Pushes branch to origin, then watches the **build main** workflow run |
 | `gbx:ci:trigger` | Push then manually trigger build main (e.g. workflow_dispatch) | Pushes branch, lists runs, prompts to trigger **build main** on current branch |
 | `gbx:ci:status` | Check recent CI runs | Shows recent workflow runs for current branch (optional: `[LIMIT]`) |
 | `gbx:ci:watch` | Stream a CI run | Watches latest run (or `[RUN_ID]`) in real time |
@@ -233,7 +233,7 @@ Workflows live in **`.github/workflows/`**. They define when and how tests and b
 
 ### Initiating a build from a branch
 
-Pushing to a branch (except `python/**` and `scala/**`) **successfully triggers** the **build main** workflow. To run the main build on your current branch (e.g. `beta/0.2.0`):
+Pushing to a branch (except `python/**` and `scala/**`) **successfully triggers** the **build main** workflow. To run the main build on your current branch (e.g. `beta/0.3.0`):
 
 - **Push and watch** — **`gbx:ci:push`**. Pushes the current branch to origin (push triggers **build main**), then streams the run.
 - **Trigger after push** — **`gbx:ci:trigger`**. Pushes, then prompts to trigger **build main** (workflow_dispatch).

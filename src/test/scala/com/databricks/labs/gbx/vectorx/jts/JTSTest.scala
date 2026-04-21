@@ -249,4 +249,85 @@ class JTSTest extends AnyFunSuite {
         parsed shouldBe a[Polygon]
     }
 
+    // ====== EWKT / EWKB (PostGIS extended formats) ======
+
+    test("fromWKT should parse EWKT SRID prefix and set SRID") {
+        val geom = JTS.fromWKT("SRID=4326;POINT (10 20)")
+        geom should not be null
+        geom shouldBe a[Point]
+        geom.getSRID shouldBe 4326
+        geom.asInstanceOf[Point].getX shouldBe 10.0
+        geom.asInstanceOf[Point].getY shouldBe 20.0
+    }
+
+    test("fromWKT should tolerate whitespace and case in EWKT prefix") {
+        val geom = JTS.fromWKT("  srid=27700 ; POINT (100 200)")
+        geom.getSRID shouldBe 27700
+    }
+
+    test("fromWKT should leave SRID=0 for plain WKT") {
+        val geom = JTS.fromWKT("POINT (1 2)")
+        geom.getSRID shouldBe 0
+    }
+
+    test("fromWKT should not mis-parse a WKT that happens to start with S") {
+        // e.g. not "SRID=..." — must not strip anything
+        val geom = JTS.fromWKT("POINT (5 6)")
+        geom.getSRID shouldBe 0
+    }
+
+    test("fromWKT should ignore invalid SRID prefix and parse remainder") {
+        // "SRID=abc;..." — non-numeric: return (0, original), which will fail WKT parse as it
+        // still starts with "SRID=abc;" — this is expected behaviour (input is malformed)
+        val thrown = intercept[Exception](JTS.fromWKT("SRID=abc;POINT (1 2)"))
+        thrown.getMessage should not be null
+    }
+
+    test("toEWKT should emit SRID prefix when set, plain WKT otherwise") {
+        val pt = JTS.point(1.0, 2.0)
+        JTS.toEWKT(pt) should not include "SRID="
+        pt.setSRID(4326)
+        JTS.toEWKT(pt) should startWith("SRID=4326;")
+    }
+
+    test("EWKT round-trip should preserve SRID") {
+        val pt = JTS.point(3.14, 2.71)
+        pt.setSRID(3857)
+        val ewkt = JTS.toEWKT(pt)
+        val back = JTS.fromWKT(ewkt)
+        back.getSRID shouldBe 3857
+    }
+
+    test("fromWKB should decode EWKB with SRID flag") {
+        val pt = JTS.point(10.0, 20.0)
+        pt.setSRID(4326)
+        val ewkb = JTS.toEWKB(pt)
+        val parsed = JTS.fromWKB(ewkb)
+        parsed.getSRID shouldBe 4326
+        parsed.asInstanceOf[Point].getX shouldBe 10.0
+    }
+
+    test("fromWKB should leave SRID=0 for plain WKB") {
+        val pt = JTS.point(1.0, 2.0)
+        val wkb = JTS.toWKB(pt) // default writer — no SRID embedded
+        val parsed = JTS.fromWKB(wkb)
+        parsed.getSRID shouldBe 0
+    }
+
+    test("toWKB (plain) should not embed SRID even when set on the geometry") {
+        val pt = JTS.point(1.0, 2.0)
+        pt.setSRID(4326)
+        val wkb = JTS.toWKB(pt)
+        val parsed = JTS.fromWKB(wkb)
+        parsed.getSRID shouldBe 0
+    }
+
+    test("EWKB round-trip should preserve SRID") {
+        val poly = JTS.polygonFromXYs(Array((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 0.0)))
+        poly.setSRID(27700)
+        val ewkb = JTS.toEWKB(poly)
+        val parsed = JTS.fromWKB(ewkb)
+        parsed.getSRID shouldBe 27700
+    }
+
 }

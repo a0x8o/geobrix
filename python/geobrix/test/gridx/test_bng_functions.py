@@ -628,3 +628,27 @@ def test_bng_tessellateexplode_string_resolution(spark, bng_registered):
     )
     rows = result.collect()
     assert len(rows) > 0
+
+
+def test_bng_scalar_literal_args(spark, bng_registered):
+    """Plain Python non-string scalars (int) are accepted in place of f.lit(...).
+
+    Verifies ColLike/_col() on gridx/bng: booleans/ints auto-wrap via f.lit,
+    so ``bng_pointascell(pt, 1)`` and ``bng_kloop(cell, 1)`` work without
+    wrapping. Strings still pass through as pyspark column refs; use f.lit for
+    string literals (e.g. resolution="1km").
+    """
+    polygon_wkt = "POLYGON ((530000 180000, 530500 180000, 530500 180500, 530000 180500, 530000 180000))"
+    df = spark.range(1).select(
+        bng_registered.bng_pointascell(f.lit("POINT (400000 400000)"), 1).alias("cell_int_res"),
+        bng_registered.bng_pointascell(f.lit("POINT (400000 400000)"), f.lit("1km")).alias(
+            "cell_str_res"
+        ),
+        bng_registered.bng_polyfill(f.lit(polygon_wkt), 1).alias("cells_int_res"),
+        bng_registered.bng_kloop(f.lit("TQ388791"), 1).alias("kloop_int_k"),
+    )
+    row = df.collect()[0]
+    assert row["cell_int_res"] is not None
+    assert row["cell_str_res"] is not None
+    assert row["cells_int_res"] is not None
+    assert row["kloop_int_k"] is not None

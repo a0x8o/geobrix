@@ -255,8 +255,8 @@ function extractFunction(code, functionName) {
     // Extract just the content inside the quotes
     const constantContent = lines.slice(functionStart, functionEnd).join('\n');
 
-    // Try Python pattern: CONSTANT = """content"""
-    let match = constantContent.match(new RegExp(`${functionName}\\s*=\\s*${quoteType}([\\s\\S]*?)${quoteType}`));
+    // Try Python pattern: CONSTANT = """content""" (optionally f/r/b/u-prefixed)
+    let match = constantContent.match(new RegExp(`${functionName}\\s*=\\s*[fFrRbBuU]*${quoteType}([\\s\\S]*?)${quoteType}`));
 
     // Try Scala pattern: val CONSTANT: String = """content"""
     if (!match) {

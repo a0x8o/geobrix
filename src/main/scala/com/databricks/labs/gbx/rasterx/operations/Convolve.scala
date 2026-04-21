@@ -47,7 +47,7 @@ object Convolve {
           "all_parents" -> ds.GetDescription(),
           "size" -> -1.toString, // Size will be determined later
           "format" -> driver.getShortName,
-          "compression" -> options.getOrElse("compression", "ZSTD"),
+          "compression" -> options.getOrElse("compression", "DEFLATE"),
           "isZipped" -> "false",
           "isSubset" -> "false"
         )
