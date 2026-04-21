@@ -26,6 +26,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'notebooks/eo-series',
+        'notebooks/xview',
       ],
     },
     {
