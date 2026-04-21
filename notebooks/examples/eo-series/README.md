@@ -73,7 +73,7 @@ GDAL writer → stacked TIFs + rst_clip
 
 - **GeoBrix RasterX** (`rx.rst_*`): `rst_h3_tessellate`, `rst_h3_tessellateexplode`, `rst_memsize`, `rst_initnodata`, `rst_boundingbox`, `rst_srid`, `rst_tryopen`, `rst_summary`, `rst_metadata`, `rst_numbands`, `rst_frombands`, `rst_fromcontent`, `rst_merge_agg` (aggregator), `rst_clip`, `rst_isempty`.
 - **GeoBrix readers/writers**: `shapefile_ogr` (zipped shapefiles without unzipping), `gdal` (GTiff reader + writer with `mode("append")` and `option("ext", "tif")`), `binaryFile` → `rst_fromcontent` pattern.
-- **Databricks built-in ST / H3** (`DBF.*`): `st_geomfromwkt`, `st_transform`, `st_buffer`, `st_simplify`, `st_astext`, `st_asgeojson`, `st_aswkb`, `st_centroid`, `st_envelope`, `h3_tessellateaswkb`, `h3_boundaryasgeojson`, `h3_boundaryaswkt`, `h3_toparent`, `h3_kring`.
+- **Databricks built-in ST / H3** (`DBF.*`): `st_geomfromwkt`, `st_transform`, `st_buffer`, `st_simplify`, `st_astext`, `st_asgeojson`, `st_aswkb`, `st_asewkb`, `st_centroid`, `st_envelope`, `h3_tessellateaswkb`, `h3_boundaryasgeojson`, `h3_boundaryaswkt`, `h3_toparent`, `h3_kring`.
 
 ---
 
@@ -83,3 +83,5 @@ GDAL writer → stacked TIFs + rst_clip
 - **SRID awareness**: Sentinel-2 tiles arrive in UTM zones (e.g. `32608`, `32609`), not EPSG:4326 — reproject bboxes before plotting on a web map.
 - **Free-tier auth-failure payloads**: Planetary Computer returns a ~550-byte XML error body when SAS tokens expire or rate limits hit. The `is_out_file_valid` column uses the 1 KB `FILE_SIZE_THRESHOLD` to detect these and enables a Delta MERGE-based retry via `update_assets` / `download_missing_assets`.
 - **Shuffle partitioning**: Several helpers temporarily disable `spark.sql.adaptive.coalescePartitions.enabled` and raise `spark.sql.shuffle.partitions` during download / stacking to keep parallelism high, then restore the original value.
+- **Prefer EWKB for `rst_clip` cutlines**: notebook 04 uses `DBF.st_asewkb(DBF.st_envelope("buffer"))` so the cutline's SRID travels with the bytes into `rst_clip`. Plain WKB (no SRID) is assumed to already be in the raster's CRS and is **not** reprojected; EWKB (or EWKT) with a valid SRID triggers reprojection when it differs from the raster CRS. Use `st_asewkb` / `st_asewkt` for robust, CRS-agnostic clipping.
+- **Scalar booleans pass through directly**: in 0.3.0 `rx.rst_clip("tile", "clip_wkb", True)` accepts a bare Python `True` for the `cutToCutline` flag — no `F.lit(True)` wrapping needed.
