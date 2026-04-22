@@ -12,7 +12,7 @@ import org.scalatest.matchers.should.Matchers._
   * 
   * A tile in GeoBrix is a struct with three fields:
   * - cellid: Long (nullable) - Grid cell ID for tessellated rasters, null for non-tessellated
-  * - raster: String or Binary - Either a file path or binary content
+  * - raster: Binary - Raster bytes loaded from file or content
   * - metadata: Map[String, String] - Driver info, extension, size, etc.
   */
 class RST_TileStructureTest extends PlanTest with SilentSparkSession {
@@ -47,10 +47,10 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         // cellid should be null for non-tessellated rasters (nullable field)
         result(0).isNullAt(result(0).fieldIndex("cellid")) should be(true)
 
-        // raster should be a string path
-        val rasterValue = result(0).getAs[String]("raster")
+        // raster should be binary bytes
+        val rasterValue = result(0).getAs[Array[Byte]]("raster")
         rasterValue should not be null
-        rasterValue should include(".TIF")
+        rasterValue.length should be > 0
 
         // metadata should be a map
         val metadata = result(0).getAs[Map[String, String]]("metadata")
@@ -58,9 +58,10 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         metadata should contain key "driver"
         metadata should contain key "extension"
         metadata("driver") should be("GTiff")
+        metadata("size").toInt should be(rasterValue.length)
     }
 
-    test("Tile from file should contain path in raster field") {
+    test("Tile from file should contain binary in raster field") {
         val sc = spark
         import com.databricks.labs.gbx.rasterx.functions._
         import sc.implicits._
@@ -70,14 +71,18 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
 
         val df = spark.range(1)
           .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
-          .select(col("tile.raster").alias("raster_path"))
+          .select(
+            col("tile.raster").alias("raster_binary"),
+            col("tile.metadata").alias("metadata")
+          )
 
         val result = df.collect()
-        val rasterPath = result(0).getAs[String]("raster_path")
+        val rasterBinary = result(0).getAs[Array[Byte]]("raster_binary")
+        val metadata = result(0).getAs[Map[String, String]]("metadata")
 
-        rasterPath should not be null
-        rasterPath should include("MCD43A4")
-        rasterPath should endWith(".TIF")
+        rasterBinary should not be null
+        rasterBinary.length should be > 0
+        metadata("size").toInt should be(rasterBinary.length)
     }
 
     test("Tile from content should contain binary in raster field") {
@@ -209,7 +214,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         result.length should be(2)
     }
 
-    test("Extract raster path from tile for conditional processing") {
+    test("Use sibling path column for conditional processing") {
         val sc = spark
         import com.databricks.labs.gbx.rasterx.functions._
         import sc.implicits._
@@ -222,8 +227,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")
         ).toDF("id", "path")
           .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
-          .withColumn("raster_path", col("tile.raster"))
-          .withColumn("is_b01", col("raster_path").contains("B01"))
+          .withColumn("is_b01", col("path").contains("B01"))
 
         val result = df.collect()
 

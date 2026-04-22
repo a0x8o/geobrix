@@ -334,5 +334,80 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         noException should be thrownBy df.collect()
     }
 
+    test("RST_Clip should reproject EWKT geometry when SRID differs from raster CRS") {
+        // Raster is World Sinusoidal; pass cutline as EWKT in WGS84 (SRID=4326).
+        // Without EWKT→SRID propagation + the SRID=0 fallback fix, the raw lon/lat coords
+        // would be treated as raster CRS → empty clip / zero-byte output.
+        val sc = spark
+        import com.databricks.labs.gbx.rasterx.functions._
+        import sc.implicits._
+        functions.register(spark)
+
+        val tifPath = this.getClass.getResource("/modis/").toString
+        val ewkt = "SRID=4326;POLYGON((-80 14, -80 17, -77 17, -77 14, -80 14))"
+
+        val df: DataFrame = Seq(
+          (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
+        ).toDF("id", "path")
+            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("clipped", rst_clip(col("raster"), lit(ewkt), lit(true)))
+            .withColumn("clipped_size", rst_memsize(col("clipped")))
+
+        val result = df.select("clipped_size").collect()
+        result should not be empty
+        val size = result.head.getAs[Long]("clipped_size")
+        // Cutline reprojected correctly should produce a real multi-KB TIFF — not the
+        // ~422-byte empty-IFD stub produced when reprojection silently no-ops.
+        size should be > 5000L
+    }
+
+    test("RST_Clip should reproject EWKB geometry when SRID differs from raster CRS") {
+        val sc = spark
+        import com.databricks.labs.gbx.rasterx.functions._
+        import sc.implicits._
+        import com.databricks.labs.gbx.vectorx.jts.JTS
+        functions.register(spark)
+
+        val tifPath = this.getClass.getResource("/modis/").toString
+        val geom = JTS.fromWKT("POLYGON((-80 14, -80 17, -77 17, -77 14, -80 14))")
+        geom.setSRID(4326)
+        val ewkb = JTS.toEWKB(geom)
+
+        val df: DataFrame = Seq(
+          (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF", ewkb)
+        ).toDF("id", "path", "clip_wkb")
+            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("clipped", rst_clip(col("raster"), col("clip_wkb"), lit(true)))
+            .withColumn("clipped_size", rst_memsize(col("clipped")))
+
+        val result = df.select("clipped_size").collect()
+        result should not be empty
+        result.head.getAs[Long]("clipped_size") should be > 5000L
+    }
+
+    test("RST_Transform should surface a clear error for invalid SRID") {
+        // RST_ErrorHandler.safeEval converts exceptions into error-metadata rows rather than
+        // failing the whole job, so we assert the error surfaces in the tile's metadata.
+        val sc = spark
+        import com.databricks.labs.gbx.rasterx.functions._
+        import sc.implicits._
+        functions.register(spark)
+
+        val tifPath = this.getClass.getResource("/modis/").toString
+
+        val df: DataFrame = Seq(
+          (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
+        ).toDF("id", "path")
+            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("transformed", rst_transform(col("raster"), lit(0)))
+            .withColumn("err", col("transformed.metadata")("error_message"))
+
+        val result = df.select("err").collect()
+        result should not be empty
+        val err = result.head.getAs[String]("err")
+        err should not be null
+        err should include("rst_transform")
+    }
+
 }
 

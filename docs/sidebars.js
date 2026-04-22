@@ -22,6 +22,15 @@ const sidebars = {
     'beta-release-notes',
     {
       type: 'category',
+      label: 'Notebooks',
+      collapsed: false,
+      items: [
+        'notebooks/eo-series',
+        'notebooks/xview',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Sample Data',
       collapsed: false,
       items: [
@@ -45,17 +54,33 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'Readers',
+      label: 'Readers & Writers',
       collapsed: false,
       items: [
-        'readers/overview',
-        'readers/gdal',
-        'readers/gtiff',
-        'readers/ogr',
-        'readers/shapefile',
-        'readers/geojson',
-        'readers/geopackage',
-        'readers/filegdb',
+        {
+          type: 'category',
+          label: 'Readers',
+          collapsed: false,
+          items: [
+            'readers/overview',
+            'readers/gdal',
+            'readers/gtiff',
+            'readers/ogr',
+            'readers/shapefile',
+            'readers/geojson',
+            'readers/geopackage',
+            'readers/filegdb',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Writers',
+          collapsed: false,
+          items: [
+            'writers/overview',
+            'writers/gdal',
+          ],
+        },
       ],
     },
     {

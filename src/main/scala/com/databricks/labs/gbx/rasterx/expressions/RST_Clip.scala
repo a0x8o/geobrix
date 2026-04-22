@@ -14,7 +14,7 @@ import org.gdal.gdal.Dataset
 import org.gdal.osr.SpatialReference
 import org.locationtech.jts.geom.Geometry
 
-import scala.util.{Failure, Try}
+import scala.util.Try
 
 /** The expression for clipping a raster by a vector. */
 case class RST_Clip(
@@ -65,13 +65,23 @@ object RST_Clip extends WithExpressionInfo {
     def execute(ds: Dataset, options: Map[String, String], geom: Geometry, cutlineAllTouched: Boolean): (Dataset, Map[String, String]) = {
         val geomSR = new SpatialReference()
         val epsgCode = geom.getSRID
-        Try(geomSR.ImportFromEPSG(epsgCode)) match {
-            case Failure(_) =>
-                val dsSR = ds.GetSpatialRef
+        // Plain WKB/WKT leave SRID=0; EWKB (PostGIS extension) and EWKT carry SRID through
+        // JTS.fromWKB / JTS.fromWKT. ImportFromEPSG(0) or an unknown code returns a non-zero
+        // OGRERR but does NOT throw — a bare Try would treat it as success and leave geomSR
+        // uninitialized, the subsequent OSR transform would silently no-op, and the raw geom
+        // coords would be sent into a differently-projected raster (empty clip / black output).
+        // Require BOTH epsgCode > 0 AND a zero return code; otherwise fall back to the raster's
+        // CRS — i.e. assume the caller passed the geometry already in the raster's CRS.
+        val imported = epsgCode > 0 && Try(geomSR.ImportFromEPSG(epsgCode)).toOption.contains(0)
+        if (!imported) {
+            val dsSR = ds.GetSpatialRef
+            if (dsSR != null) {
                 val dsEpsgCode = SpatialRefOps.getEPSGCode(dsSR)
                 if (dsEpsgCode != 0) geomSR.ImportFromEPSG(dsEpsgCode)
                 else geomSR.ImportFromWkt(dsSR.ExportToWkt())
-            case _          => // Do nothing, we have a valid SRID
+            } else {
+                geomSR.SetWellKnownGeogCS("WGS84")
+            }
         }
         val res = ClipToGeom.clip(ds, options, geom, geomSR, cutlineAllTouched)
         geomSR.delete()

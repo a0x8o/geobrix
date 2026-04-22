@@ -355,6 +355,26 @@ class RasterXFunctionsTest extends AnyFunSuite {
         result should not be null
     }
 
+    // ====== Scalar Literal Overloads ======
+
+    test("scalar-literal overloads should accept plain values for non-Column args") {
+        // rst_clip with Boolean scalar (primary parity with Mosaic/DBR built-ins)
+        functions.rst_clip(col("tile"), col("geom"), cutlineAllTouched = true) should not be null
+        // int scalars
+        functions.rst_bandmetadata(col("tile"), 1) should not be null
+        functions.rst_transform(col("tile"), 4326) should not be null
+        functions.rst_ndvi(col("tile"), 1, 2) should not be null
+        // string scalars
+        functions.rst_asformat(col("tile"), "GTiff") should not be null
+        functions.rst_updatetype(col("tile"), "Float32") should not be null
+        functions.rst_filter(col("tile"), 3, "median") should not be null
+        functions.rst_mapalgebra(col("tiles"), "{\"calc\": \"A+2*A\"}") should not be null
+        // rst_fromfile with string path + driver
+        functions.rst_fromfile("/some/path.tif", "GTiff") should not be null
+        // double scalars
+        functions.rst_worldtorastercoord(col("tile"), 1.0, 2.0) should not be null
+    }
+
     // ====== Registration Tests ======
 
     test("register should accept SparkSession without error") {

@@ -1,6 +1,6 @@
 # Push and Run CI (build main)
 
-Pushes the current branch to origin and watches the **build main** workflow run on GitHub Actions. Use this to initiate a remote build when working on a branch (e.g. `beta/0.2.0`).
+Pushes the current branch to origin and watches the **build main** workflow run on GitHub Actions. Use this to initiate a remote build when working on a branch (e.g. `beta/0.3.0`).
 
 ## Usage
 

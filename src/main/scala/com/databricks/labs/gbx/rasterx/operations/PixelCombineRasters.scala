@@ -1,6 +1,6 @@
 package com.databricks.labs.gbx.rasterx.operations
 
-import com.databricks.labs.gbx.rasterx.gdal.{GDAL, RasterDriver}
+import com.databricks.labs.gbx.rasterx.gdal.{GDAL, GDALManager, RasterDriver}
 import com.databricks.labs.gbx.rasterx.operator.{GDALBuildVRT, GDALTranslate}
 import com.databricks.labs.gbx.util.NodeFilePathUtil
 import org.gdal.gdal.Dataset
@@ -32,16 +32,20 @@ object PixelCombineRasters {
           command = s"gdalbuildvrt -resolution highest"
         )
         vrtRaster._1.delete()
-        val vrtRefreshed = RasterDriver.read(vrtPath, vrtRaster._2)
 
-        addPixelFunction(vrtPath, pythonFunc, pythonFuncName)
+        // GDAL evaluates <PixelFunctionLanguage>Python</...> during VRT read-back and translate.
+        val result = GDALManager.withVrtPython {
+            val vrtRefreshed = RasterDriver.read(vrtPath, vrtRaster._2)
 
-        val result = GDALTranslate.executeTranslate(
-          rasterPath,
-          vrtRefreshed,
-          command = s"gdal_translate",
-          options
-        )
+            addPixelFunction(vrtPath, pythonFunc, pythonFuncName)
+
+            GDALTranslate.executeTranslate(
+              rasterPath,
+              vrtRefreshed,
+              command = s"gdal_translate",
+              options
+            )
+        }
 
         Files.deleteIfExists(Paths.get(vrtPath))
 

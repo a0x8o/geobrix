@@ -257,7 +257,7 @@ When an **agent** runs a `gbx:*` command via the Shell tool, the agent should us
 
 25. **`gbx:ci:push`** - Push current branch and watch build main workflow
     - Pushes to origin, then streams the GitHub Actions run
-    - Use on branches (e.g. beta/0.2.0) to initiate a remote build
+    - Use on branches (e.g. beta/0.3.0) to initiate a remote build
     - Requires: `gh` CLI installed and authenticated
     - Example: `gbx:ci:push`
 

@@ -3,7 +3,7 @@ Tests for understanding and working with the tile structure directly.
 
 A tile in GeoBrix is a struct with three fields:
 - cellid: Long (nullable) - Grid cell ID for tessellated rasters, null for non-tessellated
-- raster: String or Binary - Either a file path or binary content
+- raster: Binary - Raster bytes loaded from file or content
 - metadata: Map[String, String] - Driver info, extension, size, etc.
 """
 
@@ -68,10 +68,11 @@ def test_tile_structure_has_required_fields(spark):
     # cellid should be None for non-tessellated rasters
     assert result[0]["cellid"] is None
 
-    # raster should be a string path
+    # raster should be loaded bytes from the file
     raster_value = result[0]["raster"]
     assert raster_value is not None
-    assert ".TIF" in raster_value or ".tif" in raster_value
+    assert isinstance(raster_value, (bytes, bytearray))
+    assert len(raster_value) > 0
 
     # metadata should be a dict
     metadata = result[0]["metadata"]
@@ -81,22 +82,27 @@ def test_tile_structure_has_required_fields(spark):
     assert metadata["driver"] == "GTiff"
 
 
-def test_tile_from_file_contains_path(spark):
-    """Test that tile from file contains path in raster field"""
+def test_tile_from_file_contains_binary(spark):
+    """rst_fromfile loads the file bytes into the raster field (BinaryType)."""
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = (
         spark.range(1)
         .select(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile"))
-        .select(f.col("tile.raster").alias("raster_path"))
+        .select(
+            f.col("tile.raster").alias("raster_binary"),
+            f.col("tile.metadata.size").alias("size"),
+        )
     )
 
     result = df.collect()
-    raster_path = result[0]["raster_path"]
+    raster_binary = result[0]["raster_binary"]
 
-    assert raster_path is not None
-    assert "MCD43A4" in raster_path
-    assert raster_path.endswith(".TIF") or raster_path.endswith(".tif")
+    assert raster_binary is not None
+    assert isinstance(raster_binary, (bytes, bytearray))
+    assert len(raster_binary) > 0
+    # Metadata "size" should reflect the real byte length now that we load content.
+    assert int(result[0]["size"]) == len(raster_binary)
 
 
 def test_tile_from_content_contains_binary(spark):
@@ -224,8 +230,8 @@ def test_filter_tiles_by_metadata(spark):
     assert len(result) == 2
 
 
-def test_extract_raster_path_for_conditional_processing(spark):
-    """Test extracting raster path from tile for conditional processing"""
+def test_extract_raster_bytes_for_conditional_processing(spark):
+    """Conditional processing should key off metadata / input path columns, not the binary raster field."""
     from databricks.labs.gbx.rasterx import functions as rx
 
     modis_files = [
@@ -235,16 +241,23 @@ def test_extract_raster_path_for_conditional_processing(spark):
 
     df = (
         spark.createDataFrame(modis_files, ["id", "path"])
-        .select("id", rx.rst_fromfile(f.col("path"), f.lit("GTiff")).alias("tile"))
         .select(
             "id",
-            f.col("tile.raster").alias("raster_path"),
-            f.col("tile.raster").contains("B01").alias("is_b01"),
+            "path",
+            rx.rst_fromfile(f.col("path"), f.lit("GTiff")).alias("tile"),
+        )
+        .select(
+            "id",
+            f.col("tile.raster").alias("raster_bytes"),
+            f.col("path").contains("B01").alias("is_b01"),
         )
     )
 
     result = df.collect()
 
+    # Raster field is now binary; branching by path uses the sibling path column.
+    assert isinstance(result[0]["raster_bytes"], (bytes, bytearray))
+    assert len(result[0]["raster_bytes"]) > 0
     assert result[0]["is_b01"] is True
     assert result[1]["is_b01"] is False
 

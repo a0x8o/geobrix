@@ -87,4 +87,31 @@ object functions extends Serializable {
     def bng_kringexplode(cellId: Column, k: Column): Column = ColumnAdapter(BNG_KRingExplode.name, Seq(cellId, k))
     def bng_tessellateexplode(geom: Column, res: Column): Column = ColumnAdapter(BNG_TessellateExplode.name, Seq(geom, res, lit(true)))
 
+    // Scalar-literal overloads — so users can pass plain values for non-Column params.
+    // Resolution accepts Int (±1..±6 index) or String ("1km", "100m"). k is Int.
+    def bng_eastnorthasbng(east: Column, north: Column, resolution: Int): Column =
+        bng_eastnorthasbng(east, north, lit(resolution))
+    def bng_eastnorthasbng(east: Column, north: Column, resolution: String): Column =
+        bng_eastnorthasbng(east, north, lit(resolution))
+    def bng_geomkloop(geom: Column, res: Int, k: Int): Column = bng_geomkloop(geom, lit(res), lit(k))
+    def bng_geomkloop(geom: Column, res: String, k: Int): Column = bng_geomkloop(geom, lit(res), lit(k))
+    def bng_geomkring(geom: Column, res: Int, k: Int): Column = bng_geomkring(geom, lit(res), lit(k))
+    def bng_geomkring(geom: Column, res: String, k: Int): Column = bng_geomkring(geom, lit(res), lit(k))
+    def bng_kloop(cellId: Column, k: Int): Column = bng_kloop(cellId, lit(k))
+    def bng_kring(cellId: Column, k: Int): Column = bng_kring(cellId, lit(k))
+    def bng_pointascell(point: Column, resolution: Int): Column = bng_pointascell(point, lit(resolution))
+    def bng_pointascell(point: Column, resolution: String): Column = bng_pointascell(point, lit(resolution))
+    def bng_polyfill(geom: Column, res: Int): Column = bng_polyfill(geom, lit(res))
+    def bng_polyfill(geom: Column, res: String): Column = bng_polyfill(geom, lit(res))
+    def bng_tessellate(geom: Column, res: Int): Column = bng_tessellate(geom, lit(res))
+    def bng_tessellate(geom: Column, res: String): Column = bng_tessellate(geom, lit(res))
+    def bng_geomkloopexplode(geom: Column, res: Int, k: Int): Column = bng_geomkloopexplode(geom, lit(res), lit(k))
+    def bng_geomkloopexplode(geom: Column, res: String, k: Int): Column = bng_geomkloopexplode(geom, lit(res), lit(k))
+    def bng_geomkringexplode(geom: Column, res: Int, k: Int): Column = bng_geomkringexplode(geom, lit(res), lit(k))
+    def bng_geomkringexplode(geom: Column, res: String, k: Int): Column = bng_geomkringexplode(geom, lit(res), lit(k))
+    def bng_kloopexplode(cellId: Column, k: Int): Column = bng_kloopexplode(cellId, lit(k))
+    def bng_kringexplode(cellId: Column, k: Int): Column = bng_kringexplode(cellId, lit(k))
+    def bng_tessellateexplode(geom: Column, res: Int): Column = bng_tessellateexplode(geom, lit(res))
+    def bng_tessellateexplode(geom: Column, res: String): Column = bng_tessellateexplode(geom, lit(res))
+
 }

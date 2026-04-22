@@ -18,7 +18,7 @@ object OperatorOptions {
     def appendOptions(command: String, writeOptions: Map[String, String], ds: Dataset): String = {
         val format = writeOptions.getOrElse("format", "GTiff")
         // scalastyle:off caselocale
-        val compression = writeOptions.getOrElse("compression", "ZSTD").toUpperCase
+        val compression = writeOptions.getOrElse("compression", "DEFLATE").toUpperCase
         // scalastyle:on caselocale
         val missingGeoRef = writeOptions.getOrElse("missingGeoRef", "false").toBoolean
         val isCalc = command.startsWith("gdal_calc")

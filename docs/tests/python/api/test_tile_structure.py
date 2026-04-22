@@ -60,9 +60,9 @@ def test_processing_binary_raster_data(spark):
     assert callable(tile_structure.processing_binary_raster_data)
 
 
-def test_comparing_file_vs_binary_tiles(spark):
-    """Test comparing file vs binary tiles (structure check)."""
-    assert callable(tile_structure.comparing_file_vs_binary_tiles)
+def test_comparing_fromfile_vs_fromcontent_tiles(spark):
+    """Test comparing rst_fromfile vs rst_fromcontent tiles (structure check)."""
+    assert callable(tile_structure.comparing_fromfile_vs_fromcontent_tiles)
 
 
 def test_non_tessellated_tiles(spark):
@@ -110,9 +110,9 @@ def test_performance_io_patterns(spark):
     assert callable(tile_structure.performance_io_patterns)
 
 
-def test_troubleshooting_cast_string_to_binary(spark):
-    """Test troubleshooting cast error (structure check)."""
-    assert callable(tile_structure.troubleshooting_cast_string_to_binary)
+def test_troubleshooting_inspect_raster_field(spark):
+    """Test troubleshooting raster-field inspection (structure check)."""
+    assert callable(tile_structure.troubleshooting_inspect_raster_field)
 
 
 def test_troubleshooting_null_cellid(spark):

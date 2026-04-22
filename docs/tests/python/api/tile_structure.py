@@ -43,23 +43,22 @@ FROM (
 
 
 def access_path_and_binary(spark):
-    """Access path from rst_fromfile and binary from GDAL reader."""
+    """Access binary raster bytes from rst_fromfile and from the GDAL reader."""
     from databricks.labs.gbx.rasterx import functions as rx
-    
-    # Access path from rst_fromfile (sample data path)
+
+    # rst_fromfile loads the file into the tile as binary content
     df = spark.range(1).select(
         rx.rst_fromfile(f.lit(SAMPLE_NYC_RASTER), f.lit("GTiff")).alias("tile")
     )
-    
-    path_df = df.select(f.col("tile.raster").alias("raster_path"))
-    # Returns: path string to the raster
-    
-    # Access binary from GDAL reader (sample data from mounted Volumes)
-    df = spark.read.format("gdal").load(SAMPLE_NYC_RASTER)
-    binary_df = df.select(f.col("tile.raster").alias("raster_binary"))
+    from_file_df = df.select(f.col("tile.raster").alias("raster_binary"))
     # Returns: b'\x4d\x4d\x00\x2a...' (binary GeoTIFF data)
-    
-    return path_df, binary_df
+
+    # The GDAL reader also produces binary tiles
+    df = spark.read.format("gdal").load(SAMPLE_NYC_RASTER)
+    from_reader_df = df.select(f.col("tile.raster").alias("raster_binary"))
+    # Returns: b'\x4d\x4d\x00\x2a...' (binary GeoTIFF data)
+
+    return from_file_df, from_reader_df
 
 
 def access_metadata_fields(spark):
@@ -172,34 +171,34 @@ def processing_binary_raster_data(spark):
     return stats_df
 
 
-def comparing_file_vs_binary_tiles(spark):
-    """Comparing File-Based vs Binary Tiles."""
+def comparing_fromfile_vs_fromcontent_tiles(spark):
+    """Compare rst_fromfile and rst_fromcontent — both produce binary tiles."""
     from databricks.labs.gbx.rasterx import functions as rx
-    
-    # File-based tile (sample data path)
-    file_tile = spark.range(1).select(
+
+    # rst_fromfile reads the file off a path and embeds its bytes in the tile
+    fromfile_tile = spark.range(1).select(
         rx.rst_fromfile(f.lit(SAMPLE_NYC_RASTER), f.lit("GTiff")).alias("tile")
     )
-    
-    file_tile.select(f.col("tile.raster")).show(truncate=False)
-    # +----------------------------------------------------------+
-    # |raster                                                    |
-    # +----------------------------------------------------------+
-    # |/Volumes/.../nyc/sentinel2/nyc_sentinel2_red.tif          |
-    # +----------------------------------------------------------+
-    
-    # Binary tile (same file read as binary)
-    binary_tile = spark.read.format("binaryFile").load(SAMPLE_NYC_RASTER).select(
-        rx.rst_fromcontent(f.col("content"), f.lit("GTiff")).alias("tile")
-    )
-    
-    binary_tile.select(f.length(f.col("tile.raster")).alias("size_bytes")).show()
+
+    fromfile_tile.select(f.length(f.col("tile.raster")).alias("size_bytes")).show()
     # +-----------+
     # |size_bytes |
     # +-----------+
     # |2345678    |
     # +-----------+
-    return file_tile, binary_tile
+
+    # rst_fromcontent takes bytes you already have in a column (e.g. from binaryFile)
+    fromcontent_tile = spark.read.format("binaryFile").load(SAMPLE_NYC_RASTER).select(
+        rx.rst_fromcontent(f.col("content"), f.lit("GTiff")).alias("tile")
+    )
+
+    fromcontent_tile.select(f.length(f.col("tile.raster")).alias("size_bytes")).show()
+    # +-----------+
+    # |size_bytes |
+    # +-----------+
+    # |2345678    |
+    # +-----------+
+    return fromfile_tile, fromcontent_tile
 
 
 def non_tessellated_tiles(spark):
@@ -336,36 +335,31 @@ def pattern_extract_binary_for_external_processing(spark):
 
 
 def performance_io_patterns(spark):
-    """Performance: File-based for initial read, binary for processing."""
+    """Performance: tiles carry binary content, so cache after expensive ops."""
     from databricks.labs.gbx.rasterx import functions as rx
-    
-    # Pattern: File-based for initial read, binary for processing (sample data)
+
     df = spark.read.format("gdal").load(SAMPLE_NYC_RASTERS)
     aoi = None  # placeholder
-    
-    # Operations automatically handle deserialization
+
+    # Tile ops pass binary content through the plan
     processed = df.select(
-        rx.rst_clip(f.col("tile"), aoi, f.lit(True))  # Reads from file as needed
+        rx.rst_clip(f.col("tile"), aoi, f.lit(True)).alias("tile")
     )
-    
-    # Materialize to binary for repeated operations
-    cached = processed.select(
-        rx.rst_fromcontent(
-            rx.rst_tobinary(f.col("tile")),  # Convert to binary
-            f.col("tile.metadata.driver")
-        ).alias("tile")
-    ).cache()
+
+    # Cache the materialized binary tiles for repeated operations
+    cached = processed.cache()
     return cached
 
 
-def troubleshooting_cast_string_to_binary(spark):
-    """Troubleshooting: Cannot cast string to binary."""
+def troubleshooting_inspect_raster_field(spark):
+    """Troubleshooting: inspect the raster field's type and size."""
     df = spark.read.format("gdal").load(SAMPLE_NYC_RASTERS)
-    
-    # Check raster type
-    df.select(f.col("tile.raster").cast("string")).show(truncate=False)
-    # If shows path → file-based
-    # If shows [binary] → binary-based
+
+    # Raster is always BinaryType; length gives the on-wire byte size.
+    df.select(
+        f.length(f.col("tile.raster")).alias("raster_bytes"),
+        f.col("tile.metadata.size").alias("reported_size"),
+    ).show()
     return df
 
 
@@ -399,11 +393,11 @@ SQL_CELLID_TESSELLATED_output = """
 """
 
 access_path_and_binary_output = """
-+----------------------------------------------------------+
-|raster_path / raster_binary                               |
-+----------------------------------------------------------+
-|.../nyc/sentinel2/nyc_sentinel2_red.tif or [BINARY]       |
-+----------------------------------------------------------+
++--------------+
+|raster_binary |
++--------------+
+|[BINARY]      |
++--------------+
 """
 
 access_metadata_fields_output = """
@@ -450,12 +444,12 @@ processing_binary_raster_data_output = """
 +----+----------+
 """
 
-comparing_file_vs_binary_tiles_output = """
-+----------------------------------------------------------+
-|raster (path) or size_bytes                               |
-+----------------------------------------------------------+
-|/Volumes/.../nyc_sentinel2_red.tif  or  2345678           |
-+----------------------------------------------------------+
+comparing_fromfile_vs_fromcontent_tiles_output = """
++-----------+
+|size_bytes |
++-----------+
+|2345678    |
++-----------+
 """
 
 non_tessellated_tiles_output = """

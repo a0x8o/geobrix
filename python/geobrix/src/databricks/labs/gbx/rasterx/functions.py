@@ -4,10 +4,34 @@ Thin wrappers around GeoBrix Scala functions (gbx_rst_*). Register with
 rx.register(spark) then use the functions on raster tile columns. For full
 descriptions and examples, see the API docs or SQL:
   DESCRIBE FUNCTION EXTENDED gbx_rst_<name>;
+
+Arg types: every wrapper accepts either a pyspark ``Column`` or a plain
+Python scalar. Non-string scalars (``bool``/``int``/``float``/``bytes``) are
+auto-wrapped with ``f.lit(...)`` — so you can write ``rst_clip(tile, geom, True)``
+and ``rst_transform(tile, 4326)`` instead of wrapping in ``f.lit``. Strings and
+``Column`` values pass through unchanged — pyspark treats a bare string as a
+dataframe column reference (``f.col("name")``); wrap in ``f.lit(...)`` to pass
+a string literal.
 """
+
+from typing import Union
 
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
+
+ColLike = Union[Column, str, bool, int, float, bytes]
+
+
+def _col(x: ColLike) -> Union[Column, str]:
+    """Auto-wrap bool/int/float/bytes scalars via f.lit(); pass strings and Columns through.
+
+    Strings stay as strings so pyspark's call_function treats them as column
+    references (matching the library's existing idiom, e.g. rx.rst_width("tile")).
+    Use f.lit("...") for string literals.
+    """
+    if isinstance(x, Column) or isinstance(x, str):
+        return x
+    return f.lit(x)
 
 
 def register(_spark: SparkSession) -> None:
@@ -23,7 +47,7 @@ def register(_spark: SparkSession) -> None:
     _spark.read.format("register_ds").option("functions", "rasterx").load().collect()
 
 
-def rst_avg(tile: Column) -> Column:
+def rst_avg(tile: ColLike) -> Column:
     """Return the average pixel value per band for the tile.
 
     Args:
@@ -32,10 +56,10 @@ def rst_avg(tile: Column) -> Column:
     Returns:
         Column of array of double (one per band).
     """
-    return f.call_function("gbx_rst_avg", tile)
+    return f.call_function("gbx_rst_avg", _col(tile))
 
 
-def rst_bandmetadata(tile: Column, band: Column) -> Column:
+def rst_bandmetadata(tile: ColLike, band: ColLike) -> Column:
     """Return metadata for the given band index (e.g. nodata, data type).
 
     Args:
@@ -45,10 +69,10 @@ def rst_bandmetadata(tile: Column, band: Column) -> Column:
     Returns:
         Column of map (string -> string).
     """
-    return f.call_function("gbx_rst_bandmetadata", tile, band)
+    return f.call_function("gbx_rst_bandmetadata", _col(tile), _col(band))
 
 
-def rst_boundingbox(tile: Column) -> Column:
+def rst_boundingbox(tile: ColLike) -> Column:
     """Return the bounding box of the raster in world coordinates.
 
     Args:
@@ -57,10 +81,10 @@ def rst_boundingbox(tile: Column) -> Column:
     Returns:
         Column of WKB (binary).
     """
-    return f.call_function("gbx_rst_boundingbox", tile)
+    return f.call_function("gbx_rst_boundingbox", _col(tile))
 
 
-def rst_format(tile: Column) -> Column:
+def rst_format(tile: ColLike) -> Column:
     """Return the GDAL format/driver name of the raster (e.g. GTiff).
 
     Args:
@@ -69,10 +93,10 @@ def rst_format(tile: Column) -> Column:
     Returns:
         Column of format string.
     """
-    return f.call_function("gbx_rst_format", tile)
+    return f.call_function("gbx_rst_format", _col(tile))
 
 
-def rst_georeference(tile: Column) -> Column:
+def rst_georeference(tile: ColLike) -> Column:
     """Return the georeference (affine transform) of the raster.
 
     Args:
@@ -81,10 +105,10 @@ def rst_georeference(tile: Column) -> Column:
     Returns:
         Column of map (string -> double).
     """
-    return f.call_function("gbx_rst_georeference", tile)
+    return f.call_function("gbx_rst_georeference", _col(tile))
 
 
-def rst_getnodata(tile: Column) -> Column:
+def rst_getnodata(tile: ColLike) -> Column:
     """Return the NoData value for the raster (or null if not set).
 
     Args:
@@ -93,10 +117,10 @@ def rst_getnodata(tile: Column) -> Column:
     Returns:
         Column of array of double (one per band), or null.
     """
-    return f.call_function("gbx_rst_getnodata", tile)
+    return f.call_function("gbx_rst_getnodata", _col(tile))
 
 
-def rst_getsubdataset(tile: Column, subset_name: Column) -> Column:
+def rst_getsubdataset(tile: ColLike, subset_name: ColLike) -> Column:
     """Return a sub-dataset (e.g. HDF sublayer) by name.
 
     Args:
@@ -106,10 +130,10 @@ def rst_getsubdataset(tile: Column, subset_name: Column) -> Column:
     Returns:
         Column of raster tile (sub-dataset).
     """
-    return f.call_function("gbx_rst_getsubdataset", tile, subset_name)
+    return f.call_function("gbx_rst_getsubdataset", _col(tile), _col(subset_name))
 
 
-def rst_height(tile: Column) -> Column:
+def rst_height(tile: ColLike) -> Column:
     """Return the pixel height (number of rows) of the raster.
 
     Args:
@@ -118,10 +142,10 @@ def rst_height(tile: Column) -> Column:
     Returns:
         Column of integer height.
     """
-    return f.call_function("gbx_rst_height", tile)
+    return f.call_function("gbx_rst_height", _col(tile))
 
 
-def rst_max(tile: Column) -> Column:
+def rst_max(tile: ColLike) -> Column:
     """Return the maximum pixel value per band for the tile.
 
     Args:
@@ -130,10 +154,10 @@ def rst_max(tile: Column) -> Column:
     Returns:
         Column of array of double (one per band).
     """
-    return f.call_function("gbx_rst_max", tile)
+    return f.call_function("gbx_rst_max", _col(tile))
 
 
-def rst_median(tile: Column) -> Column:
+def rst_median(tile: ColLike) -> Column:
     """Return the median pixel value per band for the tile.
 
     Args:
@@ -142,10 +166,10 @@ def rst_median(tile: Column) -> Column:
     Returns:
         Column of array of double (one per band).
     """
-    return f.call_function("gbx_rst_median", tile)
+    return f.call_function("gbx_rst_median", _col(tile))
 
 
-def rst_memsize(tile: Column) -> Column:
+def rst_memsize(tile: ColLike) -> Column:
     """Return the approximate memory size of the tile in bytes.
 
     Args:
@@ -154,10 +178,10 @@ def rst_memsize(tile: Column) -> Column:
     Returns:
         Column of long (bytes).
     """
-    return f.call_function("gbx_rst_memsize", tile)
+    return f.call_function("gbx_rst_memsize", _col(tile))
 
 
-def rst_metadata(tile: Column) -> Column:
+def rst_metadata(tile: ColLike) -> Column:
     """Return full metadata of the raster (driver, dimensions, CRS, etc.).
 
     Args:
@@ -166,10 +190,10 @@ def rst_metadata(tile: Column) -> Column:
     Returns:
         Column of map (string -> string).
     """
-    return f.call_function("gbx_rst_metadata", tile)
+    return f.call_function("gbx_rst_metadata", _col(tile))
 
 
-def rst_min(tile: Column) -> Column:
+def rst_min(tile: ColLike) -> Column:
     """Return the minimum pixel value per band for the tile.
 
     Args:
@@ -178,10 +202,10 @@ def rst_min(tile: Column) -> Column:
     Returns:
         Column of array of double (one per band).
     """
-    return f.call_function("gbx_rst_min", tile)
+    return f.call_function("gbx_rst_min", _col(tile))
 
 
-def rst_numbands(tile: Column) -> Column:
+def rst_numbands(tile: ColLike) -> Column:
     """Return the number of bands in the raster.
 
     Args:
@@ -190,10 +214,10 @@ def rst_numbands(tile: Column) -> Column:
     Returns:
         Column of integer band count.
     """
-    return f.call_function("gbx_rst_numbands", tile)
+    return f.call_function("gbx_rst_numbands", _col(tile))
 
 
-def rst_pixelcount(tile: Column) -> Column:
+def rst_pixelcount(tile: ColLike) -> Column:
     """Return the valid pixel count per band.
 
     Args:
@@ -202,10 +226,10 @@ def rst_pixelcount(tile: Column) -> Column:
     Returns:
         Column of array of long (one per band).
     """
-    return f.call_function("gbx_rst_pixelcount", tile)
+    return f.call_function("gbx_rst_pixelcount", _col(tile))
 
 
-def rst_pixelheight(tile: Column) -> Column:
+def rst_pixelheight(tile: ColLike) -> Column:
     """Return the pixel height (ground size in Y) in CRS units.
 
     Args:
@@ -214,10 +238,10 @@ def rst_pixelheight(tile: Column) -> Column:
     Returns:
         Column of double (may be negative).
     """
-    return f.call_function("gbx_rst_pixelheight", tile)
+    return f.call_function("gbx_rst_pixelheight", _col(tile))
 
 
-def rst_pixelwidth(tile: Column) -> Column:
+def rst_pixelwidth(tile: ColLike) -> Column:
     """Return the pixel width (ground size in X) in CRS units.
 
     Args:
@@ -226,10 +250,10 @@ def rst_pixelwidth(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_pixelwidth", tile)
+    return f.call_function("gbx_rst_pixelwidth", _col(tile))
 
 
-def rst_rotation(tile: Column) -> Column:
+def rst_rotation(tile: ColLike) -> Column:
     """Return the rotation component of the georeference (if any).
 
     Args:
@@ -238,10 +262,10 @@ def rst_rotation(tile: Column) -> Column:
     Returns:
         Column of rotation (double).
     """
-    return f.call_function("gbx_rst_rotation", tile)
+    return f.call_function("gbx_rst_rotation", _col(tile))
 
 
-def rst_scalex(tile: Column) -> Column:
+def rst_scalex(tile: ColLike) -> Column:
     """Return the X scale (pixel size in X) of the raster.
 
     Args:
@@ -250,10 +274,10 @@ def rst_scalex(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_scalex", tile)
+    return f.call_function("gbx_rst_scalex", _col(tile))
 
 
-def rst_scaley(tile: Column) -> Column:
+def rst_scaley(tile: ColLike) -> Column:
     """Return the Y scale (pixel size in Y) of the raster.
 
     Args:
@@ -262,10 +286,10 @@ def rst_scaley(tile: Column) -> Column:
     Returns:
         Column of double (often negative).
     """
-    return f.call_function("gbx_rst_scaley", tile)
+    return f.call_function("gbx_rst_scaley", _col(tile))
 
 
-def rst_skewx(tile: Column) -> Column:
+def rst_skewx(tile: ColLike) -> Column:
     """Return the X skew component of the georeference.
 
     Args:
@@ -274,10 +298,10 @@ def rst_skewx(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_skewx", tile)
+    return f.call_function("gbx_rst_skewx", _col(tile))
 
 
-def rst_skewy(tile: Column) -> Column:
+def rst_skewy(tile: ColLike) -> Column:
     """Return the Y skew component of the georeference.
 
     Args:
@@ -286,10 +310,10 @@ def rst_skewy(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_skewy", tile)
+    return f.call_function("gbx_rst_skewy", _col(tile))
 
 
-def rst_srid(tile: Column) -> Column:
+def rst_srid(tile: ColLike) -> Column:
     """Return the spatial reference ID (EPSG code) of the raster.
 
     Args:
@@ -298,10 +322,10 @@ def rst_srid(tile: Column) -> Column:
     Returns:
         Column of integer SRID.
     """
-    return f.call_function("gbx_rst_srid", tile)
+    return f.call_function("gbx_rst_srid", _col(tile))
 
 
-def rst_subdatasets(tile: Column) -> Column:
+def rst_subdatasets(tile: ColLike) -> Column:
     """Return the sub-dataset names and descriptions (e.g. for HDF/NetCDF).
 
     Args:
@@ -310,10 +334,10 @@ def rst_subdatasets(tile: Column) -> Column:
     Returns:
         Column of map (string -> string, name to description).
     """
-    return f.call_function("gbx_rst_subdatasets", tile)
+    return f.call_function("gbx_rst_subdatasets", _col(tile))
 
 
-def rst_summary(tile: Column) -> Column:
+def rst_summary(tile: ColLike) -> Column:
     """Return a short text summary of the raster (dimensions, CRS, bands).
 
     Args:
@@ -322,10 +346,10 @@ def rst_summary(tile: Column) -> Column:
     Returns:
         Column of string summary.
     """
-    return f.call_function("gbx_rst_summary", tile)
+    return f.call_function("gbx_rst_summary", _col(tile))
 
 
-def rst_type(tile: Column) -> Column:
+def rst_type(tile: ColLike) -> Column:
     """Return the raster data type (e.g. Byte, Int16, Float32) per band.
 
     Args:
@@ -334,10 +358,10 @@ def rst_type(tile: Column) -> Column:
     Returns:
         Column of array of strings (one per band).
     """
-    return f.call_function("gbx_rst_type", tile)
+    return f.call_function("gbx_rst_type", _col(tile))
 
 
-def rst_upperleftx(tile: Column) -> Column:
+def rst_upperleftx(tile: ColLike) -> Column:
     """Return the X coordinate of the upper-left corner in world coordinates.
 
     Args:
@@ -346,10 +370,10 @@ def rst_upperleftx(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_upperleftx", tile)
+    return f.call_function("gbx_rst_upperleftx", _col(tile))
 
 
-def rst_upperlefty(tile: Column) -> Column:
+def rst_upperlefty(tile: ColLike) -> Column:
     """Return the Y coordinate of the upper-left corner in world coordinates.
 
     Args:
@@ -358,10 +382,10 @@ def rst_upperlefty(tile: Column) -> Column:
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_upperlefty", tile)
+    return f.call_function("gbx_rst_upperlefty", _col(tile))
 
 
-def rst_width(tile: Column) -> Column:
+def rst_width(tile: ColLike) -> Column:
     """Return the pixel width (number of columns) of the raster.
 
     Args:
@@ -370,13 +394,13 @@ def rst_width(tile: Column) -> Column:
     Returns:
         Column of integer width.
     """
-    return f.call_function("gbx_rst_width", tile)
+    return f.call_function("gbx_rst_width", _col(tile))
 
 
 # Aggregators
 
 
-def rst_combineavg_agg(tile: Column) -> Column:
+def rst_combineavg_agg(tile: ColLike) -> Column:
     """Aggregate multiple raster tiles by averaging (use with groupBy).
 
     Args:
@@ -385,10 +409,12 @@ def rst_combineavg_agg(tile: Column) -> Column:
     Returns:
         Column of combined raster tile.
     """
-    return f.call_function("gbx_rst_combineavg_agg", tile)
+    return f.call_function("gbx_rst_combineavg_agg", _col(tile))
 
 
-def rst_derivedband_agg(tile: Column, pyfunc: str, func_name: str) -> Column:
+def rst_derivedband_agg(
+    tile: ColLike, pyfunc: ColLike, func_name: ColLike
+) -> Column:
     """Aggregate tiles and apply a Python UDF per band (use with groupBy).
 
     Args:
@@ -400,11 +426,11 @@ def rst_derivedband_agg(tile: Column, pyfunc: str, func_name: str) -> Column:
         Column of derived raster tile.
     """
     return f.call_function(
-        "gbx_rst_derivedband_agg", tile, f.lit(pyfunc), f.lit(func_name)
+        "gbx_rst_derivedband_agg", _col(tile), _col(pyfunc), _col(func_name)
     )
 
 
-def rst_merge_agg(tile: Column) -> Column:
+def rst_merge_agg(tile: ColLike) -> Column:
     """Aggregate multiple raster tiles by merging (use with groupBy).
 
     Args:
@@ -413,13 +439,13 @@ def rst_merge_agg(tile: Column) -> Column:
     Returns:
         Column of merged raster tile.
     """
-    return f.call_function("gbx_rst_merge_agg", tile)
+    return f.call_function("gbx_rst_merge_agg", _col(tile))
 
 
 # Constructors
 
 
-def rst_fromcontent(content: Column, driver: Column) -> Column:
+def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
     """Build a raster tile from binary content and GDAL driver name.
 
     Args:
@@ -429,10 +455,10 @@ def rst_fromcontent(content: Column, driver: Column) -> Column:
     Returns:
         Column of raster tile.
     """
-    return f.call_function("gbx_rst_fromcontent", content, driver)
+    return f.call_function("gbx_rst_fromcontent", _col(content), _col(driver))
 
 
-def rst_fromfile(path: Column, driver: Column) -> Column:
+def rst_fromfile(path: ColLike, driver: ColLike) -> Column:
     """Build a raster tile from a file path and GDAL driver name.
 
     Args:
@@ -442,10 +468,10 @@ def rst_fromfile(path: Column, driver: Column) -> Column:
     Returns:
         Column of raster tile.
     """
-    return f.call_function("gbx_rst_fromfile", path, driver)
+    return f.call_function("gbx_rst_fromfile", _col(path), _col(driver))
 
 
-def rst_frombands(bands: Column) -> Column:
+def rst_frombands(bands: ColLike) -> Column:
     """Build a raster tile from a list of band tiles (same dimensions).
 
     Args:
@@ -454,13 +480,13 @@ def rst_frombands(bands: Column) -> Column:
     Returns:
         Column of multi-band raster tile.
     """
-    return f.call_function("gbx_rst_frombands", bands)
+    return f.call_function("gbx_rst_frombands", _col(bands))
 
 
 # Generators
 
 
-def rst_h3_tessellate(tile: Column, resolution: Column) -> Column:
+def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> Column:
     """Tessellate the raster into H3 cells at the given resolution.
 
     Args:
@@ -470,10 +496,10 @@ def rst_h3_tessellate(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of array of (H3 index, tile) or similar.
     """
-    return f.call_function("gbx_rst_h3_tessellate", tile, resolution)
+    return f.call_function("gbx_rst_h3_tessellate", _col(tile), _col(resolution))
 
 
-def rst_maketiles(tile: Column, size_in_mb: Column) -> Column:
+def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
     """Split the raster into smaller tiles by approximate size in MB.
 
     Args:
@@ -483,10 +509,10 @@ def rst_maketiles(tile: Column, size_in_mb: Column) -> Column:
     Returns:
         Column of array of raster tiles.
     """
-    return f.call_function("gbx_rst_maketiles", tile, size_in_mb)
+    return f.call_function("gbx_rst_maketiles", _col(tile), _col(size_in_mb))
 
 
-def rst_retile(tile: Column, tile_width: Column, tile_height: Column) -> Column:
+def rst_retile(tile: ColLike, tile_width: ColLike, tile_height: ColLike) -> Column:
     """Retile the raster into tiles of the given pixel dimensions.
 
     Args:
@@ -497,10 +523,12 @@ def rst_retile(tile: Column, tile_width: Column, tile_height: Column) -> Column:
     Returns:
         Column of array of raster tiles.
     """
-    return f.call_function("gbx_rst_retile", tile, tile_width, tile_height)
+    return f.call_function(
+        "gbx_rst_retile", _col(tile), _col(tile_width), _col(tile_height)
+    )
 
 
-def rst_separatebands(tile: Column) -> Column:
+def rst_separatebands(tile: ColLike) -> Column:
     """Split the raster into one tile per band.
 
     Args:
@@ -509,11 +537,11 @@ def rst_separatebands(tile: Column) -> Column:
     Returns:
         Column of array of single-band raster tiles.
     """
-    return f.call_function("gbx_rst_separatebands", tile)
+    return f.call_function("gbx_rst_separatebands", _col(tile))
 
 
 def rst_tooverlappingtiles(
-    tile: Column, tile_width: Column, tile_height: Column, overlap: Column
+    tile: ColLike, tile_width: ColLike, tile_height: ColLike, overlap: ColLike
 ) -> Column:
     """Produce overlapping tiles with the given dimensions and overlap.
 
@@ -527,14 +555,18 @@ def rst_tooverlappingtiles(
         Column of array of raster tiles.
     """
     return f.call_function(
-        "gbx_rst_tooverlappingtiles", tile, tile_width, tile_height, overlap
+        "gbx_rst_tooverlappingtiles",
+        _col(tile),
+        _col(tile_width),
+        _col(tile_height),
+        _col(overlap),
     )
 
 
 # Grid
 
 
-def rst_h3_rastertogridavg(tile: Column, resolution: Column) -> Column:
+def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
     """Compute average pixel value per H3 cell at the given resolution.
 
     Args:
@@ -544,10 +576,12 @@ def rst_h3_rastertogridavg(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and avg).
     """
-    return f.call_function("gbx_rst_h3_rastertogridavg", tile, resolution)
+    return f.call_function(
+        "gbx_rst_h3_rastertogridavg", _col(tile), _col(resolution)
+    )
 
 
-def rst_h3_rastertogridcount(tile: Column, resolution: Column) -> Column:
+def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
     """Compute pixel count per H3 cell at the given resolution.
 
     Args:
@@ -557,10 +591,12 @@ def rst_h3_rastertogridcount(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and count).
     """
-    return f.call_function("gbx_rst_h3_rastertogridcount", tile, resolution)
+    return f.call_function(
+        "gbx_rst_h3_rastertogridcount", _col(tile), _col(resolution)
+    )
 
 
-def rst_h3_rastertogridmax(tile: Column, resolution: Column) -> Column:
+def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
     """Compute maximum pixel value per H3 cell at the given resolution.
 
     Args:
@@ -570,10 +606,12 @@ def rst_h3_rastertogridmax(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and max).
     """
-    return f.call_function("gbx_rst_h3_rastertogridmax", tile, resolution)
+    return f.call_function(
+        "gbx_rst_h3_rastertogridmax", _col(tile), _col(resolution)
+    )
 
 
-def rst_h3_rastertogridmin(tile: Column, resolution: Column) -> Column:
+def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
     """Compute minimum pixel value per H3 cell at the given resolution.
 
     Args:
@@ -583,10 +621,12 @@ def rst_h3_rastertogridmin(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and min).
     """
-    return f.call_function("gbx_rst_h3_rastertogridmin", tile, resolution)
+    return f.call_function(
+        "gbx_rst_h3_rastertogridmin", _col(tile), _col(resolution)
+    )
 
 
-def rst_h3_rastertogridmedian(tile: Column, resolution: Column) -> Column:
+def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
     """Compute median pixel value per H3 cell at the given resolution.
 
     Args:
@@ -596,13 +636,15 @@ def rst_h3_rastertogridmedian(tile: Column, resolution: Column) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and median).
     """
-    return f.call_function("gbx_rst_h3_rastertogridmedian", tile, resolution)
+    return f.call_function(
+        "gbx_rst_h3_rastertogridmedian", _col(tile), _col(resolution)
+    )
 
 
 # Operations
 
 
-def rst_asformat(tile: Column, new_format: Column) -> Column:
+def rst_asformat(tile: ColLike, new_format: ColLike) -> Column:
     """Convert the raster to a different GDAL format (e.g. COG, Zarr).
 
     Args:
@@ -612,10 +654,10 @@ def rst_asformat(tile: Column, new_format: Column) -> Column:
     Returns:
         Column of raster tile in the new format.
     """
-    return f.call_function("gbx_rst_asformat", tile, new_format)
+    return f.call_function("gbx_rst_asformat", _col(tile), _col(new_format))
 
 
-def rst_clip(tile: Column, clip: Column, cutline_all_touched: Column) -> Column:
+def rst_clip(tile: ColLike, clip: ColLike, cutline_all_touched: ColLike) -> Column:
     """Clip the raster to a geometry (or mask).
 
     Args:
@@ -626,10 +668,12 @@ def rst_clip(tile: Column, clip: Column, cutline_all_touched: Column) -> Column:
     Returns:
         Column of clipped raster tile.
     """
-    return f.call_function("gbx_rst_clip", tile, clip, cutline_all_touched)
+    return f.call_function(
+        "gbx_rst_clip", _col(tile), _col(clip), _col(cutline_all_touched)
+    )
 
 
-def rst_combineavg(tiles: Column) -> Column:
+def rst_combineavg(tiles: ColLike) -> Column:
     """Combine multiple raster tiles by averaging (same extent/cellsize).
 
     Args:
@@ -638,10 +682,10 @@ def rst_combineavg(tiles: Column) -> Column:
     Returns:
         Column of combined raster tile.
     """
-    return f.call_function("gbx_rst_combineavg", tiles)
+    return f.call_function("gbx_rst_combineavg", _col(tiles))
 
 
-def rst_convolve(tile: Column, kernel: Column) -> Column:
+def rst_convolve(tile: ColLike, kernel: ColLike) -> Column:
     """Apply a convolution kernel to the raster.
 
     Args:
@@ -651,10 +695,12 @@ def rst_convolve(tile: Column, kernel: Column) -> Column:
     Returns:
         Column of convolved raster tile.
     """
-    return f.call_function("gbx_rst_convolve", tile, kernel)
+    return f.call_function("gbx_rst_convolve", _col(tile), _col(kernel))
 
 
-def rst_derivedband(tile_expr: Column, pyfunc: str, func_name: str) -> Column:
+def rst_derivedband(
+    tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike
+) -> Column:
     """Apply a Python UDF to each pixel (or band) to produce a derived band.
 
     Args:
@@ -666,11 +712,11 @@ def rst_derivedband(tile_expr: Column, pyfunc: str, func_name: str) -> Column:
         Column of raster tile with derived band(s).
     """
     return f.call_function(
-        "gbx_rst_derivedband", tile_expr, f.lit(pyfunc), f.lit(func_name)
+        "gbx_rst_derivedband", _col(tile_expr), _col(pyfunc), _col(func_name)
     )
 
 
-def rst_filter(tile: Column, kernel_size: Column, operation: Column) -> Column:
+def rst_filter(tile: ColLike, kernel_size: ColLike, operation: ColLike) -> Column:
     """Apply a filter (e.g. min, max, mean) over a kernel window.
 
     Args:
@@ -681,10 +727,12 @@ def rst_filter(tile: Column, kernel_size: Column, operation: Column) -> Column:
     Returns:
         Column of filtered raster tile.
     """
-    return f.call_function("gbx_rst_filter", tile, kernel_size, operation)
+    return f.call_function(
+        "gbx_rst_filter", _col(tile), _col(kernel_size), _col(operation)
+    )
 
 
-def rst_initnodata(tile: Column) -> Column:
+def rst_initnodata(tile: ColLike) -> Column:
     """Initialise or fix NoData values in the raster (e.g. from metadata).
 
     Args:
@@ -693,10 +741,10 @@ def rst_initnodata(tile: Column) -> Column:
     Returns:
         Column of raster tile with NoData set.
     """
-    return f.call_function("gbx_rst_initnodata", tile)
+    return f.call_function("gbx_rst_initnodata", _col(tile))
 
 
-def rst_isempty(tile: Column) -> Column:
+def rst_isempty(tile: ColLike) -> Column:
     """Return true if the raster tile is empty or invalid.
 
     Args:
@@ -705,10 +753,10 @@ def rst_isempty(tile: Column) -> Column:
     Returns:
         Column of boolean.
     """
-    return f.call_function("gbx_rst_isempty", tile)
+    return f.call_function("gbx_rst_isempty", _col(tile))
 
 
-def rst_mapalgebra(tiles: Column, expression: Column) -> Column:
+def rst_mapalgebra(tiles: ColLike, expression: ColLike) -> Column:
     """Apply a map algebra expression to one or more tiles.
 
     Args:
@@ -718,10 +766,10 @@ def rst_mapalgebra(tiles: Column, expression: Column) -> Column:
     Returns:
         Column of result raster tile.
     """
-    return f.call_function("gbx_rst_mapalgebra", tiles, expression)
+    return f.call_function("gbx_rst_mapalgebra", _col(tiles), _col(expression))
 
 
-def rst_merge(tiles: Column) -> Column:
+def rst_merge(tiles: ColLike) -> Column:
     """Merge multiple raster tiles into one (e.g. mosaic).
 
     Args:
@@ -730,10 +778,10 @@ def rst_merge(tiles: Column) -> Column:
     Returns:
         Column of merged raster tile.
     """
-    return f.call_function("gbx_rst_merge", tiles)
+    return f.call_function("gbx_rst_merge", _col(tiles))
 
 
-def rst_ndvi(tile: Column, red_band: Column, nir_band: Column) -> Column:
+def rst_ndvi(tile: ColLike, red_band: ColLike, nir_band: ColLike) -> Column:
     """Compute NDVI from red and NIR band indices.
 
     Args:
@@ -744,10 +792,14 @@ def rst_ndvi(tile: Column, red_band: Column, nir_band: Column) -> Column:
     Returns:
         Column of raster tile (single-band NDVI).
     """
-    return f.call_function("gbx_rst_ndvi", tile, red_band, nir_band)
+    return f.call_function(
+        "gbx_rst_ndvi", _col(tile), _col(red_band), _col(nir_band)
+    )
 
 
-def rst_rastertoworldcoord(tile: Column, pixel_x: Column, pixel_y: Column) -> Column:
+def rst_rastertoworldcoord(
+    tile: ColLike, pixel_x: ColLike, pixel_y: ColLike
+) -> Column:
     """Convert pixel (x, y) to world (x, y) in the CRS of the raster.
 
     Args:
@@ -758,10 +810,14 @@ def rst_rastertoworldcoord(tile: Column, pixel_x: Column, pixel_y: Column) -> Co
     Returns:
         Column of struct (x, y as double) in world coordinates.
     """
-    return f.call_function("gbx_rst_rastertoworldcoord", tile, pixel_x, pixel_y)
+    return f.call_function(
+        "gbx_rst_rastertoworldcoord", _col(tile), _col(pixel_x), _col(pixel_y)
+    )
 
 
-def rst_rastertoworldcoordx(tile: Column, pixel_x: Column, pixel_y: Column) -> Column:
+def rst_rastertoworldcoordx(
+    tile: ColLike, pixel_x: ColLike, pixel_y: ColLike
+) -> Column:
     """Convert pixel (x, y) to world X coordinate.
 
     Args:
@@ -772,10 +828,14 @@ def rst_rastertoworldcoordx(tile: Column, pixel_x: Column, pixel_y: Column) -> C
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_rastertoworldcoordx", tile, pixel_x, pixel_y)
+    return f.call_function(
+        "gbx_rst_rastertoworldcoordx", _col(tile), _col(pixel_x), _col(pixel_y)
+    )
 
 
-def rst_rastertoworldcoordy(tile: Column, pixel_x: Column, pixel_y: Column) -> Column:
+def rst_rastertoworldcoordy(
+    tile: ColLike, pixel_x: ColLike, pixel_y: ColLike
+) -> Column:
     """Convert pixel (x, y) to world Y coordinate.
 
     Args:
@@ -786,10 +846,12 @@ def rst_rastertoworldcoordy(tile: Column, pixel_x: Column, pixel_y: Column) -> C
     Returns:
         Column of double.
     """
-    return f.call_function("gbx_rst_rastertoworldcoordy", tile, pixel_x, pixel_y)
+    return f.call_function(
+        "gbx_rst_rastertoworldcoordy", _col(tile), _col(pixel_x), _col(pixel_y)
+    )
 
 
-def rst_transform(tile: Column, target_srid: Column) -> Column:
+def rst_transform(tile: ColLike, target_srid: ColLike) -> Column:
     """Reproject the raster to the target SRID (EPSG code).
 
     Args:
@@ -799,10 +861,10 @@ def rst_transform(tile: Column, target_srid: Column) -> Column:
     Returns:
         Column of reprojected raster tile.
     """
-    return f.call_function("gbx_rst_transform", tile, target_srid)
+    return f.call_function("gbx_rst_transform", _col(tile), _col(target_srid))
 
 
-def rst_tryopen(tile: Column) -> Column:
+def rst_tryopen(tile: ColLike) -> Column:
     """Attempt to open/validate the raster; return true if successful.
 
     Args:
@@ -811,10 +873,10 @@ def rst_tryopen(tile: Column) -> Column:
     Returns:
         Column of boolean.
     """
-    return f.call_function("gbx_rst_tryopen", tile)
+    return f.call_function("gbx_rst_tryopen", _col(tile))
 
 
-def rst_updatetype(tile: Column, new_type: Column) -> Column:
+def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
     """Update the declared data type of the raster (e.g. after conversion).
 
     Args:
@@ -824,10 +886,12 @@ def rst_updatetype(tile: Column, new_type: Column) -> Column:
     Returns:
         Column of raster tile with updated type metadata.
     """
-    return f.call_function("gbx_rst_updatetype", tile, new_type)
+    return f.call_function("gbx_rst_updatetype", _col(tile), _col(new_type))
 
 
-def rst_worldtorastercoord(tile: Column, world_x: Column, world_y: Column) -> Column:
+def rst_worldtorastercoord(
+    tile: ColLike, world_x: ColLike, world_y: ColLike
+) -> Column:
     """Convert world (x, y) to pixel (x, y) in the raster.
 
     Args:
@@ -838,10 +902,14 @@ def rst_worldtorastercoord(tile: Column, world_x: Column, world_y: Column) -> Co
     Returns:
         Column of struct (x, y as integer) in pixel coordinates.
     """
-    return f.call_function("gbx_rst_worldtorastercoord", tile, world_x, world_y)
+    return f.call_function(
+        "gbx_rst_worldtorastercoord", _col(tile), _col(world_x), _col(world_y)
+    )
 
 
-def rst_worldtorastercoordx(tile: Column, world_x: Column, world_y: Column) -> Column:
+def rst_worldtorastercoordx(
+    tile: ColLike, world_x: ColLike, world_y: ColLike
+) -> Column:
     """Convert world (x, y) to pixel column index.
 
     Args:
@@ -852,10 +920,14 @@ def rst_worldtorastercoordx(tile: Column, world_x: Column, world_y: Column) -> C
     Returns:
         Column of integer (pixel column index).
     """
-    return f.call_function("gbx_rst_worldtorastercoordx", tile, world_x, world_y)
+    return f.call_function(
+        "gbx_rst_worldtorastercoordx", _col(tile), _col(world_x), _col(world_y)
+    )
 
 
-def rst_worldtorastercoordy(tile: Column, world_x: Column, world_y: Column) -> Column:
+def rst_worldtorastercoordy(
+    tile: ColLike, world_x: ColLike, world_y: ColLike
+) -> Column:
     """Convert world (x, y) to pixel row index.
 
     Args:
@@ -866,4 +938,6 @@ def rst_worldtorastercoordy(tile: Column, world_x: Column, world_y: Column) -> C
     Returns:
         Column of integer (pixel row index).
     """
-    return f.call_function("gbx_rst_worldtorastercoordy", tile, world_x, world_y)
+    return f.call_function(
+        "gbx_rst_worldtorastercoordy", _col(tile), _col(world_x), _col(world_y)
+    )

@@ -62,8 +62,15 @@ def test_rst_clip(spark):
     result = df.collect()
     assert result is not None
     assert len(result) == 1
-    # Verify the clipped tile has the expected structure
-    assert result[0]["clipped_tile"] is not None
+    tile = result[0]["clipped_tile"]
+    assert tile is not None
+    # Guard against empty-TIFF-stub regression: writeToBytes returning a ~422-byte
+    # unfinalized GTiff header if the output Dataset isn't closed before reading
+    # /vsimem. Real clipped raster bytes are much larger than the header alone.
+    assert len(tile["raster"]) > 2000, (
+        f"clipped tile raster unexpectedly small ({len(tile['raster'])}B) "
+        "— likely unfinalized GTiff output"
+    )
 
 
 def test_rst_filter(spark):
@@ -206,8 +213,8 @@ def test_rst_ndvi(spark):
 def test_rst_asformat(spark):
     """Test converting raster format.
 
-    Note: Converts from GTiff to Zarr. COG format cannot be used as it doesn't
-    support the ZSTD_LEVEL creation option that GeoBriX applies by default.
+    Note: Converts from GTiff to Zarr. Output compression defaults to DEFLATE
+    (baseline TIFF, previewable by Databricks image preview / Java ImageIO).
     """
     from databricks.labs.gbx.rasterx import functions as rx
 
@@ -365,3 +372,25 @@ def test_rst_mapalgebra(spark):
     assert len(result) == 1
     assert result[0]["algebra_result"] is not None
     assert result[0]["algebra_result"] is not None
+
+
+def test_rst_scalar_literal_args(spark):
+    """Plain Python non-string scalars (bool/int/float) are accepted in place of f.lit(...).
+
+    Verifies the ColLike/_col() widening: booleans, ints, and floats now
+    auto-wrap via f.lit so ``rst_clip(tile, geom, True)`` works without
+    ``f.lit(True)``. Strings stay as-is (pyspark column-ref convention).
+    """
+    from databricks.labs.gbx.rasterx import functions as rx
+
+    wkt = "POLYGON((-8900000 2220000, -8900000 2200000, -8880000 2200000, -8880000 2220000, -8900000 2220000))"
+    tile = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+
+    df = spark.range(1).select(
+        rx.rst_clip(tile, f.lit(wkt), True).alias("clipped"),  # bool scalar
+        rx.rst_transform(tile, 4326).alias("transformed"),  # int scalar
+    )
+
+    row = df.collect()[0]
+    assert row["clipped"] is not None
+    assert row["transformed"] is not None

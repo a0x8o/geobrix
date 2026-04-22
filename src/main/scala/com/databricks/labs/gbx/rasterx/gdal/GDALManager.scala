@@ -17,10 +17,36 @@ import scala.util.{Success, Try}
   */
 object GDALManager extends Logging {
 
+    /**
+      * Network-capable GDAL drivers that can trigger outbound HTTP at parse time.
+      * Skipped by default (never registered); users can override via `spark.gdal.GDAL_SKIP`.
+      */
+    val DefaultSkippedDrivers = "WMS WMTS WCS WFS HTTP CSW OGCAPI"
+
     var isEnabled = false
     private val lock = AnyRef
     var checkpointPath: String = _
     var useCheckpoint: Boolean = _
+
+    private val pythonLock = new Object
+    @volatile private var pythonDepth = 0
+
+    /**
+      * Bracket `block` with `GDAL_VRT_ENABLE_PYTHON=YES` so a VRT with a `<PixelFunctionLanguage>Python</...>`
+      * band can evaluate, then reset to `NO`. Safe for concurrent Spark tasks in the same JVM via a
+      * reference count (GDAL Java bindings expose only process-global `SetConfigOption`).
+      */
+    def withVrtPython[T](block: => T): T = {
+        pythonLock.synchronized {
+            if (pythonDepth == 0) gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
+            pythonDepth += 1
+        }
+        try block
+        finally pythonLock.synchronized {
+            pythonDepth -= 1
+            if (pythonDepth == 0) gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
+        }
+    }
 
     /** Initialize GDAL once per process; idempotent after first success. */
     def init(config: ExpressionConfig): Unit =
@@ -47,15 +73,23 @@ object GDALManager extends Logging {
         val CPL_TMPDIR = config.configs.getOrElse("cpl_tmpdir", "/tmp/gdal")
         val GDAL_PAM_PROXY_DIR = config.configs.getOrElse("gdal_pam_proxy_dir", "/tmp/gdal/pam")
         configureGDAL(CPL_TMPDIR, GDAL_PAM_PROXY_DIR)
-        config.getGDALConfig.foreach { case (key, value) => gdal.SetConfigOption(key, value) }
+        config.getGDALConfig.foreach { case (key, value) =>
+            val gdalKey = key
+                .stripPrefix("spark.databricks.labs.gbx.gdal.")
+                .stripPrefix("spark.gdal.")
+            gdal.SetConfigOption(gdalKey, value)
+        }
         this.checkpointPath = config.getRasterCheckpointDir
         this.useCheckpoint = config.useCheckpoint
     }
 
     def configureGDAL(CPL_TMPDIR: String, GDAL_PAM_PROXY_DIR: String, CPL_DEBUG: String = "OFF",
                       logCPL: Boolean = false): Unit = {
+        // Must be set BEFORE gdal.AllRegister() in init; skipped drivers are never registered.
+        gdal.SetConfigOption("GDAL_SKIP", DefaultSkippedDrivers)
         gdal.SetConfigOption("PROJ_LIB", "/usr/share/proj")
-        gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
+        // Off by default; flipped on only around PixelCombineRasters.combine() via withVrtPython.
+        gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
         gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES")
         gdal.SetConfigOption("CPL_TMPDIR", CPL_TMPDIR)
         gdal.SetConfigOption("GDAL_PAM_PROXY_DIR", GDAL_PAM_PROXY_DIR)

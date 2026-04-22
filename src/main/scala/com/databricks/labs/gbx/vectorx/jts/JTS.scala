@@ -22,6 +22,7 @@ object JTS {
     private val geometryFactories = mutable.Map[Long, GeometryFactory]()
     private val wkbReaders = mutable.Map[Long, WKBReader]()
     private val wkbWriters = mutable.Map[Long, WKBWriter]()
+    private val ewkbWriters = mutable.Map[Long, WKBWriter]()
     private val wtkWriters = mutable.Map[Long, WKTWriter]()
     private val wtkReaders = mutable.Map[Long, WKTReader]()
 
@@ -92,7 +93,11 @@ object JTS {
         transformation.transform(geometry)
     }
 
-    /** Decodes WKB bytes to a JTS Geometry; uses per-thread WKBReader. */
+    /** Decodes WKB or EWKB bytes to a JTS Geometry; uses per-thread WKBReader.
+      *
+      * JTS [[WKBReader]] auto-detects PostGIS "Extended WKB" (EWKB) — when the SRID-present flag
+      * is set in the byte-order byte, the reader consumes the trailing SRID int and calls
+      * [[Geometry#setSRID]] on the result. Plain WKB returns a Geometry with SRID=0. */
     def fromWKB(bytes: Array[Byte]): Geometry = {
         val tid = Thread.currentThread().getId
         val reader = wkbReaders.getOrElseUpdate(tid, new WKBReader())
@@ -120,26 +125,72 @@ object JTS {
     /** Shared empty polygon instance (from WKT). */
     def emptyPolygon: Geometry = JTS.fromWKT("POLYGON EMPTY")
 
-    /** Encodes a JTS Geometry to WKB bytes; uses per-thread WKBWriter. */
+    /** Encodes a JTS Geometry to OGC WKB bytes (no SRID); uses per-thread WKBWriter.
+      *
+      * Use [[toEWKB]] when you need to preserve SRID across the encoding. */
     def toWKB(intersection: Geometry): Array[Byte] = {
-        // val wkbWriter = new WKBWriter()
         val tid = Thread.currentThread().getId
         val writer = wkbWriters.getOrElseUpdate(tid, new WKBWriter())
         writer.write(intersection)
     }
 
-    /** Parses WKT string to a JTS Geometry; uses per-thread WKTReader. */
+    /** Encodes a JTS Geometry to PostGIS EWKB bytes; embeds SRID when set. Per-thread writer.
+      *
+      * EWKB is auto-detected on read by [[fromWKB]], so this is the reciprocal for SRID-preserving
+      * round-trips. Note: plain WKB consumers (e.g. GDAL `CreateGeometryFromWkb`, Databricks
+      * built-in `st_*` functions) may not accept EWKB — use [[toWKB]] for those. */
+    def toEWKB(geom: Geometry): Array[Byte] = {
+        val tid = Thread.currentThread().getId
+        val writer = ewkbWriters.getOrElseUpdate(tid, new WKBWriter(2, true))
+        writer.write(geom)
+    }
+
+    /** Parses OGC WKT or PostGIS EWKT to a JTS Geometry; uses per-thread WKTReader.
+      *
+      * EWKT has the form `SRID=<int>;<WKT>` (e.g. `SRID=4326;POINT(0 0)`). If present, the prefix
+      * is stripped and `setSRID` is called on the parsed geometry. Plain WKT parses as before and
+      * returns a Geometry with SRID=0. */
     def fromWKT(wkt: String): Geometry = {
         val tid = Thread.currentThread().getId
         val reader = wtkReaders.getOrElseUpdate(tid, new WKTReader())
-        reader.read(wkt)
+        val (srid, body) = splitEWKT(wkt)
+        val geom = reader.read(body)
+        if (srid > 0) geom.setSRID(srid)
+        geom
     }
 
-    /** Serializes a JTS Geometry to WKT string; uses per-thread WKTWriter. */
+    /** Splits an optional `SRID=<int>;` prefix off a WKT/EWKT string. Returns (srid, wkt-body).
+      * Returns (0, input) when no valid prefix is present. Case-insensitive; tolerates surrounding whitespace. */
+    private[jts] def splitEWKT(raw: String): (Int, String) = {
+        if (raw == null) return (0, raw)
+        val trimmed = raw.stripLeading()
+        // Cheapest possible check before allocating a substring
+        if (trimmed.length < 6 || !(trimmed.charAt(0) == 'S' || trimmed.charAt(0) == 's')) return (0, raw)
+        if (!trimmed.regionMatches(true, 0, "SRID=", 0, 5)) return (0, raw)
+        val semi = trimmed.indexOf(';', 5)
+        if (semi <= 5) return (0, raw)
+        val sridStr = trimmed.substring(5, semi).trim
+        try {
+            val srid = sridStr.toInt
+            if (srid <= 0) (0, trimmed.substring(semi + 1)) else (srid, trimmed.substring(semi + 1))
+        } catch { case _: NumberFormatException => (0, raw) }
+    }
+
+    /** Serializes a JTS Geometry to OGC WKT (no SRID); uses per-thread WKTWriter.
+      *
+      * Use [[toEWKT]] when you need to preserve SRID across the encoding. */
     def toWKT(geometry: Geometry): String = {
         val tid = Thread.currentThread().getId
         val writer = wtkWriters.getOrElseUpdate(tid, new WKTWriter())
         writer.write(geometry)
+    }
+
+    /** Serializes a JTS Geometry to PostGIS EWKT (`SRID=<int>;<WKT>`); falls back to plain WKT
+      * when SRID is 0. Reciprocal of [[fromWKT]]. */
+    def toEWKT(geometry: Geometry): String = {
+        val srid = geometry.getSRID
+        val wkt = toWKT(geometry)
+        if (srid > 0) s"SRID=$srid;$wkt" else wkt
     }
 
     /** Douglas-Peucker simplification with given tolerance; preserves SRID. */

@@ -5,7 +5,7 @@ title: Beta Release Notes
 
 # Beta Release Notes
 
-:::info Current version: 0.2.0
+:::info Current version: 0.3.0
 The changes on this page are relative to 0.1.0 (and earlier).
 :::
 
@@ -23,6 +23,7 @@ This page tracks **API and naming changes** since the GeoBrix project started. A
 |----------|---------|--------|
 | Python import `geobrix.*` | `databricks.labs.gbx.*` | Match Scala package and published artifact; avoid namespace clashes. |
 | Extra underscores in function names (multi-word parts spelled with `_`) | Single underscore between prefix and compound (e.g. `rst_pixelwidth`, `gbx_bng_cellarea`) | Underscore standardization: one leading prefix, then one compound word; no `_` inside the operation name. |
+| Non-Column value args required `f.lit(...)` / `lit(...)` wrapping (e.g. `rst_clip(tile, geom, f.lit(True))`, `bng_pointascell(pt, f.lit(1))`) | Plain Python/Scala non-string scalars accepted directly (e.g. `rst_clip(tile, geom, True)`, `rst_transform(tile, 4326)`, `bng_pointascell(pt, 1)`) | Matches Mosaic/DBR built-in ergonomics for booleans/numerics. Python wrappers auto-wrap `bool`/`int`/`float`/`bytes` via `f.lit`; Scala adds typed overloads. Strings still follow pyspark's column-ref convention — `rx.rst_width("tile")` is still `f.col("tile")`; wrap in `f.lit(...)` for string literals (e.g. `driver=f.lit("GTiff")`). |
 
 All specific function renames from that standardization are listed in the component tables below.
 
@@ -66,6 +67,8 @@ All specific function renames from that standardization are listed in the compon
 | `rst_combine_avg` / `gbx_rst_combine_avg` | `rst_combineavg` / `gbx_rst_combineavg` | Underscore standardization. |
 | `rst_h3_raster_to_grid_avg` (and Count/Max/Min/Median) | `rst_h3_rastertogridavg` (and Count/Max/Min/Median) | Underscore standardization. |
 | `rst_bandmetadata(tile)` (single arg) | `rst_bandmetadata(tile, band)` | Required `band` parameter added; use e.g. `rst_bandmetadata("tile", f.lit(1))`. |
+| `rst_fromfile` raster field was `StringType` (path) with `metadata.size = -1` | `rst_fromfile` raster field is `BinaryType` (file bytes) with real `metadata.size` | `rst_fromfile` now reads the file into the tile, so tiles are self-contained and downstream ops (e.g. `rst_clip`) no longer produce orphan temp paths. Matches `rst_fromcontent` and the GDAL reader. |
+| Default output compression was `ZSTD` (TIFF tag 50000) | Default output compression is `DEFLATE` (baseline TIFF) | ZSTD output was not decodable by Java ImageIO and broke the Databricks image preview after operators like `rst_clip`. DEFLATE is universally previewable and (with `PREDICTOR=2/3`) still compresses well. Override per-call via tile metadata `compression` key. |
 
 ---
 
@@ -118,6 +121,50 @@ Reader renames above are planned for 0.2.0. Beta (0.1.x) may still expose the ba
 
 ---
 
+## Scalar values vs `lit(...)` wrapping
+
+Previously, every non-Column argument had to be wrapped in `f.lit(...)` (Python) or `lit(...)` (Scala). That was a regression from Mosaic/DBR built-ins, where booleans and numerics can be passed as plain values. In 0.3.0, plain scalars are accepted across Python, Scala, and SQL bindings.
+
+**Python** — wrappers accept `Column` or scalar (`bool`/`int`/`float`/`bytes`); non-string scalars are auto-wrapped with `f.lit(...)`. Strings still follow pyspark's column-reference convention (bare string ≈ `f.col(name)`); wrap in `f.lit("...")` to pass a string literal.
+
+```python
+# ✅ Before 0.3.0 — required f.lit for every value
+rx.rst_clip("tile", "geom", f.lit(True))
+rx.rst_transform("tile", f.lit(4326))
+bx.bng_pointascell("pt", f.lit(1))
+bx.bng_pointascell("pt", f.lit("1km"))
+
+# ✅ 0.3.0 — scalars accepted directly
+rx.rst_clip("tile", "geom", True)
+rx.rst_transform("tile", 4326)
+bx.bng_pointascell("pt", 1)
+bx.bng_pointascell("pt", f.lit("1km"))   # string literal — still wrap in f.lit
+```
+
+**Scala** — typed overloads added for `Boolean` / `Int` / `Double` / `String` value parameters. Column args (e.g. geometry, tile) still take `Column`.
+
+```scala
+// ✅ 0.3.0 — scalar overloads resolve without lit(...)
+rst_clip(col("tile"), col("geom"), cutlineAllTouched = true)
+rst_transform(col("tile"), 4326)
+bng_pointascell(col("pt"), 1)
+bng_pointascell(col("pt"), "1km")
+```
+
+**SQL** — values are already natively accepted by Spark SQL; no change needed:
+
+```sql
+SELECT gbx_rst_clip(tile, geom, true) FROM ...;
+SELECT gbx_bng_pointascell(pt, 1) FROM ...;
+SELECT gbx_bng_pointascell(pt, '1km') FROM ...;
+```
+
+**When you still need `f.lit(...)` in Python:**
+- **String literals**: `rx.rst_fromfile(f.lit("/path/to.tif"), f.lit("GTiff"))` — a bare string is treated as a column reference.
+- **Nulls / explicit typing**: e.g. `f.lit(None).cast("double")`.
+
+---
+
 ## How to use this page
 
 - **Migrating code:** Search for the **baseline** name in your code or config; replace with **Current** and apply any behavior notes.
@@ -134,3 +181,11 @@ Reader renames above are planned for 0.2.0. Beta (0.1.x) may still expose the ba
 - **RasterX `rst_bandmetadata`:** A required `band` argument was added; call as `rst_bandmetadata(tile, band)` (e.g. `rst_bandmetadata("tile", f.lit(1))`) in Python/SQL/Scala.
 - **GDAL reader column:** Raster DataFrames from the GDAL reader use the column name `source` (not `path`) for the file path; update any code or docs that assumed `path`.
 - **BNG aggregators (`bng_cellunion_agg`, `bng_cellintersection_agg`):** Fixed a bug where aggregation buffers were shared across partitions (and across tests in the same JVM), causing incorrect `core` flags when running full test suites or with multiple partitions. Each partition now gets a fresh buffer. Chip fields are resolved by type/name in the union aggregator for robustness to struct field order. Test expectation corrected for “all core chips” intersection: result is now correctly documented as `core=true` (whole cell).
+- **`rst_clip` axis-order fix for EPSG-imported CRS (fixes all-black clips):** When the clip geometry's CRS was set via an EPSG code (plain `rst_transform`-style input, EWKT `SRID=4326;...`, or EWKB with SRID), GDAL 3+ defaults that `SpatialReference` to **authority-compliant** axis order — for EPSG:4326 that means `(latitude, longitude)`. JTS / Databricks / most GIS tooling emit WKT/WKB coordinates in traditional `(x, y) = (lon, lat)` order, so the reprojection inside `rst_clip` was silently swapping the axes (e.g. `-80 14` interpreted as `lat=-80`, near the south pole) and the cutline missed the raster entirely, producing all-black output. `OSRTransformGeometry.transform` now clones both source and destination `SpatialReference`s and forces `OAMS_TRADITIONAL_GIS_ORDER` on the clones before running the OGR transform, so JTS-origin WKB is interpreted correctly. Caller-owned `SpatialReference`s are not mutated.
+- **EWKT / EWKB support for raster clip (CRS mismatch handling):** `rst_clip` now accepts EWKT (`SRID=<epsg>;<WKT>`) and EWKB (PostGIS extended WKB) in addition to plain WKT/WKB. Semantics:
+  - **Plain WKT / WKB (no SRID):** the geometry is assumed to already be in the raster's CRS; no reprojection is performed.
+  - **EWKT / EWKB (SRID set and resolvable via EPSG):** the geometry's CRS is used and, if it differs from the raster's CRS, the cutline is reprojected before clipping.
+  - If the SRID is `0` or not a valid EPSG code, the code falls back to the raster's CRS (same as the plain case) — this restores Mosaic-compatible behavior but no longer silently produces an empty/black clip when a caller forgets to set the SRID.
+  `JTS.fromWKT` / `JTS.fromWKB` now auto-detect EWKT/EWKB; new `JTS.toEWKT` / `JTS.toEWKB` helpers emit SRID-preserving forms. Plain `toWKT` / `toWKB` output is unchanged (OGC, no SRID).
+- **`rst_transform` invalid SRID:** `rst_transform(tile, targetSrid)` now rejects `targetSrid <= 0` and EPSG codes that GDAL cannot resolve with a clear error (surfaced in tile metadata `error_message`) instead of returning a raster with an uninitialized CRS.
+- **`/vsimem/` path handling hardening:** `rst_memsize` / `rst_unlink` and the GDAL writer's in-memory byte fetch now use `startsWith("/vsimem/")` (not `contains`) and null-check `GetMemFileBuffer`, so datasets whose description happens to embed the substring (e.g. NetCDF subdataset selectors) are no longer mis-routed through the in-memory branch.

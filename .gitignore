@@ -16,6 +16,8 @@
 /metastore_db/
 /derby.log
 /test-logs/
+hs_err_pid*.log
+replay_pid*.log
 /.codeql/
 /notebooks/tests/databricks_cluster_config.env
 /ci-logs/
@@ -37,3 +39,6 @@ __pycache__/
 /.coverage
 /python/coverage-report/
 /python/geobrix/test/coverage-report/
+/CLAUDE.md
+/.claude/scheduled_tasks.lock
+/input/
