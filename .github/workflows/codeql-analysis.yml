@@ -19,7 +19,9 @@ jobs:
     # Skip until Code Security is enabled: Settings → Code security and analysis → Code scanning.
     # For private repos this may require GitHub Advanced Security. Remove this line once enabled.
     if: false
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
     permissions:

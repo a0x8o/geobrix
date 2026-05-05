@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+# Run strict PGP signature verification against .maven-keys.list.
+#
+# Usage:
+#   ./scripts/security/maven-pgp-verify
+#
+# Exits non-zero if any dependency, transitive dependency, plugin, or
+# plugin dependency:
+#   - has no PGP signature published, or
+#   - has a weak signature (e.g. SHA-1 / 1024-bit DSA), or
+#   - is signed by a key not present in .maven-keys.list.
+#
+# This is the gate that lets the repo answer "yes, every Maven 3P
+# dependency is pinned to a known-good signing key" — provided
+# .maven-keys.list has been reviewed.
+#
+# Requires: mvn.
+
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+
+cd "${root}"
+exec mvn -B -Pverify-pgp verify \
+    -DskipTests \
+    -Dscoverage.skip \
+    -Dscalastyle.skip=true

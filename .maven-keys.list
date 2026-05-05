@@ -1,0 +1,63 @@
+# Maven dependency PGP keysmap (Labs lockdown — Maven dependency pinning).
+#
+# Consumed by org.simplify4u.plugins:pgpverify-maven-plugin via the
+# `verify-pgp` Maven profile (pom.xml). Every dependency, transitive
+# dependency, plugin, and plugin dependency must have a signature whose
+# key fingerprint appears below; otherwise the build fails.
+#
+# Format (https://www.simplify4u.org/pgpverify-maven-plugin/keysmap.html):
+#
+#   groupId                               = 0x<fingerprint>[, 0x<fingerprint>...]
+#   groupId:artifactId                    = 0x<fingerprint>
+#   groupId:artifactId:packaging          = 0x<fingerprint>
+#   groupId:artifactId:packaging:version  = 0x<fingerprint>
+#
+# Ordering: most-specific entry wins. Comments start with `#`.
+#
+# Sentinels (avoid except for documented exceptions):
+#   noSig   - artifact is permitted to have no signature      (DO NOT USE)
+#   badSig  - artifact may have an invalid signature          (DO NOT USE)
+#   noKey   - signing key need not be in this keysmap         (use sparingly)
+#
+# Refresh procedure:
+#
+#   1. ./scripts/security/maven-pgp-bootstrap > /tmp/draft.list
+#      Runs `mvn -Pverify-pgp verify` with relaxed settings, captures every
+#      key fingerprint Maven Central serves for our resolved closure, and
+#      emits draft keysmap entries.
+#
+#   2. Review every fingerprint in /tmp/draft.list against the project's
+#      published signing key (Apache KEYS file, GitHub release page, etc.).
+#      Do NOT trust this file blindly — that is the entire point.
+#
+#   3. Replace the TODO block below with the reviewed entries, run
+#      `./scripts/security/maven-pgp-verify` to confirm a clean check, then
+#      commit.
+#
+# Trust-anchor URLs for the direct dependencies in pom.xml — use these to
+# cross-check fingerprints before adding entries:
+#
+#   org.apache.spark:*           https://downloads.apache.org/spark/KEYS
+#   io.delta:*                   https://github.com/delta-io/delta/blob/master/KEYS
+#   org.scala-lang:*             https://www.scala-lang.org/files/ (release manager keys)
+#   org.scalatest:*              https://www.scalatest.org/ (Bill Venners' published keys)
+#   org.scalamock:*              https://github.com/paulbutcher/ScalaMock signing key
+#   com.fasterxml.jackson.core:* https://github.com/FasterXML/jackson signing keys
+#   com.uber:h3                  https://github.com/uber/h3-java release signatures
+#   org.locationtech.jts.*       https://github.com/locationtech/jts release signatures
+#   org.locationtech.proj4j.*    https://github.com/locationtech/proj4j release signatures
+#   org.gdal:gdal                https://github.com/OSGeo/gdal release signatures
+#   junit:junit                  https://repo.maven.apache.org/maven2/junit/junit/.../*.asc
+#   org.codehaus.mojo:*          https://www.mojohaus.org/ release signing keys
+#   org.apache.maven.plugins:*   https://downloads.apache.org/maven/KEYS
+#   net.alchim31.maven:*         https://github.com/davidB/scala-maven-plugin signing key
+#   org.scalatest:scalatest-maven-plugin  https://github.com/scalatest/scalatest-maven-plugin
+#   org.scalastyle:scalastyle-maven-plugin https://github.com/scalastyle/scalastyle-maven-plugin
+#   org.scoverage:scoverage-maven-plugin   https://github.com/scoverage/scoverage-maven-plugin
+#
+# ------------------------------------------------------------------------
+# TODO: bootstrap-populated entries go below this line. Until populated,
+# the verify-pgp profile is opt-in (-Pverify-pgp); once populated and
+# verified, switch the profile to <activeByDefault>true</activeByDefault>
+# and update CI to require the verification job.
+# ------------------------------------------------------------------------

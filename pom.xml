@@ -446,6 +446,48 @@
                 <spark.version>4.0.0</spark.version>
             </properties>
         </profile>
+        <profile>
+            <!--
+              PGP signature verification of every Maven dependency, transitive
+              dependency, plugin, and plugin dependency against the keysmap at
+              ${project.basedir}/.maven-keys.list.
+
+              Opt-in via -Pverify-pgp until .maven-keys.list is fully
+              populated; after that, this profile should be activated by
+              default and CI made required. See scripts/security/README.md.
+            -->
+            <id>verify-pgp</id>
+            <properties>
+                <scala.version>2.13.12</scala.version>
+                <scala.compat.version>2.13</scala.compat.version>
+                <spark.version>4.0.0</spark.version>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.simplify4u.plugins</groupId>
+                        <artifactId>pgpverify-maven-plugin</artifactId>
+                        <version>1.18.3</version>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <failNoSignature>true</failNoSignature>
+                            <failWeakSignature>true</failWeakSignature>
+                            <failNoKey>true</failNoKey>
+                            <verifyPomFiles>true</verifyPomFiles>
+                            <verifyPlugins>true</verifyPlugins>
+                            <verifyPluginDependencies>true</verifyPluginDependencies>
+                            <keysMapLocation>${project.basedir}/.maven-keys.list</keysMapLocation>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
     <distributionManagement>
         <repository>

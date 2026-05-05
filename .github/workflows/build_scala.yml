@@ -7,7 +7,9 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
     env:

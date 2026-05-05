@@ -4,8 +4,9 @@
 # First-time setup: In repo Settings → Pages → Build and deployment,
 # set Source to "GitHub Actions".
 #
-# If the org enforces an IP allow list, use a self-hosted runner (e.g. larger)
-# inside the allowlisted network; ubuntu-latest cannot be used in that case.
+# Runs on the Databricks-hardened runner group (Labs lockdown policy);
+# this runner is inside the org's allowlisted network, so it works even
+# when org IP allow lists exclude generic ubuntu-latest.
 name: Deploy documentation
 
 on:
@@ -25,7 +26,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
     steps:
@@ -65,7 +68,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     needs: build
     steps:
       - name: Deploy to GitHub Pages

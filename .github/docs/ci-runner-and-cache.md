@@ -1,17 +1,26 @@
-# CI: Larger runner and cache
+# CI: Hardened runner and cache
 
-## Larger runner specs
+## Hardened runner specs
 
-All workflows use `runs-on: larger`. The default larger runner is:
+All workflows use the Databricks-hardened runner group (Labs lockdown policy):
 
-- **vCPU:** 4  
-- **RAM:** 16 GB  
-- **Storage (SSD):** 150 GB total (system + workspace)  
+```yaml
+runs-on:
+  group: databricks-protected-runner-group
+  labels: linux-ubuntu-latest
+```
+
+This selects an org-managed, ephemeral GitHub-hosted runner inside the
+protected group. The default specs match GitHub's larger-runner class:
+
+- **vCPU:** 4
+- **RAM:** 16 GB
+- **Storage (SSD):** 150 GB total (system + workspace)
 - **Ephemeral:** A new VM is created per job; nothing persists on the runner between runs.
 
-So there is **no accumulation of storage or memory on the runner over time**. Each job starts on a clean machine.
+So there is **no accumulation of storage or memory on the runner over time**. Each job starts on a clean machine. The hardened group additionally constrains which secrets/environments can target it and which workflows can request it — this is set at the org level, not in this repo.
 
-Reference: [GitHub Docs – Larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners).
+Reference: [GitHub Docs – Larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners) and the Databricks Labs Repository Lockdown policy (runner-group section).
 
 ---
 

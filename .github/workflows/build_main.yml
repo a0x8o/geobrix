@@ -3,7 +3,8 @@ name: build main
 # Scala doc tests are excluded from the main Scala run; they run in a separate step only on push to master.
 # Manual run: Actions → "build main" → Run workflow (workflow_dispatch).
 #
-# Use runs-on: larger for all jobs (ubuntu-latest gets 403 on actions/checkout for private repo).
+# All jobs run on the Databricks-hardened runner group (Labs lockdown policy).
+# This workflow does not interpolate any github.event.* values into run: blocks.
 on:
   push:
     branches-ignore:
@@ -18,7 +19,9 @@ permissions:
 jobs:
   # Regenerate doc-snippet-inventory and push to the PR branch (not master). Only for PRs targeting master.
   update-doc-inventory:
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     if: github.event_name == 'pull_request' && github.base_ref == 'master'
     # Scoped to protected env so REPO_ACCESS_TOKEN is only available to approved workflow runs.
     environment: runtime
@@ -42,7 +45,9 @@ jobs:
           git commit -m "chore(docs): rebuild doc-snippet-inventory.json [skip ci]"
           git push origin HEAD:${{ github.head_ref }}
   build:
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
     env:
@@ -110,7 +115,9 @@ jobs:
 
   codecov:
     name: Upload to Codecov
-    runs-on: larger
+    runs-on:
+      group: databricks-protected-runner-group
+      labels: linux-ubuntu-latest
     needs: build
     if: always() && needs.build.result == 'success'
     permissions:

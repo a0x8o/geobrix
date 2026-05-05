@@ -1,0 +1,88 @@
+#!/bin/sh
+#
+# Bootstrap or refresh .maven-keys.list by running pgpverify-maven-plugin
+# with relaxed settings, capturing every PGP fingerprint Maven Central
+# serves for our resolved closure, and emitting draft keysmap entries
+# on stdout.
+#
+# Usage:
+#   ./scripts/security/maven-pgp-bootstrap > /tmp/draft.list
+#
+# The output is a draft. Every fingerprint must be cross-checked against
+# the project's published signing key (Apache KEYS file, GitHub release
+# page, etc.) before being committed to .maven-keys.list. Trust-anchor
+# URLs for our direct dependencies are listed at the top of
+# .maven-keys.list.
+#
+# Requires: mvn (run inside the geobrix-dev container or any environment
+# with Maven 3.8+ and network access to Maven Central / db-maven-proxy).
+
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+log="${root}/target/pgpverify-bootstrap.log"
+
+mkdir -p "${root}/target"
+
+# Run the plugin with failures relaxed so the build does not abort on the
+# first unknown key — we want a complete inventory.
+(
+    cd "${root}"
+    mvn -B -q -Pverify-pgp verify \
+        -DskipTests \
+        -Dscoverage.skip \
+        -Dscalastyle.skip=true \
+        -DfailNoSignature=false \
+        -DfailWeakSignature=false \
+        -DfailNoKey=false \
+        2>&1
+) | tee "${log}" >&2
+
+# Parse Maven output into draft keysmap entries:
+#   "<groupId>:<artifactId>:<packaging>:<version>...key fingerprint 0x<HEX>"
+#
+# pgpverify-maven-plugin emits lines like:
+#   [INFO] org.example:lib:jar:1.2.3 PGP Signature OK
+#         KeyId: 0xABCDEF1234567890 UserIds: [Foo Bar <foo@example.org>]
+#
+# We aggregate (groupId:artifactId) -> set(fingerprints) and emit one
+# line per pair. Versions are intentionally dropped from the keysmap so
+# minor version bumps do not require keysmap edits — projects rarely
+# rotate keys per release.
+awk '
+    /^\[INFO\] [^ ]+:[^ ]+:[^ ]+ PGP Signature OK/ {
+        artifact = $2
+        next
+    }
+    /^[[:space:]]*KeyId: 0x[0-9A-Fa-f]+/ && artifact != "" {
+        # Extract fingerprint
+        for (i = 1; i <= NF; i++) {
+            if ($i ~ /^0x[0-9A-Fa-f]+$/) {
+                key = $i
+                # Reduce groupId:artifactId:packaging:version -> groupId:artifactId
+                n = split(artifact, parts, ":")
+                ga = parts[1] ":" parts[2]
+                seen[ga "|" key] = 1
+                ga_seen[ga] = 1
+            }
+        }
+        artifact = ""
+    }
+    END {
+        for (ga in ga_seen) {
+            keys = ""
+            for (k in seen) {
+                split(k, p, "|")
+                if (p[1] == ga) {
+                    keys = (keys == "") ? p[2] : keys ", " p[2]
+                }
+            }
+            printf "%-60s = %s\n", ga, keys
+        }
+    }
+' "${log}" | sort
+
+printf '\n' >&2
+printf 'Draft written above. Full mvn log: %s\n' "${log}" >&2
+printf 'Cross-check every fingerprint against the project trust anchors\n' >&2
+printf 'listed at the top of .maven-keys.list before committing.\n' >&2
