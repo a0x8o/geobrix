@@ -7,11 +7,16 @@ permissions:
   contents: read
 jobs:
   build:
+    # Heavy: full Scala test suite + scoverage report (mvn -T 1C, ~10–15 min). Standard runner is too small.
     runs-on:
-      group: databricks-protected-runner-group
-      labels: linux-ubuntu-latest
+      group: larger-runners
+      labels: larger
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for pip/Maven via JFrog.
+      id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:

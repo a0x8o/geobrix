@@ -157,16 +157,67 @@ RUN mkdir -p $ROOTDIR/share/maven \
   && ln -s $ROOTDIR/share/maven/bin/mvn $ROOTDIR/bin/mvn && rm /tmp/apache-maven.tar.gz
 
 ENV MAVEN_HOME="$ROOTDIR/share/maven"
+# Version pins — keep in sync with .github/actions/{scala,python}_build/action.yml,
+# scripts/geobrix-gdal-init.sh, and notebooks/tests/requirements.txt.
+# Run `gbx:versions:audit` after edits to confirm coverage.
+# DBR-aligned values: https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts
 ENV SPARK_VERSION=4.0.0
 ENV NUMPY_VERSION=2.1.3
+ENV PANDAS_VERSION=2.2.3
 ENV SETUPTOOLS_VERSION=74.0.0
+ENV PIP_VERSION=25.0.1
+ENV WHEEL_VERSION=0.45.1
+ENV REQUESTS_VERSION=2.32.3
+ENV IPYTHON_VERSION=8.30.0
+ENV IPYKERNEL_VERSION=6.29.5
+ENV IPYWIDGETS_VERSION=7.8.1
+ENV JUPYTERLAB_VERSION=4.3.4
+ENV JUPYTER_SERVER_VERSION=2.14.1
+ENV JUPYTER_CORE_VERSION=5.7.2
+ENV JUPYTER_CLIENT_VERSION=8.6.3
+ENV TORNADO_VERSION=6.4.2
+ENV NBFORMAT_VERSION=5.10.4
+ENV NBCONVERT_VERSION=7.16.4
+# Not in DBR; pinned to a PyPI stable that pre-dates the 7-day embargo on the
+# corp pypi-proxy.dev.databricks.com (per go/pypi-registry-access). build/pytest-cov also match CI.
+# 1.5.0 (released 2026-04-30) is currently embargoed; 1.4.4 is the latest available.
+ENV BUILD_VERSION=1.4.4
+ENV PYTEST_VERSION=8.4.2
+ENV PYTEST_COV_VERSION=7.1.0
+ENV GEOPANDAS_VERSION=1.1.3
+# keplergl 0.3.4+ requires ipywidgets>=8.1.5, which conflicts with DBR's ipywidgets==7.8.1.
+# 0.3.3 was never published on PyPI (gap between 0.3.2 stable and 0.3.4 alphas), so 0.3.2
+# is the last keplergl compatible with the ipywidgets 7.x line. We prefer DBR alignment
+# for ipywidgets over latest keplergl in the dev container.
+ENV KEPLERGL_VERSION=0.3.2
+# Intentional DBR divergence — DBR has pyzmq 26.2.0 but our Jupyter ZMQ workaround
+# requires the older 25.1.1 (see "ZMQ fixes" section below). Re-evaluate on next bump.
+ENV PYZMQ_VERSION=25.1.1
 
 # --- Python Environment ---
+#
+# DATABRICKS-SPECIFIC: route pip through the corp PyPI proxy.
+#
+# Per go/pypi-registry-access (Remote registry access at Databricks), public
+# PyPI (pypi.org) is DNS-blocked from Databricks corp network as a supply-chain
+# hardening measure (the proxy filters package versions newer than 7 days).
+# Without this configuration, every `pip install` in subsequent layers fails
+# with "Connection refused" / cannot resolve pypi.org.
+#
+# This is the local-build counterpart to CI's JFrog OIDC routing: CI uses
+# JFrog `db-pypi` (token-bound), local Docker uses the corp PyPI proxy
+# (network-bound). Both are Databricks-managed trust boundaries.
+#
+# Mirrors the existing Maven proxy pattern (~/.m2/settings.xml → maven-proxy.dev.databricks.com).
+# Update if go/pypi-registry-access changes the URL.
+RUN mkdir -p /etc/pip /root/.pip && printf '[global]\ntimeout = 60\nindex-url = https://pypi-proxy.dev.databricks.com/simple\n' | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null
+ENV PIP_INDEX_URL=https://pypi-proxy.dev.databricks.com/simple
+
 # 1. Upgrade pip using --ignore-installed to bypass the Debian RECORD error
-RUN python3 -m pip install --upgrade pip --ignore-installed --break-system-packages
+RUN python3 -m pip install --upgrade pip==$PIP_VERSION --ignore-installed --break-system-packages
 
 # 2. Install base tools and NumPy 2.x
-RUN pip3 install wheel \
+RUN pip3 install wheel==$WHEEL_VERSION \
     setuptools==$SETUPTOOLS_VERSION \
     numpy==$NUMPY_VERSION \
     --ignore-installed \
@@ -178,10 +229,16 @@ RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
 # Build GDAL Python bindings against the source headers built in Stage 4
 RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
 
-# Final library installs (build = PyPA python3 -m build for sdist/wheel)
-RUN pip3 install black isort flake8 build py4j requests keplergl ipython pyspark==$SPARK_VERSION --break-system-packages \
-    && pip3 install pytest pytest-cov pytest-mock nest-asyncio pytest-asyncio --break-system-packages \
-    && pip3 install geopandas pystac-client planetary-computer rasterio rioxarray --break-system-packages \
+# Final library installs. All pinned packages match CI / DBR 17.3 LTS or current
+# PyPI stable — see ENV block above for sources. Unpinned: black/isort/flake8 (lint
+# tools, version drift is low-risk), py4j (tracks pyspark), pystac-client/
+# planetary-computer/rasterio/rioxarray/pdal (geospatial dev stack, not in DBR),
+# pytest-mock/nest-asyncio/pytest-asyncio (test helpers, not in DBR).
+RUN pip3 install black isort flake8 build==$BUILD_VERSION py4j requests==$REQUESTS_VERSION \
+        keplergl==$KEPLERGL_VERSION ipython==$IPYTHON_VERSION ipykernel==$IPYKERNEL_VERSION \
+        ipywidgets==$IPYWIDGETS_VERSION pyspark==$SPARK_VERSION --break-system-packages \
+    && pip3 install pytest==$PYTEST_VERSION pytest-cov==$PYTEST_COV_VERSION pytest-mock nest-asyncio pytest-asyncio --break-system-packages \
+    && pip3 install pandas==$PANDAS_VERSION geopandas==$GEOPANDAS_VERSION pystac-client planetary-computer rasterio rioxarray --break-system-packages \
     && pip3 install pdal --break-system-packages
 
 # ZMQ fixes
@@ -201,8 +258,11 @@ ENV PYDEVD_DISABLE_FILE_VALIDATION=1
 ENV JUPYTER_PLATFORM_DIRS=1
 RUN mkdir -p /tmp/jupyter_runtime && chmod 1777 /tmp/jupyter_runtime
 RUN python3 -m ipykernel install --name python3 --display-name "Python 3 (Geobrix)" --env JUPYTER_IP 0.0.0.0 --env JUPYTER_RUNTIME_DIR /tmp/jupyter_runtime
-RUN pip3 install --upgrade jupyterlab jupyter_server jupyter_core jupyter_client tornado nbformat nbconvert testbook --break-system-packages
-RUN pip3 install --no-cache-dir --break-system-packages pyzmq==25.1.1
+RUN pip3 install --upgrade jupyterlab==$JUPYTERLAB_VERSION jupyter_server==$JUPYTER_SERVER_VERSION \
+        jupyter_core==$JUPYTER_CORE_VERSION jupyter_client==$JUPYTER_CLIENT_VERSION \
+        tornado==$TORNADO_VERSION nbformat==$NBFORMAT_VERSION nbconvert==$NBCONVERT_VERSION \
+        testbook --break-system-packages
+RUN pip3 install --no-cache-dir --break-system-packages pyzmq==$PYZMQ_VERSION
 
 # Final refresh of the shared library cache
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu

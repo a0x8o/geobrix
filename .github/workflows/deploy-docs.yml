@@ -27,10 +27,14 @@ concurrency:
 jobs:
   build:
     runs-on:
-      group: databricks-protected-runner-group
+      group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for npm via JFrog.
+      id-token: write
     steps:
       # For restricted GITHUB_TOKEN, add secret REPO_ACCESS_TOKEN (PAT with repo scope) if needed.
       - name: Checkout
@@ -44,6 +48,11 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: docs/package-lock.json
+
+      # Route npm through JFrog (OIDC) per go/hardened-gha policy.
+      # Must run after setup-node so npm is on PATH for auto-detect.
+      - name: Authenticate for JFrog (npm via OIDC)
+        uses: ./.github/actions/jfrog-auth
 
       - name: Install dependencies
         run: cd docs && npm ci
@@ -69,7 +78,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     runs-on:
-      group: databricks-protected-runner-group
+      group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     needs: build
     steps:

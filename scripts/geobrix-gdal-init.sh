@@ -18,9 +18,10 @@ VOL_DIR="/Volumes/geospatial_docs/gdal_artifacts/noble/geobrix"
 sudo apt-get -o DPkg::Lock::Timeout=-1 install -y unixodbc libcurl3-gnutls libsnappy-dev libopenjp2-7
 sudo apt-get -o DPkg::Lock::Timeout=-1 install -y libgdal-dev gdal-bin python3-gdal
 
-# pip install GDAL (match deps to DBR17.3)
-pip install --upgrade pip setuptools wheel cython
-pip install wheel setuptools==74.0.0 numpy==2.1.3
+# pip install GDAL (match deps to DBR 17.3 LTS — see release notes for the runtime).
+# Bootstrap pins must match .github/actions/{scala,python}_build/action.yml — keep these in sync.
+pip install --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1 cython==3.0.12
+pip install numpy==2.1.3
 export GDAL_CONFIG=/usr/bin/gdal-config
 pip install --no-cache-dir --force-reinstall GDAL[numpy]=="$(gdal-config --version).*"
 

@@ -8,11 +8,16 @@ permissions:
   contents: read
 jobs:
   build:
+    # Heavy: mvn install (skipping Scala tests) + GDAL native install + full pytest suite with PySpark and GDAL Python bindings.
     runs-on:
-      group: databricks-protected-runner-group
-      labels: linux-ubuntu-latest
+      group: larger-runners
+      labels: larger
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for pip/Maven via JFrog.
+      id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:

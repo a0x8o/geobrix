@@ -41,10 +41,14 @@ jobs:
   verify:
     name: pgpverify
     runs-on:
-      group: databricks-protected-runner-group
+      group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for Maven via JFrog.
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -58,6 +62,12 @@ jobs:
           distribution: 'zulu'
           cache: 'maven'
           cache-dependency-path: 'pom.xml'
+
+      # Route Maven through JFrog (OIDC) per go/hardened-gha policy.
+      # Defense in depth: artifacts come from the JFrog mirror (trust-bounded), then
+      # pgpverify-maven-plugin verifies their .asc signatures (which JFrog mirrors transparently).
+      - name: Authenticate for JFrog (Maven via OIDC)
+        uses: ./.github/actions/jfrog-auth
 
       - name: Verify Maven dependency PGP signatures
         run: ./scripts/security/maven-pgp-verify

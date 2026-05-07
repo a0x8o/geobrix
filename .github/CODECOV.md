@@ -13,7 +13,7 @@ The badge updates when Codecov receives a new coverage upload for this repo. Thi
 
 ## How coverage gets uploaded (tests run once)
 
-1. **build main** (on push/PR): Runs Scala and Python tests **once** with coverage on the `databricks-protected-runner-group` runner, uploads coverage as workflow artifacts, then a separate **codecov** job (also on the protected group) downloads those artifacts and uploads to Codecov. So the slow Codecov step does not block the build job, and tests are never run twice.
+1. **build main** (on push/PR): Runs Scala and Python tests **once** with coverage on the `larger-runners` runner (the heavy build job), uploads coverage as workflow artifacts, then a separate **codecov** job (on the lighter `databrickslabs-protected-runner-group`) downloads those artifacts and uploads to Codecov. So the slow Codecov step does not block the build job, and tests are never run twice.
 2. **Upload coverage to Codecov** (manual): Actions → “Upload coverage to Codecov” → Run workflow. Use only to refresh the badge without a new push; it runs the full test suite again.
 
 Both require the repo secret **CODECOV_TOKEN**. If you see **"Token required - not valid tokenless upload"** in the Codecov step, the secret is missing or empty.

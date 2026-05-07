@@ -33,6 +33,11 @@ runs:
             cache: 'pip' # caches dependencies for faster subsequent runs
             cache-dependency-path: '.ci-pip-cache-key'
             python-version: ${{ matrix.python }}
+        # Route pip + Maven through JFrog (OIDC) per go/hardened-gha policy.
+        # Must run after setup-java + setup-python so mvn + pip3 are on PATH for auto-detect.
+        # Caller job must declare `permissions: id-token: write`.
+        - name: Authenticate for JFrog (pip + Maven via OIDC)
+          uses: ./.github/actions/jfrog-auth
         - name: Add packaged GDAL dependencies
           shell: bash
           run : |
@@ -53,9 +58,10 @@ runs:
             # - install natives
             sudo apt-get -o DPkg::Lock::Timeout=-1 install -y unixodbc libcurl3-gnutls libsnappy-dev libopenjp2-7
             sudo apt-get -o DPkg::Lock::Timeout=-1 install -y libgdal-dev gdal-bin python3-gdal zip unzip
-            # - install pip packages
-            pip install --upgrade pip setuptools wheel cython
-            pip install build numpy==${{ matrix.numpy }}
+            # - install pip packages (pip/setuptools/wheel/cython pinned to DBR 17.3 LTS;
+            #   build pinned to current PyPI stable). Update both this and python_build/action.yml together.
+            pip install --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1 cython==3.0.12
+            pip install build==1.4.4 numpy==${{ matrix.numpy }}
             pip install pyspark==${{ matrix.spark }}
             # - install GDAL Python bindings (numpy must be installed first)
             #   detect installed GDAL version and use it if different from matrix version
@@ -87,9 +93,12 @@ runs:
           shell: bash
           run: |
             if [ -f target/scoverage.xml ]; then
-              rate=$(sed -n 's/.*statement-rate="\([^"]*\)".*/\1/p' target/scoverage.xml | head -1)
-              inv=$(sed -n 's/.*statements-invoked="\([^"]*\)".*/\1/p' target/scoverage.xml | head -1)
-              tot=$(sed -n 's/.*statement-count="\([^"]*\)".*/\1/p' target/scoverage.xml | head -1)
+              # awk (not `sed | head -1`): scoverage.xml has multiple matching
+              # lines and `head -1` closes the pipe, sending sed SIGPIPE 141.
+              # Under GHA's default `bash -eo pipefail`, that fails the step.
+              rate=$(awk 'match($0, /statement-rate="[^"]*"/) { v=substr($0, RSTART+16, RLENGTH-17); print v; exit }' target/scoverage.xml)
+              inv=$(awk 'match($0, /statements-invoked="[^"]*"/) { v=substr($0, RSTART+20, RLENGTH-21); print v; exit }' target/scoverage.xml)
+              tot=$(awk 'match($0, /statement-count="[^"]*"/) { v=substr($0, RSTART+17, RLENGTH-18); print v; exit }' target/scoverage.xml)
               echo ""
               echo "============================== Scala coverage ==============================="
               echo "Scala coverage: ${rate}% (${inv}/${tot} statements)"

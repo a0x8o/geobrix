@@ -470,6 +470,87 @@ gbx:docker:rebuild --start
 - **Mounted to**: `/root/geobrix/scripts/docker/m2/`
 - **Purpose**: Persist Maven dependencies between container restarts
 
+## Registry proxies (Databricks-specific)
+
+Per [go/pypi-registry-access](https://go/pypi-registry-access) and
+go/maven-registry-access, public PyPI and Maven Central are DNS-blocked from
+the Databricks corp network as a supply-chain hardening measure (proxies
+filter package versions newer than 7 days). The dev container is configured
+to route through the corp proxies:
+
+| Tool | Proxy URL | Configured by |
+|---|---|---|
+| pip | `https://pypi-proxy.dev.databricks.com/simple` | `Dockerfile` writes `/etc/pip.conf` + sets `PIP_INDEX_URL` env |
+| Maven | `https://maven-proxy.dev.databricks.com` | `scripts/docker/m2/settings.xml` `<mirror>` block |
+
+If a `pip install` step in the Dockerfile fails with `Connection refused` or
+`Could not find a version` listing only old releases, you've hit either the
+network block (proxy unreachable) or the 7-day embargo (the version you want
+was published <7 days ago — pick the prior stable release).
+
+## Local GitHub Actions dry-runs with `act`
+
+Separate from the dev container (`geobrix-dev`), there's a second Docker image
+purpose-built for **local CI validation** — `geobrix-ci-runner:local`. It's
+shaped like a GitHub-hosted runner (`catthehacker/ubuntu:act-24.04`, the slim
+~700 MB `act` runner image) with the Databricks corp registry proxies
+(pip / Maven / npm) pre-baked, so workflow steps that pip/mvn/npm install can
+flow through the same proxies the dev container uses.
+
+### When to use
+
+- After editing any `.github/workflows/*.yml` or `.github/actions/*/action.yml`
+- Before push, to catch typos, action SHA pin breakage, step ordering issues
+- To debug a CI failure that doesn't reproduce locally
+
+### Quickstart
+
+```bash
+brew install act              # one-time
+gbx:ci:act -l                  # list jobs across workflows
+gbx:ci:act -W .github/workflows/build_main.yml -j build   # run one job
+gbx:ci:act push                # simulate a push event
+```
+
+First run builds the runner image (~5 min, cached after).
+
+### How real `.github/` stays untouched
+
+`act` parses workflow + composite-action YAML on the host filesystem *before*
+any container starts, so we need the overlay on disk — not just inside the
+container. `scripts/ci-local/run-act.sh` regenerates a mirror at
+`.cache/act-workspace/` (gitignored) on every run:
+
+- `.github/` is freshly copied (~100 KB, ~50 ms) with the jfrog-auth stub
+  overlaid on top.
+- Every other top-level entry (`pom.xml`, `src/`, `scripts/`, `.git`, …) is
+  symlinked back to the real project, so workflow content is identical.
+- `act --bind` runs from inside the mirror; `actions/checkout` becomes a
+  no-op (uses the bind-mounted workspace as-is).
+
+The real `.github/` tree on disk is never modified — only the mirror's copy
+is. JFrog OIDC can't run locally (no real GitHub OIDC issuer); pip / Maven /
+npm fall back to the corp proxies pre-baked in the runner image.
+
+### Files
+
+| Path | Purpose |
+|---|---|
+| `scripts/ci-local/Dockerfile.gha-runner` | Runner image build |
+| `scripts/ci-local/{pip.conf,maven-settings.xml,npmrc}` | Proxy configs baked into the image |
+| `scripts/ci-local/jfrog-auth-stub/action.yml` | No-op overlay |
+| `scripts/ci-local/run-act.sh` | act invocation with overlay mount |
+| `scripts/ci-local/README.md` | Detailed mechanics + caveats |
+| `.cursor/commands/gbx-ci-act.{sh,md}` | Cursor command wrapper |
+
+### Caveats
+
+- **JFrog OIDC**: mocked locally (stub action). Real OIDC exchange runs only in CI.
+- **`runs-on: larger-runners`**: treated as a label alias; you don't actually get a "larger" machine — just whatever Docker resources are available.
+- **Real GitHub event payloads**: `act` mocks `head_sha`, `head_ref`, etc.
+- **Secrets**: only `GITHUB_TOKEN` is provided (auto-mocked); workflows fall back via the `REPO_ACCESS_TOKEN || GITHUB_TOKEN` pattern. `CODECOV_TOKEN` is missing but the upload step has `fail_ci_if_error: false`.
+- **Org-level runner-group policy**: not simulated (which is fine — local runs use a local Docker container regardless).
+
 ### Settings File
 - **Location**: `scripts/docker/m2/settings.xml`
 - **Key settings**:
@@ -483,9 +564,18 @@ gbx:docker:rebuild --start
 ## Environment Variables
 
 ### Key Variables in Container
+Pinned in `scripts/docker/Dockerfile` (DBR 17.3 LTS aligned). Run
+`gbx:versions:audit` to see all of them. The most load-bearing:
+
 ```bash
-SPARK_VERSION=3.5.3         # Spark version
-GDAL_VERSION=3.10.0         # GDAL version
+SPARK_VERSION=4.0.0         # Spark version (DBR 17.3 LTS)
+NUMPY_VERSION=2.1.3         # NumPy 2.x (DBR 17.3 LTS)
+PANDAS_VERSION=2.2.3        # pandas (DBR 17.3 LTS)
+PIP_VERSION=25.0.1          # pip (DBR 17.3 LTS)
+SETUPTOOLS_VERSION=74.0.0   # setuptools (DBR 17.3 LTS)
+WHEEL_VERSION=0.45.1        # wheel (DBR 17.3 LTS)
+# GDAL is NOT in DBR; built from ubuntugis PPA.
+# Python bindings auto-detect via `gdal-config --version` (currently 3.11.4).
 JUPYTER_PLATFORM_DIRS=1     # Suppress Jupyter warnings
 ```
 

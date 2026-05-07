@@ -20,7 +20,7 @@ jobs:
   # Regenerate doc-snippet-inventory and push to the PR branch (not master). Only for PRs targeting master.
   update-doc-inventory:
     runs-on:
-      group: databricks-protected-runner-group
+      group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     if: github.event_name == 'pull_request' && github.base_ref == 'master'
     # Scoped to protected env so REPO_ACCESS_TOKEN is only available to approved workflow runs.
@@ -45,11 +45,16 @@ jobs:
           git commit -m "chore(docs): rebuild doc-snippet-inventory.json [skip ci]"
           git push origin HEAD:${{ github.head_ref }}
   build:
+    # Heavy: full Scala test + Python test+coverage + GDAL native install (mvn -T 1C, ~10–15 min). Standard runner is too small.
     runs-on:
-      group: databricks-protected-runner-group
-      labels: linux-ubuntu-latest
+      group: larger-runners
+      labels: larger
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for pip/Maven via JFrog.
+      id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -116,7 +121,7 @@ jobs:
   codecov:
     name: Upload to Codecov
     runs-on:
-      group: databricks-protected-runner-group
+      group: databrickslabs-protected-runner-group
       labels: linux-ubuntu-latest
     needs: build
     if: always() && needs.build.result == 'success'

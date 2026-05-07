@@ -385,6 +385,18 @@
                             <minimumCoverage>${minimum.coverage}</minimumCoverage>
                             <failOnMinimumCoverage>false</failOnMinimumCoverage>
                             <scalaVersion>${scala.version}</scalaVersion>
+                            <!--
+                                Pin the scalac scoverage compiler plugin to a version that
+                                actually exists for scala_2.13.12. scoverage-maven-plugin
+                                2.1.5's `scalacPluginVersion` defaults to "2.5.2", which is
+                                NOT published on Maven Central for scala 2.13.12 (only up
+                                through 2.3.0 exists for this scala minor). Without this
+                                pin, the build fails with "Could not find artifact
+                                org.scoverage:scalac-scoverage-plugin_2.13.12:jar:2.5.2".
+                                Bump alongside scoverage-maven-plugin upgrades; verify via
+                                maven-search.
+                            -->
+                            <scalacPluginVersion>2.3.0</scalacPluginVersion>
                             <!-- Exclude documentation test utilities from coverage -->
                             <excludedPackages>tests.docs.scala.*</excludedPackages>
                             <!-- Exclude not-yet-implemented / experimental (not registered, excluded from coverage) -->
@@ -427,6 +439,8 @@
                             <minimumCoverage>${minimum.coverage}</minimumCoverage>
                             <failOnMinimumCoverage>false</failOnMinimumCoverage>
                             <scalaVersion>${scala.version}</scalaVersion>
+                            <!-- See `large` profile above for why this pin is necessary. -->
+                            <scalacPluginVersion>2.3.0</scalacPluginVersion>
                             <excludedPackages>tests.docs.scala.*</excludedPackages>
                             <excludedFiles>.*RST_DTMFromGeoms\.scala;.*InterpolateElevation\.scala</excludedFiles>
                         </configuration>
@@ -467,7 +481,7 @@
                     <plugin>
                         <groupId>org.simplify4u.plugins</groupId>
                         <artifactId>pgpverify-maven-plugin</artifactId>
-                        <version>1.18.3</version>
+                        <version>1.19.1</version>
                         <executions>
                             <execution>
                                 <goals>

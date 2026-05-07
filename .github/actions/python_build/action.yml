@@ -17,6 +17,11 @@ runs:
         cache: 'pip'
         cache-dependency-path: '.ci-pip-cache-key'
         python-version: ${{ matrix.python }}
+    # Route pip through JFrog (OIDC) per go/hardened-gha policy.
+    # Idempotent if scala_build already ran in the same job (re-auths but env vars stay set).
+    # Caller job must declare `permissions: id-token: write`.
+    - name: Authenticate for JFrog (pip via OIDC)
+      uses: ./.github/actions/jfrog-auth
     - name: Add packaged GDAL dependencies
       shell: bash
       run: |
@@ -42,10 +47,11 @@ runs:
     - name: Install python dependencies
       shell: bash
       run: |
-        # - install pip libs
+        # - install pip libs (pip/setuptools/wheel/cython pinned to DBR 17.3 LTS;
+        #   build pinned to current PyPI stable). Update both this and scala_build/action.yml together.
         #   note: gdal requires the extra args
-        pip install --upgrade pip setuptools wheel cython
-        pip install build numpy==${{ matrix.numpy }}
+        pip install --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1 cython==3.0.12
+        pip install build==1.4.4 numpy==${{ matrix.numpy }}
         pip install pyspark==${{ matrix.spark }}
         # - install GDAL Python bindings (numpy must be installed first)
         #   detect installed GDAL version and use it if different from matrix version
@@ -81,7 +87,7 @@ runs:
         cd python/geobrix
         python -m build
         if [ "${{ inputs.enable_coverage }}" = "true" ]; then
-          pip install pytest-cov -q
+          pip install pytest-cov==7.1.0 -q
           pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
         else
           pytest -m "not integration"

@@ -1,5 +1,8 @@
-# Dependencies for notebooks/tests (install from repo root or notebooks/tests/)
-pytest>=7.0
-nbformat>=5.0
-nbconvert>=7.0
+# Dependencies for notebooks/tests (install from repo root or notebooks/tests/).
+# Pinned to match scripts/docker/Dockerfile / DBR 17.3 LTS. Update via `gbx:versions:audit`.
+# pytest is intentionally CI-matrix (8.4.2), not DBR's 8.3.5 — we don't run tests in DBR.
+pytest==8.4.2
+nbformat==5.10.4
+nbconvert==7.16.4
+# Not in DBR — keep lower bound (testbook is small, low drift risk).
 testbook>=0.4.0
