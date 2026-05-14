@@ -145,8 +145,11 @@ ${INCLUDE_INTEGRATION:+export GBX_NOTEBOOK_INCLUDE_INTEGRATION=1}
 ${ALLOW_ABSOLUTE_READS:+export GBX_NOTEBOOK_ALLOW_ABSOLUTE_READS=1}
 ${ALLOW_ABSOLUTE_WRITES:+export GBX_NOTEBOOK_ALLOW_ABSOLUTE_WRITES=1}
 cd /root/geobrix
-pip install -e /root/geobrix/python/geobrix --break-system-packages -q 2>/dev/null || true
-pip install nbformat nbconvert --break-system-packages -q 2>/dev/null || true
+# Install the local geobrix package (no deps — runtime deps are already in
+# the hash-pinned dev container lockfile). nbformat / nbconvert are also
+# pre-installed there; no ad-hoc pip install needed (would defeat the
+# supply-chain hardening).
+pip install --no-deps -e /root/geobrix/python/geobrix --break-system-packages -q 2>/dev/null || true
 python3 /root/geobrix/notebooks/tests/run_notebooks_cell_by_cell.py ${PATH_ARG:+"$PATH_ARG"}
 "
 

@@ -52,7 +52,15 @@ fi
 # building native arm64 here would 404 on every apt-get install.
 if ! docker image inspect "$RUNNER_IMAGE" >/dev/null 2>&1; then
     echo "🔨 Building $RUNNER_IMAGE for linux/amd64 (one-time, ~2 min)..."
+    # Forward host registry proxy URLs (if set) as build args. Databricks
+    # employees export these per go/{pypi,maven,npm}-registry-access; external
+    # contributors leave them unset and the image uses public registries.
+    BUILD_ARGS=()
+    [ -n "${PIP_INDEX_URL:-}" ]    && BUILD_ARGS+=("--build-arg" "PIP_INDEX_URL=${PIP_INDEX_URL}")
+    [ -n "${MAVEN_MIRROR_URL:-}" ] && BUILD_ARGS+=("--build-arg" "MAVEN_MIRROR_URL=${MAVEN_MIRROR_URL}")
+    [ -n "${NPM_REGISTRY_URL:-}" ] && BUILD_ARGS+=("--build-arg" "NPM_REGISTRY_URL=${NPM_REGISTRY_URL}")
     docker build --platform linux/amd64 -t "$RUNNER_IMAGE" \
+        "${BUILD_ARGS[@]}" \
         -f "$SCRIPT_DIR/Dockerfile.gha-runner" \
         "$SCRIPT_DIR/"
     echo "✅ $RUNNER_IMAGE built."
@@ -162,8 +170,8 @@ echo "🔧 Patching mvn invocations: add -Dscoverage.scalacPluginVersion=2.3.0 i
 for af in "$WORKSPACE"/.github/actions/scala_build/action.yml; do
     [ -f "$af" ] || continue
     sed -i.bak \
-        -e 's|mvn -T 1C -q clean scoverage:test|mvn -T 1C -q -Dscoverage.scalacPluginVersion=2.3.0 clean scoverage:test|g' \
-        -e 's|mvn -q scoverage:report-only|mvn -q -Dscoverage.scalacPluginVersion=2.3.0 scoverage:report-only|g' \
+        -e 's|mvn -T 1C -C -q clean scoverage:test|mvn -T 1C -C -q -Dscoverage.scalacPluginVersion=2.3.0 clean scoverage:test|g' \
+        -e 's|mvn -C -q scoverage:report-only|mvn -C -q -Dscoverage.scalacPluginVersion=2.3.0 scoverage:report-only|g' \
         "$af"
     if ! diff -q "$af.bak" "$af" >/dev/null 2>&1; then
         echo "   patched: $(basename "$(dirname "$af")")/$(basename "$af")"

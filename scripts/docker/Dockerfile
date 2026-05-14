@@ -20,7 +20,21 @@ FROM --platform=${BUILDPLATFORM} ubuntu@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg && mkdir -p /usr/share/keyrings
 
-RUN curl -fsSL https://repos.azul.com/azul-repo.key | gpg --dearmor -o /usr/share/keyrings/azul.gpg \
+# Azul Zulu signing key fingerprint (Labs lockdown policy: replace TOFU with
+# explicit fingerprint pin). The downloaded key MUST present this fingerprint;
+# any other key — including a different valid key on the same URL — fails the
+# build. Cross-check on key bump:
+#   gpg --show-keys --with-fingerprint --with-colons azul-repo.key
+# Current fingerprint sourced from repos.azul.com 2026-05-14:
+ARG AZUL_FPR=27BC0C8CB3D81623F59BDADCB1998361219BD9C9
+RUN curl -fsSL https://repos.azul.com/azul-repo.key -o /tmp/azul-repo.key \
+    && actual_fpr=$(gpg --show-keys --with-fingerprint --with-colons /tmp/azul-repo.key | awk -F: '/^fpr:/ {print $10; exit}') \
+    && if [ "$actual_fpr" != "$AZUL_FPR" ]; then \
+         echo "Azul key fingerprint mismatch: got=$actual_fpr expected=$AZUL_FPR" >&2; \
+         exit 1; \
+       fi \
+    && gpg --dearmor < /tmp/azul-repo.key > /usr/share/keyrings/azul.gpg \
+    && rm /tmp/azul-repo.key \
     && echo "deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main" > /etc/apt/sources.list.d/azul.list
 
 RUN apt-get update && apt-get install -y zulu17-jdk --no-install-recommends \
@@ -179,7 +193,7 @@ ENV TORNADO_VERSION=6.4.2
 ENV NBFORMAT_VERSION=5.10.4
 ENV NBCONVERT_VERSION=7.16.4
 # Not in DBR; pinned to a PyPI stable that pre-dates the 7-day embargo on the
-# corp pypi-proxy.dev.databricks.com (per go/pypi-registry-access). build/pytest-cov also match CI.
+# corp pip proxy (per go/pypi-registry-access). build/pytest-cov also match CI.
 # 1.5.0 (released 2026-04-30) is currently embargoed; 1.4.4 is the latest available.
 ENV BUILD_VERSION=1.4.4
 ENV PYTEST_VERSION=8.4.2
@@ -196,50 +210,60 @@ ENV PYZMQ_VERSION=25.1.1
 
 # --- Python Environment ---
 #
-# DATABRICKS-SPECIFIC: route pip through the corp PyPI proxy.
+# Pip index URL is injectable via --build-arg so this Dockerfile is usable
+# both outside Databricks (defaults to public PyPI) and inside Databricks
+# (override to the corp pip proxy required by go/pypi-registry-access, which
+# DNS-blocks public PyPI as a supply-chain hardening measure).
 #
-# Per go/pypi-registry-access (Remote registry access at Databricks), public
-# PyPI (pypi.org) is DNS-blocked from Databricks corp network as a supply-chain
-# hardening measure (the proxy filters package versions newer than 7 days).
-# Without this configuration, every `pip install` in subsequent layers fails
-# with "Connection refused" / cannot resolve pypi.org.
-#
-# This is the local-build counterpart to CI's JFrog OIDC routing: CI uses
-# JFrog `db-pypi` (token-bound), local Docker uses the corp PyPI proxy
-# (network-bound). Both are Databricks-managed trust boundaries.
-#
-# Mirrors the existing Maven proxy pattern (~/.m2/settings.xml → maven-proxy.dev.databricks.com).
-# Update if go/pypi-registry-access changes the URL.
-RUN mkdir -p /etc/pip /root/.pip && printf '[global]\ntimeout = 60\nindex-url = https://pypi-proxy.dev.databricks.com/simple\n' | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null
-ENV PIP_INDEX_URL=https://pypi-proxy.dev.databricks.com/simple
+# Example:
+#   docker build --build-arg PIP_INDEX_URL="$PIP_INDEX_URL" ...
+# or set PIP_INDEX_URL in the host env before invoking scripts/docker/build_smart.sh.
+ARG PIP_INDEX_URL=
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+      mkdir -p /etc/pip /root/.pip && \
+      printf '[global]\ntimeout = 60\nindex-url = %s\n' "$PIP_INDEX_URL" \
+        | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null; \
+    fi
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 
-# 1. Upgrade pip using --ignore-installed to bypass the Debian RECORD error
+# --- Hash-pinned Python install (Labs lockdown — supply chain) ---
+#
+# The full Python dependency closure for the dev container is locked with
+# sha256 hashes in python/geobrix/requirements-dev-container.txt. pip refuses
+# to install anything whose hash doesn't match. This protects against a
+# compromised PyPI mirror substituting same-version-but-different-bytes
+# wheels at docker-build time (the LiteLLM-class attack vector).
+#
+# Pinned versions in the .in source match the ENV block above (DBR 17.3 LTS
+# aligned where applicable). GDAL is NOT in the lockfile — its Python wheel
+# must build against the gdal-config from Stage 4 (source build).
+#
+# Regenerate via:
+#   docker exec -it geobrix-dev bash -lc \
+#     'cd /root/geobrix/python/geobrix && \
+#      uv pip compile --generate-hashes --python-version 3.12 \
+#         --output-file requirements-dev-container.txt requirements-dev-container.in'
+
+# 1. Upgrade pip itself to a known version BEFORE consuming the hash-pinned
+#    lockfile. --ignore-installed bypasses the Debian RECORD error.
 RUN python3 -m pip install --upgrade pip==$PIP_VERSION --ignore-installed --break-system-packages
 
-# 2. Install base tools and NumPy 2.x
-RUN pip3 install wheel==$WHEEL_VERSION \
-    setuptools==$SETUPTOOLS_VERSION \
-    numpy==$NUMPY_VERSION \
-    --ignore-installed \
-    --break-system-packages
+# 2. Copy the lockfile (and its .in source for in-container regen if needed).
+COPY --link python/geobrix/requirements-dev-container.in python/geobrix/requirements-dev-container.txt /tmp/
 
-# 3. Build Python GDAL against your source headers
+# 3. Install the full hash-pinned closure (~110 packages).
+#    --ignore-installed: skip pip's pre-install uninstall pass. apt-installed
+#    python3-wheel/python3-setuptools have no RECORD file so pip refuses to
+#    uninstall them; without this flag pip aborts when an apt-managed package
+#    version differs from the lockfile pin. Safe because --require-hashes
+#    still cryptographically verifies every byte that lands on disk.
+RUN pip3 install --require-hashes --ignore-installed -r /tmp/requirements-dev-container.txt --break-system-packages
+
+# 4. Build the GDAL Python binding against the source headers from Stage 4.
+#    Cannot be hash-pinned because the version is dynamic (matches the
+#    source-built libgdal). Verified against the source tarball's pinned
+#    SHA-256 in Stage 4 — so the binding is built from already-verified bytes.
 RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
-
-# Build GDAL Python bindings against the source headers built in Stage 4
-RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
-
-# Final library installs. All pinned packages match CI / DBR 17.3 LTS or current
-# PyPI stable — see ENV block above for sources. Unpinned: black/isort/flake8 (lint
-# tools, version drift is low-risk), py4j (tracks pyspark), pystac-client/
-# planetary-computer/rasterio/rioxarray/pdal (geospatial dev stack, not in DBR),
-# pytest-mock/nest-asyncio/pytest-asyncio (test helpers, not in DBR).
-RUN pip3 install black isort flake8 build==$BUILD_VERSION py4j requests==$REQUESTS_VERSION \
-        keplergl==$KEPLERGL_VERSION ipython==$IPYTHON_VERSION ipykernel==$IPYKERNEL_VERSION \
-        ipywidgets==$IPYWIDGETS_VERSION pyspark==$SPARK_VERSION --break-system-packages \
-    && pip3 install pytest==$PYTEST_VERSION pytest-cov==$PYTEST_COV_VERSION pytest-mock nest-asyncio pytest-asyncio --break-system-packages \
-    && pip3 install pandas==$PANDAS_VERSION geopandas==$GEOPANDAS_VERSION pystac-client planetary-computer rasterio rioxarray --break-system-packages \
-    && pip3 install pdal --break-system-packages
 
 # ZMQ fixes
 ENV ZMQ_TRANSPORT=tcp
@@ -272,7 +296,7 @@ WORKDIR /root/geobrix
 
 # Copy the entrypoint script into the container
 # this starts haveged (maybe more?)
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Make the entrypoint script executable
 RUN chmod +x /usr/local/bin/entrypoint.sh

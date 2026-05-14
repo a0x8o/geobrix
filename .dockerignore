@@ -1,0 +1,43 @@
+# Exclude heavy / derived / secret directories from the docker build context.
+# Context is the project root (per scripts/docker/build_smart.sh) so the
+# Dockerfile's COPY can reach python/geobrix/. Without this file, docker would
+# stream the entire repo (incl. target/, .git/, sample-data/) on every build.
+
+# Build / cache artifacts
+**/target/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.pyc
+.cache/
+test-logs/
+coverage-reports/
+staging/
+
+# VCS and editor
+.git/
+.idea/
+.vscode/
+*.swp
+
+# Per-host caches (Maven, npm, virtualenvs)
+scripts/docker/m2/
+node_modules/
+docs/node_modules/
+docs/build/
+python/geobrix/.venv/
+**/dist/
+**/*.egg-info/
+
+# Large data
+sample-data/Volumes/
+resources/static/*.zip
+**/*.tar.gz
+**/*.zip
+
+# Secrets
+.env
+.env.local
+**/credentials.json
+**/.aws/

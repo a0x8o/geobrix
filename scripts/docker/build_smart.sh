@@ -83,6 +83,14 @@ trap 'log_error "Build failed at stage: ${CURRENT_STAGE}"; exit 1' ERR
 START_TIME=$(date +%s)
 log_info "Starting smart build for ${FINAL_TAG}..."
 
+# Forward host PIP_INDEX_URL into the build if set. Databricks employees should
+# have this exported per go/pypi-registry-access; external contributors can
+# leave it unset to use public PyPI.
+if [ -n "${PIP_INDEX_URL:-}" ]; then
+    log_info "Using PIP_INDEX_URL from host environment for the build."
+    EXTRA_ARGS+=("--build-arg" "PIP_INDEX_URL=${PIP_INDEX_URL}")
+fi
+
 # --- STEP 1: PULL LATEST BASE ---
 if [ "$FORCE_PULL" = true ]; then
     log_info "Checking for latest Ubuntu 24.04 security patches..."
@@ -104,12 +112,17 @@ for STAGE in "${STAGES[@]}"; do
     log_info "Building stage: ${YELLOW}${STAGE}${NC}..."
     STAGE_START=$(date +%s)
 
-    # Note: Using "${EXTRA_ARGS[@]}" preserves spaces in arguments
+    # Note: Using "${EXTRA_ARGS[@]}" preserves spaces in arguments.
+    # Context is the project root so the Dockerfile's COPY can reach
+    # python/geobrix/requirements-dev-container.{in,txt} for the hash-pinned
+    # pip install. Dockerfile path is explicit via -f.
+    PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
     docker build \
         $PULL_FLAG \
         --target "$STAGE" \
         -t "$STAGE_TAG" \
-        "${EXTRA_ARGS[@]}" .
+        -f "$PROJECT_ROOT/scripts/docker/Dockerfile" \
+        "${EXTRA_ARGS[@]}" "$PROJECT_ROOT"
 
     STAGE_END=$(date +%s)
     log_success "Stage ${STAGE} completed in $((STAGE_END - STAGE_START))s."

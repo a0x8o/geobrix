@@ -6,10 +6,10 @@ Validate `.github/workflows/*.yml` changes locally before pushing. Catches ~80% 
 
 | File | Purpose |
 |---|---|
-| `Dockerfile.gha-runner` | Runner image: `catthehacker/ubuntu:act-24.04` (slim ~700 MB) + corp pip/Maven/npm proxy pre-baked. Tagged `geobrix-ci-runner:local`. |
-| `pip.conf` | Pip config baked into the runner image (`pypi-proxy.dev.databricks.com`). |
-| `maven-settings.xml` | Maven `<mirror>` settings baked into the runner image (`maven-proxy.dev.databricks.com`). |
-| `npmrc` | npm registry config baked into the runner image (`npm-proxy.dev.databricks.com`); also covers yarn classic + pnpm. Used by `deploy-docs.yml`'s `npm ci`. |
+| `Dockerfile.gha-runner` | Runner image: `catthehacker/ubuntu:runner-24.04` digest-pinned. Pip/Maven/npm registry URLs are build-arg injected (defaults: public registries). Tagged `geobrix-ci-runner:local`. |
+| `pip.conf` | Pip config skeleton baked into the runner image. `index-url` injected at build time from `$PIP_INDEX_URL`. |
+| `maven-settings.xml` | Maven `<settings>` skeleton baked into the runner image. `<mirror>` injected at build time from `$MAVEN_MIRROR_URL`. |
+| `npmrc` | npm registry config skeleton baked into the runner image; also covers yarn classic + pnpm. `registry=` injected at build time from `$NPM_REGISTRY_URL`. Used by `deploy-docs.yml`'s `npm ci`. |
 | `jfrog-auth-stub/action.yml` | No-op composite action. Copied by `run-act.sh` into a sibling workspace mirror (`.cache/act-workspace/`) where it overlays the real one — see "How real `.github/` stays untouched" below. |
 | `run-act.sh` | Pre-flight checks + image build + workspace-mirror prep + `act` invocation. |
 
@@ -51,7 +51,7 @@ PROJECT_ROOT/                       # real, never modified
 └── ...                             # all other top-level entries symlinked
 ```
 
-`run-act.sh` `cd`s into the mirror, then invokes `act --bind`, so the bind-mounted workspace is the mirror. The stub composite emits a `::notice::` and exits; pip/Maven still find the corp proxy via the pre-baked config in the runner image.
+`run-act.sh` `cd`s into the mirror, then invokes `act --bind`, so the bind-mounted workspace is the mirror. The stub composite emits a `::notice::` and exits; pip/Maven still find whatever registry was injected at image build time (corp proxy for Databricks employees who set `PIP_INDEX_URL` etc. before building, public registries otherwise).
 
 The mirror is regenerated from scratch on every run — fast (~50 ms) because `.github/` is small (~100 KB) and everything else is symlinked.
 
@@ -74,7 +74,7 @@ If a workflow change is suspected to be the source of a CI failure, check `gbx:v
 - Workflow YAML syntax + action SHA pin validity
 - Step ordering (e.g. would `setup-python` actually be available before our pip step?)
 - Composite action structure (`scala_build`, `python_build`)
-- pip + Maven installs (route through corp proxy, same as the dev container)
+- pip + Maven installs (route through whichever registry was build-arg-injected)
 - Most matrix expansions
 - Conditional `if:` evaluation
 
@@ -114,7 +114,7 @@ fix that also keeps us workflow-faithful (real CI is amd64 too).
 ## Maintenance
 
 - **If catthehacker bumps `ubuntu:full-24.04`**, rebuild: `docker rmi geobrix-ci-runner:local && bash scripts/ci-local/run-act.sh -l`.
-- **If proxy URLs change** (per go/pypi-registry-access or go/maven-registry-access), edit `pip.conf` / `maven-settings.xml` and rebuild.
+- **If proxy URLs change** (per go/{pypi,maven,npm}-registry-access), update the host env vars (`PIP_INDEX_URL` / `MAVEN_MIRROR_URL` / `NPM_REGISTRY_URL`) and rebuild the runner image — `docker rmi geobrix-ci-runner:local && bash scripts/ci-local/run-act.sh -l`.
 - **If a new composite action also needs OIDC and act-stubbing**, add a sibling stub directory and extend `run-act.sh` with another `--container-options` mount.
 
 ## See also

@@ -39,31 +39,41 @@ runs:
         sudo apt-get install -y software-properties-common
         sudo add-apt-repository -y ppa:ubuntugis/ubuntugis-unstable
         sudo apt-get update -y
-        # - install natives (same set as scala_build minus zip/unzip and .so copy)
+        # - install natives. GDAL packages exact-pinned to a single ubuntugis-unstable
+        #   build to keep CI deterministic against PPA drift. Bump GDAL_PPA_VERSION in
+        #   lockstep with matrix.gdal across action.yml files. Find current version at
+        #   https://launchpad.net/~ubuntugis/+archive/ubuntu/ubuntugis-unstable/+packages
+        GDAL_PPA_VERSION="3.11.4+dfsg-1~noble0"
         sudo apt-get -o DPkg::Lock::Timeout=-1 install -y unixodbc libcurl3-gnutls libsnappy-dev libopenjp2-7
-        sudo apt-get -o DPkg::Lock::Timeout=-1 install -y libgdal-dev gdal-bin python3-gdal
+        sudo apt-get -o DPkg::Lock::Timeout=-1 install -y \
+          "libgdal-dev=${GDAL_PPA_VERSION}" \
+          "gdal-bin=${GDAL_PPA_VERSION}" \
+          "python3-gdal=${GDAL_PPA_VERSION}"
         # - save apt archives for next run (workflow caches .cache/apt-archives)
         sudo cp -n /var/cache/apt/archives/*.deb .cache/apt-archives/ 2>/dev/null || true
-    - name: Install python dependencies
+    - name: Install python dependencies (hash-pinned via requirements-ci.txt)
       shell: bash
       run: |
-        # - install pip libs (pip/setuptools/wheel/cython pinned to DBR 17.3 LTS;
-        #   build pinned to current PyPI stable). Update both this and scala_build/action.yml together.
-        #   note: gdal requires the extra args
-        pip install --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1 cython==3.0.12
-        pip install build==1.4.4 numpy==${{ matrix.numpy }}
-        pip install pyspark==${{ matrix.spark }}
-        # - install GDAL Python bindings (numpy must be installed first)
-        #   detect installed GDAL version and use it if different from matrix version
+        # Bootstrap pip itself to a known version (must come before --require-hashes).
+        # pip ships with the actions/setup-python tool-cache Python, which is
+        # itself hash-pinned by setup-python's release manifest.
+        pip install --upgrade pip==25.0.1
+        # Now consume the hash-pinned lockfile. Every transitive dep is locked
+        # with sha256; pip refuses to install if a hash doesn't match.
+        # Regenerate via: uv pip compile --generate-hashes python/geobrix/requirements-ci.in
+        pip install --require-hashes -r python/geobrix/requirements-ci.txt
+        # GDAL is the one exception: the wheel must match the system's
+        # apt-installed native, which is version-pinned by GDAL_PPA_VERSION
+        # above. We detect it and install at that version, NOT from the lockfile.
         export GDAL_CONFIG=/usr/bin/gdal-config
         INSTALLED_GDAL_VERSION=$(gdal-config --version)
         echo "System GDAL version: ${INSTALLED_GDAL_VERSION}"
         echo "Matrix GDAL version: ${{ matrix.gdal }}"
-        # Use installed version if available, otherwise use matrix version
         GDAL_VERSION_TO_INSTALL="${INSTALLED_GDAL_VERSION:-${{ matrix.gdal }}}"
         pip install --no-build-isolation gdal[numpy]==${GDAL_VERSION_TO_INSTALL}
-        pip install pytest==${{ matrix.pytest }}
-        pip install python/geobrix[dev]
+        # Install the in-repo geobrix package (no extras — dev/test deps are
+        # already locked in requirements-ci.txt).
+        pip install --no-deps python/geobrix
     - name: Lint Python (isort, black, flake8)
       if: inputs.run_lint == 'true'
       shell: bash
@@ -86,8 +96,8 @@ runs:
       run: |
         cd python/geobrix
         python -m build
+        # pytest-cov is already locked in requirements-ci.txt; no extra install needed.
         if [ "${{ inputs.enable_coverage }}" = "true" ]; then
-          pip install pytest-cov==7.1.0 -q
           pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
         else
           pytest -m "not integration"

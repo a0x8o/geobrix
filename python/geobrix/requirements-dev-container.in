@@ -1,0 +1,65 @@
+# Source of truth for the geobrix-dev Docker image's Python deps.
+# Consumed by scripts/docker/Dockerfile via:
+#   pip install --require-hashes -r python/geobrix/requirements-dev-container.txt
+#
+# Regenerate the hash-pinned lock alongside any edit:
+#   docker exec -it geobrix-dev bash -lc \
+#     'cd /root/geobrix/python/geobrix && \
+#      uv pip compile --generate-hashes --python-version 3.12 \
+#         --output-file requirements-dev-container.txt requirements-dev-container.in'
+#
+# All versions match scripts/docker/Dockerfile's ENV block (DBR 17.3 LTS-aligned
+# where applicable). GDAL is NOT included — it's built from source and the
+# Python binding is installed against the local gdal-config --version.
+#
+# Bump procedure: edit a pin, regenerate the .txt, rebuild the image with
+# `scripts/docker/build_smart.sh --no-cache`, smoke-test.
+
+# --- toolchain ---
+pip==25.0.1
+setuptools==74.0.0
+wheel==0.45.1
+cython==3.0.12
+build==1.4.4
+
+# --- DBR-aligned runtime / numeric stack ---
+numpy==2.1.3
+pandas==2.2.3
+pyspark==4.0.0
+py4j==0.10.9.9
+requests==2.32.3
+
+# --- geospatial dev stack (not in DBR) ---
+geopandas==1.1.3
+keplergl==0.3.2
+pystac-client==0.9.0
+planetary-computer==1.0.0
+rasterio==1.5.0
+rioxarray==0.22.0
+pdal==3.5.3
+
+# --- lint tooling ---
+black==26.3.1
+isort==8.0.1
+flake8==7.3.0
+
+# --- test tooling ---
+pytest==8.4.2
+pytest-cov==7.1.0
+pytest-mock==3.15.1
+pytest-asyncio==1.3.0
+nest-asyncio==1.6.0
+testbook==0.4.2
+
+# --- Jupyter (final stage only) ---
+ipython==8.30.0
+ipykernel==6.29.5
+ipywidgets==7.8.1
+jupyterlab==4.3.4
+jupyter_server==2.14.1
+jupyter_core==5.7.2
+jupyter_client==8.6.3
+tornado==6.4.2
+nbformat==5.10.4
+nbconvert==7.16.4
+pyzmq==25.1.1

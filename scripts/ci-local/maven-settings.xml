@@ -1,11 +1,11 @@
+<!--
+Maven settings baked into the local-act runner image.
+The <mirror> url is injected at image build time from $MAVEN_MIRROR_URL on the
+host (see Dockerfile.gha-runner). Databricks employees should set
+MAVEN_MIRROR_URL to the corp Maven proxy per go/maven-registry-access;
+external contributors can leave it unset to use Maven Central.
+-->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd">
-    <mirrors>
-        <mirror>
-            <id>db-maven-proxy</id>
-            <url>https://maven-proxy.dev.databricks.com</url>
-            <mirrorOf>central</mirrorOf>
-        </mirror>
-    </mirrors>
 </settings>

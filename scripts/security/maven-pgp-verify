@@ -22,7 +22,8 @@ set -eu
 root="$(git rev-parse --show-toplevel)"
 
 cd "${root}"
-exec mvn -B -Pverify-pgp verify \
+# -C: strict-checksums — fail (not warn) on missing/mismatched artifact checksums.
+exec mvn -B -C -Pverify-pgp verify \
     -DskipTests \
     -Dscoverage.skip \
     -Dscalastyle.skip=true

@@ -18,7 +18,12 @@
 # Build (one-time, via gbx:ci:act):
 #   docker build -t geobrix-ci-runner:local \
 #     -f scripts/ci-local/Dockerfile.gha-runner scripts/ci-local/
-FROM catthehacker/ubuntu:runner-24.04
+#
+# Pinned by digest (Labs lockdown policy: tags are mutable). To refresh,
+# `docker pull catthehacker/ubuntu:runner-24.04` and update the sha256 below.
+# Tag comment retained for readability.
+FROM catthehacker/ubuntu@sha256:5b8d45504136db3cc4758c0c16e32e21eb783e9645305a30a7333f8ba9b14ba4
+# catthehacker/ubuntu:runner-24.04
 
 # runner-24.04 defaults to a non-root `runner` user. Switch to root for our
 # config-file installs (pip.conf in /etc, maven settings.xml in /usr/share,
@@ -26,9 +31,18 @@ FROM catthehacker/ubuntu:runner-24.04
 # whatever USER ends the Dockerfile — leave that as the base image's default.
 USER root
 
-# Corp pip proxy (per go/pypi-registry-access). MUST come BEFORE any RUN that
-# invokes pip — otherwise build-time pip install hits public PyPI (blocked).
-ENV PIP_INDEX_URL=https://pypi-proxy.dev.databricks.com/simple
+# Pip / Maven / npm proxy URLs are injected via build args. Databricks
+# employees should export PIP_INDEX_URL, MAVEN_MIRROR_URL, NPM_REGISTRY_URL
+# (per go/pypi-registry-access, go/maven-registry-access, go/npm-registry-access)
+# before invoking scripts/ci-local/run-act.sh, which forwards them as build
+# args. External contributors leave them empty and get public registries.
+ARG PIP_INDEX_URL=
+ARG MAVEN_MIRROR_URL=
+ARG NPM_REGISTRY_URL=
+
+# Pip index URL must be set BEFORE any RUN that invokes pip — otherwise
+# build-time pip install hits whatever the host network resolves pypi.org to.
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 
 # Bypass PEP 668 "externally-managed-environment" on Ubuntu 24.04. Real GHA
 # runners avoid this because actions/setup-python extracts a fresh tool-cache
@@ -79,9 +93,13 @@ RUN curl -fsSL https://github.com/actions/python-versions/releases/download/3.12
 RUN /opt/hostedtoolcache/Python/3.12.3/x64/bin/pip install --no-warn-script-location setuptools wheel
 
 # pip.conf belt-and-suspenders for any tool that re-exec's pip with a fresh
-# environment that loses PIP_INDEX_URL.
+# environment that loses PIP_INDEX_URL. The base pip.conf is templated; we
+# inject the index-url at build time when PIP_INDEX_URL is set.
 COPY pip.conf /etc/pip.conf
-RUN mkdir -p /root/.pip && cp /etc/pip.conf /root/.pip/pip.conf \
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+      printf 'index-url = %s\n' "$PIP_INDEX_URL" >> /etc/pip.conf; \
+    fi \
+    && mkdir -p /root/.pip && cp /etc/pip.conf /root/.pip/pip.conf \
     && if id -u runner >/dev/null 2>&1; then \
          mkdir -p /home/runner/.pip \
          && cp /etc/pip.conf /home/runner/.pip/pip.conf \
@@ -114,18 +132,27 @@ RUN apt-get update \
 # `--no-build-isolation` from the gdal install line in the mirror so pip
 # gets to pick its own setuptools (whatever pip's bundled mechanism uses).
 
-# Corp Maven proxy (per go/maven-registry-access).
+# Corp Maven proxy (per go/maven-registry-access). Injected from MAVEN_MIRROR_URL
+# build arg when set; left as the empty template otherwise.
 # IMPORTANT: drop the proxy <mirror> in Maven's GLOBAL settings.xml at
 # /usr/share/maven/conf/settings.xml. The actions/setup-java action overwrites
 # the USER settings.xml at ~/.m2/settings.xml (overwrite-settings defaults to
 # true) on every workflow run — so user-level config is lost. Maven merges
 # global + user; the mirror lives in global where setup-java can't reach.
 COPY maven-settings.xml /usr/share/maven/conf/settings.xml
+RUN if [ -n "$MAVEN_MIRROR_URL" ]; then \
+      python3 -c "import sys, re; p='/usr/share/maven/conf/settings.xml'; s=open(p).read(); m=f'  <mirrors>\n    <mirror>\n      <id>db-maven-proxy</id>\n      <url>${MAVEN_MIRROR_URL}</url>\n      <mirrorOf>central</mirrorOf>\n    </mirror>\n  </mirrors>\n'; s=s.replace('</settings>', m+'</settings>'); open(p,'w').write(s)"; \
+    fi
 
 # Corp npm proxy (per go/npm-registry-access). Used by deploy-docs.yml's npm ci.
-# yarn classic + pnpm both read ~/.npmrc, so this covers them too.
+# yarn classic + pnpm both read ~/.npmrc, so this covers them too. The committed
+# npmrc is empty (no registry= line); we inject the registry from NPM_REGISTRY_URL
+# at build time when set.
 COPY npmrc /tmp/npmrc
-RUN cp /tmp/npmrc /root/.npmrc \
+RUN if [ -n "$NPM_REGISTRY_URL" ]; then \
+      printf 'registry=%s\n' "$NPM_REGISTRY_URL" >> /tmp/npmrc; \
+    fi \
+    && cp /tmp/npmrc /root/.npmrc \
     && if id -u runner >/dev/null 2>&1; then \
          cp /tmp/npmrc /home/runner/.npmrc \
          && chown runner:runner /home/runner/.npmrc; \

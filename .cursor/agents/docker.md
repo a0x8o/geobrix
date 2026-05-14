@@ -475,13 +475,17 @@ gbx:docker:rebuild --start
 Per [go/pypi-registry-access](https://go/pypi-registry-access) and
 go/maven-registry-access, public PyPI and Maven Central are DNS-blocked from
 the Databricks corp network as a supply-chain hardening measure (proxies
-filter package versions newer than 7 days). The dev container is configured
-to route through the corp proxies:
+filter package versions newer than 7 days). The dev container is built to
+route through whatever registry URLs the host environment supplies:
 
-| Tool | Proxy URL | Configured by |
+| Tool | Source of URL | Configured by |
 |---|---|---|
-| pip | `https://pypi-proxy.dev.databricks.com/simple` | `Dockerfile` writes `/etc/pip.conf` + sets `PIP_INDEX_URL` env |
-| Maven | `https://maven-proxy.dev.databricks.com` | `scripts/docker/m2/settings.xml` `<mirror>` block |
+| pip | host env `PIP_INDEX_URL` forwarded as `--build-arg` | `Dockerfile` writes `/etc/pip.conf` + sets `PIP_INDEX_URL` env only when set; `build_smart.sh` auto-forwards |
+| Maven | `scripts/docker/m2/settings.xml` `<mirror>` block (gitignored, host-local) | `docker_maven_setup.sh` |
+
+Databricks employees should export `PIP_INDEX_URL` per go/pypi-registry-access
+before building (or it'll be picked up automatically by `build_smart.sh`).
+External contributors leave it unset and the build uses public PyPI.
 
 If a `pip install` step in the Dockerfile fails with `Connection refused` or
 `Could not find a version` listing only old releases, you've hit either the
@@ -492,10 +496,11 @@ was published <7 days ago — pick the prior stable release).
 
 Separate from the dev container (`geobrix-dev`), there's a second Docker image
 purpose-built for **local CI validation** — `geobrix-ci-runner:local`. It's
-shaped like a GitHub-hosted runner (`catthehacker/ubuntu:act-24.04`, the slim
-~700 MB `act` runner image) with the Databricks corp registry proxies
-(pip / Maven / npm) pre-baked, so workflow steps that pip/mvn/npm install can
-flow through the same proxies the dev container uses.
+shaped like a GitHub-hosted runner (`catthehacker/ubuntu:runner-24.04`,
+digest-pinned). pip/Maven/npm registry URLs are build-arg injected from the
+host env (`PIP_INDEX_URL`, `MAVEN_MIRROR_URL`, `NPM_REGISTRY_URL`) so
+Databricks employees who set them per go/{pypi,maven,npm}-registry-access get
+the corp proxies; external contributors get public registries.
 
 ### When to use
 

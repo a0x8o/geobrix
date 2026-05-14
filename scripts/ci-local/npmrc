@@ -1,1 +1,5 @@
-registry=https://npm-proxy.dev.databricks.com/
+# npm config baked into the local-act runner image.
+# The registry url is injected at image build time from $NPM_REGISTRY_URL on
+# the host (see Dockerfile.gha-runner). Databricks employees should set
+# NPM_REGISTRY_URL to the corp npm proxy per go/npm-registry-access; external
+# contributors can leave it unset to use registry.npmjs.org.

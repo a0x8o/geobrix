@@ -19,14 +19,14 @@ name: Verify Maven dependency PGP signatures
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'pom.xml'
       - '.maven-keys.list'
       - '.github/workflows/verify-maven-pgp.yml'
       - 'scripts/security/maven-pgp-*'
   pull_request:
-    branches: [master]
+    branches: [main]
     paths:
       - 'pom.xml'
       - '.maven-keys.list'

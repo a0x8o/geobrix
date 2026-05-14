@@ -12,11 +12,15 @@ sudo apt-get update -y
 # update to your actual volume path
 VOL_DIR="/Volumes/geospatial_docs/gdal_artifacts/noble/geobrix"
 
-# install natives
+# install natives — keep GDAL_PPA_VERSION in sync with CI (.github/actions/*/action.yml).
 # https://gdal.org/en/stable/api/python/python_bindings.html
 # https://medium.com/@felipempfreelancer/install-gdal-for-python-on-ubuntu-24-04-9ed65dd39cac
+GDAL_PPA_VERSION="3.11.4+dfsg-1~noble0"
 sudo apt-get -o DPkg::Lock::Timeout=-1 install -y unixodbc libcurl3-gnutls libsnappy-dev libopenjp2-7
-sudo apt-get -o DPkg::Lock::Timeout=-1 install -y libgdal-dev gdal-bin python3-gdal
+sudo apt-get -o DPkg::Lock::Timeout=-1 install -y \
+  "libgdal-dev=${GDAL_PPA_VERSION}" \
+  "gdal-bin=${GDAL_PPA_VERSION}" \
+  "python3-gdal=${GDAL_PPA_VERSION}"
 
 # pip install GDAL (match deps to DBR 17.3 LTS — see release notes for the runtime).
 # Bootstrap pins must match .github/actions/{scala,python}_build/action.yml — keep these in sync.
