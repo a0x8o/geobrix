@@ -192,9 +192,9 @@ ENV JUPYTER_CLIENT_VERSION=8.6.3
 ENV TORNADO_VERSION=6.4.2
 ENV NBFORMAT_VERSION=5.10.4
 ENV NBCONVERT_VERSION=7.16.4
-# Not in DBR; pinned to a PyPI stable that pre-dates the 7-day embargo on the
-# corp pip proxy (per go/pypi-registry-access). build/pytest-cov also match CI.
-# 1.5.0 (released 2026-04-30) is currently embargoed; 1.4.4 is the latest available.
+# Not in DBR; pinned to a stable PyPI version. build/pytest-cov also match CI.
+# 1.5.0 (released 2026-04-30) is too new for some private PyPI mirrors that
+# embargo recent releases; 1.4.4 is the broadly-available latest.
 ENV BUILD_VERSION=1.4.4
 ENV PYTEST_VERSION=8.4.2
 ENV PYTEST_COV_VERSION=7.1.0
@@ -210,20 +210,20 @@ ENV PYZMQ_VERSION=25.1.1
 
 # --- Python Environment ---
 #
-# Pip index URL is injectable via --build-arg so this Dockerfile is usable
-# both outside Databricks (defaults to public PyPI) and inside Databricks
-# (override to the corp pip proxy required by go/pypi-registry-access, which
-# DNS-blocks public PyPI as a supply-chain hardening measure).
+# Pip index URL is injectable via --build-arg. Defaults to public PyPI;
+# override to a private mirror if your build network requires one.
 #
 # Example:
 #   docker build --build-arg PIP_INDEX_URL="$PIP_INDEX_URL" ...
 # or set PIP_INDEX_URL in the host env before invoking scripts/docker/build_smart.sh.
-ARG PIP_INDEX_URL=
-RUN if [ -n "$PIP_INDEX_URL" ]; then \
-      mkdir -p /etc/pip /root/.pip && \
-      printf '[global]\ntimeout = 60\nindex-url = %s\n' "$PIP_INDEX_URL" \
-        | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null; \
-    fi
+# Default to public PyPI rather than empty string — an empty PIP_INDEX_URL
+# env var causes pip to construct URLs with no host and fail with
+# `Connection refused` against `/simple/<pkg>/` instead of falling back to
+# the public index.
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+RUN mkdir -p /etc/pip /root/.pip && \
+    printf '[global]\ntimeout = 60\nindex-url = %s\n' "$PIP_INDEX_URL" \
+      | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null
 ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 
 # --- Hash-pinned Python install (Labs lockdown — supply chain) ---
@@ -245,8 +245,14 @@ ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 #         --output-file requirements-dev-container.txt requirements-dev-container.in'
 
 # 1. Upgrade pip itself to a known version BEFORE consuming the hash-pinned
-#    lockfile. --ignore-installed bypasses the Debian RECORD error.
-RUN python3 -m pip install --upgrade pip==$PIP_VERSION --ignore-installed --break-system-packages
+#    lockfile. Bootstrap is hash-pinned too (chicken-and-egg: a compromised
+#    pip could otherwise ignore --require-hashes on the bulk install below).
+#    --ignore-installed bypasses the Debian RECORD error. Hashes match the
+#    pip==$PIP_VERSION entry in requirements-dev-container.txt.
+RUN python3 -m pip install --upgrade --ignore-installed --break-system-packages \
+        pip==$PIP_VERSION \
+        --hash=sha256:88f96547ea48b940a3a385494e181e29fb8637898f88d88737c5049780f196ea \
+        --hash=sha256:c46efd13b6aa8279f33f2864459c8ce587ea6a1a59ee20de055868d8f7688f7f
 
 # 2. Copy the lockfile (and its .in source for in-container regen if needed).
 COPY --link python/geobrix/requirements-dev-container.in python/geobrix/requirements-dev-container.txt /tmp/
@@ -259,11 +265,29 @@ COPY --link python/geobrix/requirements-dev-container.in python/geobrix/requirem
 #    still cryptographically verifies every byte that lands on disk.
 RUN pip3 install --require-hashes --ignore-installed -r /tmp/requirements-dev-container.txt --break-system-packages
 
-# 4. Build the GDAL Python binding against the source headers from Stage 4.
-#    Cannot be hash-pinned because the version is dynamic (matches the
-#    source-built libgdal). Verified against the source tarball's pinned
-#    SHA-256 in Stage 4 — so the binding is built from already-verified bytes.
-RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
+# 4. Build the GDAL Python binding from sdist against the verified libgdal
+#    headers from Stage 4.
+#
+#    Why this single package is not in the hash-pinned lockfile:
+#    - The Python binding version is pinned by `gdal-config --version`, which
+#      is whatever libgdal we source-built in Stage 4 (currently 3.11.4, and
+#      that source tarball IS SHA-256-verified — see GDAL_SHA256 above). The
+#      Python wheel/sdist on PyPI MUST match that native, so the version
+#      string is dynamic in the same way GDAL_VERSION is.
+#    - To bring this under --require-hashes we'd need a per-libgdal-version
+#      hash for the matching PyPI sdist; OSGeo doesn't publish per-release
+#      hashes for the PyPI sdist, and pinning them ourselves means another
+#      file to bump in lockstep on every GDAL version bump.
+#
+#    Mitigation: --no-binary :all: forces pip to grab the source distribution
+#    and compile it against our verified libgdal headers, rather than
+#    accepting whatever pre-built manylinux wheel PyPI serves. A malicious
+#    actor would have to ship a backdoored sdist (much harder than swapping
+#    a wheel: the sdist build script runs `gdal-config` from our verified
+#    Stage-4 install, and any byte that ships in libgdal.so came from the
+#    verified source tarball). Residual risk: the sdist's Python wrapper
+#    code itself is not byte-verified.
+RUN pip3 install --no-binary :all: gdal==$(gdal-config --version) --break-system-packages
 
 # ZMQ fixes
 ENV ZMQ_TRANSPORT=tcp
@@ -274,19 +298,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzmq3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Jupyter specific (final stage only: runtime dir and binding)
-# Bind to 0.0.0.0 so kernel ZMQ works reliably in Docker (no security requirement in dev)
+# Jupyter specific (final stage only: runtime dir + ipykernel registration).
+# Bind to 0.0.0.0 so kernel ZMQ works reliably in Docker (no security
+# requirement in dev). jupyterlab / jupyter_server / jupyter_core /
+# jupyter_client / tornado / nbformat / nbconvert / testbook / pyzmq are all
+# locked in requirements-dev-container.txt and were installed (and SHA-256
+# verified) by the --require-hashes step above. No follow-up pip install
+# here — adding one would re-resolve dependencies without hash enforcement
+# and silently undo the lockfile's supply-chain guarantee.
 ENV JUPYTER_RUNTIME_DIR=/tmp/jupyter_runtime
 ENV JUPYTER_IP=0.0.0.0
 ENV PYDEVD_DISABLE_FILE_VALIDATION=1
 ENV JUPYTER_PLATFORM_DIRS=1
 RUN mkdir -p /tmp/jupyter_runtime && chmod 1777 /tmp/jupyter_runtime
 RUN python3 -m ipykernel install --name python3 --display-name "Python 3 (Geobrix)" --env JUPYTER_IP 0.0.0.0 --env JUPYTER_RUNTIME_DIR /tmp/jupyter_runtime
-RUN pip3 install --upgrade jupyterlab==$JUPYTERLAB_VERSION jupyter_server==$JUPYTER_SERVER_VERSION \
-        jupyter_core==$JUPYTER_CORE_VERSION jupyter_client==$JUPYTER_CLIENT_VERSION \
-        tornado==$TORNADO_VERSION nbformat==$NBFORMAT_VERSION nbconvert==$NBCONVERT_VERSION \
-        testbook --break-system-packages
-RUN pip3 install --no-cache-dir --break-system-packages pyzmq==$PYZMQ_VERSION
 
 # Final refresh of the shared library cache
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu

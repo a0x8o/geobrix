@@ -4,9 +4,9 @@
 # First-time setup: In repo Settings → Pages → Build and deployment,
 # set Source to "GitHub Actions".
 #
-# Runs on the Databricks-hardened runner group (Labs lockdown policy);
-# this runner is inside the org's allowlisted network, so it works even
-# when org IP allow lists exclude generic ubuntu-latest.
+# Runs on the org's hardened runner group (see runs-on below); the runner
+# is on an allowlisted network, so it works even when IP allow lists
+# exclude generic ubuntu-latest.
 name: Deploy documentation
 
 on:
@@ -49,8 +49,8 @@ jobs:
           cache: "npm"
           cache-dependency-path: docs/package-lock.json
 
-      # Route npm through JFrog (OIDC) per go/hardened-gha policy.
-      # Must run after setup-node so npm is on PATH for auto-detect.
+      # Route npm through JFrog with OIDC-issued credentials for supply-chain
+      # hardening. Must run after setup-node so npm is on PATH for auto-detect.
       - name: Authenticate for JFrog (npm via OIDC)
         uses: ./.github/actions/jfrog-auth
 

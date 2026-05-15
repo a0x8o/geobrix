@@ -3,11 +3,12 @@ description: 'Authenticate with JFrog using OIDC based on the GitHub repository.
 # Source: ported from databrickslabs/ucx/.github/actions/jfrog-auth/ (kept intentionally
 # in sync — when UCX moves this to an external action, switch to that.)
 #
-# Why: per go/hardened-gha, public databricks-labs repos must route pip + Maven (and
-# npm/sbt/etc when present) through JFrog with OIDC. This composite obtains a JFrog
-# access token from the GitHub OIDC provider and configures the package managers it
-# detects on PATH so subsequent install commands pull from db-pypi / db-maven /
-# db-npm instead of public registries.
+# Why: supply-chain hardening for public databricks-labs repos — route pip +
+# Maven (and npm/sbt/etc when present) through JFrog with OIDC-issued
+# credentials. This composite obtains a JFrog access token from the GitHub
+# OIDC provider and configures the package managers it detects on PATH so
+# subsequent install commands pull from db-pypi / db-maven / db-npm instead
+# of public registries.
 #
 # Some things to note:
 #  - Run this _after_ installing any tools that need to use JFrog; auth is configured

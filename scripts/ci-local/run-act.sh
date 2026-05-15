@@ -52,15 +52,19 @@ fi
 # building native arm64 here would 404 on every apt-get install.
 if ! docker image inspect "$RUNNER_IMAGE" >/dev/null 2>&1; then
     echo "🔨 Building $RUNNER_IMAGE for linux/amd64 (one-time, ~2 min)..."
-    # Forward host registry proxy URLs (if set) as build args. Databricks
-    # employees export these per go/{pypi,maven,npm}-registry-access; external
-    # contributors leave them unset and the image uses public registries.
+    # Forward host registry proxy URLs (if set) as build args. Export them
+    # to point at a private mirror if your network requires it; otherwise
+    # leave them unset and the image uses public registries.
     BUILD_ARGS=()
     [ -n "${PIP_INDEX_URL:-}" ]    && BUILD_ARGS+=("--build-arg" "PIP_INDEX_URL=${PIP_INDEX_URL}")
     [ -n "${MAVEN_MIRROR_URL:-}" ] && BUILD_ARGS+=("--build-arg" "MAVEN_MIRROR_URL=${MAVEN_MIRROR_URL}")
     [ -n "${NPM_REGISTRY_URL:-}" ] && BUILD_ARGS+=("--build-arg" "NPM_REGISTRY_URL=${NPM_REGISTRY_URL}")
+    # ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} expands to nothing when the array
+    # is empty — needed for the public-contributor path (no proxy URLs set)
+    # under `set -u` on bash 3.2 (macOS default), which otherwise errors with
+    # "BUILD_ARGS[@]: unbound variable" before docker even starts.
     docker build --platform linux/amd64 -t "$RUNNER_IMAGE" \
-        "${BUILD_ARGS[@]}" \
+        ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
         -f "$SCRIPT_DIR/Dockerfile.gha-runner" \
         "$SCRIPT_DIR/"
     echo "✅ $RUNNER_IMAGE built."
@@ -141,18 +145,19 @@ for af in "$WORKSPACE"/.github/actions/scala_build/action.yml \
 done
 
 # DELIBERATE LOCAL-ACT VARIATION (experimental):
-# Workflow does `pip install --no-build-isolation gdal[numpy]==3.11.4`. With
-# --no-build-isolation, pip uses our env's setuptools (74.0.0 — strict
+# Workflow does `pip install --no-build-isolation --no-binary :all: gdal[numpy]==3.11.4`.
+# With --no-build-isolation, pip uses our env's setuptools (74.0.0 — strict
 # validate-pyproject) which rejects GDAL 3.11.4's invalid dual-key
 # `[project.license]`. Removing --no-build-isolation lets pip create an
 # isolated build env with whatever setuptools its own bootstrap uses, which
-# *might* end up being a lenient combo.
+# *might* end up being a lenient combo. --no-binary :all: stays — we still
+# want the sdist path locally so we exercise the same code path real CI runs.
 echo "🔧 Patching gdal install: drop --no-build-isolation in mirror (act-local variation)..."
 for af in "$WORKSPACE"/.github/actions/scala_build/action.yml \
           "$WORKSPACE"/.github/actions/python_build/action.yml; do
     [ -f "$af" ] || continue
     sed -i.bak \
-        -e 's|pip install --no-build-isolation gdal\[numpy\]|pip install gdal[numpy]|g' \
+        -e 's|pip install --no-build-isolation --no-binary :all: gdal\[numpy\]|pip install --no-binary :all: gdal[numpy]|g' \
         "$af"
     if ! diff -q "$af.bak" "$af" >/dev/null 2>&1; then
         echo "   patched: $(basename "$(dirname "$af")")/$(basename "$af")"

@@ -83,9 +83,8 @@ trap 'log_error "Build failed at stage: ${CURRENT_STAGE}"; exit 1' ERR
 START_TIME=$(date +%s)
 log_info "Starting smart build for ${FINAL_TAG}..."
 
-# Forward host PIP_INDEX_URL into the build if set. Databricks employees should
-# have this exported per go/pypi-registry-access; external contributors can
-# leave it unset to use public PyPI.
+# Forward host PIP_INDEX_URL into the build if set. Leave unset to use
+# public PyPI; export it to point at a private mirror if your network needs one.
 if [ -n "${PIP_INDEX_URL:-}" ]; then
     log_info "Using PIP_INDEX_URL from host environment for the build."
     EXTRA_ARGS+=("--build-arg" "PIP_INDEX_URL=${PIP_INDEX_URL}")

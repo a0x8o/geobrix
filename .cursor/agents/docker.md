@@ -470,27 +470,24 @@ gbx:docker:rebuild --start
 - **Mounted to**: `/root/geobrix/scripts/docker/m2/`
 - **Purpose**: Persist Maven dependencies between container restarts
 
-## Registry proxies (Databricks-specific)
+## Registry proxies (optional)
 
-Per [go/pypi-registry-access](https://go/pypi-registry-access) and
-go/maven-registry-access, public PyPI and Maven Central are DNS-blocked from
-the Databricks corp network as a supply-chain hardening measure (proxies
-filter package versions newer than 7 days). The dev container is built to
-route through whatever registry URLs the host environment supplies:
+The dev container is built to route through whatever registry URLs the host
+environment supplies — useful if you sit behind a network that blocks public
+PyPI / Maven Central, or if you want a single team-wide pin set:
 
 | Tool | Source of URL | Configured by |
 |---|---|---|
 | pip | host env `PIP_INDEX_URL` forwarded as `--build-arg` | `Dockerfile` writes `/etc/pip.conf` + sets `PIP_INDEX_URL` env only when set; `build_smart.sh` auto-forwards |
 | Maven | `scripts/docker/m2/settings.xml` `<mirror>` block (gitignored, host-local) | `docker_maven_setup.sh` |
 
-Databricks employees should export `PIP_INDEX_URL` per go/pypi-registry-access
-before building (or it'll be picked up automatically by `build_smart.sh`).
-External contributors leave it unset and the build uses public PyPI.
+Export `PIP_INDEX_URL` before building (or `build_smart.sh` picks it up
+automatically). Leave it unset and the build uses public PyPI.
 
 If a `pip install` step in the Dockerfile fails with `Connection refused` or
-`Could not find a version` listing only old releases, you've hit either the
-network block (proxy unreachable) or the 7-day embargo (the version you want
-was published <7 days ago — pick the prior stable release).
+`Could not find a version` listing only old releases, your proxy is either
+unreachable or has an embargo on recently-published versions — fall back to
+the prior stable release of the offending package.
 
 ## Local GitHub Actions dry-runs with `act`
 
@@ -498,9 +495,9 @@ Separate from the dev container (`geobrix-dev`), there's a second Docker image
 purpose-built for **local CI validation** — `geobrix-ci-runner:local`. It's
 shaped like a GitHub-hosted runner (`catthehacker/ubuntu:runner-24.04`,
 digest-pinned). pip/Maven/npm registry URLs are build-arg injected from the
-host env (`PIP_INDEX_URL`, `MAVEN_MIRROR_URL`, `NPM_REGISTRY_URL`) so
-Databricks employees who set them per go/{pypi,maven,npm}-registry-access get
-the corp proxies; external contributors get public registries.
+host env (`PIP_INDEX_URL`, `MAVEN_MIRROR_URL`, `NPM_REGISTRY_URL`) — set them
+to a private proxy if your network requires it; leave them unset to use
+public registries.
 
 ### When to use
 
@@ -535,7 +532,8 @@ container. `scripts/ci-local/run-act.sh` regenerates a mirror at
 
 The real `.github/` tree on disk is never modified — only the mirror's copy
 is. JFrog OIDC can't run locally (no real GitHub OIDC issuer); pip / Maven /
-npm fall back to the corp proxies pre-baked in the runner image.
+npm fall back to whatever proxies were build-arg-injected into the runner
+image (public registries by default).
 
 ### Files
 

@@ -63,9 +63,10 @@ jobs:
           cache: 'maven'
           cache-dependency-path: 'pom.xml'
 
-      # Route Maven through JFrog (OIDC) per go/hardened-gha policy.
-      # Defense in depth: artifacts come from the JFrog mirror (trust-bounded), then
-      # pgpverify-maven-plugin verifies their .asc signatures (which JFrog mirrors transparently).
+      # Route Maven through JFrog with OIDC-issued credentials for supply-chain
+      # hardening. Defense in depth: artifacts come from the JFrog mirror
+      # (trust-bounded), then pgpverify-maven-plugin verifies their .asc
+      # signatures (which JFrog mirrors transparently).
       - name: Authenticate for JFrog (Maven via OIDC)
         uses: ./.github/actions/jfrog-auth
 

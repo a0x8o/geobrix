@@ -37,7 +37,7 @@ The first invocation builds `geobrix-ci-runner:local` (~5 min). Subsequent runs 
 
 ## What's wired
 
-- **Runner image**: `catthehacker/ubuntu:runner-24.04` (digest-pinned). pip/Maven/npm registry URLs are build-arg injected from the host env (`PIP_INDEX_URL`, `MAVEN_MIRROR_URL`, `NPM_REGISTRY_URL`). Databricks employees set these per go/{pypi,maven,npm}-registry-access; otherwise the image uses public registries.
+- **Runner image**: `catthehacker/ubuntu:runner-24.04` (digest-pinned). pip/Maven/npm registry URLs are build-arg injected from the host env (`PIP_INDEX_URL`, `MAVEN_MIRROR_URL`, `NPM_REGISTRY_URL`); set them to a private proxy if your network requires it, otherwise leave unset to use public registries.
 - **Platform map**: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `larger`, `linux-ubuntu-latest` → `geobrix-ci-runner:local`
 - **JFrog auth stub**: Real `.github/actions/jfrog-auth/action.yml` is bind-mounted over inside the act container with a no-op stub. Real `.github/` on disk is never modified.
 

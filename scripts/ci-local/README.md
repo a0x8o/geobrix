@@ -51,7 +51,7 @@ PROJECT_ROOT/                       # real, never modified
 └── ...                             # all other top-level entries symlinked
 ```
 
-`run-act.sh` `cd`s into the mirror, then invokes `act --bind`, so the bind-mounted workspace is the mirror. The stub composite emits a `::notice::` and exits; pip/Maven still find whatever registry was injected at image build time (corp proxy for Databricks employees who set `PIP_INDEX_URL` etc. before building, public registries otherwise).
+`run-act.sh` `cd`s into the mirror, then invokes `act --bind`, so the bind-mounted workspace is the mirror. The stub composite emits a `::notice::` and exits; pip/Maven still find whatever registry was injected at image build time (a private mirror if you set `PIP_INDEX_URL` etc. before building, public registries otherwise).
 
 The mirror is regenerated from scratch on every run — fast (~50 ms) because `.github/` is small (~100 KB) and everything else is symlinked.
 
@@ -114,11 +114,10 @@ fix that also keeps us workflow-faithful (real CI is amd64 too).
 ## Maintenance
 
 - **If catthehacker bumps `ubuntu:full-24.04`**, rebuild: `docker rmi geobrix-ci-runner:local && bash scripts/ci-local/run-act.sh -l`.
-- **If proxy URLs change** (per go/{pypi,maven,npm}-registry-access), update the host env vars (`PIP_INDEX_URL` / `MAVEN_MIRROR_URL` / `NPM_REGISTRY_URL`) and rebuild the runner image — `docker rmi geobrix-ci-runner:local && bash scripts/ci-local/run-act.sh -l`.
+- **If proxy URLs change**, update the host env vars (`PIP_INDEX_URL` / `MAVEN_MIRROR_URL` / `NPM_REGISTRY_URL`) and rebuild the runner image — `docker rmi geobrix-ci-runner:local && bash scripts/ci-local/run-act.sh -l`.
 - **If a new composite action also needs OIDC and act-stubbing**, add a sibling stub directory and extend `run-act.sh` with another `--container-options` mount.
 
 ## See also
 
 - [act docs](https://nektosact.com/) — full `act` command reference
 - `.cursor/agents/docker.md` — "Local GHA dry-runs with `act`" section
-- `prompts/security/2026-05-06-jfrog-runner-versions-securitymd.md` — context for why JFrog OIDC exists

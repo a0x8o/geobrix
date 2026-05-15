@@ -1,7 +1,8 @@
 # scripts/security/
 
-Tooling that implements the Databricks Labs [Repository Lockdown policy](https://docs.google.com/document/d/1J50oKQxG9WhGXWEl5zlbCq5pf9AGh57yDhZh9nxCQC0/edit)
-for GeoBrix. Two pinning regimes:
+Tooling that implements the Databricks Labs repository lockdown policy for
+GeoBrix — supply-chain hardening around third-party GitHub Actions and Maven
+dependencies. Two pinning regimes:
 
 1. **GitHub Actions** — every third-party Action must be pinned to a full
    commit SHA taken from a release published before the

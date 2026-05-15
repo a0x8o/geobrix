@@ -1,6 +1,6 @@
 #!/bin/bash
 # gbx:ci:act - Run GitHub Actions workflows locally via `act`, against a
-# Databricks-aware runner image. The real .github/ tree is NEVER modified —
+# project-shaped runner image. The real .github/ tree is NEVER modified —
 # the jfrog-auth composite is bind-mounted with a no-op stub at runtime.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -27,8 +27,8 @@ show_help() {
     echo -e "${CYAN}What's pre-baked into the runner image:${NC}"
     echo -e "  • pip / Maven / npm registry URLs are build-arg injected from your env"
     echo -e "    (${YELLOW}PIP_INDEX_URL${NC} / ${YELLOW}MAVEN_MIRROR_URL${NC} / ${YELLOW}NPM_REGISTRY_URL${NC});"
-    echo -e "    Databricks employees: set per go/{pypi,maven,npm}-registry-access before first build."
-    echo -e "    Otherwise the image defaults to public registries."
+    echo -e "    set them to a private proxy if your network requires it, or leave unset"
+    echo -e "    to default to public registries."
     echo ""
     echo -e "${CYAN}Caveats:${NC}"
     echo -e "  • JFrog OIDC is mocked (no real token); pip/maven/npm flow via the registry baked in at build time"
