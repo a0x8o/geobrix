@@ -12,9 +12,12 @@ GeoBrix currently offers heavy-weight, distributed APIs, primarily written in Sc
 
 ## Prerequisites
 
-- Databricks Runtime (DBR) 17.1 or later (LTS releases recommended)
+- **Databricks Runtime 17.3 LTS.** The init script's pinned GDAL package
+  targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS; other
+  runtimes use different bases and will either fail to install or silently
+  fall back to an unpinned GDAL.
 - Classic Databricks cluster (not Serverless)
-- GDAL native libraries
+- GDAL native libraries (installed by the init script below)
 
 ## Installation Steps
 
@@ -43,6 +46,15 @@ GeoBrix requires GDAL natives, which are currently best installed via an init sc
 1. Use the init script from the repo: [scripts/geobrix-gdal-init.sh](https://github.com/databrickslabs/geobrix/blob/main/scripts/geobrix-gdal-init.sh) (shown below)
 2. Modify the `VOL_DIR` variable to point to your Volume location where you uploaded the artifacts
 3. Upload the modified init script to your Databricks Volume
+
+**What the script does** (see [Security](./security) for the full rationale):
+
+- Adds the UbuntuGIS PPA using an inline-embedded signing key, verified against the expected fingerprint (`UBUNTUGIS_FPR`) before any package install.
+- Installs the pinned GDAL package version (`GDAL_PPA_VERSION`) from the verified PPA so the native version matches the JNI binding shipped in the JAR.
+- Installs the Python `GDAL` wheel from source against the pinned headers (no opportunistic wheel from PyPI).
+- Copies `libgdalalljni.so` and `geobrix-*-jar-with-dependencies.jar` from `VOL_DIR` into place.
+
+`VOL_DIR` is the only line you should edit.
 
 <CodeFromTest code={initScript} language="bash" title="GeoBrix Init Script (scripts/geobrix-gdal-init.sh)" />
 
@@ -120,13 +132,12 @@ If you see the GeoBrix functions listed, your installation is successful!
 
 ### GDAL Library Issues
 
-If you encounter errors about missing GDAL libraries, please bear in mind that we currently use [UbuntuGIS](https://launchpad.net/~ubuntugis/+archive/ubuntu/ubuntugis-unstable) PPA 
-which from time-to-time might update GDAL version. If the major or minor version is changed, this will result in 
-issues (requires us to recompile the JNI bindings):
+The init script installs GDAL from the [UbuntuGIS](https://launchpad.net/~ubuntugis/+archive/ubuntu/ubuntugis-unstable) PPA using a pinned package version (`GDAL_PPA_VERSION`) and a fingerprint-verified signing key (`UBUNTUGIS_FPR`). Common failure modes:
 
-1. Check that the init script ran successfully (check driver logs)
-2. Verify the `libgdalalljni.so` file is in `/usr/lib` on the driver and executors
-3. Add `/usr/lib` to `LD_LIBRARY_PATH` (uncommon)
+1. **Fingerprint mismatch** — the script exits with `ubuntugis key fingerprint mismatch: got='…' expected='…'`. The embedded key block or `UBUNTUGIS_FPR` has been tampered with, or Launchpad rotated its signing key. Re-download the init script from the [release artifacts](https://github.com/databrickslabs/geobrix/releases) and re-verify the fingerprint at [Launchpad's API](https://launchpad.net/api/1.0/~ubuntugis/+archive/ubuntu/ubuntugis-unstable). See the [Security](./security) page for the rationale.
+2. **Pinned package version unavailable** — `apt-get install` fails with "Version `…` not found". The PPA has retired that build. Use a newer GeoBrix release whose init script pins a still-available version, rather than locally editing the pin (the JNI binding in the JAR must match).
+3. **DBR base image mismatch** — the script targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS.
+4. **General checks** — confirm the init script ran successfully (driver logs) and that `libgdalalljni.so` is in `/usr/lib` on the driver and executors. Adding `/usr/lib` to `LD_LIBRARY_PATH` is rarely needed.
 
 ### Function Registration Issues
 

@@ -1,0 +1,169 @@
+---
+sidebar_position: 11
+---
+
+# Security
+
+GeoBrix is an open-source [Databricks Labs](https://www.databricks.com/learn/labs)
+project. Because the published artifacts run inside customer clusters and read
+data from a wide range of formats, we treat supply-chain hygiene as a
+first-class concern. This page describes what we do upstream to keep the
+package trustworthy, and what you can do on your side to build on that
+foundation.
+
+For private vulnerability disclosure, see
+[SECURITY.md](https://github.com/databrickslabs/geobrix/blob/main/SECURITY.md) —
+email `labs@databricks.com` or reach out via your Databricks representative.
+Please do not open a public issue for a suspected vulnerability.
+
+## How we secure the package
+
+These controls live in the [GeoBrix repository](https://github.com/databrickslabs/geobrix)
+itself — they apply to every release we publish.
+
+### Pinned third-party GitHub Actions
+
+Every third-party Action referenced under `.github/` is locked to a full commit
+SHA from a release published before the policy cutoff, rather than a movable
+tag like `@v3`. Tag names are kept inline as comments for readability, but the
+SHA is what GitHub resolves. This means a compromised upstream Action repo
+cannot retroactively change what runs in our CI.
+
+First-party (`databricks*` / `databrickslabs*`) Actions are exempt and
+continue to use tag references.
+
+### PGP-verified Maven dependencies
+
+Every Maven artifact pulled by the build — direct dependency, transitive
+dependency, plugin, plugin dependency — is checked against a PGP key
+allowlist maintained in the repository
+([`.maven-keys.list`](https://github.com/databrickslabs/geobrix/blob/main/.maven-keys.list)).
+The
+[`pgpverify-maven-plugin`](https://www.simplify4u.org/pgpverify-maven-plugin/)
+runs as the first Maven step in every CI build, so verification happens before
+any compile, test, or install. CI Maven invocations also pass `-C`
+(strict-checksums), so any checksum mismatch from the registry aborts the
+build instead of warning.
+
+### Hash-pinned Python dependencies
+
+Every Python install path that we control — CI, the development container,
+and the notebook test harness — uses a lockfile generated with
+`uv pip compile --generate-hashes` and installed via
+`pip install --require-hashes`. pip refuses to install any wheel whose
+sha256 doesn't match what was recorded at lock time, so a compromised mirror
+serving a same-version-but-different-bytes wheel fails closed.
+
+| Path | Lockfile |
+|---|---|
+| CI (Scala + Python build) | [`python/geobrix/requirements-ci.txt`](https://github.com/databrickslabs/geobrix/blob/main/python/geobrix/requirements-ci.txt) |
+| Dev container | [`python/geobrix/requirements-dev-container.txt`](https://github.com/databrickslabs/geobrix/blob/main/python/geobrix/requirements-dev-container.txt) |
+| Notebook test harness | [`notebooks/tests/requirements.txt`](https://github.com/databrickslabs/geobrix/blob/main/notebooks/tests/requirements.txt) |
+
+GDAL is the documented exception: its Python wheel must match the GDAL native
+version installed on the host, so it is installed separately against the
+detected version. The native side is pinned via the init script (see below).
+
+### Pinned GDAL native + fingerprint-pinned PPA key
+
+The [cluster init script](./installation#3-create-init-script) installs GDAL
+from the UbuntuGIS PPA — but instead of trusting whatever signing key
+Launchpad happens to serve (the default `add-apt-repository` flow), the script
+embeds the expected key inline and **refuses to proceed unless the key's
+fingerprint matches `UBUNTUGIS_FPR`**. A tampered cluster image, a swapped key
+block in the script, or a Launchpad MITM all fail closed before any GDAL
+package is installed.
+
+On top of the key-fingerprint check, the script also:
+
+- Pins the GDAL package version (`GDAL_PPA_VERSION`) to the exact `apt`
+  release that matches the JNI binding shipped in the GeoBrix JAR.
+- Installs the Python `GDAL` wheel with `--no-binary :all:` against those
+  pinned `apt` headers, so the wheel is compiled from source on the cluster
+  rather than accepting whatever pre-built wheel PyPI happens to serve.
+
+### Hardened, ephemeral CI runners
+
+All CI jobs run on Databricks-managed hardened runner groups registered for
+the `databrickslabs` org. Each job gets a fresh, ephemeral VM that is
+destroyed at the end of the run, so nothing persists between jobs and no
+state can be carried forward by a malicious step. Org-level allowlisting
+controls which workflows can request those runners and which secrets they
+can see.
+
+### Short-lived registry tokens (JFrog OIDC)
+
+Pip, Maven, and npm in CI authenticate to our artifact mirror via short-lived
+OIDC tokens minted per run, not long-lived registry credentials checked into
+GitHub secrets. The token's lifetime is the workflow run; there is nothing
+durable to leak.
+
+### Gated deploy environment
+
+Workflows that need elevated tokens (pushing back to PR branches, deploying
+docs) run under a GitHub Environment with deployment-branch restrictions
+(`main` only), required CODEOWNER review, and the environment-scoped
+`REPO_ACCESS_TOKEN` as a fine-grained PAT limited to `contents:write` on this
+repository. Secrets are not released until those gates pass.
+
+## How you can build on this foundation
+
+The upstream controls above protect the artifacts we ship. The controls below
+are what you can do at install time and at runtime to keep the same
+guarantees in your environment.
+
+### 1. Use the released init script verbatim
+
+The PGP fingerprint check, GDAL version pin, and source-only Python install
+are load-bearing for the supply-chain story. The only line you should change
+in [`scripts/geobrix-gdal-init.sh`](https://github.com/databrickslabs/geobrix/blob/main/scripts/geobrix-gdal-init.sh)
+is `VOL_DIR`. Replacing it with a homegrown GDAL installer drops those guarantees
+on your cluster.
+
+### 2. Stage release artifacts in a Volume you control
+
+You don't have to fetch the JAR, wheel, and `libgdalalljni.so` from the internet on every
+cluster start. The recommended flow is:
+
+  - Download the artifacts from the
+   [GitHub release page](https://github.com/databrickslabs/geobrix/releases).
+  - Verify the sha256 of each asset against what the release page publishes.
+  - Upload the verified files to a Unity Catalog Volume your workspace owns.
+  - Set `VOL_DIR` in the init script to that Volume path.
+  - Refresh artifacts on a controlled cadence — not automatically.
+
+This puts the artifacts on storage you control, with the access policy you've
+already approved.
+
+### 3. Pin the GeoBrix version in your cluster libraries
+
+GeoBrix is **Beta** — APIs may break to stabilize, and there are no function
+aliases. Pin the exact wheel and JAR version in your cluster configuration
+and only bump deliberately. See the
+[Beta Release Notes](./beta-release-notes) for the change list per version.
+
+### 4. Restrict GDAL drivers for untrusted inputs
+
+GeoBrix wraps GDAL/OGR, which can read a very large number of raster and
+vector formats. When you ingest data from third-party sources, narrow the
+driver list with `GDAL_SKIP` or the per-format options described in the
+[Readers](./readers/overview) and [Writers](./writers/overview) sections,
+rather than leaving every driver enabled by default. The smaller the
+allowlist, the smaller the attack surface from a malicious input file.
+
+### 5. Report suspected vulnerabilities privately
+
+If you find something that looks like a security issue in GeoBrix itself,
+contact `labs@databricks.com` or your Databricks representative before
+publishing details. See
+[SECURITY.md](https://github.com/databrickslabs/geobrix/blob/main/SECURITY.md)
+for what to include in the report.
+
+## Next steps
+
+- [Installation Guide](./installation) — apply the init script as part of
+  cluster setup.
+- [Readers overview](./readers/overview) — configuration knobs for narrowing
+  the GDAL driver surface.
+- [SECURITY.md](https://github.com/databrickslabs/geobrix/blob/main/SECURITY.md) —
+  vulnerability reporting policy.

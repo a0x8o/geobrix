@@ -125,6 +125,7 @@ const sidebars = {
       ],
     },
     'developers',
+    'security',
     'limitations',
     'support',
   ],
