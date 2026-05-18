@@ -17,9 +17,16 @@ permissions:
 jobs:
   coverage-package:
     name: Coverage ${{ matrix.package }}
-    runs-on: larger
+    # Heavy per matrix shard: mvn scoverage:test for one package + GDAL native install. 6 shards in parallel; per-shard fan-out keeps wall-clock down.
+    runs-on:
+      group: larger-runners
+      labels: larger
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for pip/Maven via JFrog.
+      id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:
@@ -64,7 +71,9 @@ jobs:
 
   merge-and-upload:
     name: Merge and upload to Codecov
-    runs-on: larger
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     needs: coverage-package
     if: always() && needs.coverage-package.result == 'success'
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.

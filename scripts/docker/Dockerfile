@@ -20,7 +20,21 @@ FROM --platform=${BUILDPLATFORM} ubuntu@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg && mkdir -p /usr/share/keyrings
 
-RUN curl -fsSL https://repos.azul.com/azul-repo.key | gpg --dearmor -o /usr/share/keyrings/azul.gpg \
+# Azul Zulu signing key fingerprint (Labs lockdown policy: replace TOFU with
+# explicit fingerprint pin). The downloaded key MUST present this fingerprint;
+# any other key — including a different valid key on the same URL — fails the
+# build. Cross-check on key bump:
+#   gpg --show-keys --with-fingerprint --with-colons azul-repo.key
+# Current fingerprint sourced from repos.azul.com 2026-05-14:
+ARG AZUL_FPR=27BC0C8CB3D81623F59BDADCB1998361219BD9C9
+RUN curl -fsSL https://repos.azul.com/azul-repo.key -o /tmp/azul-repo.key \
+    && actual_fpr=$(gpg --show-keys --with-fingerprint --with-colons /tmp/azul-repo.key | awk -F: '/^fpr:/ {print $10; exit}') \
+    && if [ "$actual_fpr" != "$AZUL_FPR" ]; then \
+         echo "Azul key fingerprint mismatch: got=$actual_fpr expected=$AZUL_FPR" >&2; \
+         exit 1; \
+       fi \
+    && gpg --dearmor < /tmp/azul-repo.key > /usr/share/keyrings/azul.gpg \
+    && rm /tmp/azul-repo.key \
     && echo "deb [signed-by=/usr/share/keyrings/azul.gpg] https://repos.azul.com/zulu/deb stable main" > /etc/apt/sources.list.d/azul.list
 
 RUN apt-get update && apt-get install -y zulu17-jdk --no-install-recommends \
@@ -157,32 +171,123 @@ RUN mkdir -p $ROOTDIR/share/maven \
   && ln -s $ROOTDIR/share/maven/bin/mvn $ROOTDIR/bin/mvn && rm /tmp/apache-maven.tar.gz
 
 ENV MAVEN_HOME="$ROOTDIR/share/maven"
+# Version pins — keep in sync with .github/actions/{scala,python}_build/action.yml,
+# scripts/geobrix-gdal-init.sh, and notebooks/tests/requirements.txt.
+# Run `gbx:versions:audit` after edits to confirm coverage.
+# DBR-aligned values: https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts
 ENV SPARK_VERSION=4.0.0
 ENV NUMPY_VERSION=2.1.3
+ENV PANDAS_VERSION=2.2.3
 ENV SETUPTOOLS_VERSION=74.0.0
+ENV PIP_VERSION=25.0.1
+ENV WHEEL_VERSION=0.45.1
+ENV REQUESTS_VERSION=2.32.3
+ENV IPYTHON_VERSION=8.30.0
+ENV IPYKERNEL_VERSION=6.29.5
+ENV IPYWIDGETS_VERSION=7.8.1
+ENV JUPYTERLAB_VERSION=4.3.4
+ENV JUPYTER_SERVER_VERSION=2.14.1
+ENV JUPYTER_CORE_VERSION=5.7.2
+ENV JUPYTER_CLIENT_VERSION=8.6.3
+ENV TORNADO_VERSION=6.4.2
+ENV NBFORMAT_VERSION=5.10.4
+ENV NBCONVERT_VERSION=7.16.4
+# Not in DBR; pinned to a stable PyPI version. build/pytest-cov also match CI.
+# 1.5.0 (released 2026-04-30) is too new for some private PyPI mirrors that
+# embargo recent releases; 1.4.4 is the broadly-available latest.
+ENV BUILD_VERSION=1.4.4
+ENV PYTEST_VERSION=8.4.2
+ENV PYTEST_COV_VERSION=7.1.0
+ENV GEOPANDAS_VERSION=1.1.3
+# keplergl 0.3.4+ requires ipywidgets>=8.1.5, which conflicts with DBR's ipywidgets==7.8.1.
+# 0.3.3 was never published on PyPI (gap between 0.3.2 stable and 0.3.4 alphas), so 0.3.2
+# is the last keplergl compatible with the ipywidgets 7.x line. We prefer DBR alignment
+# for ipywidgets over latest keplergl in the dev container.
+ENV KEPLERGL_VERSION=0.3.2
+# Intentional DBR divergence — DBR has pyzmq 26.2.0 but our Jupyter ZMQ workaround
+# requires the older 25.1.1 (see "ZMQ fixes" section below). Re-evaluate on next bump.
+ENV PYZMQ_VERSION=25.1.1
 
 # --- Python Environment ---
-# 1. Upgrade pip using --ignore-installed to bypass the Debian RECORD error
-RUN python3 -m pip install --upgrade pip --ignore-installed --break-system-packages
+#
+# Pip index URL is injectable via --build-arg. Defaults to public PyPI;
+# override to a private mirror if your build network requires one.
+#
+# Example:
+#   docker build --build-arg PIP_INDEX_URL="$PIP_INDEX_URL" ...
+# or set PIP_INDEX_URL in the host env before invoking scripts/docker/build_smart.sh.
+# Default to public PyPI rather than empty string — an empty PIP_INDEX_URL
+# env var causes pip to construct URLs with no host and fail with
+# `Connection refused` against `/simple/<pkg>/` instead of falling back to
+# the public index.
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+RUN mkdir -p /etc/pip /root/.pip && \
+    printf '[global]\ntimeout = 60\nindex-url = %s\n' "$PIP_INDEX_URL" \
+      | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 
-# 2. Install base tools and NumPy 2.x
-RUN pip3 install wheel \
-    setuptools==$SETUPTOOLS_VERSION \
-    numpy==$NUMPY_VERSION \
-    --ignore-installed \
-    --break-system-packages
+# --- Hash-pinned Python install (Labs lockdown — supply chain) ---
+#
+# The full Python dependency closure for the dev container is locked with
+# sha256 hashes in python/geobrix/requirements-dev-container.txt. pip refuses
+# to install anything whose hash doesn't match. This protects against a
+# compromised PyPI mirror substituting same-version-but-different-bytes
+# wheels at docker-build time (the LiteLLM-class attack vector).
+#
+# Pinned versions in the .in source match the ENV block above (DBR 17.3 LTS
+# aligned where applicable). GDAL is NOT in the lockfile — its Python wheel
+# must build against the gdal-config from Stage 4 (source build).
+#
+# Regenerate via:
+#   docker exec -it geobrix-dev bash -lc \
+#     'cd /root/geobrix/python/geobrix && \
+#      uv pip compile --generate-hashes --python-version 3.12 \
+#         --output-file requirements-dev-container.txt requirements-dev-container.in'
 
-# 3. Build Python GDAL against your source headers
-RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
+# 1. Upgrade pip itself to a known version BEFORE consuming the hash-pinned
+#    lockfile. Bootstrap is hash-pinned too (chicken-and-egg: a compromised
+#    pip could otherwise ignore --require-hashes on the bulk install below).
+#    --ignore-installed bypasses the Debian RECORD error. Hashes match the
+#    pip==$PIP_VERSION entry in requirements-dev-container.txt.
+RUN python3 -m pip install --upgrade --ignore-installed --break-system-packages \
+        pip==$PIP_VERSION \
+        --hash=sha256:88f96547ea48b940a3a385494e181e29fb8637898f88d88737c5049780f196ea \
+        --hash=sha256:c46efd13b6aa8279f33f2864459c8ce587ea6a1a59ee20de055868d8f7688f7f
 
-# Build GDAL Python bindings against the source headers built in Stage 4
-RUN pip3 install gdal==$(gdal-config --version) --break-system-packages
+# 2. Copy the lockfile (and its .in source for in-container regen if needed).
+COPY --link python/geobrix/requirements-dev-container.in python/geobrix/requirements-dev-container.txt /tmp/
 
-# Final library installs (build = PyPA python3 -m build for sdist/wheel)
-RUN pip3 install black isort flake8 build py4j requests keplergl ipython pyspark==$SPARK_VERSION --break-system-packages \
-    && pip3 install pytest pytest-cov pytest-mock nest-asyncio pytest-asyncio --break-system-packages \
-    && pip3 install geopandas pystac-client planetary-computer rasterio rioxarray --break-system-packages \
-    && pip3 install pdal --break-system-packages
+# 3. Install the full hash-pinned closure (~110 packages).
+#    --ignore-installed: skip pip's pre-install uninstall pass. apt-installed
+#    python3-wheel/python3-setuptools have no RECORD file so pip refuses to
+#    uninstall them; without this flag pip aborts when an apt-managed package
+#    version differs from the lockfile pin. Safe because --require-hashes
+#    still cryptographically verifies every byte that lands on disk.
+RUN pip3 install --require-hashes --ignore-installed -r /tmp/requirements-dev-container.txt --break-system-packages
+
+# 4. Build the GDAL Python binding from sdist against the verified libgdal
+#    headers from Stage 4.
+#
+#    Why this single package is not in the hash-pinned lockfile:
+#    - The Python binding version is pinned by `gdal-config --version`, which
+#      is whatever libgdal we source-built in Stage 4 (currently 3.11.4, and
+#      that source tarball IS SHA-256-verified — see GDAL_SHA256 above). The
+#      Python wheel/sdist on PyPI MUST match that native, so the version
+#      string is dynamic in the same way GDAL_VERSION is.
+#    - To bring this under --require-hashes we'd need a per-libgdal-version
+#      hash for the matching PyPI sdist; OSGeo doesn't publish per-release
+#      hashes for the PyPI sdist, and pinning them ourselves means another
+#      file to bump in lockstep on every GDAL version bump.
+#
+#    Mitigation: --no-binary :all: forces pip to grab the source distribution
+#    and compile it against our verified libgdal headers, rather than
+#    accepting whatever pre-built manylinux wheel PyPI serves. A malicious
+#    actor would have to ship a backdoored sdist (much harder than swapping
+#    a wheel: the sdist build script runs `gdal-config` from our verified
+#    Stage-4 install, and any byte that ships in libgdal.so came from the
+#    verified source tarball). Residual risk: the sdist's Python wrapper
+#    code itself is not byte-verified.
+RUN pip3 install --no-binary :all: gdal==$(gdal-config --version) --break-system-packages
 
 # ZMQ fixes
 ENV ZMQ_TRANSPORT=tcp
@@ -193,16 +298,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libzmq3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Jupyter specific (final stage only: runtime dir and binding)
-# Bind to 0.0.0.0 so kernel ZMQ works reliably in Docker (no security requirement in dev)
+# Jupyter specific (final stage only: runtime dir + ipykernel registration).
+# Bind to 0.0.0.0 so kernel ZMQ works reliably in Docker (no security
+# requirement in dev). jupyterlab / jupyter_server / jupyter_core /
+# jupyter_client / tornado / nbformat / nbconvert / testbook / pyzmq are all
+# locked in requirements-dev-container.txt and were installed (and SHA-256
+# verified) by the --require-hashes step above. No follow-up pip install
+# here — adding one would re-resolve dependencies without hash enforcement
+# and silently undo the lockfile's supply-chain guarantee.
 ENV JUPYTER_RUNTIME_DIR=/tmp/jupyter_runtime
 ENV JUPYTER_IP=0.0.0.0
 ENV PYDEVD_DISABLE_FILE_VALIDATION=1
 ENV JUPYTER_PLATFORM_DIRS=1
 RUN mkdir -p /tmp/jupyter_runtime && chmod 1777 /tmp/jupyter_runtime
 RUN python3 -m ipykernel install --name python3 --display-name "Python 3 (Geobrix)" --env JUPYTER_IP 0.0.0.0 --env JUPYTER_RUNTIME_DIR /tmp/jupyter_runtime
-RUN pip3 install --upgrade jupyterlab jupyter_server jupyter_core jupyter_client tornado nbformat nbconvert testbook --break-system-packages
-RUN pip3 install --no-cache-dir --break-system-packages pyzmq==25.1.1
 
 # Final refresh of the shared library cache
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
@@ -212,7 +321,7 @@ WORKDIR /root/geobrix
 
 # Copy the entrypoint script into the container
 # this starts haveged (maybe more?)
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Make the entrypoint script executable
 RUN chmod +x /usr/local/bin/entrypoint.sh

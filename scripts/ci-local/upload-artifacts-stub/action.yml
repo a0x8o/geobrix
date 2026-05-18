@@ -1,0 +1,15 @@
+name: 'upload artifacts (act stub)'
+description: |
+  No-op stub for local `act` runs. Bind-overlaid by run-act.sh into the
+  mirror's `.github/actions/upload_artifacts/action.yml`. Real upload uses
+  `actions/upload-artifact@v4` whose protobuf schema (the `mime_type` field)
+  is newer than what act's bundled artifact server understands — uploads fail
+  with `Failed to CreateArtifact: ... unknown field "mime_type"`. Locally we
+  don't need real artifact storage anyway (no downstream job consumes them
+  in the same act run); skipping the step keeps the job green.
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        echo "::notice::upload-artifacts stubbed for local act run; real CI uploads via actions/upload-artifact@v4"

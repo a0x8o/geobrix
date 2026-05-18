@@ -1,0 +1,74 @@
+name: Verify Maven dependency PGP signatures
+#
+# Runs strict PGP signature verification against .maven-keys.list using
+# pgpverify-maven-plugin (configured in the `verify-pgp` Maven profile).
+#
+# Today this workflow is non-blocking — it must succeed before
+# .maven-keys.list can be considered fully populated and the verify-pgp
+# profile can be flipped to <activeByDefault>true</activeByDefault>. Once
+# that flip happens, this workflow becomes redundant (every other build
+# verifies as well) and can be deleted, OR kept as the canonical
+# fast-feedback signal in branch protection.
+#
+# See scripts/security/README.md for the bootstrap procedure.
+#
+# Security note: this workflow does not interpolate any github.event.*
+# context into run: blocks. The only secret reference is the standard
+# checkout-token pattern in actions/checkout's `with:` (gated by
+# environment: runtime).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pom.xml'
+      - '.maven-keys.list'
+      - '.github/workflows/verify-maven-pgp.yml'
+      - 'scripts/security/maven-pgp-*'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pom.xml'
+      - '.maven-keys.list'
+      - '.github/workflows/verify-maven-pgp.yml'
+      - 'scripts/security/maven-pgp-*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: pgpverify
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
+    environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for Maven via JFrog.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configure JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+          cache: 'maven'
+          cache-dependency-path: 'pom.xml'
+
+      # Route Maven through JFrog with OIDC-issued credentials for supply-chain
+      # hardening. Defense in depth: artifacts come from the JFrog mirror
+      # (trust-bounded), then pgpverify-maven-plugin verifies their .asc
+      # signatures (which JFrog mirrors transparently).
+      - name: Authenticate for JFrog (Maven via OIDC)
+        uses: ./.github/actions/jfrog-auth
+
+      - name: Verify Maven dependency PGP signatures
+        run: ./scripts/security/maven-pgp-verify

@@ -1,0 +1,175 @@
+# GeoBrix-shaped GitHub Actions runner image for local validation via `act`.
+#
+# Base: catthehacker/ubuntu:runner-24.04 — middle-tier image (~2-3 GB).
+# Has Python + Java + Node + Maven pre-baked into /opt/hostedtoolcache/, so
+# setup-python and setup-java DETECT the existing tool-cache and skip their
+# extract+upgrade dance. The slim :act variant lacked these and triggered an
+# act-specific bug where setup-python leaves pip in a half-upgraded state
+# (vendored resolvelib mismatch → ImportError: cannot import RequirementInformation).
+# We do NOT use geobrix-dev (the developer container) — that image is
+# Spark/Maven/Jupyter-shaped and very different from a GHA runner.
+#
+# Pre-bakes pip + Maven + npm proxy config so workflow steps that pip/mvn/npm
+# install route through whichever registry was build-arg injected (public by
+# default; a private mirror if PIP_INDEX_URL / MAVEN_MIRROR_URL /
+# NPM_REGISTRY_URL were set on the host before the build). The real
+# `jfrog-auth` composite action is bind-mounted over with a no-op stub at
+# runtime (see scripts/ci-local/run-act.sh) — local OIDC token exchange
+# isn't possible.
+#
+# Build (one-time, via gbx:ci:act):
+#   docker build -t geobrix-ci-runner:local \
+#     -f scripts/ci-local/Dockerfile.gha-runner scripts/ci-local/
+#
+# Pinned by digest (Labs lockdown policy: tags are mutable). To refresh,
+# `docker pull catthehacker/ubuntu:runner-24.04` and update the sha256 below.
+# Tag comment retained for readability.
+FROM catthehacker/ubuntu@sha256:5b8d45504136db3cc4758c0c16e32e21eb783e9645305a30a7333f8ba9b14ba4
+# catthehacker/ubuntu:runner-24.04
+
+# runner-24.04 defaults to a non-root `runner` user. Switch to root for our
+# config-file installs (pip.conf in /etc, maven settings.xml in /usr/share,
+# npmrc in /home/runner/, apt install, etc.). act starts the workflow as
+# whatever USER ends the Dockerfile — leave that as the base image's default.
+USER root
+
+# Pip / Maven / npm proxy URLs are injected via build args. Export
+# PIP_INDEX_URL, MAVEN_MIRROR_URL, NPM_REGISTRY_URL before invoking
+# scripts/ci-local/run-act.sh (which forwards them) to route installs
+# through a private mirror; leave them empty to get public registries.
+# PIP_INDEX_URL defaults to public PyPI (NOT empty string — an empty
+# PIP_INDEX_URL env var causes pip to construct URLs with no host and fail
+# with `Connection refused` against `/simple/<pkg>/`, which is much worse
+# than just falling back to the public index).
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+ARG MAVEN_MIRROR_URL=
+ARG NPM_REGISTRY_URL=
+
+# Pip index URL must be set BEFORE any RUN that invokes pip — otherwise
+# build-time pip install hits whatever the host network resolves pypi.org to.
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+
+# Bypass PEP 668 "externally-managed-environment" on Ubuntu 24.04. Real GHA
+# runners avoid this because actions/setup-python extracts a fresh tool-cache
+# Python that doesn't carry the marker; on the slim catthehacker:act image
+# pip ends up hitting system Python which DOES carry it. Setting this env
+# is equivalent to passing --break-system-packages on every pip command.
+# Real workflows don't pass that flag (and shouldn't need to in CI).
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+# Pre-bake Python 3.12.3 in /opt/hostedtoolcache so actions/setup-python
+# detects the cached install and skips its install+upgrade dance. Without
+# this, setup-python under `act` corrupts pip's vendored resolvelib
+# (ImportError: cannot import RequirementInformation), failing every
+# subsequent pip command. The tarball + setup.sh is the same flow that real
+# GHA hosted runners use; running setup.sh at build time avoids the act
+# runtime quirk that triggers the corruption.
+#
+# Update note: bump PYTHON_VERSION + PYTHON_TARBALL_TAG + PYTHON_SHA256 in
+# lockstep when bumping matrix.python in workflows (see `gbx:versions:audit
+# --package python`). Pin to actions/python-versions release tags from
+# https://github.com/actions/python-versions/releases; recompute the SHA-256
+# locally before committing the bump.
+#
+# IMPORTANT: we DELIBERATELY skip the tarball's setup.sh. That script's job
+# is to (a) create the bin/python symlink and (b) run `pip install -U pip`.
+# Step (b) is what triggers the act-specific pip vendored-resolvelib
+# corruption (ImportError: cannot import RequirementInformation). We do
+# step (a) ourselves and intentionally leave pip at the version that ships
+# with the tarball — workflow's own `pip install --upgrade pip==25.0.1` will
+# upgrade it later in the GHA-controlled step (which works fine).
+ARG PYTHON_VERSION=3.12.3
+ARG PYTHON_TARBALL_TAG=3.12.3-11057844995
+ARG PYTHON_SHA256=07ef2452a390e76505b5a26b37bae7f88bc260926ca70ae88cb679003ab42279
+RUN curl -fsSL "https://github.com/actions/python-versions/releases/download/${PYTHON_TARBALL_TAG}/python-${PYTHON_VERSION}-linux-24.04-x64.tar.gz" \
+        -o /tmp/python.tar.gz \
+    && echo "${PYTHON_SHA256}  /tmp/python.tar.gz" | sha256sum -c - \
+    && mkdir -p "/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64" \
+    && tar -xzf /tmp/python.tar.gz -C "/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64" --strip-components=1 \
+    && rm -f "/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64/setup.sh" \
+    && BIN="/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64/bin" \
+    && { [ -e "$BIN/python" ] || ln -sf python3 "$BIN/python"; } \
+    && { [ -e "$BIN/pip" ] \
+         || { printf '#!/bin/sh\nexec "$(dirname "$0")/pip3" "$@"\n' > "$BIN/pip" \
+              && chmod 0755 "$BIN/pip"; }; } \
+    && touch "/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64.complete" \
+    && rm /tmp/python.tar.gz
+
+# Pre-install setuptools + wheel into tool-cache. The tarball ships only with
+# pip/python; setup.sh would normally `pip install setuptools wheel` after.
+# We skip setup.sh (its `pip install -U pip` corrupts vendored resolvelib
+# under act). Installing here gives the workflow's `pip install --upgrade
+# setuptools==74.0.0 wheel==X` a clean RECORD-bearing target to upgrade —
+# matches what real GHA tool-cache Python looks like.
+RUN "/opt/hostedtoolcache/Python/${PYTHON_VERSION}/x64/bin/pip" install --no-warn-script-location setuptools wheel
+
+# pip.conf belt-and-suspenders for any tool that re-exec's pip with a fresh
+# environment that loses PIP_INDEX_URL. The base pip.conf is templated; we
+# inject the index-url at build time when PIP_INDEX_URL is set.
+COPY pip.conf /etc/pip.conf
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+      printf 'index-url = %s\n' "$PIP_INDEX_URL" >> /etc/pip.conf; \
+    fi \
+    && mkdir -p /root/.pip && cp /etc/pip.conf /root/.pip/pip.conf \
+    && if id -u runner >/dev/null 2>&1; then \
+         mkdir -p /home/runner/.pip \
+         && cp /etc/pip.conf /home/runner/.pip/pip.conf \
+         && chown -R runner:runner /home/runner/.pip; \
+       fi
+
+# Maven (must come BEFORE we drop in the proxy settings.xml at its global path).
+# We also REMOVE apt-installed python3-{pip,wheel,setuptools}: they pollute
+# the tool-cache Python's import path (its sys.path includes system
+# /usr/lib/python3/dist-packages), causing `pip install --upgrade wheel` to
+# find apt's wheel 0.42.0 and fail with "Cannot uninstall ... RECORD file
+# not found. Hint: The package was installed by debian." Real GHA hosted
+# runners don't ship these via apt, so they don't hit this. Removing them
+# makes our tool-cache pip behave like real GHA.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        maven \
+    && DEBIAN_FRONTEND=noninteractive apt-get remove -y --purge --autoremove \
+        python3-wheel python3-setuptools python3-pip 2>/dev/null || true \
+    && rm -rf /var/lib/apt/lists/*
+
+# NOTE: previously tried to pre-install gdal[numpy]==3.11.4 here to dodge
+# GDAL's broken pyproject.toml (dual `[project.license]`). All variants
+# failed: setuptools 64+ rejects the dual-license schema; setuptools ≤ 63.x
+# is broken on Python 3.12 (pkgutil.ImpImporter removed). No setuptools
+# version satisfies BOTH Python 3.12 + lenient validation.
+#
+# This is a real workflow bug, not act-specific — real CI will hit it too
+# the moment the security branch is pushed. Workaround in run-act.sh: drop
+# `--no-build-isolation` from the gdal install line in the mirror so pip
+# gets to pick its own setuptools (whatever pip's bundled mechanism uses).
+
+# Optional Maven proxy. Injected from MAVEN_MIRROR_URL build arg when set;
+# left as the empty template otherwise (uses Maven Central).
+# IMPORTANT: drop the proxy <mirror> in Maven's GLOBAL settings.xml at
+# /usr/share/maven/conf/settings.xml. The actions/setup-java action overwrites
+# the USER settings.xml at ~/.m2/settings.xml (overwrite-settings defaults to
+# true) on every workflow run — so user-level config is lost. Maven merges
+# global + user; the mirror lives in global where setup-java can't reach.
+COPY maven-settings.xml /usr/share/maven/conf/settings.xml
+RUN if [ -n "$MAVEN_MIRROR_URL" ]; then \
+      python3 -c "import sys, re; p='/usr/share/maven/conf/settings.xml'; s=open(p).read(); m=f'  <mirrors>\n    <mirror>\n      <id>db-maven-proxy</id>\n      <url>${MAVEN_MIRROR_URL}</url>\n      <mirrorOf>central</mirrorOf>\n    </mirror>\n  </mirrors>\n'; s=s.replace('</settings>', m+'</settings>'); open(p,'w').write(s)"; \
+    fi
+
+# Optional npm proxy. Used by deploy-docs.yml's npm ci. yarn classic + pnpm
+# both read ~/.npmrc, so this covers them too. The committed npmrc is empty
+# (no registry= line); we inject the registry from NPM_REGISTRY_URL at build
+# time when set, otherwise installs hit registry.npmjs.org.
+COPY npmrc /tmp/npmrc
+RUN if [ -n "$NPM_REGISTRY_URL" ]; then \
+      printf 'registry=%s\n' "$NPM_REGISTRY_URL" >> /tmp/npmrc; \
+    fi \
+    && cp /tmp/npmrc /root/.npmrc \
+    && if id -u runner >/dev/null 2>&1; then \
+         cp /tmp/npmrc /home/runner/.npmrc \
+         && chown runner:runner /home/runner/.npmrc; \
+       fi \
+    && rm /tmp/npmrc
+
+# act sets ACT=true at runtime; this is informational, not load-bearing.
+LABEL org.databricks.geobrix.purpose="local-ci-dry-run-via-act"
+LABEL org.databricks.geobrix.proxy="pip+maven+npm registry configs build-arg injected"

@@ -192,7 +192,7 @@ if [ \"$SKIP_BUILD\" != 'true' ]; then
     cd /root/geobrix/python/geobrix && python3 -m build && cd /root/geobrix
     echo ''
     echo 'Installing Python package (editable)...'
-    pip install -e /root/geobrix/python/geobrix --break-system-packages -q
+    pip install --no-deps -e /root/geobrix/python/geobrix --break-system-packages -q
     echo ''
 fi
 

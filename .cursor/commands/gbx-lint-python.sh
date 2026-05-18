@@ -79,7 +79,9 @@ run_fix_host() {
         if [ ! -d "$venv_dir" ] || [ ! -x "$venv_dir/bin/isort" ] || [ ! -x "$venv_dir/bin/black" ] || [ ! -x "$venv_dir/bin/flake8" ]; then
             echo -e "${CYAN}Creating venv at ${YELLOW}$venv_dir${NC} and installing dev deps..."
             python3 -m venv "$venv_dir" || { echo -e "${RED}Failed to create venv.${NC}"; exit 1; }
-            "$venv_dir/bin/pip" install -q --upgrade pip
+            # Pin bootstrap to DBR 17.3 LTS — keep in sync with .github/actions/{scala,python}_build/action.yml,
+            # scripts/docker/Dockerfile, scripts/geobrix-gdal-init.sh.
+            "$venv_dir/bin/pip" install -q --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1
             (cd "$PY_DIR" && "$venv_dir/bin/pip" install -q -e ".[dev]") || { echo -e "${RED}Failed to install python/geobrix[dev].${NC}"; exit 1; }
             echo -e "${GREEN}Venv ready.${NC}"
         fi

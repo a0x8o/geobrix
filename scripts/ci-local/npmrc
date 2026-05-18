@@ -1,0 +1,5 @@
+# npm config baked into the local-act runner image.
+# The registry url is injected at image build time from $NPM_REGISTRY_URL on
+# the host (see Dockerfile.gha-runner). Set $NPM_REGISTRY_URL to point at a
+# private mirror if your network requires one; leave it unset to use
+# registry.npmjs.org.

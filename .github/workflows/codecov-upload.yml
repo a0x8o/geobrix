@@ -7,7 +7,7 @@
 # Requirements:
 #   - Repo secret CODECOV_TOKEN (from https://codecov.io/gh/databrickslabs/geobrix → Settings).
 #
-# Badge: README uses https://codecov.io/gh/databrickslabs/geobrix/branch/master/graph/badge.svg
+# Badge: README uses https://codecov.io/gh/databrickslabs/geobrix/branch/main/graph/badge.svg
 
 name: Upload coverage to Codecov
 
@@ -20,9 +20,16 @@ permissions:
 jobs:
   coverage:
     name: Build, test with coverage, upload
-    runs-on: larger
+    # Heavy: full Scala scoverage + Python pytest --cov + GDAL native install (manual coverage-refresh path). Same workload as build_main, so same runner class.
+    runs-on:
+      group: larger-runners
+      labels: larger
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for pip/Maven via JFrog.
+      id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:

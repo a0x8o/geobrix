@@ -118,7 +118,7 @@ if [ \"$SKIP_BUILD\" != 'true' ]; then
     echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     mvn package -DskipTests -q
     cd /root/geobrix/python/geobrix && python3 -m build && cd /root/geobrix
-    pip install -e /root/geobrix/python/geobrix --break-system-packages -q
+    pip install --no-deps -e /root/geobrix/python/geobrix --break-system-packages -q
     echo ''
 fi
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'

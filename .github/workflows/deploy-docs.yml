@@ -4,13 +4,14 @@
 # First-time setup: In repo Settings → Pages → Build and deployment,
 # set Source to "GitHub Actions".
 #
-# If the org enforces an IP allow list, use a self-hosted runner (e.g. larger)
-# inside the allowlisted network; ubuntu-latest cannot be used in that case.
+# Runs on the org's hardened runner group (see runs-on below); the runner
+# is on an allowlisted network, so it works even when IP allow lists
+# exclude generic ubuntu-latest.
 name: Deploy documentation
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'docs/**'
       - '.github/workflows/deploy-docs.yml'
@@ -25,9 +26,15 @@ concurrency:
 
 jobs:
   build:
-    runs-on: larger
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret), so gate behind the protected env.
     environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-auth: GitHub OIDC token exchange for npm via JFrog.
+      id-token: write
     steps:
       # For restricted GITHUB_TOKEN, add secret REPO_ACCESS_TOKEN (PAT with repo scope) if needed.
       - name: Checkout
@@ -41,6 +48,11 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: docs/package-lock.json
+
+      # Route npm through JFrog with OIDC-issued credentials for supply-chain
+      # hardening. Must run after setup-node so npm is on PATH for auto-detect.
+      - name: Authenticate for JFrog (npm via OIDC)
+        uses: ./.github/actions/jfrog-auth
 
       - name: Install dependencies
         run: cd docs && npm ci
@@ -65,7 +77,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-    runs-on: larger
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     needs: build
     steps:
       - name: Deploy to GitHub Pages

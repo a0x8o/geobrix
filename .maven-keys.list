@@ -1,0 +1,1055 @@
+# Maven dependency PGP keysmap (Labs lockdown — Maven dependency pinning).
+#
+# Consumed by org.simplify4u.plugins:pgpverify-maven-plugin via the
+# `verify-pgp` Maven profile (pom.xml). Every dependency, transitive
+# dependency, plugin, and plugin dependency must have a signature whose
+# key fingerprint appears below; otherwise the build fails.
+#
+# Format (https://www.simplify4u.org/pgpverify-maven-plugin/keysmap.html):
+#
+#   groupId                               = 0x<fingerprint>[, 0x<fingerprint>...]
+#   groupId:artifactId                    = 0x<fingerprint>
+#   groupId:artifactId:packaging          = 0x<fingerprint>
+#   groupId:artifactId:packaging:version  = 0x<fingerprint>
+#
+# Ordering: most-specific entry wins. Comments start with `#`.
+#
+# Sentinels (avoid except for documented exceptions):
+#   noSig   - artifact is permitted to have no signature      (DO NOT USE)
+#   badSig  - artifact may have an invalid signature          (DO NOT USE)
+#   noKey   - signing key need not be in this keysmap         (use sparingly)
+#
+# Refresh procedure:
+#
+#   1. ./scripts/security/maven-pgp-bootstrap > /tmp/draft.list
+#      Runs `mvn -Pverify-pgp verify` with relaxed settings, captures every
+#      key fingerprint Maven Central serves for our resolved closure, and
+#      emits draft keysmap entries.
+#
+#   2. Review every fingerprint in /tmp/draft.list against the project's
+#      published signing key (Apache KEYS file, GitHub release page, etc.).
+#      Do NOT trust this file blindly — that is the entire point.
+#
+#   3. Replace the TODO block below with the reviewed entries, run
+#      `./scripts/security/maven-pgp-verify` to confirm a clean check, then
+#      commit.
+#
+# Trust-anchor URLs for the direct dependencies in pom.xml — use these to
+# cross-check fingerprints before adding entries:
+#
+#   org.apache.spark:*           https://downloads.apache.org/spark/KEYS
+#   io.delta:*                   https://github.com/delta-io/delta/blob/master/KEYS
+#   org.scala-lang:*             https://www.scala-lang.org/files/ (release manager keys)
+#   org.scalatest:*              https://www.scalatest.org/ (Bill Venners' published keys)
+#   org.scalamock:*              https://github.com/paulbutcher/ScalaMock signing key
+#   com.fasterxml.jackson.core:* https://github.com/FasterXML/jackson signing keys
+#   com.uber:h3                  https://github.com/uber/h3-java release signatures
+#   org.locationtech.jts.*       https://github.com/locationtech/jts release signatures
+#   org.locationtech.proj4j.*    https://github.com/locationtech/proj4j release signatures
+#   org.gdal:gdal                https://github.com/OSGeo/gdal release signatures
+#   junit:junit                  https://repo.maven.apache.org/maven2/junit/junit/.../*.asc
+#   org.codehaus.mojo:*          https://www.mojohaus.org/ release signing keys
+#   org.apache.maven.plugins:*   https://downloads.apache.org/maven/KEYS
+#   net.alchim31.maven:*         https://github.com/davidB/scala-maven-plugin signing key
+#   org.scalatest:scalatest-maven-plugin  https://github.com/scalatest/scalatest-maven-plugin
+#   org.scalastyle:scalastyle-maven-plugin https://github.com/scalastyle/scalastyle-maven-plugin
+#   org.scoverage:scoverage-maven-plugin   https://github.com/scoverage/scoverage-maven-plugin
+#
+# ------------------------------------------------------------------------
+# TODO: bootstrap-populated signed-key entries go below the noSig block.
+# Until populated, the verify-pgp profile is opt-in (-Pverify-pgp); once
+# populated and verified, switch the profile to
+# <activeByDefault>true</activeByDefault> and update CI to require the
+# verification job.
+# ------------------------------------------------------------------------
+
+# --- noSig sentinels for known-legacy unsigned artifacts on Maven Central ---
+#
+# These are very old (pre-2015) transitive build/test deps that were
+# uploaded to Maven Central before PGP signing was broadly adopted.
+# They are NOT direct GeoBrix deps; they enter the closure via plugin
+# dependencies. The artifacts themselves cannot be re-signed by the
+# current Maven Central maintainers — only by the original publisher,
+# which is impractical (projects defunct or maintainer keys lost).
+#
+# noSig means: pgpverify-maven-plugin will accept this artifact even if
+# Maven Central serves it without a .asc signature. The trust model
+# falls back to Maven Central's repository-level integrity (artifacts
+# are immutable once published; their bytes match the checksums on file).
+#
+# Versions are pinned: future versions of these groupId:artifactId pairs
+# (unlikely for these abandoned projects) would require a fresh review
+# rather than inheriting noSig.
+aopalliance:aopalliance:jar:1.0                                = noSig
+aopalliance:aopalliance:pom:1.0                                = noSig
+classworlds:classworlds:jar:1.1-alpha-2                        = noSig
+classworlds:classworlds:pom:1.1-alpha-2                        = noSig
+com.google.collections:google-collections:jar:1.0              = noSig
+com.google.collections:google-collections:pom:1.0              = noSig
+commons-beanutils:commons-beanutils:jar:1.7.0                  = noSig
+commons-beanutils:commons-beanutils:pom:1.7.0                  = noSig
+commons-chain:commons-chain:jar:1.1                            = noSig
+commons-chain:commons-chain:pom:1.1                            = noSig
+commons-digester:commons-digester:jar:1.8                      = noSig
+commons-digester:commons-digester:pom:1.8                      = noSig
+dom4j:dom4j:jar:1.1                                            = noSig
+dom4j:dom4j:pom:1.1                                            = noSig
+javax.inject:javax.inject:jar:1                                = noSig
+javax.inject:javax.inject:pom:1                                = noSig
+junit:junit:jar:3.8.1                                          = noSig
+junit:junit:pom:3.8.1                                          = noSig
+org.codehaus.plexus:plexus-container-default:jar:1.0-alpha-9-stable-1 = noSig
+org.codehaus.plexus:plexus-container-default:pom:1.0-alpha-9-stable-1 = noSig
+org.codehaus.plexus:plexus-i18n:jar:1.0-beta-10                = noSig
+org.codehaus.plexus:plexus-i18n:pom:1.0-beta-10                = noSig
+org.codehaus.plexus:plexus-utils:jar:1.5.5                     = noSig
+org.codehaus.plexus:plexus-utils:pom:1.5.5                     = noSig
+oro:oro:jar:2.0.8                                              = noSig
+oro:oro:pom:2.0.8                                              = noSig
+
+# --- Bootstrap-generated signed-key entries ---
+#
+# Generated by `scripts/security/maven-pgp-bootstrap` against the current
+# pom.xml dependency closure. These are the PGP signing keys Maven Central
+# served at bootstrap time for each (groupId:artifactId) pair.
+#
+# TRUST STATUS: SNAPSHOT, NOT CROSS-CHECKED.
+# Before the `verify-pgp` profile can be flipped to <activeByDefault>true</activeByDefault>,
+# every fingerprint below must be cross-checked against the project's
+# published trust anchor (Apache KEYS file, GitHub release page, etc.).
+# Trust-anchor URLs for direct deps are listed above. Treat this block
+# as a working draft; a follow-up PR (`Populate Maven PGP keysmap from
+# reviewed signatures`) will mark each entry as reviewed and flip the
+# profile.
+#
+com.fasterxml.jackson.core:jackson-annotations                           = 0x28118C070CB22A0175A2E8D43D12CA2AC19F3181
+com.fasterxml.jackson.core:jackson-core                                  = 0x28118C070CB22A0175A2E8D43D12CA2AC19F3181
+com.fasterxml.jackson.core:jackson-databind                              = 0x28118C070CB22A0175A2E8D43D12CA2AC19F3181
+com.github.luben:zstd-jni                                                = 0x9AC5712CABE9635B65663AB0711C0A9A896FE336
+com.google.code.findbugs:jsr305                                          = 0x7616EB882DAF57A11477AAF559A252FB1199D873
+com.google.errorprone:error_prone_annotations                            = 0xEE0CA873074092F806F59B65D364ABAA39A47320, 0xF05E5F90E43E837F9DD8C781BF935C771A8474F8
+com.google.guava:failureaccess                                           = 0xBDB5FA4FE719D787FB3D3197F6D4A1D411E9D1AE
+com.google.guava:guava                                                   = 0x56ED3B4843DAACC79DE555557457CA33C3CE9E15, 0xBDB5FA4FE719D787FB3D3197F6D4A1D411E9D1AE
+com.google.guava:listenablefuture                                        = 0xBDB5FA4FE719D787FB3D3197F6D4A1D411E9D1AE
+com.google.inject:guice                                                  = 0x1616273079FE63E31C938F10F0DF21D1D0A3C384
+com.google.j2objc:j2objc-annotations                                     = 0xBDB5FA4FE719D787FB3D3197F6D4A1D411E9D1AE, 0xB801E2F8EF035068EC1139CC29579F18FA8FD93B
+com.googlecode.json-simple:json-simple                                   = 0xB1DCB69DFBAD15DFC6214C44717134BDA955E8F3
+com.swoval:file-tree-views                                               = 0xEE2CFEB6A2AECF44C781C5C3DCD5181297A43D24
+com.thoughtworks.qdox:qdox                                               = 0xB02137D875D833D9B23392ECAE5A7FB608A0221C, 0x7E6557B314B189FD4EA5B680FE66BCA17E67AE6F
+com.typesafe:config                                                      = 0x75DF525907FF19B0E4AEC4C7C550938A54246AD3
+com.uber:h3                                                              = 0xB4D7EBFB68163296CC2B2D5D428985C8224623B7
+com.vladsch.flexmark:flexmark-all                                        = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-abbreviation                           = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-admonition                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-anchorlink                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-aside                                  = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-attributes                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-autolink                               = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-definition                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-emoji                                  = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-enumerated-reference                   = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-escaped-character                      = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-footnotes                              = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gfm-issues                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gfm-strikethrough                      = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gfm-tables                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gfm-tasklist                           = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gfm-users                              = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-gitlab                                 = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-ins                                    = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-jekyll-front-matter                    = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-jekyll-tag                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-macros                                 = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-media-tags                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-superscript                            = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-tables                                 = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-toc                                    = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-typographic                            = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-wikilink                               = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-xwiki-macros                           = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-yaml-front-matter                      = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-ext-youtube-embedded                       = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-formatter                                  = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-html-parser                                = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-jira-converter                             = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-profile-pegdown                            = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-util                                       = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark-youtrack-converter                         = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+com.vladsch.flexmark:flexmark                                            = 0x4008F9DFF7DBC968F35F9E712642156411CCE8B3
+commons-codec:commons-codec                                              = 0x2DB4F1EF0FA761ECC4EA935C86FDC7E2A11262CB
+commons-collections:commons-collections                                  = 0x0CC641C3A62453AB390066C4A41F13C999945293
+commons-io:commons-io                                                    = 0x2DB4F1EF0FA761ECC4EA935C86FDC7E2A11262CB, 0xCD5464315F0B98C77E6E8ECD9DAADC1C9FCC82D0
+commons-lang:commons-lang                                                = 0x636DE9055C4C75C7BD9830771241BC872C5E4EC0
+commons-logging:commons-logging                                          = 0x0CC641C3A62453AB390066C4A41F13C999945293
+io.airlift:aircompressor                                                 = 0x9E93DB1192CEE3D3B581AABB37E9D58EA4598641
+io.github.java-diff-utils:java-diff-utils                                = 0xD477D51812E692011DB11E66A6EA2E2BF22E0543
+io.github.resilience4j:resilience4j-core                                 = 0x94FAC9D5B165E80F1F2D9A103FFA7DB1EC0FF1A2
+io.github.resilience4j:resilience4j-retry                                = 0x94FAC9D5B165E80F1F2D9A103FFA7DB1EC0FF1A2
+io.vavr:vavr-match                                                       = 0x0942F59B726DA4BD2837DD44F45F03308EE961FF
+io.vavr:vavr                                                             = 0x0942F59B726DA4BD2837DD44F45F03308EE961FF
+javax.annotation:javax.annotation-api                                    = 0x4F7E32D440EF90A83011A8FC6425559C47CC79C4
+javax.enterprise:cdi-api                                                 = 0xF2F5A9AFBD6C3FAE324194DCB00369BF54A1AC32
+javax.servlet:javax.servlet-api                                          = 0x4F7E32D440EF90A83011A8FC6425559C47CC79C4
+junit:junit                                                              = 0xFF6E2C001948C5F2F38B0CC385911F425EC61B51
+net.alchim31.maven:scala-maven-plugin                                    = 0xC810A0FEF9B28BCA880B6F179AE9AEF3D958C62E
+net.openhft:zero-allocation-hashing                                      = 0xA7D8BE3D575D6C5040E889331B6E3BDDD4415872
+org.apache-extras.beanshell:bsh                                          = 0xDDDEE87612E9FB95F5C8D91E411063A3A0FFD119
+org.apache.commons:commons-compress                                      = 0x2DB4F1EF0FA761ECC4EA935C86FDC7E2A11262CB, 0xCE8075A251547BEE249BC151A2115AE15F6B8B72
+org.apache.commons:commons-exec                                          = 0xF4DD59C90148BDC52BEB90A4530AA5F25C25011F
+org.apache.commons:commons-lang3                                         = 0xB6E73D84EA4FCC47166087253FAAD2CD5ECBB314, 0x2DB4F1EF0FA761ECC4EA935C86FDC7E2A11262CB
+org.apache.commons:commons-text                                          = 0xB6E73D84EA4FCC47166087253FAAD2CD5ECBB314
+org.apache.httpcomponents:httpclient                                     = 0x0785B3EFF60B1B1BEA94E0BB7C25280EAE63EBE5
+org.apache.httpcomponents:httpcore                                       = 0x0785B3EFF60B1B1BEA94E0BB7C25280EAE63EBE5
+org.apache.maven.doxia:doxia-core                                        = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-decoration-model                            = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-integration-tools                           = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-logging-api                                 = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-apt                                  = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-confluence                           = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-docbook-simple                       = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-fml                                  = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-markdown                             = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-twiki                                = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-xdoc                                 = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-xhtml5                               = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-module-xhtml                                = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-sink-api                                    = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-site-renderer                               = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.doxia:doxia-skin-model                                  = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.enforcer:enforcer-api                                   = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.enforcer:enforcer-rules                                 = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-assembly-plugin                           = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.apache.maven.plugins:maven-clean-plugin                              = 0xAE9E53FC28FF2AB1012273D0BF1518E0160788A2
+org.apache.maven.plugins:maven-compiler-plugin                           = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-deploy-plugin                             = 0x88BE34F94BDB2B5357044E2E3A387D43964143E3
+org.apache.maven.plugins:maven-enforcer-plugin                           = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-install-plugin                            = 0x88BE34F94BDB2B5357044E2E3A387D43964143E3
+org.apache.maven.plugins:maven-jar-plugin                                = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-resources-plugin                          = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.apache.maven.plugins:maven-site-plugin                               = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.plugins:maven-surefire-plugin                           = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.reporting:maven-reporting-api                           = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.reporting:maven-reporting-exec                          = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.resolver:maven-resolver-api                             = 0x522CA055B326A636D833EF6A0551FD3684FCBBB7, 0x29BEA2A645F2D6CED7FB12E02B172E3E156466E8, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.resolver:maven-resolver-impl                            = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.resolver:maven-resolver-spi                             = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.resolver:maven-resolver-util                            = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0x29BEA2A645F2D6CED7FB12E02B172E3E156466E8, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1, 0x522CA055B326A636D833EF6A0551FD3684FCBBB7
+org.apache.maven.shared:file-management                                  = 0x29BEA2A645F2D6CED7FB12E02B172E3E156466E8
+org.apache.maven.shared:maven-common-artifact-filters                    = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.shared:maven-dependency-tree                            = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven.shared:maven-filtering                                  = 0xB91AB7D2121DC6B0A61AA182D7742D58455ECC7C
+org.apache.maven.shared:maven-shared-incremental                         = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.shared:maven-shared-utils                               = 0x82C9EC0E52C47A936A849E0113D979595E6D01E1, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.surefire:maven-surefire-common                          = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-api                                   = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-booter                                = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-extensions-api                        = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-extensions-spi                        = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-logger-api                            = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven.surefire:surefire-shared-utils                          = 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.apache.maven:maven-aether-provider                                   = 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-archiver                                          = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA, 0xFA77DCFEF2EE6EB2DEBEDD2C012579464D01C06A, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven:maven-artifact                                          = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-builder-support                                   = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven:maven-core                                              = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-model-builder                                     = 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven:maven-model                                             = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-plugin-api                                        = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-repository-metadata                               = 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven:maven-resolver-provider                                 = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.apache.maven:maven-settings-builder                                  = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.maven:maven-settings                                          = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866
+org.apache.spark:spark-catalyst_2.13                                     = 0x4DC9676CEF9A83E98FCA02784D6620843CD87F5A
+org.apache.spark:spark-core_2.13                                         = 0x4DC9676CEF9A83E98FCA02784D6620843CD87F5A
+org.apache.spark:spark-sql_2.13                                          = 0x4DC9676CEF9A83E98FCA02784D6620843CD87F5A
+org.apache.velocity:velocity-tools                                       = 0x7B9751FC3F01F134F476464CD0EB627D4885CED1
+org.apache.velocity:velocity                                             = 0x7B9751FC3F01F134F476464CD0EB627D4885CED1
+org.apache.xbean:xbean-reflect                                           = 0x223D3A74B068ECA354DC385CE126833F9CF64915
+org.bouncycastle:bcpg-jdk18on                                            = 0x7B121B76A7ED6CE6E60AD51784E913A8E3A748C0
+org.bouncycastle:bcprov-jdk18on                                          = 0x7B121B76A7ED6CE6E60AD51784E913A8E3A748C0
+org.bouncycastle:bcutil-jdk18on                                          = 0x7B121B76A7ED6CE6E60AD51784E913A8E3A748C0
+org.checkerframework:checker-compat-qual                                 = 0x19BEAB2D799C020F17C69126B16698A4ADF4D638
+org.checkerframework:checker-qual                                        = 0x19BEAB2D799C020F17C69126B16698A4ADF4D638
+org.codehaus.mojo:animal-sniffer-annotations                             = 0x82F833963889D7ED06F1E4DC6525FD70CC303655
+org.codehaus.mojo:build-helper-maven-plugin                              = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-archiver                                      = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA, 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-cipher                                        = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688
+org.codehaus.plexus:plexus-classworlds                                   = 0xB02137D875D833D9B23392ECAE5A7FB608A0221C, 0xFB11D4BB7B244678337AAD8BC7BF26D0BB617866, 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-api                                  = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-compiler-javac                                = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-compiler-manager                              = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-component-annotations                         = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA, 0xFA77DCFEF2EE6EB2DEBEDD2C012579464D01C06A
+org.codehaus.plexus:plexus-container-default                             = 0xFA77DCFEF2EE6EB2DEBEDD2C012579464D01C06A
+org.codehaus.plexus:plexus-interpolation                                 = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA, 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.codehaus.plexus:plexus-io                                            = 0xFA77DCFEF2EE6EB2DEBEDD2C012579464D01C06A, 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-java                                          = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-resources                                     = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA, 0xF254B35617DC255D9344BCFA873A8E86B4372146
+org.codehaus.plexus:plexus-sec-dispatcher                                = 0x2BE13D052E9AA567D657D9791FD507154FB9BA39
+org.codehaus.plexus:plexus-utils                                         = 0x6A814B1F869C2BBEAB7CB7271A2A1C94BDE89688, 0xEA23DB1360D9029481E7F2EFECDFEA3CB4493B94, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.codehaus.plexus:plexus-velocity                                      = 0x190D5A957FF22273E601F7A7C92C5FEC70161C62
+org.codehaus.plexus:plexus-xml                                           = 0xFA77DCFEF2EE6EB2DEBEDD2C012579464D01C06A, 0x84789D24DF77A32433CE1F079EB80E92EB2135B1, 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.eclipse.aether:aether-api                                            = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.eclipse.aether:aether-impl                                           = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.eclipse.aether:aether-spi                                            = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.eclipse.aether:aether-util                                           = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.eclipse.jetty:jetty-http                                             = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-io                                               = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-security                                         = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-server                                           = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-servlet                                          = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-util-ajax                                        = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-util                                             = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-webapp                                           = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.jetty:jetty-xml                                              = 0x5989BAF76217B843D66BE55B2D0E1FB8FE4B68B4
+org.eclipse.sisu:org.eclipse.sisu.inject                                 = 0xCF17E92C9FFA55316B5DB83901D734EE5EE9C3F8
+org.eclipse.sisu:org.eclipse.sisu.plexus                                 = 0xCF17E92C9FFA55316B5DB83901D734EE5EE9C3F8
+org.gdal:gdal                                                            = 0xB1FA7D81EEB8E66399178B9733EBBFC47B3DD87D
+org.hamcrest:hamcrest-core                                               = 0x4DB1A49729B053CAF015CEE9A6ADFC93EF34893E
+org.iq80.snappy:snappy                                                   = 0x9E93DB1192CEE3D3B581AABB37E9D58EA4598641
+org.jline:jline-native                                                   = 0xEA23DB1360D9029481E7F2EFECDFEA3CB4493B94
+org.jline:jline-terminal-jni                                             = 0xEA23DB1360D9029481E7F2EFECDFEA3CB4493B94
+org.jline:jline-terminal                                                 = 0xEA23DB1360D9029481E7F2EFECDFEA3CB4493B94
+org.jsoup:jsoup                                                          = 0xF3184BCD55F4D016E30D4C9BF42E87F9665015C9
+org.locationtech.jts.io:jts-io-common                                    = 0x6EB0DED2F354B5D1DD24006168127E5CB45F41F3
+org.locationtech.jts:jts-core                                            = 0x6EB0DED2F354B5D1DD24006168127E5CB45F41F3
+org.locationtech.proj4j:proj4j-epsg                                      = 0x3B854F176E251D753BB2FF1BBAE04B4DA2C66578
+org.locationtech.proj4j:proj4j                                           = 0x3B854F176E251D753BB2FF1BBAE04B4DA2C66578
+org.nibor.autolink:autolink                                              = 0x624B96CEB9896889C97B258F7DC3076FE22D4F88
+org.ow2.asm:asm                                                          = 0xA5BD02B93E7A40482EB1D66A5F69AD087600B22C
+org.scala-lang.modules:scala-parallel-collections_2.13                   = 0xC44A68FD10FF456C91E2757D18088D07854014B3
+org.scala-lang.modules:scala-parser-combinators_2.11                     = 0xDBE61B6BA51DFCAEDED256477090AF43A5E10D0B
+org.scala-lang.modules:scala-parser-combinators_2.13                     = 0xDBE61B6BA51DFCAEDED256477090AF43A5E10D0B
+org.scala-lang.modules:scala-xml_2.11                                    = 0x8D0C8FA7175F26274A6A9F87EFEC7EA866CC43AE
+org.scala-lang:scala-compiler                                            = 0x86DA41A5E1699C9CEBE964A8A9052B1B6D92E560
+org.scala-lang:scala-library                                             = 0x86DA41A5E1699C9CEBE964A8A9052B1B6D92E560, 0x3D3A4396458FD629DEAE0F88E9DF618BB41F2BCE
+org.scala-lang:scala-reflect                                             = 0x86DA41A5E1699C9CEBE964A8A9052B1B6D92E560
+org.scala-sbt:collections_2.13                                           = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:compiler-bridge_2.13                                       = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:compiler-interface                                         = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:core-macros_2.13                                           = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:io_2.13                                                    = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:util-control_2.13                                          = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:util-interface                                             = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:util-logging_2.13                                          = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:util-position_2.13                                         = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:util-relation_2.13                                         = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-apiinfo_2.13                                          = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-classfile_2.13                                        = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-classpath_2.13                                        = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-compile-core_2.13                                     = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-core_2.13                                             = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-persist-core-assembly                                 = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc-persist_2.13                                          = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scala-sbt:zinc_2.13                                                  = 0x2BE67AC00D699E04E840B7FE29967E804D85663F
+org.scalactic:scalactic_2.13                                             = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalamock:scalamock_2.13                                             = 0x59593FDD6216AF090F33BCB695BFD10F272BAD4A
+org.scalariform:scalariform_2.11                                         = 0x5C6E778B2A635CDDC6770D4430BCB5D0C5BCAF2E
+org.scalastyle:scalastyle-maven-plugin                                   = 0xDBD4264DBDE40652150BCB423FA1B549D9437E2C
+org.scalastyle:scalastyle_2.11                                           = 0xDBD4264DBDE40652150BCB423FA1B549D9437E2C
+org.scalatest:scalatest-compatible                                       = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-core_2.13                                        = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-diagrams_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-featurespec_2.13                                 = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-flatspec_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-freespec_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-funspec_2.13                                     = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-funsuite_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-matchers-core_2.13                               = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-maven-plugin                                     = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-mustmatchers_2.13                                = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-propspec_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-refspec_2.13                                     = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-shouldmatchers_2.13                              = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest-wordspec_2.13                                    = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.scalatest:scalatest_2.13                                             = 0x6766B3EC6ECC2FFD5F899F7C63BB5E152DFF95F0
+org.simplify4u.plugins:pgpverify-maven-plugin                            = 0x57EB3F12030A57BAA31CAAD5BE3E2A5CB80794EE
+org.slf4j:slf4j-api                                                      = 0x475F3B8E59E6E63AA78067482C7B12F2A511E325
+org.sonatype.plexus:plexus-build-api                                     = 0x2BCBDD0F23EA1CAFCC11D4860374CF2E8DD1BDFD
+org.sonatype.plexus:plexus-cipher                                        = 0x9FFED7A118D45A44E4A1E47130E6F80434A72A7F
+org.sonatype.plexus:plexus-sec-dispatcher                                = 0x9FFED7A118D45A44E4A1E47130E6F80434A72A7F
+org.sonatype.sisu:sisu-guice                                             = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41, 0xE78AA45938D10249E08CC1C752E6585E0102B84D
+org.sonatype.sisu:sisu-inject-bean                                       = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.sonatype.sisu:sisu-inject-plexus                                     = 0xBA926F64CA647B6D853A38672E2010F8A7FF4A41
+org.tukaani:xz                                                           = 0x3690C240CE51B4670D30AD1C38EE757D69184620
+
+# --- Version-specific noSig entries surfaced by full-CI (act) closure ---
+#
+# These artifacts have no .asc signature on Maven Central at the specific
+# version+packaging listed. They were surfaced when pgpverify ran against
+# a fresh ~/.m2 (matching real CI behavior) and saw a larger transitive
+# plugin closure than the dev-container bootstrap captured.
+#
+# noSig at the version:packaging level is more precise than at the
+# groupId:artifactId level — it lets future versions (which may add
+# signatures) be re-evaluated rather than blanket-trusted.
+#
+# Generated from test-logs/local-act-verifypgp.log via:
+#   grep -oE "Unsigned artifact .* in keys map: [^[:space:]]+" \
+#     test-logs/local-act-verifypgp.log | sed -E 's/^.*: //' | sort -u
+#
+antlr:antlr:jar:2.7.2                                                                      = noSig
+antlr:antlr:pom:2.7.2                                                                      = noSig
+com.fasterxml.jackson.core:jackson-annotations:jar:2.18.3                                  = noSig
+com.fasterxml.jackson.core:jackson-annotations:pom:2.18.3                                  = noSig
+com.fasterxml.jackson.core:jackson-core:jar:2.18.3                                         = noSig
+com.fasterxml.jackson.core:jackson-core:pom:2.18.3                                         = noSig
+com.fasterxml.jackson.core:jackson-databind:jar:2.18.3                                     = noSig
+com.fasterxml.jackson.core:jackson-databind:pom:2.18.3                                     = noSig
+com.github.luben:zstd-jni:jar:1.5.7-6                                                      = noSig
+com.github.luben:zstd-jni:pom:1.5.7-6                                                      = noSig
+com.google.code.findbugs:jsr305:jar:2.0.1                                                  = noSig
+com.google.code.findbugs:jsr305:jar:3.0.2                                                  = noSig
+com.google.code.findbugs:jsr305:pom:2.0.1                                                  = noSig
+com.google.code.findbugs:jsr305:pom:3.0.2                                                  = noSig
+com.google.errorprone:error_prone_annotations:jar:2.1.3                                    = noSig
+com.google.errorprone:error_prone_annotations:jar:2.36.0                                   = noSig
+com.google.errorprone:error_prone_annotations:pom:2.1.3                                    = noSig
+com.google.errorprone:error_prone_annotations:pom:2.36.0                                   = noSig
+com.google.guava:failureaccess:jar:1.0.2                                                   = noSig
+com.google.guava:failureaccess:pom:1.0.2                                                   = noSig
+com.google.guava:guava:jar:25.1-android                                                    = noSig
+com.google.guava:guava:jar:33.4.0-jre                                                      = noSig
+com.google.guava:guava:pom:25.1-android                                                    = noSig
+com.google.guava:guava:pom:33.4.0-jre                                                      = noSig
+com.google.guava:listenablefuture:jar:9999.0-empty-to-avoid-conflict-with-guava            = noSig
+com.google.guava:listenablefuture:pom:9999.0-empty-to-avoid-conflict-with-guava            = noSig
+com.google.inject:guice:jar:no_aop:4.2.2                                                   = noSig
+com.google.inject:guice:pom:4.2.2                                                          = noSig
+com.google.j2objc:j2objc-annotations:jar:1.1                                               = noSig
+com.google.j2objc:j2objc-annotations:jar:3.0.0                                             = noSig
+com.google.j2objc:j2objc-annotations:pom:1.1                                               = noSig
+com.google.j2objc:j2objc-annotations:pom:3.0.0                                             = noSig
+com.googlecode.json-simple:json-simple:jar:1.1.1                                           = noSig
+com.googlecode.json-simple:json-simple:pom:1.1.1                                           = noSig
+com.jcraft:jsch:jar:0.1.27                                                                 = noSig
+com.jcraft:jsch:pom:0.1.27                                                                 = noSig
+com.swoval:file-tree-views:jar:2.1.12                                                      = noSig
+com.swoval:file-tree-views:pom:2.1.12                                                      = noSig
+com.thoughtworks.qdox:qdox:jar:2.2.0                                                       = noSig
+com.thoughtworks.qdox:qdox:pom:2.2.0                                                       = noSig
+com.typesafe:config:jar:1.2.0                                                              = noSig
+com.typesafe:config:pom:1.2.0                                                              = noSig
+com.uber:h3:jar:3.7.0                                                                      = noSig
+com.uber:h3:pom:3.7.0                                                                      = noSig
+commons-cli:commons-cli:jar:1.0                                                            = noSig
+commons-cli:commons-cli:pom:1.0                                                            = noSig
+commons-codec:commons-codec:jar:1.11                                                       = noSig
+commons-codec:commons-codec:jar:1.19.0                                                     = noSig
+commons-codec:commons-codec:jar:1.3                                                        = noSig
+commons-codec:commons-codec:pom:1.11                                                       = noSig
+commons-codec:commons-codec:pom:1.19.0                                                     = noSig
+commons-codec:commons-codec:pom:1.3                                                        = noSig
+commons-collections:commons-collections:jar:3.2.1                                          = noSig
+commons-collections:commons-collections:pom:3.2.1                                          = noSig
+commons-httpclient:commons-httpclient:jar:2.0.2                                            = noSig
+commons-httpclient:commons-httpclient:pom:2.0.2                                            = noSig
+commons-io:commons-io:jar:1.4                                                              = noSig
+commons-io:commons-io:jar:2.11.0                                                           = noSig
+commons-io:commons-io:jar:2.16.1                                                           = noSig
+commons-io:commons-io:jar:2.20.0                                                           = noSig
+commons-io:commons-io:jar:2.21.0                                                           = noSig
+commons-io:commons-io:jar:2.6                                                              = noSig
+commons-io:commons-io:pom:1.4                                                              = noSig
+commons-io:commons-io:pom:2.11.0                                                           = noSig
+commons-io:commons-io:pom:2.16.1                                                           = noSig
+commons-io:commons-io:pom:2.20.0                                                           = noSig
+commons-io:commons-io:pom:2.21.0                                                           = noSig
+commons-io:commons-io:pom:2.6                                                              = noSig
+commons-lang:commons-lang:jar:2.1                                                          = noSig
+commons-lang:commons-lang:jar:2.5                                                          = noSig
+commons-lang:commons-lang:pom:2.1                                                          = noSig
+commons-lang:commons-lang:pom:2.5                                                          = noSig
+commons-logging:commons-logging-api:jar:1.1                                                = noSig
+commons-logging:commons-logging-api:pom:1.1                                                = noSig
+commons-logging:commons-logging:jar:1.0.4                                                  = noSig
+commons-logging:commons-logging:jar:1.1.1                                                  = noSig
+commons-logging:commons-logging:jar:1.2                                                    = noSig
+commons-logging:commons-logging:pom:1.0.4                                                  = noSig
+commons-logging:commons-logging:pom:1.1.1                                                  = noSig
+commons-logging:commons-logging:pom:1.2                                                    = noSig
+commons-validator:commons-validator:jar:1.3.1                                              = noSig
+commons-validator:commons-validator:pom:1.3.1                                              = noSig
+de.zeigermann.xml:xml-im-exporter:jar:1.1                                                  = noSig
+de.zeigermann.xml:xml-im-exporter:pom:1.1                                                  = noSig
+io.airlift:aircompressor:jar:0.27                                                          = noSig
+io.airlift:aircompressor:pom:0.27                                                          = noSig
+io.github.java-diff-utils:java-diff-utils:jar:4.15                                         = noSig
+io.github.java-diff-utils:java-diff-utils:pom:4.15                                         = noSig
+io.github.resilience4j:resilience4j-core:jar:1.7.1                                         = noSig
+io.github.resilience4j:resilience4j-core:pom:1.7.1                                         = noSig
+io.github.resilience4j:resilience4j-retry:jar:1.7.1                                        = noSig
+io.github.resilience4j:resilience4j-retry:pom:1.7.1                                        = noSig
+io.vavr:vavr-match:jar:0.10.6                                                              = noSig
+io.vavr:vavr-match:pom:0.10.6                                                              = noSig
+io.vavr:vavr:jar:0.10.6                                                                    = noSig
+io.vavr:vavr:pom:0.10.6                                                                    = noSig
+javax.annotation:javax.annotation-api:jar:1.2                                              = noSig
+javax.annotation:javax.annotation-api:pom:1.2                                              = noSig
+javax.servlet:servlet-api:jar:2.5                                                          = noSig
+javax.servlet:servlet-api:pom:2.5                                                          = noSig
+jdom:jdom:jar:1.0                                                                          = noSig
+jdom:jdom:pom:1.0                                                                          = noSig
+jtidy:jtidy:jar:4aug2000r7-dev                                                             = noSig
+jtidy:jtidy:pom:4aug2000r7-dev                                                             = noSig
+junit:junit:jar:3.8.2                                                                      = noSig
+junit:junit:jar:4.13.2                                                                     = noSig
+junit:junit:pom:3.8.2                                                                      = noSig
+junit:junit:pom:4.13.2                                                                     = noSig
+log4j:log4j:jar:1.2.12                                                                     = noSig
+log4j:log4j:pom:1.2.12                                                                     = noSig
+net.alchim31.maven:scala-maven-plugin:jar:4.9.9                                            = noSig
+net.alchim31.maven:scala-maven-plugin:pom:4.9.9                                            = noSig
+net.openhft:zero-allocation-hashing:jar:0.16                                               = noSig
+net.openhft:zero-allocation-hashing:pom:0.16                                               = noSig
+org.apache-extras.beanshell:bsh:jar:2.0b6                                                  = noSig
+org.apache-extras.beanshell:bsh:pom:2.0b6                                                  = noSig
+org.apache.commons:commons-compress:jar:1.28.0                                             = noSig
+org.apache.commons:commons-compress:pom:1.28.0                                             = noSig
+org.apache.commons:commons-exec:jar:1.6.0                                                  = noSig
+org.apache.commons:commons-exec:pom:1.6.0                                                  = noSig
+org.apache.commons:commons-lang3:jar:3.18.0                                                = noSig
+org.apache.commons:commons-lang3:jar:3.19.0                                                = noSig
+org.apache.commons:commons-lang3:jar:3.20.0                                                = noSig
+org.apache.commons:commons-lang3:jar:3.8.1                                                 = noSig
+org.apache.commons:commons-lang3:pom:3.18.0                                                = noSig
+org.apache.commons:commons-lang3:pom:3.19.0                                                = noSig
+org.apache.commons:commons-lang3:pom:3.20.0                                                = noSig
+org.apache.commons:commons-lang3:pom:3.8.1                                                 = noSig
+org.apache.httpcomponents:httpclient:jar:4.0.2                                             = noSig
+org.apache.httpcomponents:httpclient:jar:4.5.14                                            = noSig
+org.apache.httpcomponents:httpclient:pom:4.0.2                                             = noSig
+org.apache.httpcomponents:httpclient:pom:4.5.14                                            = noSig
+org.apache.httpcomponents:httpcore:jar:4.0.1                                               = noSig
+org.apache.httpcomponents:httpcore:jar:4.4.16                                              = noSig
+org.apache.httpcomponents:httpcore:pom:4.0.1                                               = noSig
+org.apache.httpcomponents:httpcore:pom:4.4.16                                              = noSig
+org.apache.maven.doxia:doxia-core:jar:1.4                                                  = noSig
+org.apache.maven.doxia:doxia-core:pom:1.4                                                  = noSig
+org.apache.maven.doxia:doxia-decoration-model:jar:1.4                                      = noSig
+org.apache.maven.doxia:doxia-decoration-model:pom:1.4                                      = noSig
+org.apache.maven.doxia:doxia-integration-tools:jar:1.5                                     = noSig
+org.apache.maven.doxia:doxia-integration-tools:pom:1.5                                     = noSig
+org.apache.maven.doxia:doxia-logging-api:jar:1.11.1                                        = noSig
+org.apache.maven.doxia:doxia-logging-api:jar:1.4                                           = noSig
+org.apache.maven.doxia:doxia-logging-api:pom:1.11.1                                        = noSig
+org.apache.maven.doxia:doxia-logging-api:pom:1.4                                           = noSig
+org.apache.maven.doxia:doxia-module-apt:jar:1.4                                            = noSig
+org.apache.maven.doxia:doxia-module-apt:pom:1.4                                            = noSig
+org.apache.maven.doxia:doxia-module-fml:jar:1.4                                            = noSig
+org.apache.maven.doxia:doxia-module-fml:pom:1.4                                            = noSig
+org.apache.maven.doxia:doxia-module-markdown:jar:1.4                                       = noSig
+org.apache.maven.doxia:doxia-module-markdown:pom:1.4                                       = noSig
+org.apache.maven.doxia:doxia-module-xdoc:jar:1.4                                           = noSig
+org.apache.maven.doxia:doxia-module-xdoc:pom:1.4                                           = noSig
+org.apache.maven.doxia:doxia-module-xhtml:jar:1.4                                          = noSig
+org.apache.maven.doxia:doxia-module-xhtml:pom:1.4                                          = noSig
+org.apache.maven.doxia:doxia-sink-api:jar:1.0-alpha-7                                      = noSig
+org.apache.maven.doxia:doxia-sink-api:jar:1.11.1                                           = noSig
+org.apache.maven.doxia:doxia-sink-api:jar:1.4                                              = noSig
+org.apache.maven.doxia:doxia-sink-api:jar:2.0.0                                            = noSig
+org.apache.maven.doxia:doxia-sink-api:pom:1.0-alpha-7                                      = noSig
+org.apache.maven.doxia:doxia-sink-api:pom:1.11.1                                           = noSig
+org.apache.maven.doxia:doxia-sink-api:pom:1.4                                              = noSig
+org.apache.maven.doxia:doxia-sink-api:pom:2.0.0                                            = noSig
+org.apache.maven.doxia:doxia-site-renderer:jar:1.4                                         = noSig
+org.apache.maven.doxia:doxia-site-renderer:pom:1.4                                         = noSig
+org.apache.maven.enforcer:enforcer-api:jar:3.6.2                                           = noSig
+org.apache.maven.enforcer:enforcer-api:pom:3.6.2                                           = noSig
+org.apache.maven.enforcer:enforcer-rules:jar:3.6.2                                         = noSig
+org.apache.maven.enforcer:enforcer-rules:pom:3.6.2                                         = noSig
+org.apache.maven.plugins:maven-assembly-plugin:jar:3.8.0                                   = noSig
+org.apache.maven.plugins:maven-assembly-plugin:pom:3.8.0                                   = noSig
+org.apache.maven.plugins:maven-clean-plugin:jar:2.5                                        = noSig
+org.apache.maven.plugins:maven-clean-plugin:pom:2.5                                        = noSig
+org.apache.maven.plugins:maven-compiler-plugin:jar:3.1                                     = noSig
+org.apache.maven.plugins:maven-compiler-plugin:pom:3.1                                     = noSig
+org.apache.maven.plugins:maven-deploy-plugin:jar:2.7                                       = noSig
+org.apache.maven.plugins:maven-deploy-plugin:pom:2.7                                       = noSig
+org.apache.maven.plugins:maven-enforcer-plugin:jar:3.6.2                                   = noSig
+org.apache.maven.plugins:maven-enforcer-plugin:pom:3.6.2                                   = noSig
+org.apache.maven.plugins:maven-install-plugin:jar:2.4                                      = noSig
+org.apache.maven.plugins:maven-install-plugin:pom:2.4                                      = noSig
+org.apache.maven.plugins:maven-jar-plugin:jar:2.4                                          = noSig
+org.apache.maven.plugins:maven-jar-plugin:pom:2.4                                          = noSig
+org.apache.maven.plugins:maven-resources-plugin:jar:3.4.0                                  = noSig
+org.apache.maven.plugins:maven-resources-plugin:pom:3.4.0                                  = noSig
+org.apache.maven.plugins:maven-site-plugin:jar:3.3                                         = noSig
+org.apache.maven.plugins:maven-site-plugin:pom:3.3                                         = noSig
+org.apache.maven.plugins:maven-surefire-plugin:jar:3.5.5                                   = noSig
+org.apache.maven.plugins:maven-surefire-plugin:pom:3.5.5                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:jar:2.0.6                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:jar:3.0                                     = noSig
+org.apache.maven.reporting:maven-reporting-api:jar:3.1.1                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:jar:4.0.0                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:pom:2.0.6                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:pom:3.0                                     = noSig
+org.apache.maven.reporting:maven-reporting-api:pom:3.1.1                                   = noSig
+org.apache.maven.reporting:maven-reporting-api:pom:4.0.0                                   = noSig
+org.apache.maven.reporting:maven-reporting-exec:jar:1.1                                    = noSig
+org.apache.maven.reporting:maven-reporting-exec:pom:1.1                                    = noSig
+org.apache.maven.resolver:maven-resolver-api:jar:1.4.1                                     = noSig
+org.apache.maven.resolver:maven-resolver-api:jar:1.6.3                                     = noSig
+org.apache.maven.resolver:maven-resolver-api:pom:1.4.1                                     = noSig
+org.apache.maven.resolver:maven-resolver-api:pom:1.6.3                                     = noSig
+org.apache.maven.resolver:maven-resolver-impl:jar:1.6.3                                    = noSig
+org.apache.maven.resolver:maven-resolver-impl:pom:1.6.3                                    = noSig
+org.apache.maven.resolver:maven-resolver-spi:jar:1.6.3                                     = noSig
+org.apache.maven.resolver:maven-resolver-spi:pom:1.6.3                                     = noSig
+org.apache.maven.resolver:maven-resolver-util:jar:1.4.1                                    = noSig
+org.apache.maven.resolver:maven-resolver-util:jar:1.6.3                                    = noSig
+org.apache.maven.resolver:maven-resolver-util:jar:1.9.23                                   = noSig
+org.apache.maven.resolver:maven-resolver-util:pom:1.4.1                                    = noSig
+org.apache.maven.resolver:maven-resolver-util:pom:1.6.3                                    = noSig
+org.apache.maven.resolver:maven-resolver-util:pom:1.9.23                                   = noSig
+org.apache.maven.shared:file-management:jar:3.1.0                                          = noSig
+org.apache.maven.shared:file-management:pom:3.1.0                                          = noSig
+org.apache.maven.shared:maven-common-artifact-filters:jar:3.4.0                            = noSig
+org.apache.maven.shared:maven-common-artifact-filters:pom:3.4.0                            = noSig
+org.apache.maven.shared:maven-dependency-tree:jar:3.3.0                                    = noSig
+org.apache.maven.shared:maven-dependency-tree:pom:3.3.0                                    = noSig
+org.apache.maven.shared:maven-filtering:jar:3.4.0                                          = noSig
+org.apache.maven.shared:maven-filtering:pom:3.4.0                                          = noSig
+org.apache.maven.shared:maven-shared-incremental:jar:1.1                                   = noSig
+org.apache.maven.shared:maven-shared-incremental:pom:1.1                                   = noSig
+org.apache.maven.shared:maven-shared-utils:jar:0.1                                         = noSig
+org.apache.maven.shared:maven-shared-utils:jar:0.3                                         = noSig
+org.apache.maven.shared:maven-shared-utils:jar:3.3.4                                       = noSig
+org.apache.maven.shared:maven-shared-utils:jar:3.4.2                                       = noSig
+org.apache.maven.shared:maven-shared-utils:pom:0.1                                         = noSig
+org.apache.maven.shared:maven-shared-utils:pom:0.3                                         = noSig
+org.apache.maven.shared:maven-shared-utils:pom:3.3.4                                       = noSig
+org.apache.maven.shared:maven-shared-utils:pom:3.4.2                                       = noSig
+org.apache.maven.surefire:maven-surefire-common:jar:3.5.5                                  = noSig
+org.apache.maven.surefire:maven-surefire-common:pom:3.5.5                                  = noSig
+org.apache.maven.surefire:surefire-api:jar:3.5.5                                           = noSig
+org.apache.maven.surefire:surefire-api:pom:3.5.5                                           = noSig
+org.apache.maven.surefire:surefire-booter:jar:3.5.5                                        = noSig
+org.apache.maven.surefire:surefire-booter:pom:3.5.5                                        = noSig
+org.apache.maven.surefire:surefire-extensions-api:jar:3.5.5                                = noSig
+org.apache.maven.surefire:surefire-extensions-api:pom:3.5.5                                = noSig
+org.apache.maven.surefire:surefire-extensions-spi:jar:3.5.5                                = noSig
+org.apache.maven.surefire:surefire-extensions-spi:pom:3.5.5                                = noSig
+org.apache.maven.surefire:surefire-logger-api:jar:3.5.5                                    = noSig
+org.apache.maven.surefire:surefire-logger-api:pom:3.5.5                                    = noSig
+org.apache.maven.surefire:surefire-shared-utils:jar:3.5.5                                  = noSig
+org.apache.maven.surefire:surefire-shared-utils:pom:3.5.5                                  = noSig
+org.apache.maven.wagon:wagon-file:jar:1.0-beta-2                                           = noSig
+org.apache.maven.wagon:wagon-file:pom:1.0-beta-2                                           = noSig
+org.apache.maven.wagon:wagon-http-lightweight:jar:1.0-beta-2                               = noSig
+org.apache.maven.wagon:wagon-http-lightweight:pom:1.0-beta-2                               = noSig
+org.apache.maven.wagon:wagon-http-shared:jar:1.0-beta-2                                    = noSig
+org.apache.maven.wagon:wagon-http-shared:pom:1.0-beta-2                                    = noSig
+org.apache.maven.wagon:wagon-provider-api:jar:1.0                                          = noSig
+org.apache.maven.wagon:wagon-provider-api:jar:1.0-beta-2                                   = noSig
+org.apache.maven.wagon:wagon-provider-api:pom:1.0                                          = noSig
+org.apache.maven.wagon:wagon-provider-api:pom:1.0-beta-2                                   = noSig
+org.apache.maven.wagon:wagon-ssh-common:jar:1.0-beta-2                                     = noSig
+org.apache.maven.wagon:wagon-ssh-common:pom:1.0-beta-2                                     = noSig
+org.apache.maven.wagon:wagon-ssh-external:jar:1.0-beta-2                                   = noSig
+org.apache.maven.wagon:wagon-ssh-external:pom:1.0-beta-2                                   = noSig
+org.apache.maven.wagon:wagon-ssh:jar:1.0-beta-2                                            = noSig
+org.apache.maven.wagon:wagon-ssh:pom:1.0-beta-2                                            = noSig
+org.apache.maven.wagon:wagon-webdav:jar:1.0-beta-2                                         = noSig
+org.apache.maven.wagon:wagon-webdav:pom:1.0-beta-2                                         = noSig
+org.apache.maven:maven-aether-provider:jar:3.0                                             = noSig
+org.apache.maven:maven-aether-provider:pom:3.0                                             = noSig
+org.apache.maven:maven-archiver:jar:2.4.2                                                  = noSig
+org.apache.maven:maven-archiver:jar:2.5                                                    = noSig
+org.apache.maven:maven-archiver:jar:3.6.5                                                  = noSig
+org.apache.maven:maven-archiver:jar:3.6.6                                                  = noSig
+org.apache.maven:maven-archiver:pom:2.4.2                                                  = noSig
+org.apache.maven:maven-archiver:pom:2.5                                                    = noSig
+org.apache.maven:maven-archiver:pom:3.6.5                                                  = noSig
+org.apache.maven:maven-archiver:pom:3.6.6                                                  = noSig
+org.apache.maven:maven-artifact-manager:jar:2.0.6                                          = noSig
+org.apache.maven:maven-artifact-manager:jar:2.0.9                                          = noSig
+org.apache.maven:maven-artifact-manager:pom:2.0.6                                          = noSig
+org.apache.maven:maven-artifact-manager:pom:2.0.9                                          = noSig
+org.apache.maven:maven-artifact:jar:2.0.6                                                  = noSig
+org.apache.maven:maven-artifact:jar:2.0.9                                                  = noSig
+org.apache.maven:maven-artifact:jar:3.0                                                    = noSig
+org.apache.maven:maven-artifact:jar:3.8.6                                                  = noSig
+org.apache.maven:maven-artifact:pom:2.0.6                                                  = noSig
+org.apache.maven:maven-artifact:pom:2.0.9                                                  = noSig
+org.apache.maven:maven-artifact:pom:3.0                                                    = noSig
+org.apache.maven:maven-artifact:pom:3.8.6                                                  = noSig
+org.apache.maven:maven-builder-support:jar:3.8.6                                           = noSig
+org.apache.maven:maven-builder-support:pom:3.8.6                                           = noSig
+org.apache.maven:maven-core:jar:2.0.6                                                      = noSig
+org.apache.maven:maven-core:jar:2.0.9                                                      = noSig
+org.apache.maven:maven-core:jar:3.0                                                        = noSig
+org.apache.maven:maven-core:jar:3.8.6                                                      = noSig
+org.apache.maven:maven-core:pom:2.0.6                                                      = noSig
+org.apache.maven:maven-core:pom:2.0.9                                                      = noSig
+org.apache.maven:maven-core:pom:3.0                                                        = noSig
+org.apache.maven:maven-core:pom:3.8.6                                                      = noSig
+org.apache.maven:maven-error-diagnostics:jar:2.0.6                                         = noSig
+org.apache.maven:maven-error-diagnostics:jar:2.0.9                                         = noSig
+org.apache.maven:maven-error-diagnostics:pom:2.0.6                                         = noSig
+org.apache.maven:maven-error-diagnostics:pom:2.0.9                                         = noSig
+org.apache.maven:maven-model-builder:jar:3.0                                               = noSig
+org.apache.maven:maven-model-builder:jar:3.8.6                                             = noSig
+org.apache.maven:maven-model-builder:pom:3.0                                               = noSig
+org.apache.maven:maven-model-builder:pom:3.8.6                                             = noSig
+org.apache.maven:maven-model:jar:2.0.6                                                     = noSig
+org.apache.maven:maven-model:jar:2.0.9                                                     = noSig
+org.apache.maven:maven-model:jar:3.0                                                       = noSig
+org.apache.maven:maven-model:jar:3.8.6                                                     = noSig
+org.apache.maven:maven-model:pom:2.0.6                                                     = noSig
+org.apache.maven:maven-model:pom:2.0.9                                                     = noSig
+org.apache.maven:maven-model:pom:3.0                                                       = noSig
+org.apache.maven:maven-model:pom:3.8.6                                                     = noSig
+org.apache.maven:maven-monitor:jar:2.0.6                                                   = noSig
+org.apache.maven:maven-monitor:jar:2.0.9                                                   = noSig
+org.apache.maven:maven-monitor:pom:2.0.6                                                   = noSig
+org.apache.maven:maven-monitor:pom:2.0.9                                                   = noSig
+org.apache.maven:maven-plugin-api:jar:2.0.6                                                = noSig
+org.apache.maven:maven-plugin-api:jar:2.0.9                                                = noSig
+org.apache.maven:maven-plugin-api:jar:3.0                                                  = noSig
+org.apache.maven:maven-plugin-api:jar:3.8.6                                                = noSig
+org.apache.maven:maven-plugin-api:pom:2.0.6                                                = noSig
+org.apache.maven:maven-plugin-api:pom:2.0.9                                                = noSig
+org.apache.maven:maven-plugin-api:pom:3.0                                                  = noSig
+org.apache.maven:maven-plugin-api:pom:3.8.6                                                = noSig
+org.apache.maven:maven-plugin-descriptor:jar:2.0.6                                         = noSig
+org.apache.maven:maven-plugin-descriptor:jar:2.0.9                                         = noSig
+org.apache.maven:maven-plugin-descriptor:pom:2.0.6                                         = noSig
+org.apache.maven:maven-plugin-descriptor:pom:2.0.9                                         = noSig
+org.apache.maven:maven-plugin-parameter-documenter:jar:2.0.6                               = noSig
+org.apache.maven:maven-plugin-parameter-documenter:jar:2.0.9                               = noSig
+org.apache.maven:maven-plugin-parameter-documenter:pom:2.0.6                               = noSig
+org.apache.maven:maven-plugin-parameter-documenter:pom:2.0.9                               = noSig
+org.apache.maven:maven-plugin-registry:jar:2.0.6                                           = noSig
+org.apache.maven:maven-plugin-registry:jar:2.0.9                                           = noSig
+org.apache.maven:maven-plugin-registry:pom:2.0.6                                           = noSig
+org.apache.maven:maven-plugin-registry:pom:2.0.9                                           = noSig
+org.apache.maven:maven-profile:jar:2.0.6                                                   = noSig
+org.apache.maven:maven-profile:jar:2.0.9                                                   = noSig
+org.apache.maven:maven-profile:pom:2.0.6                                                   = noSig
+org.apache.maven:maven-profile:pom:2.0.9                                                   = noSig
+org.apache.maven:maven-project:jar:2.0.6                                                   = noSig
+org.apache.maven:maven-project:jar:2.0.9                                                   = noSig
+org.apache.maven:maven-project:pom:2.0.6                                                   = noSig
+org.apache.maven:maven-project:pom:2.0.9                                                   = noSig
+org.apache.maven:maven-repository-metadata:jar:2.0.6                                       = noSig
+org.apache.maven:maven-repository-metadata:jar:2.0.9                                       = noSig
+org.apache.maven:maven-repository-metadata:jar:3.0                                         = noSig
+org.apache.maven:maven-repository-metadata:jar:3.8.6                                       = noSig
+org.apache.maven:maven-repository-metadata:pom:2.0.6                                       = noSig
+org.apache.maven:maven-repository-metadata:pom:2.0.9                                       = noSig
+org.apache.maven:maven-repository-metadata:pom:3.0                                         = noSig
+org.apache.maven:maven-repository-metadata:pom:3.8.6                                       = noSig
+org.apache.maven:maven-resolver-provider:jar:3.8.6                                         = noSig
+org.apache.maven:maven-resolver-provider:pom:3.8.6                                         = noSig
+org.apache.maven:maven-settings-builder:jar:3.0                                            = noSig
+org.apache.maven:maven-settings-builder:jar:3.8.6                                          = noSig
+org.apache.maven:maven-settings-builder:pom:3.0                                            = noSig
+org.apache.maven:maven-settings-builder:pom:3.8.6                                          = noSig
+org.apache.maven:maven-settings:jar:2.0.6                                                  = noSig
+org.apache.maven:maven-settings:jar:2.0.9                                                  = noSig
+org.apache.maven:maven-settings:jar:3.0                                                    = noSig
+org.apache.maven:maven-settings:jar:3.8.6                                                  = noSig
+org.apache.maven:maven-settings:pom:2.0.6                                                  = noSig
+org.apache.maven:maven-settings:pom:2.0.9                                                  = noSig
+org.apache.maven:maven-settings:pom:3.0                                                    = noSig
+org.apache.maven:maven-settings:pom:3.8.6                                                  = noSig
+org.apache.maven:maven-toolchain:jar:1.0                                                   = noSig
+org.apache.maven:maven-toolchain:pom:1.0                                                   = noSig
+org.apache.spark:spark-catalyst_2.13:pom:4.0.0                                             = noSig
+org.apache.spark:spark-catalyst_2.13:test-jar:tests:4.0.0                                  = noSig
+org.apache.spark:spark-core_2.13:pom:4.0.0                                                 = noSig
+org.apache.spark:spark-core_2.13:test-jar:tests:4.0.0                                      = noSig
+org.apache.spark:spark-sql_2.13:pom:4.0.0                                                  = noSig
+org.apache.spark:spark-sql_2.13:test-jar:tests:4.0.0                                       = noSig
+org.apache.struts:struts-core:jar:1.3.8                                                    = noSig
+org.apache.struts:struts-core:pom:1.3.8                                                    = noSig
+org.apache.struts:struts-taglib:jar:1.3.8                                                  = noSig
+org.apache.struts:struts-taglib:pom:1.3.8                                                  = noSig
+org.apache.struts:struts-tiles:jar:1.3.8                                                   = noSig
+org.apache.struts:struts-tiles:pom:1.3.8                                                   = noSig
+org.apache.velocity:velocity-tools:jar:2.0                                                 = noSig
+org.apache.velocity:velocity-tools:pom:2.0                                                 = noSig
+org.apache.velocity:velocity:jar:1.5                                                       = noSig
+org.apache.velocity:velocity:pom:1.5                                                       = noSig
+org.apache.xbean:xbean-reflect:jar:3.4                                                     = noSig
+org.apache.xbean:xbean-reflect:pom:3.4                                                     = noSig
+org.bouncycastle:bcpg-jdk18on:jar:1.80                                                     = noSig
+org.bouncycastle:bcpg-jdk18on:pom:1.80                                                     = noSig
+org.bouncycastle:bcprov-jdk18on:jar:1.80                                                   = noSig
+org.bouncycastle:bcprov-jdk18on:pom:1.80                                                   = noSig
+org.bouncycastle:bcutil-jdk18on:jar:1.80                                                   = noSig
+org.bouncycastle:bcutil-jdk18on:pom:1.80                                                   = noSig
+org.checkerframework:checker-compat-qual:jar:2.0.0                                         = noSig
+org.checkerframework:checker-compat-qual:pom:2.0.0                                         = noSig
+org.checkerframework:checker-qual:jar:3.43.0                                               = noSig
+org.checkerframework:checker-qual:pom:3.43.0                                               = noSig
+org.codehaus.mojo:animal-sniffer-annotations:jar:1.14                                      = noSig
+org.codehaus.mojo:animal-sniffer-annotations:pom:1.14                                      = noSig
+org.codehaus.mojo:build-helper-maven-plugin:jar:3.6.0                                      = noSig
+org.codehaus.mojo:build-helper-maven-plugin:pom:3.6.0                                      = noSig
+org.codehaus.plexus:plexus-archiver:jar:1.0                                                = noSig
+org.codehaus.plexus:plexus-archiver:jar:2.1                                                = noSig
+org.codehaus.plexus:plexus-archiver:jar:4.10.4                                             = noSig
+org.codehaus.plexus:plexus-archiver:jar:4.11.0                                             = noSig
+org.codehaus.plexus:plexus-archiver:pom:1.0                                                = noSig
+org.codehaus.plexus:plexus-archiver:pom:2.1                                                = noSig
+org.codehaus.plexus:plexus-archiver:pom:4.10.4                                             = noSig
+org.codehaus.plexus:plexus-archiver:pom:4.11.0                                             = noSig
+org.codehaus.plexus:plexus-cipher:jar:2.0                                                  = noSig
+org.codehaus.plexus:plexus-cipher:pom:2.0                                                  = noSig
+org.codehaus.plexus:plexus-classworlds:jar:2.2.2                                           = noSig
+org.codehaus.plexus:plexus-classworlds:jar:2.2.3                                           = noSig
+org.codehaus.plexus:plexus-classworlds:jar:2.6.0                                           = noSig
+org.codehaus.plexus:plexus-classworlds:jar:2.9.0                                           = noSig
+org.codehaus.plexus:plexus-classworlds:pom:2.2.2                                           = noSig
+org.codehaus.plexus:plexus-classworlds:pom:2.2.3                                           = noSig
+org.codehaus.plexus:plexus-classworlds:pom:2.6.0                                           = noSig
+org.codehaus.plexus:plexus-classworlds:pom:2.9.0                                           = noSig
+org.codehaus.plexus:plexus-compiler-api:jar:2.2                                            = noSig
+org.codehaus.plexus:plexus-compiler-api:pom:2.2                                            = noSig
+org.codehaus.plexus:plexus-compiler-javac:jar:2.2                                          = noSig
+org.codehaus.plexus:plexus-compiler-javac:pom:2.2                                          = noSig
+org.codehaus.plexus:plexus-compiler-manager:jar:2.2                                        = noSig
+org.codehaus.plexus:plexus-compiler-manager:pom:2.2                                        = noSig
+org.codehaus.plexus:plexus-component-annotations:jar:1.5.4                                 = noSig
+org.codehaus.plexus:plexus-component-annotations:jar:1.5.5                                 = noSig
+org.codehaus.plexus:plexus-component-annotations:jar:2.1.0                                 = noSig
+org.codehaus.plexus:plexus-component-annotations:pom:1.5.4                                 = noSig
+org.codehaus.plexus:plexus-component-annotations:pom:1.5.5                                 = noSig
+org.codehaus.plexus:plexus-component-annotations:pom:2.1.0                                 = noSig
+org.codehaus.plexus:plexus-container-default:jar:1.0-alpha-30                              = noSig
+org.codehaus.plexus:plexus-container-default:jar:1.5.5                                     = noSig
+org.codehaus.plexus:plexus-container-default:pom:1.0-alpha-30                              = noSig
+org.codehaus.plexus:plexus-container-default:pom:1.5.5                                     = noSig
+org.codehaus.plexus:plexus-digest:jar:1.0                                                  = noSig
+org.codehaus.plexus:plexus-digest:pom:1.0                                                  = noSig
+org.codehaus.plexus:plexus-i18n:jar:1.0-beta-7                                             = noSig
+org.codehaus.plexus:plexus-i18n:pom:1.0-beta-7                                             = noSig
+org.codehaus.plexus:plexus-interactivity-api:jar:1.0-alpha-4                               = noSig
+org.codehaus.plexus:plexus-interactivity-api:pom:1.0-alpha-4                               = noSig
+org.codehaus.plexus:plexus-interpolation:jar:1.14                                          = noSig
+org.codehaus.plexus:plexus-interpolation:jar:1.15                                          = noSig
+org.codehaus.plexus:plexus-interpolation:jar:1.26                                          = noSig
+org.codehaus.plexus:plexus-interpolation:jar:1.27                                          = noSig
+org.codehaus.plexus:plexus-interpolation:jar:1.29                                          = noSig
+org.codehaus.plexus:plexus-interpolation:pom:1.14                                          = noSig
+org.codehaus.plexus:plexus-interpolation:pom:1.15                                          = noSig
+org.codehaus.plexus:plexus-interpolation:pom:1.26                                          = noSig
+org.codehaus.plexus:plexus-interpolation:pom:1.27                                          = noSig
+org.codehaus.plexus:plexus-interpolation:pom:1.29                                          = noSig
+org.codehaus.plexus:plexus-io:jar:1.0                                                      = noSig
+org.codehaus.plexus:plexus-io:jar:2.0.2                                                    = noSig
+org.codehaus.plexus:plexus-io:jar:3.6.0                                                    = noSig
+org.codehaus.plexus:plexus-io:pom:1.0                                                      = noSig
+org.codehaus.plexus:plexus-io:pom:2.0.2                                                    = noSig
+org.codehaus.plexus:plexus-io:pom:3.6.0                                                    = noSig
+org.codehaus.plexus:plexus-java:jar:1.5.2                                                  = noSig
+org.codehaus.plexus:plexus-java:pom:1.5.2                                                  = noSig
+org.codehaus.plexus:plexus-resources:jar:1.0-alpha-7                                       = noSig
+org.codehaus.plexus:plexus-resources:jar:1.3.0                                             = noSig
+org.codehaus.plexus:plexus-resources:pom:1.0-alpha-7                                       = noSig
+org.codehaus.plexus:plexus-resources:pom:1.3.0                                             = noSig
+org.codehaus.plexus:plexus-sec-dispatcher:jar:2.0                                          = noSig
+org.codehaus.plexus:plexus-sec-dispatcher:pom:2.0                                          = noSig
+org.codehaus.plexus:plexus-utils:jar:1.5.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:jar:1.5.10                                                = noSig
+org.codehaus.plexus:plexus-utils:jar:1.5.6                                                 = noSig
+org.codehaus.plexus:plexus-utils:jar:3.0                                                   = noSig
+org.codehaus.plexus:plexus-utils:jar:3.0.5                                                 = noSig
+org.codehaus.plexus:plexus-utils:jar:3.3.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:jar:4.0.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:jar:4.0.2                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:1.5.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:1.5.10                                                = noSig
+org.codehaus.plexus:plexus-utils:pom:1.5.6                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:3.0                                                   = noSig
+org.codehaus.plexus:plexus-utils:pom:3.0.5                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:3.3.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:4.0.1                                                 = noSig
+org.codehaus.plexus:plexus-utils:pom:4.0.2                                                 = noSig
+org.codehaus.plexus:plexus-velocity:jar:1.1.8                                              = noSig
+org.codehaus.plexus:plexus-velocity:pom:1.1.8                                              = noSig
+org.codehaus.plexus:plexus-xml:jar:3.0.1                                                   = noSig
+org.codehaus.plexus:plexus-xml:jar:3.0.2                                                   = noSig
+org.codehaus.plexus:plexus-xml:pom:3.0.1                                                   = noSig
+org.codehaus.plexus:plexus-xml:pom:3.0.2                                                   = noSig
+org.eclipse.aether:aether-util:jar:0.9.0.M2                                                = noSig
+org.eclipse.aether:aether-util:pom:0.9.0.M2                                                = noSig
+org.eclipse.sisu:org.eclipse.sisu.inject:jar:0.3.5                                         = noSig
+org.eclipse.sisu:org.eclipse.sisu.inject:pom:0.3.5                                         = noSig
+org.eclipse.sisu:org.eclipse.sisu.plexus:jar:0.3.5                                         = noSig
+org.eclipse.sisu:org.eclipse.sisu.plexus:pom:0.3.5                                         = noSig
+org.gdal:gdal:jar:3.11.0                                                                   = noSig
+org.gdal:gdal:pom:3.11.0                                                                   = noSig
+org.hamcrest:hamcrest-core:jar:1.3                                                         = noSig
+org.hamcrest:hamcrest-core:pom:1.3                                                         = noSig
+org.jline:jline-native:jar:3.27.1                                                          = noSig
+org.jline:jline-native:pom:3.27.1                                                          = noSig
+org.jline:jline-terminal-jni:jar:3.27.1                                                    = noSig
+org.jline:jline-terminal-jni:pom:3.27.1                                                    = noSig
+org.jline:jline-terminal:jar:3.27.1                                                        = noSig
+org.jline:jline-terminal:pom:3.27.1                                                        = noSig
+org.locationtech.jts.io:jts-io-common:jar:1.20.0                                           = noSig
+org.locationtech.jts.io:jts-io-common:pom:1.20.0                                           = noSig
+org.locationtech.jts:jts-core:jar:1.20.0                                                   = noSig
+org.locationtech.jts:jts-core:pom:1.20.0                                                   = noSig
+org.locationtech.proj4j:proj4j-epsg:jar:1.3.0                                              = noSig
+org.locationtech.proj4j:proj4j-epsg:pom:1.3.0                                              = noSig
+org.locationtech.proj4j:proj4j:jar:1.3.0                                                   = noSig
+org.locationtech.proj4j:proj4j:pom:1.3.0                                                   = noSig
+org.mortbay.jetty:jetty-util:jar:6.1.25                                                    = noSig
+org.mortbay.jetty:jetty-util:pom:6.1.25                                                    = noSig
+org.mortbay.jetty:jetty:jar:6.1.25                                                         = noSig
+org.mortbay.jetty:jetty:pom:6.1.25                                                         = noSig
+org.mortbay.jetty:servlet-api:jar:2.5-20081211                                             = noSig
+org.mortbay.jetty:servlet-api:pom:2.5-20081211                                             = noSig
+org.ow2.asm:asm-analysis:jar:4.1                                                           = noSig
+org.ow2.asm:asm-analysis:pom:4.1                                                           = noSig
+org.ow2.asm:asm-tree:jar:4.1                                                               = noSig
+org.ow2.asm:asm-tree:pom:4.1                                                               = noSig
+org.ow2.asm:asm-util:jar:4.1                                                               = noSig
+org.ow2.asm:asm-util:pom:4.1                                                               = noSig
+org.ow2.asm:asm:jar:4.1                                                                    = noSig
+org.ow2.asm:asm:jar:9.9.1                                                                  = noSig
+org.ow2.asm:asm:pom:4.1                                                                    = noSig
+org.ow2.asm:asm:pom:9.9.1                                                                  = noSig
+org.parboiled:parboiled-core:jar:1.1.4                                                     = noSig
+org.parboiled:parboiled-core:pom:1.1.4                                                     = noSig
+org.parboiled:parboiled-java:jar:1.1.4                                                     = noSig
+org.parboiled:parboiled-java:pom:1.1.4                                                     = noSig
+org.pegdown:pegdown:jar:1.2.1                                                              = noSig
+org.pegdown:pegdown:pom:1.2.1                                                              = noSig
+org.scala-lang.modules:scala-parallel-collections_2.13:jar:0.2.0                           = noSig
+org.scala-lang.modules:scala-parallel-collections_2.13:pom:0.2.0                           = noSig
+org.scala-lang.modules:scala-parser-combinators_2.11:jar:1.0.6                             = noSig
+org.scala-lang.modules:scala-parser-combinators_2.11:pom:1.0.6                             = noSig
+org.scala-lang.modules:scala-parser-combinators_2.13:jar:1.1.2                             = noSig
+org.scala-lang.modules:scala-parser-combinators_2.13:pom:1.1.2                             = noSig
+org.scala-lang.modules:scala-xml_2.11:jar:1.0.6                                            = noSig
+org.scala-lang.modules:scala-xml_2.11:pom:1.0.6                                            = noSig
+org.scala-lang:scala-compiler:jar:2.13.16                                                  = noSig
+org.scala-lang:scala-compiler:pom:2.13.16                                                  = noSig
+org.scala-lang:scala-library:jar:2.11.11                                                   = noSig
+org.scala-lang:scala-library:jar:2.13.12                                                   = noSig
+org.scala-lang:scala-library:jar:2.13.16                                                   = noSig
+org.scala-lang:scala-library:pom:2.11.11                                                   = noSig
+org.scala-lang:scala-library:pom:2.13.12                                                   = noSig
+org.scala-lang:scala-library:pom:2.13.16                                                   = noSig
+org.scala-lang:scala-reflect:jar:2.13.16                                                   = noSig
+org.scala-lang:scala-reflect:pom:2.13.16                                                   = noSig
+org.scala-sbt:collections_2.13:jar:1.11.5                                                  = noSig
+org.scala-sbt:collections_2.13:pom:1.11.5                                                  = noSig
+org.scala-sbt:compiler-bridge_2.13:jar:1.12.0                                              = noSig
+org.scala-sbt:compiler-bridge_2.13:pom:1.12.0                                              = noSig
+org.scala-sbt:compiler-interface:jar:1.12.0                                                = noSig
+org.scala-sbt:compiler-interface:pom:1.12.0                                                = noSig
+org.scala-sbt:core-macros_2.13:jar:1.11.5                                                  = noSig
+org.scala-sbt:core-macros_2.13:pom:1.11.5                                                  = noSig
+org.scala-sbt:io_2.13:jar:1.10.5                                                           = noSig
+org.scala-sbt:io_2.13:pom:1.10.5                                                           = noSig
+org.scala-sbt:util-control_2.13:jar:1.11.5                                                 = noSig
+org.scala-sbt:util-control_2.13:pom:1.11.5                                                 = noSig
+org.scala-sbt:util-interface:jar:1.11.5                                                    = noSig
+org.scala-sbt:util-interface:pom:1.11.5                                                    = noSig
+org.scala-sbt:util-logging_2.13:jar:1.11.5                                                 = noSig
+org.scala-sbt:util-logging_2.13:pom:1.11.5                                                 = noSig
+org.scala-sbt:util-position_2.13:jar:1.11.5                                                = noSig
+org.scala-sbt:util-position_2.13:pom:1.11.5                                                = noSig
+org.scala-sbt:util-relation_2.13:jar:1.11.5                                                = noSig
+org.scala-sbt:util-relation_2.13:pom:1.11.5                                                = noSig
+org.scala-sbt:zinc-apiinfo_2.13:jar:1.12.0                                                 = noSig
+org.scala-sbt:zinc-apiinfo_2.13:pom:1.12.0                                                 = noSig
+org.scala-sbt:zinc-classfile_2.13:jar:1.12.0                                               = noSig
+org.scala-sbt:zinc-classfile_2.13:pom:1.12.0                                               = noSig
+org.scala-sbt:zinc-classpath_2.13:jar:1.12.0                                               = noSig
+org.scala-sbt:zinc-classpath_2.13:pom:1.12.0                                               = noSig
+org.scala-sbt:zinc-compile-core_2.13:jar:1.12.0                                            = noSig
+org.scala-sbt:zinc-compile-core_2.13:pom:1.12.0                                            = noSig
+org.scala-sbt:zinc-core_2.13:jar:1.12.0                                                    = noSig
+org.scala-sbt:zinc-core_2.13:pom:1.12.0                                                    = noSig
+org.scala-sbt:zinc-persist-core-assembly:jar:1.12.0                                        = noSig
+org.scala-sbt:zinc-persist-core-assembly:pom:1.12.0                                        = noSig
+org.scala-sbt:zinc-persist_2.13:jar:1.12.0                                                 = noSig
+org.scala-sbt:zinc-persist_2.13:pom:1.12.0                                                 = noSig
+org.scala-sbt:zinc_2.13:jar:1.12.0                                                         = noSig
+org.scala-sbt:zinc_2.13:pom:1.12.0                                                         = noSig
+org.scalactic:scalactic_2.13:jar:3.2.14                                                    = noSig
+org.scalactic:scalactic_2.13:pom:3.2.14                                                    = noSig
+org.scalamock:scalamock_2.13:jar:7.5.5                                                     = noSig
+org.scalamock:scalamock_2.13:pom:7.5.5                                                     = noSig
+org.scalariform:scalariform_2.11:jar:0.2.0                                                 = noSig
+org.scalariform:scalariform_2.11:pom:0.2.0                                                 = noSig
+org.scalastyle:scalastyle-maven-plugin:jar:1.0.0                                           = noSig
+org.scalastyle:scalastyle-maven-plugin:pom:1.0.0                                           = noSig
+org.scalastyle:scalastyle_2.11:jar:1.0.0                                                   = noSig
+org.scalastyle:scalastyle_2.11:pom:1.0.0                                                   = noSig
+org.scalatest:scalatest-compatible:jar:3.2.14                                              = noSig
+org.scalatest:scalatest-compatible:pom:3.2.14                                              = noSig
+org.scalatest:scalatest-core_2.13:jar:3.2.14                                               = noSig
+org.scalatest:scalatest-core_2.13:pom:3.2.14                                               = noSig
+org.scalatest:scalatest-diagrams_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-diagrams_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest-featurespec_2.13:jar:3.2.14                                        = noSig
+org.scalatest:scalatest-featurespec_2.13:pom:3.2.14                                        = noSig
+org.scalatest:scalatest-flatspec_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-flatspec_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest-freespec_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-freespec_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest-funspec_2.13:jar:3.2.14                                            = noSig
+org.scalatest:scalatest-funspec_2.13:pom:3.2.14                                            = noSig
+org.scalatest:scalatest-funsuite_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-funsuite_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest-matchers-core_2.13:jar:3.2.14                                      = noSig
+org.scalatest:scalatest-matchers-core_2.13:pom:3.2.14                                      = noSig
+org.scalatest:scalatest-maven-plugin:jar:2.2.0                                             = noSig
+org.scalatest:scalatest-maven-plugin:pom:2.2.0                                             = noSig
+org.scalatest:scalatest-mustmatchers_2.13:jar:3.2.14                                       = noSig
+org.scalatest:scalatest-mustmatchers_2.13:pom:3.2.14                                       = noSig
+org.scalatest:scalatest-propspec_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-propspec_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest-refspec_2.13:jar:3.2.14                                            = noSig
+org.scalatest:scalatest-refspec_2.13:pom:3.2.14                                            = noSig
+org.scalatest:scalatest-shouldmatchers_2.13:jar:3.2.14                                     = noSig
+org.scalatest:scalatest-shouldmatchers_2.13:pom:3.2.14                                     = noSig
+org.scalatest:scalatest-wordspec_2.13:jar:3.2.14                                           = noSig
+org.scalatest:scalatest-wordspec_2.13:pom:3.2.14                                           = noSig
+org.scalatest:scalatest_2.13:jar:3.2.14                                                    = noSig
+org.scalatest:scalatest_2.13:pom:3.2.14                                                    = noSig
+org.simplify4u.plugins:pgpverify-maven-plugin:jar:1.19.1                                   = noSig
+org.simplify4u.plugins:pgpverify-maven-plugin:pom:1.19.1                                   = noSig
+org.slf4j:slf4j-api:jar:1.7.36                                                             = noSig
+org.slf4j:slf4j-api:pom:1.7.36                                                             = noSig
+org.sonatype.aether:aether-api:jar:1.7                                                     = noSig
+org.sonatype.aether:aether-api:pom:1.7                                                     = noSig
+org.sonatype.aether:aether-impl:jar:1.7                                                    = noSig
+org.sonatype.aether:aether-impl:pom:1.7                                                    = noSig
+org.sonatype.aether:aether-spi:jar:1.7                                                     = noSig
+org.sonatype.aether:aether-spi:pom:1.7                                                     = noSig
+org.sonatype.aether:aether-util:jar:1.7                                                    = noSig
+org.sonatype.aether:aether-util:pom:1.7                                                    = noSig
+org.sonatype.plexus:plexus-build-api:jar:0.0.7                                             = noSig
+org.sonatype.plexus:plexus-build-api:pom:0.0.7                                             = noSig
+org.sonatype.plexus:plexus-cipher:jar:1.4                                                  = noSig
+org.sonatype.plexus:plexus-cipher:pom:1.4                                                  = noSig
+org.sonatype.plexus:plexus-sec-dispatcher:jar:1.3                                          = noSig
+org.sonatype.plexus:plexus-sec-dispatcher:pom:1.3                                          = noSig
+org.sonatype.sisu:sisu-guice:jar:noaop:2.1.7                                               = noSig
+org.sonatype.sisu:sisu-guice:pom:2.1.7                                                     = noSig
+org.sonatype.sisu:sisu-inject-bean:jar:1.4.2                                               = noSig
+org.sonatype.sisu:sisu-inject-bean:pom:1.4.2                                               = noSig
+org.sonatype.sisu:sisu-inject-plexus:jar:1.4.2                                             = noSig
+org.sonatype.sisu:sisu-inject-plexus:pom:1.4.2                                             = noSig
+org.tukaani:xz:jar:1.10                                                                    = noSig
+org.tukaani:xz:jar:1.11                                                                    = noSig
+org.tukaani:xz:pom:1.10                                                                    = noSig
+org.tukaani:xz:pom:1.11                                                                    = noSig
+slide:slide-webdavlib:jar:2.1                                                              = noSig
+slide:slide-webdavlib:pom:2.1                                                              = noSig
+sslext:sslext:jar:1.2-0                                                                    = noSig
+sslext:sslext:pom:1.2-0                                                                    = noSig
+xerces:xercesImpl:jar:2.9.1                                                                = noSig
+xerces:xercesImpl:pom:2.9.1                                                                = noSig
+xml-apis:xml-apis:jar:1.0.b2                                                               = noSig
+xml-apis:xml-apis:jar:1.3.04                                                               = noSig
+xml-apis:xml-apis:pom:1.0.b2                                                               = noSig
+xml-apis:xml-apis:pom:1.3.04                                                               = noSig

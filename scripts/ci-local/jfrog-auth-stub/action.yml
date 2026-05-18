@@ -1,0 +1,19 @@
+name: 'JFrog auth (act stub)'
+description: |
+  No-op stub for local `act` runs. Bind-mounted by scripts/ci-local/run-act.sh
+  over the real .github/actions/jfrog-auth/action.yml inside the act container.
+  The real action lives in .github/actions/jfrog-auth/ and is what CI uses;
+  this file never replaces it on disk — only inside the `act` container.
+  Locally the runner image (geobrix-ci-runner) routes pip + Maven through
+  whichever registry was build-arg injected (public by default).
+outputs:
+  jfrog-access-token:
+    description: 'Empty (act stub — no real OIDC token issued locally)'
+    value: ''
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        echo "::notice::jfrog-auth stubbed for local act run; pip/maven use the registry pre-baked in the runner image."
+        echo "::notice::Real OIDC exchange runs only in CI, with id-token: write granted on the GHA job."

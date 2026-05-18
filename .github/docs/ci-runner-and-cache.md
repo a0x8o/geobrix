@@ -1,17 +1,57 @@
-# CI: Larger runner and cache
+# CI: Hardened runner and cache
 
-## Larger runner specs
+## Hardened runner groups (mixed strategy)
 
-All workflows use `runs-on: larger`. The default larger runner is:
+All jobs run on a Databricks-hardened runner group registered for the
+**databrickslabs** org (Labs lockdown policy). We use a **mixed strategy** —
+heavy build/test jobs on the larger machine, light orchestration jobs on the
+standard machine. Both groups are hardened (org-level allowlist, ephemeral VMs,
+constrained secret access).
 
-- **vCPU:** 4  
-- **RAM:** 16 GB  
-- **Storage (SSD):** 150 GB total (system + workspace)  
-- **Ephemeral:** A new VM is created per job; nothing persists on the runner between runs.
+### Heavy jobs — `larger-runners` / `larger`
 
-So there is **no accumulation of storage or memory on the runner over time**. Each job starts on a clean machine.
+Jobs that run mvn install, GDAL setup, or pytest:
 
-Reference: [GitHub Docs – Larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners).
+```yaml
+runs-on:
+  group: larger-runners
+  labels: larger
+```
+
+Currently used by: `build_main` build, `build_python` build, `build_scala`
+build, `build_scala_by_package` test-package, `codecov-scala-parallel`
+coverage-package, `codecov-upload` coverage, `codeql-analysis` analyze.
+
+### Light jobs — `databrickslabs-protected-runner-group` / `linux-ubuntu-latest`
+
+Jobs that just download artifacts, run a Python script, do `mvn` dep resolution,
+or run npm/docusaurus:
+
+```yaml
+runs-on:
+  group: databrickslabs-protected-runner-group
+  labels: linux-ubuntu-latest
+```
+
+Currently used by: `build_main` update-doc-inventory + codecov,
+`codecov-scala-parallel` merge-and-upload, `verify-maven-pgp` verify,
+`deploy-docs` build + deploy.
+
+### Common properties
+
+Both groups select org-managed, ephemeral GitHub-hosted runners. A new VM is
+created per job; nothing persists on the runner between runs, so there is
+**no accumulation of storage or memory on the runner over time**. The
+hardened groups additionally constrain which secrets/environments can target
+them and which workflows can request them — set at the org level, not in this
+repo.
+
+The `larger` label maps to GitHub's larger-runner class (≥4 vCPU, ≥16 GB RAM,
+~150 GB SSD); the standard `linux-ubuntu-latest` is smaller — sufficient for
+artifact handling, dep resolution, and lightweight scripts. Exact specs are
+maintained in the Databricks runner-hardening spreadsheet.
+
+Reference: [GitHub Docs – Larger runners](https://docs.github.com/en/actions/reference/runners/larger-runners) and the Databricks Labs Repository Lockdown policy (runner-group section).
 
 ---
 
