@@ -490,14 +490,16 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <failNoSignature>true</failNoSignature>
                             <failWeakSignature>true</failWeakSignature>
                             <!--
-                              Strict "fail when signing key not in keysmap" is the DEFAULT in
-                              pgpverify-maven-plugin >= 1.13; it is enforced by the keysmap itself
-                              (no `noKey` tokens in .maven-keys.list). The previously set `failNoKey`
-                              parameter was renamed-then-removed upstream and is silently dropped in
-                              1.19.1 (emits "Parameter 'failNoKey' is unknown" at build time).
+                              Strict-by-default policy is enforced through .maven-keys.list, not
+                              through mojo parameters. In pgpverify-maven-plugin 1.19.1:
+                                * `failNoSignature` is DEPRECATED since 1.13.0 — express the
+                                  requirement via the keysmap by not allowing `noSig` tokens.
+                                * `failNoKey` was renamed-then-removed and is silently dropped
+                                  ("Parameter 'failNoKey' is unknown" warning).
+                              Both are intentionally absent here. .maven-keys.list's "DO NOT USE
+                              noSig / badSig" comment is the authoritative policy.
                             -->
                             <verifyPomFiles>true</verifyPomFiles>
                             <verifyPlugins>true</verifyPlugins>
