@@ -4,6 +4,7 @@ import org.scalatest.Reporter
 import org.scalatest.events._
 
 import java.io.File
+import java.lang.reflect.Modifier
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -22,12 +23,16 @@ import java.util.concurrent.atomic.AtomicInteger
  *   [progress] RUN COMPLETE · 64 suites · 1,247 tests · 0 failed · elapsed 18m 03s
  *
  * The "/M" denominator is computed once on the first event by walking
- * `target/test-classes/` and counting `*Test.class` files (geobrix's
- * convention; verified by `find src/test/scala -name '*Test.scala' | wc -l`).
- * For filtered runs (`-Dsuites=...`) M still reflects the full discoverable
- * count, so `#3/64` reads as "3 of 64 available" rather than "3 of 3 selected".
- * The discovery path can be overridden with `-DgbxTestClassesDir=…`; if the
- * directory is missing entirely, M is suppressed and only `#N` is printed.
+ * `target/test-classes/` and reflecting on each `*Test.class`, applying the
+ * same filter ScalaTest's own discovery applies: the class must be
+ * **concrete**, **public**, **extend `org.scalatest.Suite`**, and have a
+ * **public no-arg constructor**. Naive filename-only counting overcounted
+ * by ~10 because abstract bases and helper traits also compile to
+ * `*Test.class` files. For filtered runs (`-Dsuites=...`) M still reflects
+ * the full runnable count, so `#3/63` reads as "3 of 63 available" rather
+ * than "3 of 3 selected". The discovery path can be overridden with
+ * `-DgbxTestClassesDir=…`; if the directory is missing entirely, M is
+ * suppressed and only `#N` is printed.
  *
  * Counters are AtomicInteger because ScalaTest may fire events from multiple
  * threads when suites run in parallel.
@@ -101,24 +106,55 @@ class ProgressReporter extends Reporter {
   }
 
   /**
-   * Walks `target/test-classes/` (or `-DgbxTestClassesDir=…`) and counts compiled
-   * `*Test.class` files, excluding inner classes (filenames containing `$`).
-   * Returns 0 on any error or if the directory doesn't exist — caller treats 0
-   * as "no denominator, print just #N".
+   * Walks `target/test-classes/` (or `-DgbxTestClassesDir=…`) and counts the
+   * `*Test.class` files that ScalaTest will actually run: concrete + public +
+   * extends `org.scalatest.Suite` + has a public no-arg constructor. Returns 0
+   * on any error or if the directory doesn't exist — caller treats 0 as
+   * "no denominator, print just #N".
    */
   private def discoverTotalSuites(): Int = {
     val path = sys.props.getOrElse("gbxTestClassesDir", "target/test-classes")
     val dir = new File(path)
-    if (!dir.isDirectory) 0
-    else try countTestClasses(dir) catch { case _: Throwable => 0 }
+    if (!dir.isDirectory) return 0
+    val suiteCls =
+      try Class.forName("org.scalatest.Suite", false, Thread.currentThread().getContextClassLoader)
+      catch { case _: Throwable => return 0 }
+    try countRunnableSuites(dir, dir, suiteCls)
+    catch { case _: Throwable => 0 }
   }
 
-  private def countTestClasses(dir: File): Int = {
+  private def countRunnableSuites(root: File, dir: File, suiteCls: Class[_]): Int = {
     val entries = Option(dir.listFiles()).getOrElse(Array.empty[File])
     entries.foldLeft(0) { (acc, f) =>
-      if (f.isDirectory) acc + countTestClasses(f)
-      else if (f.getName.endsWith("Test.class") && !f.getName.contains("$")) acc + 1
+      if (f.isDirectory) acc + countRunnableSuites(root, f, suiteCls)
+      else if (f.getName.endsWith("Test.class") && !f.getName.contains("$"))
+        acc + (if (isRunnableSuite(root, f, suiteCls)) 1 else 0)
       else acc
+    }
+  }
+
+  /**
+   * Reflective check matching ScalaTest's discovery filter. Uses
+   * `Class.forName(name, initialize=false, ...)` so static initializers don't
+   * run during counting — only the class metadata is loaded. Any failure
+   * (NoClassDefFoundError, missing transitive dep, locked classloader)
+   * conservatively counts the class as "not runnable" so a transient
+   * reflection issue can't inflate the denominator.
+   */
+  private def isRunnableSuite(root: File, classFile: File, suiteCls: Class[_]): Boolean = {
+    try {
+      val rel = root.toURI.relativize(classFile.toURI).getPath
+      val className = rel.stripSuffix(".class").replace('/', '.')
+      val cls = Class.forName(className, false, Thread.currentThread().getContextClassLoader)
+      val mods = cls.getModifiers
+      if (Modifier.isAbstract(mods) || Modifier.isInterface(mods) || !Modifier.isPublic(mods)) false
+      else if (!suiteCls.isAssignableFrom(cls)) false
+      else {
+        try { cls.getConstructor(); true }
+        catch { case _: NoSuchMethodException => false }
+      }
+    } catch {
+      case _: Throwable => false
     }
   }
 }
