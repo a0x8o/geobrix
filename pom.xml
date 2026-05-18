@@ -34,6 +34,14 @@
         <!-- Test Configuration -->
         <skipTests>false</skipTests>
         <minimum.coverage>80</minimum.coverage>
+        <!--
+          Default value of the Maven `suites` property, used by scalatest-maven-plugin
+          AND forwarded into the forked test JVM via argLine (see below) so that
+          ProgressReporter knows the runtime filter when computing #N/M. Override
+          per-invocation with `mvn test -Dsuites=com.x.SomeTest` or via the
+          scala_build action's `suite_pattern` input.
+        -->
+        <suites></suites>
         
         <!-- Debug Configuration -->
         <jdwp.agent>-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005</jdwp.agent>
@@ -288,6 +296,7 @@
                         -XX:ReservedCodeCacheSize=512m
                         -XX:InitialCodeCacheSize=256m
                         -XX:MaxMetaspaceSize=1024m
+                        -Dgbx.suites=${suites}
                         ${agentLib}
                     </argLine>
                     <!--

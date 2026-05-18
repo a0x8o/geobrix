@@ -152,7 +152,13 @@ class ProgressReporter extends Reporter {
     val suiteCls =
       try Class.forName("org.scalatest.Suite", false, Thread.currentThread().getContextClassLoader)
       catch { case _: Throwable => return 0 }
-    val matcher = compileSuitesMatcher(sys.props.getOrElse("suites", ""))
+    // Read the explicit forwarded JVM prop first (set by scalatest-maven-plugin's
+    // argLine in pom.xml: `-Dgbx.suites=${suites}`). The bare `suites` key only
+    // works if the user happened to pass `-Dsuites=…` at the JVM level —
+    // scalatest-maven-plugin consumes the Maven `suites` property and translates
+    // it to runner args, NOT to a forwarded JVM system property.
+    val rawPattern = sys.props.getOrElse("gbx.suites", sys.props.getOrElse("suites", ""))
+    val matcher = compileSuitesMatcher(rawPattern)
     try countRunnableSuites(dir, dir, suiteCls, matcher)
     catch { case _: Throwable => 0 }
   }
