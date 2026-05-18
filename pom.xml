@@ -340,6 +340,36 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+              Lifecycle plugins below are bound implicitly by Maven's default
+              build lifecycle (compile / install / deploy). Without explicit
+              version pins, Maven auto-resolves whatever the embedded Super
+              POM defaults to, which drifts across Maven minor versions and
+              swaps in new (legit but un-mapped) signing keys — exactly the
+              "Not allowed artifact" failures we hit. Pinning here freezes
+              the resolved versions and their transitive plugin-dependencies
+              (plexus-compiler-*, file-management, etc.) so .maven-keys.list
+              can be authoritative against a stable closure. Bump in lockstep
+              with a re-bootstrap of .maven-keys.list.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>3.1.4</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>3.1.4</version>
+            </plugin>
         </plugins>
     </build>
     <profiles>
