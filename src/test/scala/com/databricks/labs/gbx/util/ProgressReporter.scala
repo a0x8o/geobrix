@@ -22,15 +22,19 @@ import java.util.concurrent.atomic.AtomicInteger
  *                                · totals: 312 tests, 0 failed · elapsed 3m 24s
  *   [progress] RUN COMPLETE · 64 suites · 1,247 tests · 0 failed · elapsed 18m 03s
  *
- * The "/M" denominator is computed once on the first event by walking
- * `target/test-classes/` and reflecting on each `*Test.class`, applying the
- * same filter ScalaTest's own discovery applies: the class must be
- * **concrete**, **public**, **extend `org.scalatest.Suite`**, and have a
- * **public no-arg constructor**. Naive filename-only counting overcounted
- * by ~10 because abstract bases and helper traits also compile to
- * `*Test.class` files. For filtered runs (`-Dsuites=...`) M still reflects
- * the full runnable count, so `#3/63` reads as "3 of 63 available" rather
- * than "3 of 3 selected". The discovery path can be overridden with
+ * The "/M" denominator starts as the reflection-filtered upper bound
+ * (concrete + public + extends `org.scalatest.Suite` + has a public
+ * no-arg constructor — same structural shape ScalaTest's own discovery
+ * uses) and then decrements whenever a SuiteCompleted fires with 0 tests.
+ * Those empty suites pass discovery structurally but run nothing — the
+ * only way to detect them without running constructors at discovery time
+ * (which would have side effects) is to watch them go by. M converges to
+ * the true runnable count as empty suites are encountered; empty suites
+ * themselves are silently dropped (no progress line emitted, so #N keeps
+ * pace with what the user perceives as "actual work happened"). For
+ * filtered runs (`-Dsuites=...`) M still reflects the full runnable
+ * count, so `#3/63` reads as "3 of 63 available" rather than "3 of 3
+ * selected". The discovery path can be overridden with
  * `-DgbxTestClassesDir=…`; if the directory is missing entirely, M is
  * suppressed and only `#N` is printed.
  *
@@ -49,8 +53,12 @@ class ProgressReporter extends Reporter {
   }
   private val startTimeMs = System.currentTimeMillis()
 
-  // 0 means "not discovered" — the formatter falls back to just `#N`.
-  private lazy val totalSuites: Int = discoverTotalSuites()
+  // Starts at -1 ("not yet discovered"); first SuiteCompleted triggers the
+  // class scan. 0 thereafter means "discovery returned nothing usable" — the
+  // formatter falls back to just `#N` in that case. Otherwise this value is
+  // an upper bound on the runnable suite count, decremented in-place when an
+  // empty SuiteCompleted (0 tests) is observed.
+  private val totalSuites = new AtomicInteger(-1)
 
   override def apply(event: Event): Unit = event match {
     case _: SuiteStarting =>
@@ -68,18 +76,30 @@ class ProgressReporter extends Reporter {
       failedInCurrentSuite.set(failedInCurrentSuite.get() + 1)
 
     case e: SuiteCompleted =>
-      val n = suitesCompleted.incrementAndGet()
-      val suiteMs = e.duration.getOrElse(0L)
+      // Lazy-init M on the first SuiteCompleted so the cost is paid inside the
+      // test JVM (where the test classpath is fully assembled), not in the
+      // constructor of the reporter.
+      if (totalSuites.get() == -1) totalSuites.set(discoverTotalSuites())
       val suiteTests = testsInCurrentSuite.get()
-      val suiteFailed = failedInCurrentSuite.get()
-      val totalTests = testsTotal.get()
-      val totalFailed = testsFailedTotal.get()
-      Console.out.println(
-        f"[progress] suite ${suiteIndex(n)} done · ${e.suiteName} · $suiteMs%,d ms · " +
-          f"tests=$suiteTests ($suiteFailed failed) · " +
-          f"totals: $totalTests%,d tests, $totalFailed failed · elapsed ${elapsedHuman()}"
-      )
-      Console.out.flush()
+      if (suiteTests == 0) {
+        // Empty suite (Suite-extending class with no `test(...)` blocks
+        // registered): discovery counted it structurally; the run produced
+        // zero work. Adjust M down and skip the progress line so #N stays
+        // aligned with real work.
+        if (totalSuites.get() > 0) totalSuites.decrementAndGet()
+      } else {
+        val n = suitesCompleted.incrementAndGet()
+        val suiteMs = e.duration.getOrElse(0L)
+        val suiteFailed = failedInCurrentSuite.get()
+        val totalTests = testsTotal.get()
+        val totalFailed = testsFailedTotal.get()
+        Console.out.println(
+          f"[progress] suite ${suiteIndex(n)} done · ${e.suiteName} · $suiteMs%,d ms · " +
+            f"tests=$suiteTests ($suiteFailed failed) · " +
+            f"totals: $totalTests%,d tests, $totalFailed failed · elapsed ${elapsedHuman()}"
+        )
+        Console.out.flush()
+      }
       testsInCurrentSuite.remove()
       failedInCurrentSuite.remove()
 
@@ -94,8 +114,10 @@ class ProgressReporter extends Reporter {
     case _ => // ignore other events
   }
 
-  private def suiteIndex(n: Int): String =
-    if (totalSuites > 0) f"#$n/$totalSuites" else f"#$n"
+  private def suiteIndex(n: Int): String = {
+    val m = totalSuites.get()
+    if (m > 0) f"#$n/$m" else f"#$n"
+  }
 
   private def elapsedHuman(): String = {
     val ms = System.currentTimeMillis() - startTimeMs
