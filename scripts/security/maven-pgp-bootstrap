@@ -28,13 +28,16 @@ mkdir -p "${root}/target"
 # first unknown key — we want a complete inventory.
 (
     cd "${root}"
+    # -DfailNoKey is intentionally omitted: it is not a parameter in
+    # pgpverify-maven-plugin >= 1.13 (emits "Parameter 'failNoKey' is unknown").
+    # Missing-keysmap-entry behavior in 1.19.1 is controlled by the keysmap
+    # file itself, not by mojo parameters.
     mvn -B -q -Pverify-pgp verify \
         -DskipTests \
         -Dscoverage.skip \
         -Dscalastyle.skip=true \
         -DfailNoSignature=false \
         -DfailWeakSignature=false \
-        -DfailNoKey=false \
         2>&1
 ) | tee "${log}" >&2
 

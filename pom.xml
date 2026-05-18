@@ -492,7 +492,13 @@
                         <configuration>
                             <failNoSignature>true</failNoSignature>
                             <failWeakSignature>true</failWeakSignature>
-                            <failNoKey>true</failNoKey>
+                            <!--
+                              Strict "fail when signing key not in keysmap" is the DEFAULT in
+                              pgpverify-maven-plugin >= 1.13; it is enforced by the keysmap itself
+                              (no `noKey` tokens in .maven-keys.list). The previously set `failNoKey`
+                              parameter was renamed-then-removed upstream and is silently dropped in
+                              1.19.1 (emits "Parameter 'failNoKey' is unknown" at build time).
+                            -->
                             <verifyPomFiles>true</verifyPomFiles>
                             <verifyPlugins>true</verifyPlugins>
                             <verifyPluginDependencies>true</verifyPluginDependencies>
