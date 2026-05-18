@@ -22,18 +22,28 @@ import java.util.concurrent.atomic.AtomicInteger
  *                                · totals: 312 tests, 0 failed · elapsed 3m 24s
  *   [progress] RUN COMPLETE · 64 suites · 1,247 tests · 0 failed · elapsed 18m 03s
  *
- * The "/M" denominator starts as the reflection-filtered upper bound
- * (concrete + public + extends `org.scalatest.Suite` + has a public
- * no-arg constructor — same structural shape ScalaTest's own discovery
- * uses) and then decrements whenever a SuiteCompleted fires with 0 tests.
- * Those empty suites pass discovery structurally but run nothing — the
- * only way to detect them without running constructors at discovery time
- * (which would have side effects) is to watch them go by. M converges to
- * the true runnable count as empty suites are encountered; empty suites
- * themselves are silently dropped (no progress line emitted, so #N keeps
- * pace with what the user perceives as "actual work happened"). For
- * filtered runs (`-Dsuites=...`) M still reflects the full runnable
- * count, so `#3/63` reads as "3 of 63 available" rather than "3 of 3
+ * The "/M" denominator is computed by walking `target/test-classes/` for
+ * every `*Test.class` and keeping only the classes that:
+ *
+ *   1. Pass the structural Suite filter (concrete + public + extends
+ *      `org.scalatest.Suite` + has a public no-arg constructor — same
+ *      shape ScalaTest's own discovery uses), and
+ *   2. Match the `-Dsuites=…` runtime filter (comma-separated list of
+ *      exact FQCNs and/or `package.*` wildcards) that scalatest-maven-
+ *      plugin forwards into the test JVM as a system property. Without
+ *      this, classes compiled from `docs/tests/scala/…` (added as a
+ *      secondary test source by build-helper-maven-plugin) and tests
+ *      outside our top-level namespace (e.g.
+ *      `org.apache.spark.sql.adapters.SparkAdaptersTest`) would inflate
+ *      the count even though ScalaTest's runner skips them under our
+ *      default `com.databricks.labs.gbx.*` pattern.
+ *
+ * As a belt-and-braces guard, M also decrements at runtime whenever a
+ * SuiteCompleted fires with 0 tests — that handles any classes that
+ * slipped past the static filter but registered no `test("…")` blocks.
+ *
+ * For filtered runs (`-Dsuites=com.databricks.labs.gbx.gridx.*`) M reflects
+ * the count selected by that filter, so `#3/12` reads as "3 of 12
  * selected". The discovery path can be overridden with
  * `-DgbxTestClassesDir=…`; if the directory is missing entirely, M is
  * suppressed and only `#N` is printed.
@@ -129,8 +139,9 @@ class ProgressReporter extends Reporter {
 
   /**
    * Walks `target/test-classes/` (or `-DgbxTestClassesDir=…`) and counts the
-   * `*Test.class` files that ScalaTest will actually run: concrete + public +
-   * extends `org.scalatest.Suite` + has a public no-arg constructor. Returns 0
+   * `*Test.class` files that ScalaTest will actually run: structurally a
+   * Suite (concrete + public + extends `org.scalatest.Suite` + public no-arg
+   * constructor) AND matched by the `-Dsuites=…` runtime filter. Returns 0
    * on any error or if the directory doesn't exist — caller treats 0 as
    * "no denominator, print just #N".
    */
@@ -141,16 +152,22 @@ class ProgressReporter extends Reporter {
     val suiteCls =
       try Class.forName("org.scalatest.Suite", false, Thread.currentThread().getContextClassLoader)
       catch { case _: Throwable => return 0 }
-    try countRunnableSuites(dir, dir, suiteCls)
+    val matcher = compileSuitesMatcher(sys.props.getOrElse("suites", ""))
+    try countRunnableSuites(dir, dir, suiteCls, matcher)
     catch { case _: Throwable => 0 }
   }
 
-  private def countRunnableSuites(root: File, dir: File, suiteCls: Class[_]): Int = {
+  private def countRunnableSuites(
+      root: File,
+      dir: File,
+      suiteCls: Class[_],
+      matcher: String => Boolean
+  ): Int = {
     val entries = Option(dir.listFiles()).getOrElse(Array.empty[File])
     entries.foldLeft(0) { (acc, f) =>
-      if (f.isDirectory) acc + countRunnableSuites(root, f, suiteCls)
+      if (f.isDirectory) acc + countRunnableSuites(root, f, suiteCls, matcher)
       else if (f.getName.endsWith("Test.class") && !f.getName.contains("$"))
-        acc + (if (isRunnableSuite(root, f, suiteCls)) 1 else 0)
+        acc + (if (isRunnableSuite(root, f, suiteCls, matcher)) 1 else 0)
       else acc
     }
   }
@@ -163,10 +180,16 @@ class ProgressReporter extends Reporter {
    * conservatively counts the class as "not runnable" so a transient
    * reflection issue can't inflate the denominator.
    */
-  private def isRunnableSuite(root: File, classFile: File, suiteCls: Class[_]): Boolean = {
+  private def isRunnableSuite(
+      root: File,
+      classFile: File,
+      suiteCls: Class[_],
+      matcher: String => Boolean
+  ): Boolean = {
     try {
       val rel = root.toURI.relativize(classFile.toURI).getPath
       val className = rel.stripSuffix(".class").replace('/', '.')
+      if (!matcher(className)) return false
       val cls = Class.forName(className, false, Thread.currentThread().getContextClassLoader)
       val mods = cls.getModifiers
       if (Modifier.isAbstract(mods) || Modifier.isInterface(mods) || !Modifier.isPublic(mods)) false
@@ -177,6 +200,30 @@ class ProgressReporter extends Reporter {
       }
     } catch {
       case _: Throwable => false
+    }
+  }
+
+  /**
+   * Compiles the comma-separated `-Dsuites=…` value into a single FQCN
+   * matcher. Each entry is either an exact class name (`com.x.YTest`) or a
+   * package wildcard ending in `.*` (`com.x.*` matches everything under
+   * `com.x.`). Empty / unset property = accept everything (no filter active).
+   * This mirrors scalatest-maven-plugin's documented `<suites>` semantics
+   * closely enough for the counting purpose — we don't need the runner's
+   * full glob support, just the patterns geobrix actually uses.
+   */
+  private def compileSuitesMatcher(suitesProp: String): String => Boolean = {
+    val patterns = suitesProp.split(",").map(_.trim).filter(_.nonEmpty).toList
+    if (patterns.isEmpty) (_: String) => true
+    else {
+      val checks: List[String => Boolean] = patterns.map {
+        case p if p.endsWith(".*") =>
+          val prefix = p.stripSuffix(".*") + "."
+          (fqcn: String) => fqcn.startsWith(prefix)
+        case exact =>
+          (fqcn: String) => fqcn == exact
+      }
+      (fqcn: String) => checks.exists(_(fqcn))
     }
   }
 }
