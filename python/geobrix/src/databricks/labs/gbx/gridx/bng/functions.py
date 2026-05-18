@@ -160,9 +160,7 @@ def bng_euclideandistance(cell_id1: ColLike, cell_id2: ColLike) -> Column:
     Returns:
         Column of long (distance in metres).
     """
-    return f.call_function(
-        "gbx_bng_euclideandistance", _col(cell_id1), _col(cell_id2)
-    )
+    return f.call_function("gbx_bng_euclideandistance", _col(cell_id1), _col(cell_id2))
 
 
 def bng_geomkloop(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
@@ -176,9 +174,7 @@ def bng_geomkloop(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
     Returns:
         Column of array of BNG cell identifiers.
     """
-    return f.call_function(
-        "gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k)
-    )
+    return f.call_function("gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k))
 
 
 def bng_geomkring(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
@@ -192,9 +188,7 @@ def bng_geomkring(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
     Returns:
         Column of array of BNG cell identifiers.
     """
-    return f.call_function(
-        "gbx_bng_geomkring", _col(geom), _col(resolution), _col(k)
-    )
+    return f.call_function("gbx_bng_geomkring", _col(geom), _col(resolution), _col(k))
 
 
 def bng_kloop(cell_id: ColLike, k: ColLike) -> Column:

@@ -14,16 +14,14 @@ from unittest.mock import patch
 
 import pytest
 
-# Public API from package
+# Public API + the _bundle module itself (needed for internal-helper coverage tests below).
+from databricks.labs.gbx.sample import _bundle as _bundle_mod
 from databricks.labs.gbx.sample import (
     get_temp_dir,
     get_volumes_path,
     run_complete_bundle,
     run_essential_bundle,
 )
-# Internal helpers for coverage
-from databricks.labs.gbx.sample import _bundle as _bundle_mod
-
 
 # ========== __init__ (package surface) ==========
 
