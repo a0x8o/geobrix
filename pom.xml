@@ -19,11 +19,29 @@
         <!-- Build Configuration -->
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <!--
+          project.build.sourceEncoding and project.reporting.outputEncoding are the
+          standard property names every Maven plugin (resources, compiler, surefire,
+          site, javadoc, etc.) looks up. Setting only a custom <encoding> property
+          leaves them undefined and triggers per-plugin "Using platform encoding"
+          warnings (resources:3.4.0 in particular). Keep `<encoding>` for legacy
+          references elsewhere in the build.
+        -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <encoding>UTF-8</encoding>
         
         <!-- Test Configuration -->
         <skipTests>false</skipTests>
         <minimum.coverage>80</minimum.coverage>
+        <!--
+          Default value of the Maven `suites` property, used by scalatest-maven-plugin
+          AND forwarded into the forked test JVM via argLine (see below) so that
+          ProgressReporter knows the runtime filter when computing #N/M. Override
+          per-invocation with `mvn test -Dsuites=com.x.SomeTest` or via the
+          scala_build action's `suite_pattern` input.
+        -->
+        <suites></suites>
         
         <!-- Debug Configuration -->
         <jdwp.agent>-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005</jdwp.agent>
@@ -278,10 +296,25 @@
                         -XX:ReservedCodeCacheSize=512m
                         -XX:InitialCodeCacheSize=256m
                         -XX:MaxMetaspaceSize=1024m
+                        -Dgbx.suites=${suites}
                         ${agentLib}
                     </argLine>
-                    <!-- Stdout: F = show failures, S = show summary (pytest-style: failures + short summary) -->
-                    <stdout>FS</stdout>
+                    <!--
+                      Stdout config flags (scalatest -o[configs...]):
+                        F = show failures
+                        S = show summary
+                        D = show per-test durations (e.g. `- foo should bar (12 ms)`),
+                            so long-running mvn output is more diagnostic.
+                      Keep deliberately small so the log isn't dominated by green dots.
+                    -->
+                    <stdout>FSD</stdout>
+                    <!--
+                      Custom reporter: prints `[progress] suite #N done · …` after every
+                      SuiteCompleted event so long mvn test runs (both local and CI) get
+                      a periodic "how far along" line. Source:
+                      src/test/scala/com/databricks/labs/gbx/util/ProgressReporter.scala
+                    -->
+                    <reporters>com.databricks.labs.gbx.util.ProgressReporter</reporters>
                 </configuration>
                 <executions>
                     <execution>
@@ -339,6 +372,36 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <!--
+              Lifecycle plugins below are bound implicitly by Maven's default
+              build lifecycle (compile / install / deploy). Without explicit
+              version pins, Maven auto-resolves whatever the embedded Super
+              POM defaults to, which drifts across Maven minor versions and
+              swaps in new (legit but un-mapped) signing keys — exactly the
+              "Not allowed artifact" failures we hit. Pinning here freezes
+              the resolved versions and their transitive plugin-dependencies
+              (plexus-compiler-*, file-management, etc.) so .maven-keys.list
+              can be authoritative against a stable closure. Bump in lockstep
+              with a re-bootstrap of .maven-keys.list.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>3.1.4</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>3.1.4</version>
             </plugin>
         </plugins>
     </build>
@@ -490,9 +553,17 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <failNoSignature>true</failNoSignature>
                             <failWeakSignature>true</failWeakSignature>
-                            <failNoKey>true</failNoKey>
+                            <!--
+                              Strict-by-default policy is enforced through .maven-keys.list, not
+                              through mojo parameters. In pgpverify-maven-plugin 1.19.1:
+                                * `failNoSignature` is DEPRECATED since 1.13.0 — express the
+                                  requirement via the keysmap by not allowing `noSig` tokens.
+                                * `failNoKey` was renamed-then-removed and is silently dropped
+                                  ("Parameter 'failNoKey' is unknown" warning).
+                              Both are intentionally absent here. .maven-keys.list's "DO NOT USE
+                              noSig / badSig" comment is the authoritative policy.
+                            -->
                             <verifyPomFiles>true</verifyPomFiles>
                             <verifyPlugins>true</verifyPlugins>
                             <verifyPluginDependencies>true</verifyPluginDependencies>

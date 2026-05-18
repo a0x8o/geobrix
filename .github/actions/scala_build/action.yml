@@ -27,16 +27,25 @@ runs:
         - name: Set Maven opts for coverage and parallel builds
           shell: bash
           run: echo "MAVEN_OPTS=-Xmx4g -XX:+UseG1GC" >> $GITHUB_ENV
+        # Pre-route pip at db-pypi BEFORE actions/setup-python runs: setup-python's
+        # python-versions installer unconditionally runs `pip install --upgrade pip`,
+        # which on the hardened runner group hits the egress allowlist and fails
+        # SSL-EOF against pypi.org. This step writes netrc + pip.conf so that
+        # internal pip call (and every later one) routes through JFrog instead.
+        - name: Pre-bootstrap pip for JFrog (pre-setup-python)
+          uses: ./.github/actions/jfrog-pip-bootstrap
         - name: Configure python interpreter
           uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
           with:
             cache: 'pip' # caches dependencies for faster subsequent runs
             cache-dependency-path: '.ci-pip-cache-key'
             python-version: ${{ matrix.python }}
-        # Route pip + Maven through JFrog (OIDC) per go/hardened-gha policy.
-        # Must run after setup-java + setup-python so mvn + pip3 are on PATH for auto-detect.
+        # Route Maven through JFrog (OIDC) per go/hardened-gha policy. Pip was
+        # already configured by jfrog-pip-bootstrap above; this re-runs pip's
+        # netrc/pip.conf write idempotently with a fresh token, and configures
+        # Maven now that setup-java has put mvn + ~/.m2/settings.xml in place.
         # Caller job must declare `permissions: id-token: write`.
-        - name: Authenticate for JFrog (pip + Maven via OIDC)
+        - name: Authenticate for JFrog (Maven + pip refresh via OIDC)
           uses: ./.github/actions/jfrog-auth
         # Verify the PGP signature of every Maven dependency / plugin against
         # .maven-keys.list BEFORE any other mvn call resolves or compiles them.

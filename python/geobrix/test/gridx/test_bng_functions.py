@@ -640,10 +640,12 @@ def test_bng_scalar_literal_args(spark, bng_registered):
     """
     polygon_wkt = "POLYGON ((530000 180000, 530500 180000, 530500 180500, 530000 180500, 530000 180000))"
     df = spark.range(1).select(
-        bng_registered.bng_pointascell(f.lit("POINT (400000 400000)"), 1).alias("cell_int_res"),
-        bng_registered.bng_pointascell(f.lit("POINT (400000 400000)"), f.lit("1km")).alias(
-            "cell_str_res"
+        bng_registered.bng_pointascell(f.lit("POINT (400000 400000)"), 1).alias(
+            "cell_int_res"
         ),
+        bng_registered.bng_pointascell(
+            f.lit("POINT (400000 400000)"), f.lit("1km")
+        ).alias("cell_str_res"),
         bng_registered.bng_polyfill(f.lit(polygon_wkt), 1).alias("cells_int_res"),
         bng_registered.bng_kloop(f.lit("TQ388791"), 1).alias("kloop_int_k"),
     )

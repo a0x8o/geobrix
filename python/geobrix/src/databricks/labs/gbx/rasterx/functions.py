@@ -412,9 +412,7 @@ def rst_combineavg_agg(tile: ColLike) -> Column:
     return f.call_function("gbx_rst_combineavg_agg", _col(tile))
 
 
-def rst_derivedband_agg(
-    tile: ColLike, pyfunc: ColLike, func_name: ColLike
-) -> Column:
+def rst_derivedband_agg(tile: ColLike, pyfunc: ColLike, func_name: ColLike) -> Column:
     """Aggregate tiles and apply a Python UDF per band (use with groupBy).
 
     Args:
@@ -576,9 +574,7 @@ def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and avg).
     """
-    return f.call_function(
-        "gbx_rst_h3_rastertogridavg", _col(tile), _col(resolution)
-    )
+    return f.call_function("gbx_rst_h3_rastertogridavg", _col(tile), _col(resolution))
 
 
 def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
@@ -591,9 +587,7 @@ def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and count).
     """
-    return f.call_function(
-        "gbx_rst_h3_rastertogridcount", _col(tile), _col(resolution)
-    )
+    return f.call_function("gbx_rst_h3_rastertogridcount", _col(tile), _col(resolution))
 
 
 def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
@@ -606,9 +600,7 @@ def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and max).
     """
-    return f.call_function(
-        "gbx_rst_h3_rastertogridmax", _col(tile), _col(resolution)
-    )
+    return f.call_function("gbx_rst_h3_rastertogridmax", _col(tile), _col(resolution))
 
 
 def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
@@ -621,9 +613,7 @@ def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
     Returns:
         Column of grid values (e.g. struct with H3 index and min).
     """
-    return f.call_function(
-        "gbx_rst_h3_rastertogridmin", _col(tile), _col(resolution)
-    )
+    return f.call_function("gbx_rst_h3_rastertogridmin", _col(tile), _col(resolution))
 
 
 def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
@@ -698,9 +688,7 @@ def rst_convolve(tile: ColLike, kernel: ColLike) -> Column:
     return f.call_function("gbx_rst_convolve", _col(tile), _col(kernel))
 
 
-def rst_derivedband(
-    tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike
-) -> Column:
+def rst_derivedband(tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike) -> Column:
     """Apply a Python UDF to each pixel (or band) to produce a derived band.
 
     Args:
@@ -792,14 +780,10 @@ def rst_ndvi(tile: ColLike, red_band: ColLike, nir_band: ColLike) -> Column:
     Returns:
         Column of raster tile (single-band NDVI).
     """
-    return f.call_function(
-        "gbx_rst_ndvi", _col(tile), _col(red_band), _col(nir_band)
-    )
+    return f.call_function("gbx_rst_ndvi", _col(tile), _col(red_band), _col(nir_band))
 
 
-def rst_rastertoworldcoord(
-    tile: ColLike, pixel_x: ColLike, pixel_y: ColLike
-) -> Column:
+def rst_rastertoworldcoord(tile: ColLike, pixel_x: ColLike, pixel_y: ColLike) -> Column:
     """Convert pixel (x, y) to world (x, y) in the CRS of the raster.
 
     Args:
@@ -889,9 +873,7 @@ def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
     return f.call_function("gbx_rst_updatetype", _col(tile), _col(new_type))
 
 
-def rst_worldtorastercoord(
-    tile: ColLike, world_x: ColLike, world_y: ColLike
-) -> Column:
+def rst_worldtorastercoord(tile: ColLike, world_x: ColLike, world_y: ColLike) -> Column:
     """Convert world (x, y) to pixel (x, y) in the raster.
 
     Args:

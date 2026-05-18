@@ -1,0 +1,58 @@
+name: 'Bootstrap pip JFrog routing (pre-setup-python)'
+description: |
+  Acquire a JFrog OIDC access token and pre-configure pip + netrc so that any
+  pip invocation routes through the JFrog db-pypi mirror instead of pypi.org —
+  including actions/setup-python's internal "Upgrading pip" step, which runs
+  before any other action gets a chance to redirect pip.
+
+  Why this exists: the Databricks hardened runner groups (larger-runners,
+  databrickslabs-protected-runner-group) block egress to pypi.org by design;
+  the go/hardened-gha policy is that all package fetches go through JFrog.
+  Without this pre-bootstrap, setup-python's bundled "pip install --upgrade pip"
+  hits pypi.org and dies with SSL EOF before .github/actions/jfrog-auth
+  ever gets to configure pip.
+
+  Reuses the OIDC exchange script from .github/actions/jfrog-auth/jfrog-auth
+  to avoid duplicating curl logic that we keep in sync with UCX. The main
+  jfrog-auth composite still runs later in the same job (idempotent for pip;
+  primary for Maven, which needs setup-java to have run first).
+
+  Caller job MUST declare:
+    permissions:
+      id-token: write
+runs:
+  using: "composite"
+  steps:
+    - id: jfrog-auth
+      name: Acquire JFrog OIDC access token
+      shell: bash
+      run: |
+        if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL}" ]] || [[ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" ]]; then
+          printf '::error::%s\n' 'This action uses OIDC: job must have "id-token: write" permission'
+          exit 1
+        fi
+        "${GITHUB_WORKSPACE}/.github/actions/jfrog-auth/jfrog-auth" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+
+    - name: Write pip.conf + netrc for JFrog (db-pypi)
+      shell: bash
+      env:
+        JFROG_ACCESS_TOKEN: "${{ steps.jfrog-auth.outputs.jfrog-access-token }}"
+      run: |
+        umask 077
+        cat > "${RUNNER_TEMP}/.netrc" << EOF
+        machine databricks.jfrog.io
+        login gha-service-account
+        password ${JFROG_ACCESS_TOKEN}
+        EOF
+        # Same db-pypi URL the main jfrog-auth composite uses; the later
+        # jfrog-auth run will overwrite this file with an identical value
+        # (modulo a fresh token in netrc) — idempotent by design.
+        cat > "${RUNNER_TEMP}/.pip.conf" << 'EOF'
+        [global]
+        index-url = https://databricks.jfrog.io/artifactory/api/pypi/db-pypi/simple
+        EOF
+        printf '%s=%s\n' 'NETRC' "${RUNNER_TEMP}/.netrc" >> "${GITHUB_ENV}"
+        printf '%s=%s\n' 'PIP_CONFIG_FILE' "${RUNNER_TEMP}/.pip.conf" >> "${GITHUB_ENV}"
+        printf '::debug::%s\n' 'Pre-bootstrap: configured JFrog access for pip.'

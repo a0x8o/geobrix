@@ -390,11 +390,8 @@ org.tukaani:xz                                                           = 0x369
 antlr:antlr:jar:2.7.2                                                                      = noSig
 antlr:antlr:pom:2.7.2                                                                      = noSig
 com.fasterxml.jackson.core:jackson-annotations:jar:2.18.3                                  = noSig
-com.fasterxml.jackson.core:jackson-annotations:pom:2.18.3                                  = noSig
 com.fasterxml.jackson.core:jackson-core:jar:2.18.3                                         = noSig
-com.fasterxml.jackson.core:jackson-core:pom:2.18.3                                         = noSig
 com.fasterxml.jackson.core:jackson-databind:jar:2.18.3                                     = noSig
-com.fasterxml.jackson.core:jackson-databind:pom:2.18.3                                     = noSig
 com.github.luben:zstd-jni:jar:1.5.7-6                                                      = noSig
 com.github.luben:zstd-jni:pom:1.5.7-6                                                      = noSig
 com.google.code.findbugs:jsr305:jar:2.0.1                                                  = noSig
@@ -498,7 +495,6 @@ junit:junit:pom:4.13.2                                                          
 log4j:log4j:jar:1.2.12                                                                     = noSig
 log4j:log4j:pom:1.2.12                                                                     = noSig
 net.alchim31.maven:scala-maven-plugin:jar:4.9.9                                            = noSig
-net.alchim31.maven:scala-maven-plugin:pom:4.9.9                                            = noSig
 net.openhft:zero-allocation-hashing:jar:0.16                                               = noSig
 net.openhft:zero-allocation-hashing:pom:0.16                                               = noSig
 org.apache-extras.beanshell:bsh:jar:2.0b6                                                  = noSig
@@ -1053,3 +1049,92 @@ xml-apis:xml-apis:jar:1.0.b2                                                    
 xml-apis:xml-apis:jar:1.3.04                                                               = noSig
 xml-apis:xml-apis:pom:1.0.b2                                                               = noSig
 xml-apis:xml-apis:pom:1.3.04                                                               = noSig
+
+# --- Version-specific keyed entries surfaced by post-pin closure ----------
+#
+# These are lifecycle-plugin versions that pom.xml now pins explicitly
+# (maven-compiler-plugin, maven-install-plugin, maven-deploy-plugin) plus
+# their transitive plugin-dependencies (plexus-compiler-*, file-management).
+# Newer versions are signed by Apache committers whose keys aren't on the
+# Apache Maven KEYS file but ARE on keyserver.ubuntu.com with self-signed
+# UIDs at apache.org addresses.
+#
+# Trust verification (2026-05-18):
+#
+#   0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+#       uid: Slawomir Jaranowski <sjaranowski@apache.org>
+#       Apache Maven committer; lead developer of pgpverify-maven-plugin
+#       itself. Key created 2021-12-22, RSA 4096, active.
+#       https://keyserver.ubuntu.com/pks/lookup?op=vindex&fingerprint=on&search=0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+#
+#   0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+#       uid: Sylwester Lachiewicz <slachiewicz@apache.org>
+#       Apache committer; Mojo Codehaus / Maven plugins maintainer.
+#       Key created 2020-05-09, RSA 4096, active.
+#       https://keyserver.ubuntu.com/pks/lookup?op=vindex&fingerprint=on&search=0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+#
+# Versions are pinned in pom.xml; bump them in lockstep with new entries here.
+
+org.apache.maven.plugins:maven-install-plugin:jar:3.1.4                                    = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-install-plugin:pom:3.1.4                                    = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-deploy-plugin:jar:3.1.4                                     = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-deploy-plugin:pom:3.1.4                                     = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.shared:file-management:jar:3.2.0                                          = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.shared:file-management:pom:3.2.0                                          = 0x84789D24DF77A32433CE1F079EB80E92EB2135B1
+org.apache.maven.plugins:maven-compiler-plugin:jar:3.15.0                                  = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.apache.maven.plugins:maven-compiler-plugin:pom:3.15.0                                  = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-api:jar:2.16.2                                         = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-api:pom:2.16.2                                         = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-javac:jar:2.16.2                                       = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-javac:pom:2.16.2                                       = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-manager:jar:2.16.2                                     = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+org.codehaus.plexus:plexus-compiler-manager:pom:2.16.2                                     = 0x32118CF76C9EC5D918E54967CA80D1F0EB6CA4BA
+
+# --- badSig overrides for POMs byte-mutated by db-maven JFrog mirror -----
+#
+# These six .pom files fail pgpverify-maven-plugin with "PGP Signature
+# INVALID" — cryptographic verification of the .asc against the bytes
+# fails. The corresponding .jar files for the same artifacts verify
+# OK (they're binary and pass through JFrog untouched).
+#
+# Root cause confirmed 2026-05-18 via the diag-pgpverify-pom-transit
+# workflow (run 26056343517 on branch ci-fix-jfrog):
+#
+#   * .pom sha256 from db-maven DIFFERS from Maven Central (size delta
+#     -348 to +170 bytes per file)
+#   * .pom.asc sha256 from db-maven MATCHES Maven Central (signatures
+#     untouched)
+#   * Hex dump shows LF → CRLF conversion at every line end, plus
+#     additional content normalization (whitespace / XML formatting)
+#   * Standalone `gpg --verify` on the db-maven bytes produces "Signature
+#     made … using RSA key … Can't check signature" — the .asc was
+#     computed against the original Maven Central bytes, not the
+#     JFrog-mutated ones.
+#
+# JFrog db-maven applies some form of text-resource transformation to
+# .pom files on the mirror side, which breaks the upstream PGP signature
+# chain. The .jar signatures remain trustworthy (binary, untouched), so
+# code-execution integrity is still gated. POM-declared dependency
+# coordinates inherit JFrog-as-trust-boundary status (an attacker who
+# compromises db-maven could regress to a previously-trusted-but-now-
+# vulnerable signed JAR via POM rewrite — risk is real but bounded
+# to artifacts already in the mirror's allowlist).
+#
+# `badSig` here means "tolerate that the .pom signature does not
+# cryptographically verify" — narrower than `noSig` ("tolerate no
+# signature at all"). The artifact must still HAVE a .asc on the
+# server; this only suppresses the crypto-failure error.
+#
+# Action item: file a JFrog admin ticket asking db-maven to disable
+# text-artifact transformations so POM bytes pass through verbatim, then
+# delete this block (POMs will verify again).
+#
+# Versions are pinned at the exact artifact:packaging:version level so
+# future releases inherit strict verification rather than the override.
+
+com.fasterxml.jackson.core:jackson-annotations:pom:2.18.3                                  = badSig
+com.fasterxml.jackson.core:jackson-core:pom:2.18.3                                         = badSig
+com.fasterxml.jackson.core:jackson-databind:pom:2.18.3                                     = badSig
+javax.servlet:javax.servlet-api:pom:3.1.0                                                  = badSig
+net.alchim31.maven:scala-maven-plugin:pom:4.9.9                                            = badSig
+org.iq80.snappy:snappy:pom:0.4                                                             = badSig
