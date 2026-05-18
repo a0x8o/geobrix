@@ -1,0 +1,128 @@
+#!/bin/bash
+#
+# Diagnose Category B PGP failures: "PGP Signature INVALID" on .pom files
+# only (never .jar). Suspected cause: db-maven JFrog mirror mutating POM
+# bytes (line endings, encoding, metadata) between Maven Central and CI,
+# breaking the upstream signature.
+#
+# This script fetches each suspect POM + .asc from the configured Maven
+# mirror (db-maven via NETRC auth — same path Maven uses in CI) and
+# compares its sha256 against a known reference from Maven Central (fetched
+# locally via maven-proxy.dev.databricks.com, recorded below).
+#
+# Outputs per artifact:
+#   * size + sha256 of the .pom and .pom.asc as served by db-maven
+#   * PASS/FAIL vs the embedded Maven Central reference sha256s
+#   * if mismatch: first 16 bytes that differ (line-ending diff is the
+#     usual suspect)
+#   * gpg --verify result if gpg is available
+#
+# Usage (in CI / geobrix-dev container):
+#   ./scripts/security/diag-pgpverify-pom-transit
+#
+# Requires: curl, shasum/sha256sum. Optional: gpg.
+# Requires NETRC env var pointing at a netrc with db-maven creds — set
+# by .github/actions/jfrog-auth or .github/actions/jfrog-pip-bootstrap.
+
+set -eu
+
+# db-maven Maven repo root (artifactory db-maven proxy of Maven Central).
+JFROG_URL="https://databricks.jfrog.io/artifactory/db-maven"
+
+# Each line: "<gradle/maven path>|<expected .pom sha256>|<expected .pom.asc sha256>"
+# Reference sha256s captured 2026-05-18 from maven-proxy.dev.databricks.com,
+# which is a transparent mirror of repo1.maven.org. If those upstream bytes
+# ever change, regenerate this table.
+ARTIFACTS=$(cat <<'EOF'
+com/fasterxml/jackson/core/jackson-annotations/2.18.3/jackson-annotations-2.18.3.pom|b9c98ba9e29ea61b693d4c8c801968feaae220b2b2002364a7bcec524998384b|0f752e188ec3c8f0a3bd6060b67243750d01eda3adc9fbfa7c3c114f784eae5e
+com/fasterxml/jackson/core/jackson-core/2.18.3/jackson-core-2.18.3.pom|37dc6b8f6391a4709ac215ca98fa2341c6dd65613c2277d96a4fd82a2f50e3c9|81f47a9b1d9b40d6679888ea23f42b076f79c923f0a31ad27bde68faa3429851
+com/fasterxml/jackson/core/jackson-databind/2.18.3/jackson-databind-2.18.3.pom|e58f48ac14e4dbd48595d69e20bad35019ec1281514ef7ef155e18072ada617f|da0ea4a494ed5368e3e5579fffe677ba2208faf82f88df890169bfa08817c7b3
+net/alchim31/maven/scala-maven-plugin/4.9.9/scala-maven-plugin-4.9.9.pom|6fc2ece5857f70bcb3fc08a41c5a9f6dcb23c359cab649a48a838b7948a72ed5|b8e4a5cbb07e2492ff72f2d8c0b00a05749082ee49d70e2fd7622de261191e2e
+org/iq80/snappy/snappy/0.4/snappy-0.4.pom|a709ce17111e4149d9b79a5295644e0cd5a8355aec4b2ef4c0436aba7b25d08a|1dcdccaf5d6eb766e4daa9b9a386fa697594ede0f5e273062813aea534e13bc6
+javax/servlet/javax.servlet-api/3.1.0/javax.servlet-api-3.1.0.pom|b31109e22ea3f2df1ad7955432e718a35def50ae6c19698034afa8a0cf9e9069|c7130f17422295faabf1885daa6f1c8a1a8c05d6a573c512148119f2a4aa42f3
+EOF
+)
+
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  SHA() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  echo "ERROR: need sha256sum or shasum on PATH" >&2
+  exit 1
+fi
+
+NETRC_FLAG=""
+if [ -n "${NETRC:-}" ] && [ -r "${NETRC}" ]; then
+  NETRC_FLAG="--netrc-file ${NETRC}"
+elif [ -r "${HOME}/.netrc" ]; then
+  NETRC_FLAG="--netrc"
+fi
+
+TMP=$(mktemp -d)
+trap 'rm -rf "${TMP}"' EXIT
+
+mismatch=0
+
+printf '%s\n' "===== POM transit diagnostic: db-maven vs Maven Central ====="
+printf 'JFrog base: %s\n' "${JFROG_URL}"
+printf 'Netrc:      %s\n' "${NETRC:-${HOME}/.netrc (if present)}"
+printf '\n'
+
+# Process while preserving variables across loop iterations (subshell trap)
+while IFS='|' read -r path expected_pom_sha expected_asc_sha; do
+  [ -z "${path}" ] && continue
+  fname=$(basename "${path}")
+  pom="${TMP}/${fname}"
+  asc="${TMP}/${fname}.asc"
+
+  printf '────── %s ──────\n' "${fname}"
+  http_pom=$(curl -sSL ${NETRC_FLAG} --max-time 20 -w '%{http_code}' -o "${pom}" "${JFROG_URL}/${path}" || echo "curl-error")
+  http_asc=$(curl -sSL ${NETRC_FLAG} --max-time 20 -w '%{http_code}' -o "${asc}" "${JFROG_URL}/${path}.asc" || echo "curl-error")
+
+  if [ "${http_pom}" != "200" ] || [ "${http_asc}" != "200" ]; then
+    printf '  ⚠ fetch failed (.pom=%s .asc=%s); skipping\n\n' "${http_pom}" "${http_asc}"
+    mismatch=$((mismatch+1))
+    continue
+  fi
+
+  pom_size=$(wc -c < "${pom}" | tr -d ' ')
+  asc_size=$(wc -c < "${asc}" | tr -d ' ')
+  pom_sha=$(SHA "${pom}")
+  asc_sha=$(SHA "${asc}")
+
+  pom_status="MATCH"
+  asc_status="MATCH"
+  [ "${pom_sha}" != "${expected_pom_sha}" ] && { pom_status="MISMATCH"; mismatch=$((mismatch+1)); }
+  [ "${asc_sha}" != "${expected_asc_sha}" ] && { asc_status="MISMATCH"; mismatch=$((mismatch+1)); }
+
+  printf '  .pom      size=%s  sha256=%s  [%s]\n' "${pom_size}" "${pom_sha}" "${pom_status}"
+  printf '  .pom.asc  size=%s  sha256=%s  [%s]\n' "${asc_size}" "${asc_sha}" "${asc_status}"
+
+  # If POM bytes differ from Maven Central reference, print a hex-diff to
+  # localize the divergence (line endings are the usual culprit).
+  if [ "${pom_status}" = "MISMATCH" ]; then
+    # Fetch Maven Central reference too (only path: maven-central tends to be
+    # blocked from the hardened runner, so this may fail — we still emit the
+    # local hex dump of what JFrog served for byte-level inspection).
+    printf '  (db-maven bytes, first 256):\n'
+    head -c 256 "${pom}" | od -An -c | sed 's/^/    /'
+    printf '  (db-maven bytes, last 64):\n'
+    tail -c 64 "${pom}" | od -An -c | sed 's/^/    /'
+  fi
+
+  # Standalone gpg verify (does the .asc verify the .pom regardless of keysmap?)
+  if command -v gpg >/dev/null 2>&1; then
+    if gpg --verify "${asc}" "${pom}" >"${TMP}/gpg.out" 2>&1; then
+      printf '  gpg --verify: OK\n'
+    else
+      printf '  gpg --verify: FAILED\n'
+      sed 's/^/    /' "${TMP}/gpg.out"
+    fi
+  fi
+
+  printf '\n'
+done <<< "${ARTIFACTS}"
+
+printf '===== summary: %s mismatch event(s) =====\n' "${mismatch}"
+exit "${mismatch}"
