@@ -10,7 +10,11 @@ description = "GeoBriX: A high-performance spatial processing library for Apache
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
 
-license = { text = "Databricks License" }
+# PEP 639 SPDX expression form. setuptools >=77 deprecated the table form
+# (`{ text = ... }` / `{ file = ... }`) and warns on every build by 2027-Feb-18.
+# Proprietary licenses use the `LicenseRef-<id>` namespace per PEP 639;
+# canonical license text lives in ../../LICENSE at the repo root.
+license = "LicenseRef-Databricks-Proprietary"
 classifiers = [
     "License :: Other/Proprietary License",
     "Topic :: Scientific/Engineering :: GIS",
