@@ -19,6 +19,16 @@
         <!-- Build Configuration -->
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <!--
+          project.build.sourceEncoding and project.reporting.outputEncoding are the
+          standard property names every Maven plugin (resources, compiler, surefire,
+          site, javadoc, etc.) looks up. Setting only a custom <encoding> property
+          leaves them undefined and triggers per-plugin "Using platform encoding"
+          warnings (resources:3.4.0 in particular). Keep `<encoding>` for legacy
+          references elsewhere in the build.
+        -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <encoding>UTF-8</encoding>
         
         <!-- Test Configuration -->
