@@ -15,7 +15,18 @@ name: Diag — POM transit (db-maven vs Maven Central)
 # values — only static script invocations.
 
 on:
+  # workflow_dispatch is the long-term trigger, but it only works once the
+  # workflow file lands on the default branch. While this diagnostic lives
+  # only on ci-fix-jfrog, also fire on push that touches the diag script
+  # or the workflow itself so we can actually run it. Remove the push
+  # trigger once the diagnostic concludes and the workflow is deleted.
   workflow_dispatch: {}
+  push:
+    branches:
+      - 'ci-fix-jfrog'
+    paths:
+      - 'scripts/security/diag-pgpverify-pom-transit'
+      - '.github/workflows/diag-pgpverify-pom-transit.yml'
 
 permissions:
   contents: read
