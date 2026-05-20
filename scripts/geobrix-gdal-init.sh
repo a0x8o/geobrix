@@ -48,16 +48,16 @@
 #    By default, this script writes its full stdout+stderr to a local
 #    /tmp file and copies that file to VOL_DIR via an EXIT trap on
 #    script exit. The persistent copy survives the failing cluster's
-#    teardown. Path layout (one file per node per init run):
-#        $VOL_DIR/_init_logs/$DB_CLUSTER_ID/$(hostname)/init_<timestamp>.log
+#    teardown. Path layout (per host, fixed filenames so each cluster
+#    launch overwrites the previous launch's logs in place):
+#        $VOL_DIR/_init_logs/$DB_CLUSTER_ID/$(hostname)/init.log
+#        $VOL_DIR/_init_logs/$DB_CLUSTER_ID/$(hostname)/_NN_*.txt
 #    Per-host subdirectories isolate driver vs worker logs (and any
 #    multiple workers from each other) — no risk of two nodes racing
-#    on the same path. Multiple init runs on the same node produce
-#    multiple timestamped files; sort by mtime to find the latest.
-#    To read everything from any working cluster:
+#    on the same path. To read everything from any working cluster:
 #        %sh
 #        find /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id> -type f
-#        cat /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname>/<latest>.log
+#        cat /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname>/init.log
 #    No env-var setup needed — reuses the VOL_DIR already configured
 #    for the platform tarball.
 #
@@ -135,17 +135,27 @@ VOL_DIR="/Volumes/geospatial_docs/gdal_artifacts/noble/geobrix"
 WS_LOG_DIR="${WS_LOG_DIR:-$VOL_DIR/_init_logs}"
 CLUSTER_ID="${DB_CLUSTER_ID:-no-cluster-id}"
 HOSTNAME_LBL="$(hostname)"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 # Per-host paths everywhere — both local (avoids any /tmp collision in
 # edge cases like sequential init runs on the same node) and persistent
 # (driver + workers each write to a clearly-distinct path; no chance of
 # two nodes racing on the same S3 object). Path layout:
-#   $WS_LOG_DIR/<cluster_id>/<hostname>/init_<timestamp>.log
+#   $WS_LOG_DIR/<cluster_id>/<hostname>/init.log     (full log)
+#   $WS_LOG_DIR/<cluster_id>/<hostname>/_NN_*.txt    (step breadcrumbs)
+# Filenames are STABLE per host (no timestamp) so each cluster launch
+# overwrites the previous launch's logs in place — the directory never
+# accumulates a growing set of files. Per-host clear below removes any
+# straggler files from a prior launch (e.g. if a step or breadcrumb
+# from a prior run wouldn't be overwritten by this run's writes).
 LOCAL_LOG="/tmp/geobrix-init-${HOSTNAME_LBL}.log"
 FINAL_LOG_DIR="$WS_LOG_DIR/$CLUSTER_ID/$HOSTNAME_LBL"
-FINAL_LOG="$FINAL_LOG_DIR/init_${TIMESTAMP}.log"
+FINAL_LOG="$FINAL_LOG_DIR/init.log"
 
 mkdir -p "$FINAL_LOG_DIR" 2>/dev/null || true
+# Clear this host's prior logs only — leave sibling host directories
+# untouched so a parallel-running worker's init doesn't lose its writes.
+( cd "$FINAL_LOG_DIR" 2>/dev/null && rm -f -- *.txt *.log ) 2>/dev/null || true
+# Also clear any local /tmp leftover so tee starts fresh (without -a).
+: > "$LOCAL_LOG" 2>/dev/null || true
 
 echo "started at $(date -Iseconds) host=$HOSTNAME_LBL cluster=$CLUSTER_ID pid=$$" \
     > "$FINAL_LOG_DIR/_01_started.txt" 2>/dev/null || true

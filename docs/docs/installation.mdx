@@ -197,23 +197,24 @@ The init script installs GDAL from a CI-built bundle staged in your Unity Catalo
 If the cluster never launches, Databricks's normal `/databricks/init_scripts/...` logs die with the failing node. To recover them, the init script writes a persistent copy of its full stdout/stderr to a per-host subdirectory under your `VOL_DIR`:
 
 ```
-$VOL_DIR/_init_logs/<cluster-id>/<hostname>/init_<timestamp>.log
+$VOL_DIR/_init_logs/<cluster-id>/<hostname>/init.log
+$VOL_DIR/_init_logs/<cluster-id>/<hostname>/_NN_<step>.txt
 ```
 
-Plus a series of `_NN_<step>.txt` breadcrumb files marking how far the script got (one per major step: sidecar verify, tarball extract, dpkg, pip, JAR install, etc.) and `_99_trap_*.txt` markers indicating whether the EXIT trap fired and what the cp result was.
+Filenames are **stable per host** — each cluster launch clears its host directory and overwrites in place, so the directory never accumulates a growing set of files. `init.log` is the full output; `_NN_<step>.txt` are small breadcrumb files marking how far the script got (one per major step: sidecar verify, tarball extract, dpkg, pip, JAR install, etc.) and `_99_trap_*.txt` markers indicating whether the EXIT trap fired and what the cp result was.
 
 From any working cluster in the same workspace:
 
 ```bash
 %sh
-# List per-host directories for the failing cluster
-find /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id> -type f | sort
+# List files for one failing host
+find /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname> -type f | sort
 
-# Read the latest log for one host
-cat /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname>/init_*.log
+# Read the full log
+cat /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname>/init.log
 ```
 
-The highest-numbered `_NN_*.txt` breadcrumb tells you the last successful step; the main `init_*.log` has the full output up to (and including) the failure. To override the log location (e.g. write to a dedicated logs volume or a Workspace files path), set `WS_LOG_DIR` as a cluster env var or edit the constant near the top of the init script.
+The highest-numbered `_NN_*.txt` breadcrumb tells you the last successful step; `init.log` has the full output up to (and including) the failure. To override the log location (e.g. write to a dedicated logs volume or a Workspace files path), set `WS_LOG_DIR` as a cluster env var or edit the constant near the top of the init script.
 
 :::note Legacy PPA-based init script
 If you need the legacy on-cluster PPA install (slow — typically 10–15 minutes of cluster start time, used historically and still useful for bootstrapping a new bundle), see [`scripts/geobrix-gdal-init-ppa.sh`](https://github.com/databrickslabs/geobrix/blob/main/scripts/geobrix-gdal-init-ppa.sh). It is not the recommended path for new clusters.
