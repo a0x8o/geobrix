@@ -2,7 +2,7 @@ package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
 import org.apache.spark.sql.catalyst.plans.PlanTest
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.functions.{array, col, lit}
 import org.apache.spark.sql.test.SilentSparkSession
 import org.scalatest.matchers.should.Matchers._
 
@@ -87,7 +87,7 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
             .withColumn("b1", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"), lit("GTiff")))
             .withColumn("b2", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"), lit("GTiff")))
             .withColumn("b3", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"), lit("GTiff")))
-            .withColumn("stacked", rst_frombands(col("b1"), col("b2"), col("b3")))
+            .withColumn("stacked", rst_frombands(array(col("b1"), col("b2"), col("b3"))))
             .select(
               col("stacked.raster").alias("raster"),
               col("stacked.metadata").alias("metadata")
@@ -102,16 +102,25 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
     test("rst_combineavg_agg returns self-contained GTiff bytes (no VRT payload)") {
         val sc = spark
         import com.databricks.labs.gbx.rasterx.functions._
+        import com.databricks.labs.gbx.udfs.st_buffer
         import sc.implicits._
         functions.register(spark)
 
         val tifPath = this.getClass.getResource("/modis/").toString
+        // rst_clip preamble mirrors RST_AggEvalTest — exercises the same
+        // path-setup that PixelCombineRasters relies on (the VRT staging dir
+        // under NodeFilePathUtil.rootPath gets touched during clip). Without
+        // it, combineavg's gdalbuildvrt → read-back-VRT step can't find its
+        // own freshly-written VRT in the test environment.
         val df = Seq(
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"
         ).toDF("path")
             .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("bbox", rst_boundingbox(col("tile")))
+            .withColumn("clipper", st_buffer(col("bbox"), lit(-500000.0)))
+            .withColumn("tile", rst_clip(col("tile"), col("clipper"), lit(true)))
             .groupBy(lit(1).alias("g"))
             .agg(rst_combineavg_agg(col("tile")).alias("avg"))
             .select(
