@@ -1,0 +1,305 @@
+name: package geobrix artifacts
+# One-stop release packaging: builds the JAR + Python wheel inline,
+# repackages the committed GDAL platform tarball with the JAR baked in, and
+# attaches every release artifact (JAR, wheel, GDAL tarball, sidecar, init
+# script, docs zip) to an existing tag via `gh release upload --clobber`.
+#
+# Manual-only: Actions -> "package geobrix artifacts" -> Run workflow.
+#
+# Inputs:
+#   ref           - git ref to build from (branch / tag / SHA). Empty = the
+#                   ref the workflow was launched on.
+#   attach_to_tag - tag (e.g. v0.3.0) to attach all six files to. Empty =
+#                   produce workflow artifacts only, no tag mutation.
+#
+# Always uploaded as workflow artifacts (downloadable from the run page):
+#   1. geobrix-<version>-jar-with-dependencies.jar              (built inline)
+#   2. dblabs_geobrix-<version>-py3-none-any.whl                (built inline)
+#   3. geobrix-gdal-artifacts-v<version>-noble.tar.gz           (repackaged)
+#   4. geobrix-gdal-artifacts-v<version>-noble.tar.gz.sha256    (computed)
+#   5. geobrix-gdal-init.sh                                     (committed)
+#   6. geobrix-docs-<version>.zip                               (built inline from docs/)
+#
+# The slow PPA/apt dance does NOT run here - the GDAL platform layer
+# (~250 MB of .debs + wheels + JNI) is committed under resources/static/
+# (Git LFS) and was reviewed at the PR that bumped it. This workflow only
+# grafts the per-release JAR into a copy of those bytes and recomputes the
+# SHA256SUMS manifest. Total runtime ~2-3 min vs. ~15 if we rebuilt the
+# platform layer per release.
+#
+# Security: every workflow_dispatch input is surfaced as env: before any
+# run: block. Direct ${{ ... }} interpolation of user inputs into shell is
+# a command-injection risk - we don't do it. See:
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+#
+# All jobs run on the Databricks-hardened runner group (Labs lockdown policy).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch / tag / SHA) to build from. Empty = the ref the workflow was launched on."
+        required: false
+        type: string
+        default: ""
+      attach_to_tag:
+        description: "Tag to attach the six files to (e.g. v0.3.0). Empty = workflow artifacts only."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    environment: runtime
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INPUT_REF: ${{ inputs.ref }}
+      INPUT_ATTACH_TO_TAG: ${{ inputs.attach_to_tag }}
+    strategy:
+      matrix:
+        python: [ 3.12.3 ]
+        numpy:  [ 2.1.3 ]
+        gdal:   [ 3.11.4 ]
+        spark:  [ 4.0.0 ]
+    steps:
+      - name: checkout code (with LFS)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          lfs: true
+
+      - name: verify platform tarball is LFS-pulled
+        shell: bash
+        run: |
+          PLATFORM=resources/static/geobrix-gdal-platform-noble.tar.gz
+          if [ ! -s "$PLATFORM" ]; then
+              echo "$PLATFORM is missing or empty" >&2
+              exit 1
+          fi
+          if head -c 50 "$PLATFORM" | grep -q '^version https://git-lfs'; then
+              echo "$PLATFORM is an LFS pointer, not the binary - checkout's lfs: true didn't resolve it." >&2
+              exit 1
+          fi
+          ( cd resources/static && sha256sum -c geobrix-gdal-platform-noble.tar.gz.sha256 )
+
+      - name: Configure JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
+        with:
+          java-version: "17"
+          distribution: "zulu"
+          cache: "maven"
+          cache-dependency-path: "pom.xml"
+
+      - name: Set Maven opts
+        shell: bash
+        run: echo "MAVEN_OPTS=-Xmx4g -XX:+UseG1GC" >> "$GITHUB_ENV"
+
+      - name: Create pip cache key file
+        shell: bash
+        env:
+          GH_REF: ${{ github.ref }}
+          PY: ${{ matrix.python }}
+          NP: ${{ matrix.numpy }}
+          SP: ${{ matrix.spark }}
+          GD: ${{ matrix.gdal }}
+        run: |
+          echo "${GH_REF}-${PY}-${NP}-${SP}-${GD}" > .ci-pip-cache-key
+
+      - name: Pre-bootstrap pip for JFrog
+        uses: ./.github/actions/jfrog-pip-bootstrap
+
+      - name: Configure Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          cache: "pip"
+          cache-dependency-path: ".ci-pip-cache-key"
+          python-version: ${{ matrix.python }}
+
+      - name: Authenticate for JFrog
+        uses: ./.github/actions/jfrog-auth
+
+      - name: Verify Maven dependency PGP signatures
+        shell: bash
+        run: ./scripts/security/maven-pgp-verify
+
+      - name: build scala JAR (skip tests, no GDAL install)
+        shell: bash
+        run: |
+          mvn -C -q clean package -DskipTests -Dscoverage.skip -Dscalastyle.fail=false
+          ls -lh target/geobrix-*-jar-with-dependencies.jar
+
+      # Hash-pinned minimal build set: just build / setuptools / wheel. See
+      # python/geobrix/requirements-build.in for the source list; the .txt
+      # lockfile must be regenerated via `uv pip compile --generate-hashes`
+      # when bumping any of those. Slimmer than requirements-ci.txt (which
+      # pulls pytest, black, scientific stack) by ~30s of pip resolve time.
+      - name: install Python build deps (hash-pinned)
+        shell: bash
+        run: |
+          pip install --upgrade pip==25.0.1
+          pip install --require-hashes -r python/geobrix/requirements-build.txt
+
+      - name: build Python wheel
+        shell: bash
+        run: |
+          cd python/geobrix
+          python -m build
+          ls -lh dist/*.whl
+
+      # ---- docs ----------------------------------------------------------
+      # Docusaurus static-zip build, version-named from the JAR we just
+      # produced. This replaces the previously-committed
+      # resources/static/geobrix-docs-*.zip — the doc bundle is now a
+      # release-time output, since release IS the natural time to cut a
+      # static docs snapshot.
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: docs/package-lock.json
+
+      # JFrog auth ran earlier; that step writes npm credentials too (per
+      # deploy-docs.yml's pattern), so `npm ci` below will route through
+      # the JFrog mirror.
+      - name: Install docs dependencies
+        shell: bash
+        run: cd docs && npm ci
+
+      - name: Build static docs zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Parse version up front so we can name the zip — the repackage
+          # step below also derives it, but doing it here too lets us name
+          # the docs zip in a single shell invocation.
+          JAR=$(ls target/geobrix-*-jar-with-dependencies.jar 2>/dev/null | head -1)
+          VERSION=$(basename "$JAR" | sed -nE 's/^geobrix-(.+)-jar-with-dependencies\.jar$/\1/p')
+          if [ -z "$VERSION" ]; then
+              echo "could not parse version from JAR name: $(basename "$JAR")" >&2
+              exit 1
+          fi
+
+          ( cd docs && npm run build:static-zip )
+
+          mkdir -p dist
+          DOCS_ZIP="dist/geobrix-docs-${VERSION}.zip"
+          # Strip DS_Store noise; -q to keep run log readable.
+          ( cd docs/build-static-zip && zip -qr "../../$DOCS_ZIP" . -x "*.DS_Store" )
+
+          echo "GBX_DOCS_ZIP=$DOCS_ZIP" >> "$GITHUB_ENV"
+          ls -lh "$DOCS_ZIP"
+
+      - name: repackage platform tarball with JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(ls target/geobrix-*-jar-with-dependencies.jar 2>/dev/null | head -1)
+          if [ -z "$JAR" ]; then
+              echo "no geobrix-*-jar-with-dependencies.jar found in target/" >&2
+              exit 1
+          fi
+
+          VERSION=$(basename "$JAR" | sed -nE 's/^geobrix-(.+)-jar-with-dependencies\.jar$/\1/p')
+          if [ -z "$VERSION" ]; then
+              echo "could not parse version from JAR name: $(basename "$JAR")" >&2
+              exit 1
+          fi
+          echo "GeoBrix version: $VERSION"
+
+          mkdir -p dist staging
+          rm -rf staging/bundle
+          mkdir -p staging/bundle
+
+          tar -xzf resources/static/geobrix-gdal-platform-noble.tar.gz \
+              -C staging/bundle --strip-components=1
+
+          cp "$JAR" "staging/bundle/$(basename "$JAR")"
+
+          ( cd staging/bundle && \
+              rm -f SHA256SUMS && \
+              find . -type f ! -name SHA256SUMS -print0 \
+                  | LC_ALL=C sort -z \
+                  | xargs -0 sha256sum > SHA256SUMS )
+
+          TARBALL=geobrix-gdal-artifacts-v${VERSION}-noble.tar.gz
+          tar --sort=name --mtime='UTC 2020-01-01' \
+              --owner=0 --group=0 --numeric-owner \
+              -czf "dist/$TARBALL" -C staging bundle/
+          ( cd dist && sha256sum "$TARBALL" > "$TARBALL.sha256" )
+
+          echo "GBX_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "GBX_TARBALL=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: show release manifest
+        shell: bash
+        run: |
+          echo "=== files to publish ==="
+          ls -lh \
+              "target/geobrix-${GBX_VERSION}-jar-with-dependencies.jar" \
+              "python/geobrix/dist/"*.whl \
+              "dist/${GBX_TARBALL}" \
+              "dist/${GBX_TARBALL}.sha256" \
+              scripts/geobrix-gdal-init.sh \
+              "${GBX_DOCS_ZIP}"
+          echo
+          echo "=== outer sidecar ==="
+          cat "dist/${GBX_TARBALL}.sha256"
+
+      - name: upload as workflow artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
+        with:
+          name: geobrix-release-artifacts
+          path: |
+            target/geobrix-*-jar-with-dependencies.jar
+            python/geobrix/dist/*.whl
+            dist/geobrix-gdal-artifacts-*.tar.gz
+            dist/geobrix-gdal-artifacts-*.tar.gz.sha256
+            scripts/geobrix-gdal-init.sh
+            dist/geobrix-docs-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: attach to tag
+        if: ${{ inputs.attach_to_tag != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$INPUT_ATTACH_TO_TAG" in
+              v[0-9]*|[0-9]*) : ;;
+              *)
+                  echo "attach_to_tag '$INPUT_ATTACH_TO_TAG' doesn't look like a version tag." >&2
+                  exit 1
+                  ;;
+          esac
+
+          JAR=$(ls target/geobrix-*-jar-with-dependencies.jar | head -1)
+          WHL=$(ls python/geobrix/dist/*.whl | head -1)
+
+          gh release upload "$INPUT_ATTACH_TO_TAG" \
+              "$JAR" \
+              "$WHL" \
+              "dist/${GBX_TARBALL}" \
+              "dist/${GBX_TARBALL}.sha256" \
+              scripts/geobrix-gdal-init.sh \
+              "${GBX_DOCS_ZIP}" \
+              --clobber
+
+          echo "Attached to tag $INPUT_ATTACH_TO_TAG:"
+          echo "  $(basename "$JAR")"
+          echo "  $(basename "$WHL")"
+          echo "  ${GBX_TARBALL}"
+          echo "  ${GBX_TARBALL}.sha256"
+          echo "  geobrix-gdal-init.sh"
+          echo "  $(basename "${GBX_DOCS_ZIP}")"
