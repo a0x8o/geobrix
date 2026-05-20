@@ -9,6 +9,10 @@
 /target/
 /spark-warehouse/
 /artifacts/
+# Local output of scripts/build-gdal-artifacts.sh — the platform tarball
+# + sidecar are moved into resources/static/ (committed via Git LFS);
+# everything else in dist/ is intermediate (extracted bundle, etc.).
+/dist/
 /python/geobrix/artifacts/
 /python/geobrix/test/vectorx/spark-warehouse/
 /python/geobrix/test/gridx/artifacts/

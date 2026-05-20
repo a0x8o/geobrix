@@ -1,0 +1,19 @@
+# Minimal hash-pinned Python deps for the wheel-build path in
+# .github/workflows/package-geobrix-artifacts.yml. Trimmed down from
+# requirements-ci.in to just the PEP 517 frontend + backend that
+# `python -m build` needs — no pytest, coverage, lint tooling, or
+# scientific stack. Saves ~30s vs. installing the full CI dep set.
+#
+# Edit this file, then regenerate the hash-pinned lock:
+#
+#   cd python/geobrix
+#   uv pip compile --generate-hashes --python-version 3.12 \
+#       --output-file requirements-build.txt requirements-build.in
+#
+# Versions are deliberately the same as the corresponding lines in
+# requirements-ci.in so the two lockfiles can't disagree on what build
+# backend version produced any given wheel. If you bump a version here,
+# bump it there too (and vice versa) — they're a paired set.
+build==1.4.4
+setuptools==80.9.0  # >= 77.0.0 required to parse PEP 639 SPDX license strings (matches requirements-ci.in note)
+wheel==0.45.1

@@ -52,11 +52,47 @@ Spatial K-Nearest Neighbors is not yet ported:
 - No KNN operations currently available
 - H3 support for Geometry-based K-Ring and K-Loop not included
 
+## Coordinate Reference Systems (PROJ version skew)
+
+GeoBrix's GDAL stack and DBR's built-in spatial functions each carry
+their own PROJ runtime — they coexist on the cluster but are not the
+same library, and the two PROJ versions can diverge slightly:
+
+- **GeoBrix's GDAL** links to the PROJ shipped in the cluster init
+  bundle (currently PROJ 9.4.1, from the UbuntuGIS PPA build of
+  `libgdal37`). Installed at `/usr/lib/x86_64-linux-gnu/libproj.so.25`.
+- **DBR 17.3 LTS's built-in `ST_*` functions** link to PROJ 9.7.1,
+  bundled with the runtime under `/databricks/native/` (with
+  `PROJ_DATA=/databricks/native/proj-data`). Not registered with
+  `ldconfig` and not installed via apt — fully isolated from
+  `/usr/lib`.
+
+The two run side-by-side in the same JVM/Python process without
+conflict, because they're loaded from distinct paths. The cost is
+**CRS-catalog skew at the edges**: any EPSG code added or refined
+between PROJ 9.4.1 and 9.7.1 (newly-added projections, updated
+grid-shift definitions, transformation pipeline changes) may be
+interpreted slightly differently by a GeoBrix function vs. a DBR
+built-in operating on the same geometry.
+
+For the common EPSG codes you're most likely to use day-to-day —
+`EPSG:4326`, `EPSG:3857`, `EPSG:27700`, the UTM zones — this is
+invisible. For freshly-added projections or very precise datum
+transformations, it may surface.
+
+If you run into a CRS-related discrepancy between a GeoBrix function
+and a DBR `ST_*` built-in on the same input, please
+[file an issue](https://github.com/databrickslabs/geobrix/issues) with
+the EPSG code and a minimal repro — that's the signal we'd use to
+prioritize rebuilding the GeoBrix GDAL stack from source against DBR's
+PROJ in a future release.
+
 ## Compute Requirements
 
 GeoBrix requires Databricks Classic Clusters:
 - **Not** currently compatible with Serverless compute
 - Requires GDAL native libraries via init script, which are currently only supported on classic clusters
+- **Non-ARM instance types only (Intel or AMD x86_64).** The GDAL bundle ships `amd64` `.deb`s from the UbuntuGIS PPA — `amd64` and `x86_64` are the same architecture, and Intel and AMD CPUs are interchangeable. ARM-based instance types — AWS Graviton, Ampere, Apple Silicon — are not supported. The init script fails fast on `aarch64`.
 
 Databricks Runtime:
 - **Minimum**: DBR 17.1 (recommend DBR 17.3 LTS or later)
