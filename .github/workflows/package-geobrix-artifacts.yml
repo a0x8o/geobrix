@@ -70,12 +70,44 @@ jobs:
         gdal:   [ 3.11.4 ]
         spark:  [ 4.0.0 ]
     steps:
-      - name: checkout code (with LFS)
+      # actions/checkout's lfs: true is hard to debug — when an LFS object
+      # exists as a pointer in git but the bytes were never uploaded to
+      # GitHub LFS storage, the action errors out with a bare
+      # `Object does not exist on the server: [404]` and no actionable
+      # next step. Check out without LFS first so we can run our own
+      # `git lfs pull` with a clear error message that names the fix.
+      - name: checkout code (no LFS yet)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
-          lfs: true
+          lfs: false
+
+      - name: pull LFS objects (with actionable error on 404)
+        shell: bash
+        run: |
+          if git lfs pull 2>&1; then
+              echo "==> Git LFS objects pulled successfully."
+          else
+              echo
+              echo "============================================================"
+              echo "Git LFS pull FAILED."
+              echo
+              echo "Most common cause: an LFS pointer is committed but the"
+              echo "actual bytes were never uploaded to GitHub LFS storage."
+              echo "This can happen if 'git push' on the branch in question"
+              echo "did not also push LFS objects (the regular git pack"
+              echo "transfer succeeds while the LFS transfer silently no-ops"
+              echo "or is rejected — e.g., the first time a repo uses LFS"
+              echo "and org-level storage hasn't been provisioned yet)."
+              echo
+              echo "Fix: on a workstation that has the file:"
+              echo "  git lfs push origin <branch-or-tag> --all"
+              echo
+              echo "Then re-trigger this workflow."
+              echo "============================================================"
+              exit 1
+          fi
 
       - name: verify platform tarball is LFS-pulled
         shell: bash
@@ -86,10 +118,34 @@ jobs:
               exit 1
           fi
           if head -c 50 "$PLATFORM" | grep -q '^version https://git-lfs'; then
-              echo "$PLATFORM is an LFS pointer, not the binary - checkout's lfs: true didn't resolve it." >&2
+              echo "$PLATFORM is still an LFS pointer after `git lfs pull` — see the previous step's diagnostic." >&2
               exit 1
           fi
           ( cd resources/static && sha256sum -c geobrix-gdal-platform-noble.tar.gz.sha256 )
+
+      - name: verify python/geobrix/requirements-build.txt is committed
+        shell: bash
+        run: |
+          if [ ! -f python/geobrix/requirements-build.txt ]; then
+              echo
+              echo "============================================================"
+              echo "python/geobrix/requirements-build.txt is missing."
+              echo
+              echo "It's the hash-pinned lockfile this workflow installs from"
+              echo "via 'pip install --require-hashes'. It's generated from"
+              echo "python/geobrix/requirements-build.in and must be committed"
+              echo "alongside it on the branch being released."
+              echo
+              echo "Regenerate with:"
+              echo "  cd python/geobrix"
+              echo "  uv pip compile --generate-hashes --python-version 3.12 \\"
+              echo "      --output-file requirements-build.txt requirements-build.in"
+              echo
+              echo "Then commit to the branch being released and re-trigger"
+              echo "this workflow."
+              echo "============================================================"
+              exit 1
+          fi
 
       - name: Configure JDK
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5.2.0
