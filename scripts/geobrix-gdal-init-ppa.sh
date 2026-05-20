@@ -1,5 +1,21 @@
 #!/bin/bash
 #
+# ============================================================================
+# LEGACY PATH — slow cluster start (~15 minutes)
+# ============================================================================
+# This script adds the UbuntuGIS PPA, downloads + installs GDAL .debs on every
+# cluster boot, and SOURCE-COMPILES the GDAL Python bindings against the
+# freshly-installed libgdal-dev. Total cold-start cost on a Databricks cluster
+# is typically 10–15 minutes (PPA fetch + apt install + ~5–8 min source build
+# of GDAL[numpy] under pip --no-binary :all:).
+#
+# Prefer scripts/geobrix-gdal-init.sh for new clusters: it installs the same
+# fingerprint-verified set of artifacts in 30–90 seconds by pre-staging the
+# CI-built bundle in a Unity Catalog Volume. Keep this script around only for:
+#   - bootstrapping the very first artifact bundle (CI uses this dance to
+#     produce what gets staged for the tarball script), or
+#   - troubleshooting a cluster that can't read from the staging volume.
+#
 # Databricks cluster init script. This file is uploaded to a Workspace
 # volume and run by the cluster on boot — the ubuntugis PPA signing key is embedded
 # inline below. Keep this file self-contained.
@@ -106,7 +122,7 @@ sudo apt-get -o DPkg::Lock::Timeout=-1 install -y \
 
 # pip install GDAL (match deps to DBR 17.3 LTS — see release notes for the runtime).
 # Bootstrap pins must match .github/actions/{scala,python}_build/action.yml — keep these in sync.
-pip install --upgrade pip==25.0.1 setuptools==74.0.0 wheel==0.45.1 cython==3.0.12
+pip install --upgrade pip==25.0.1 setuptools==80.9.0 wheel==0.45.1 cython==3.0.12  # setuptools >= 77.0.0 required for GDAL 3.11+ sdist's PEP 639 SPDX license string
 pip install numpy==2.1.3
 export GDAL_CONFIG=/usr/bin/gdal-config
 # --no-binary :all: forces sdist compile against the apt-installed libgdal
