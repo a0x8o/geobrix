@@ -5,11 +5,24 @@ title: Beta Release Notes
 
 # Beta Release Notes
 
-:::info Current version: 0.3.0
+:::info Current version: 0.3.1
 The changes on this page are relative to 0.1.0 (and earlier).
 :::
 
 This page tracks **API and naming changes** since the GeoBrix project started. After the project is approved, formal release notes will take over; until then, use this as the single place to look up what changed and why.
+
+---
+
+## What's new in v0.3.1
+
+Released 2026-05-20. Patch release with a correctness fix for cross-executor raster payloads, plus the first release published via the new automated packaging workflow.
+
+- **`tile.raster` bytes are always self-contained (no VRT payloads).** Three RasterX operations — `MergeRasters` (`gbx_rst_merge`, `gbx_rst_merge_agg`), `MergeBands` (`gbx_rst_frombands`), and `PixelCombineRasters` (`gbx_rst_derivedband`, `gbx_rst_derivedband_agg`, `gbx_rst_combineavg`, `gbx_rst_combineavg_agg`) — historically returned tiles whose `metadata("driver")` claimed `VRT` even though the on-disk file was a materialized GTiff. That mis-tag propagated through `RasterDriver.writeToBytes`, causing the serialized `tile.raster` payload to be VRT XML that referenced a `/vsimem/` tempfile only reachable on the producing executor. Single-node tests passed by accident (the tempfile existed locally); multi-executor clusters hit `file not found` errors when the VRT was opened elsewhere. Fix: `GDALTranslate.executeTranslate` now records the **output** dataset's driver in its returned metadata (not the input's), and `RasterDriver.writeToBytes` defensively coerces VRT to GTiff on serialization + sniffs the result to refuse shipping VRT bytes. Regression coverage in [`RST_NoVrtPayloadTest`](https://github.com/databrickslabs/geobrix/blob/main/src/test/scala/com/databricks/labs/gbx/rasterx/expressions/RST_NoVrtPayloadTest.scala).
+- **Release published via the new `package-geobrix-artifacts.yml` workflow.** v0.3.1 is the first GeoBrix release built end-to-end through the GDAL-platform-tarball + LFS pipeline introduced in v0.3.0. Assets attached to the v0.3.1 release page: `geobrix-0.3.1-jar-with-dependencies.jar`, `dblabs_geobrix-0.3.1-py3-none-any.whl`, `geobrix-gdal-artifacts-v0.3.1-noble.tar.gz`, the matching `.sha256` sidecar, `geobrix-gdal-init.sh`, and `geobrix-docs-0.3.1.zip` — all six produced by one workflow run from the v0.3.1 tag.
+
+:::warning Known issue in v0.3.0
+v0.3.0 ships the pre-fix raster aggregator chain — `gbx_rst_merge`, `gbx_rst_merge_agg`, `gbx_rst_frombands`, `gbx_rst_derivedband`, `gbx_rst_derivedband_agg`, `gbx_rst_combineavg`, and `gbx_rst_combineavg_agg` may return `tile.raster` bytes that are VRT XML referencing a `/vsimem/` tempfile only reachable on the executor that produced them. Symptoms on multi-executor clusters: `file not found` errors when downstream stages try to open the tile, or `plot_raster(...)` rendering an unexpected VRT XML payload (instead of a real raster image). The single-node `EO Series — 03. Gridded EO Data` notebook can hit this after `rst_merge_agg` on h3 k-rings. **Upgrade to v0.3.1 if you use any of these functions in a multi-executor workload.**
+:::
 
 ---
 

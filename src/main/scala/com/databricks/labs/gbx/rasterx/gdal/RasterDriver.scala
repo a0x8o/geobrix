@@ -139,10 +139,27 @@ object RasterDriver {
       * Dataset is closed (via res.delete()) before GetMemFileBuffer reads it. Skipping the
       * close on the caller's writable Dataset leaves GTiff IFD/strip structures unfinalized
       * and GetMemFileBuffer returns a ~422-byte empty-header stub. The temp vsimem file is
-      * unlinked after reading to avoid leaking memory across long-running jobs (e.g. many clips). */
+      * unlinked after reading to avoid leaking memory across long-running jobs (e.g. many clips).
+      *
+      * Self-contained-payload invariant: serialized tile.raster bytes must be reachable from
+      * any executor in the cluster — so we coerce VRT (which is just XML pointing at other
+      * paths) to GTiff before serializing. Any caller upstream that hands us a VRT-driver
+      * Dataset (or metadata claiming driver=VRT) gets a real GTiff out. Bytes are sniffed
+      * post-write and re-translated if a VRT magic header still appears, as a belt-and-braces
+      * check against future regressions or metadata drift. */
     def writeToBytes(ds: Dataset, options: Map[String, String]): Array[Byte] = {
         val isZip = options.getOrElse("isZip", "false").toBoolean
-        val driverName = options.getOrElse("driver", "GTiff")
+        // VRT bytes are never a valid self-contained tile.raster payload — they reference
+        // /vsimem/ tempfiles that only exist on the producing executor. If metadata or the
+        // Dataset itself reports VRT, coerce to GTiff for the on-wire serialization. The
+        // Dataset's actual on-disk content is already materialized (MergeRasters et al
+        // translate VRT → GTiff and return the GTiff Dataset); we just need to stop the
+        // metadata from claiming otherwise.
+        val rawDriverName = options.getOrElse("driver", Option(ds).map(_.GetDriver().getShortName).getOrElse("GTiff"))
+        val driverName = if (rawDriverName == "VRT") "GTiff" else rawDriverName
+        val translateOptions =
+            if (rawDriverName == "VRT") options ++ Map("driver" -> "GTiff", "format" -> "GTiff")
+            else options
         val extension = GDAL.getExtension(driverName)
         val uuid = java.util.UUID.randomUUID().toString.replace("-", "_")
         val tempPath =
@@ -151,12 +168,36 @@ object RasterDriver {
         ds.FlushCache()
         // Create a copy via gdal_translate to ensure proper format/compression AND a clean
         // close of the output handle (required to finalize GTiff headers in vsimem).
-        val (res, _) = GDALTranslate.executeTranslate(tempPath, ds, "gdal_translate", options)
+        val (res, _) = GDALTranslate.executeTranslate(tempPath, ds, "gdal_translate", translateOptions)
         res.FlushCache()
         res.delete()
         val bytes = gdal.GetMemFileBuffer(tempPath)
         gdal.Unlink(tempPath)
-        bytes
+        // Defensive sniff: if somehow VRT bytes are about to be returned, log loud
+        // rather than ship a broken-cross-executor payload. Caller code (smoke tests,
+        // regression test, prod cluster) will see this in the executor log and we'll
+        // know a future regression has slipped past the coercion above.
+        if (bytes != null && bytes.length >= 12 && new String(bytes.take(12), "US-ASCII") == "<VRTDataset ") {
+            // scalastyle:off println
+            System.err.println(
+              s"[geobrix] RasterDriver.writeToBytes: refusing to ship VRT bytes (driver=$rawDriverName); " +
+                  s"this would produce a tile.raster payload unreachable across executors. " +
+                  s"Re-translating to GTiff."
+            )
+            // scalastyle:on println
+            val recoverPath = s"/vsimem/temp_raster_recover_$uuid.tif"
+            val (resRecover, _) = GDALTranslate.executeTranslate(
+              recoverPath, ds, "gdal_translate",
+              options ++ Map("driver" -> "GTiff", "format" -> "GTiff")
+            )
+            resRecover.FlushCache()
+            resRecover.delete()
+            val recovered = gdal.GetMemFileBuffer(recoverPath)
+            gdal.Unlink(recoverPath)
+            recovered
+        } else {
+            bytes
+        }
     }
 
 }
