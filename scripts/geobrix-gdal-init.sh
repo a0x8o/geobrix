@@ -48,13 +48,16 @@
 #    By default, this script writes its full stdout+stderr to a local
 #    /tmp file and copies that file to VOL_DIR via an EXIT trap on
 #    script exit. The persistent copy survives the failing cluster's
-#    teardown. Path layout (per host, fixed filenames so each cluster
-#    launch overwrites the previous launch's logs in place):
+#    teardown. Path layout (per host, fixed filenames):
 #        $VOL_DIR/_init_logs/$DB_CLUSTER_ID/$(hostname)/init.log
 #        $VOL_DIR/_init_logs/$DB_CLUSTER_ID/$(hostname)/_NN_*.txt
-#    Per-host subdirectories isolate driver vs worker logs (and any
-#    multiple workers from each other) — no risk of two nodes racing
-#    on the same path. To read everything from any working cluster:
+#    On every cluster launch the driver wipes the entire cluster-level
+#    log dir ($VOL_DIR/_init_logs/$DB_CLUSTER_ID/) — clean slate, no
+#    stale per-host subdirs from prior launches accumulating. Workers
+#    leave peer subdirs alone and only clear their own. Per-host
+#    subdirectories isolate driver vs worker logs (and multiple workers
+#    from each other) — no risk of two nodes racing on the same path.
+#    To read everything from any working cluster:
 #        %sh
 #        find /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id> -type f
 #        cat /Volumes/<your-vol-dir>/_init_logs/<failing-cluster-id>/<hostname>/init.log
@@ -143,16 +146,33 @@ HOSTNAME_LBL="$(hostname)"
 #   $WS_LOG_DIR/<cluster_id>/<hostname>/_NN_*.txt    (step breadcrumbs)
 # Filenames are STABLE per host (no timestamp) so each cluster launch
 # overwrites the previous launch's logs in place — the directory never
-# accumulates a growing set of files. Per-host clear below removes any
-# straggler files from a prior launch (e.g. if a step or breadcrumb
-# from a prior run wouldn't be overwritten by this run's writes).
+# accumulates a growing set of files.
 LOCAL_LOG="/tmp/geobrix-init-${HOSTNAME_LBL}.log"
 FINAL_LOG_DIR="$WS_LOG_DIR/$CLUSTER_ID/$HOSTNAME_LBL"
 FINAL_LOG="$FINAL_LOG_DIR/init.log"
 
+# Cluster launch == clean slate.
+#
+# On the driver only, wipe the entire cluster-level log dir before this
+# run starts. That removes stale per-host subdirs left over from prior
+# launches of the same cluster — important for autoscaling clusters
+# where workers come and go and hostnames vary between launches; without
+# the driver-side wipe, those orphaned subdirs would accumulate forever.
+#
+# Workers do NOT wipe the cluster dir (would race with peer workers and
+# with the still-running driver during the initial startup window). On a
+# worker, the host-level clear below catches any residue tied to that
+# specific hostname.
+#
+# Detection: DB_IS_DRIVER is set to "TRUE" on the driver, "FALSE" or
+# unset on workers — set by Databricks on every cluster-scoped init run.
+if [ "${DB_IS_DRIVER:-FALSE}" = "TRUE" ]; then
+    rm -rf "$WS_LOG_DIR/$CLUSTER_ID" 2>/dev/null || true
+fi
+
 mkdir -p "$FINAL_LOG_DIR" 2>/dev/null || true
-# Clear this host's prior logs only — leave sibling host directories
-# untouched so a parallel-running worker's init doesn't lose its writes.
+# Clear this host's prior logs (covers worker autoscale-in scenarios
+# where the cluster-level wipe above didn't run on this node).
 ( cd "$FINAL_LOG_DIR" 2>/dev/null && rm -f -- *.txt *.log ) 2>/dev/null || true
 # Also clear any local /tmp leftover so tee starts fresh (without -a).
 : > "$LOCAL_LOG" 2>/dev/null || true

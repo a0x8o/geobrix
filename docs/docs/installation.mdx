@@ -201,7 +201,9 @@ $VOL_DIR/_init_logs/<cluster-id>/<hostname>/init.log
 $VOL_DIR/_init_logs/<cluster-id>/<hostname>/_NN_<step>.txt
 ```
 
-Filenames are **stable per host** — each cluster launch clears its host directory and overwrites in place, so the directory never accumulates a growing set of files. `init.log` is the full output; `_NN_<step>.txt` are small breadcrumb files marking how far the script got (one per major step: sidecar verify, tarball extract, dpkg, pip, JAR install, etc.) and `_99_trap_*.txt` markers indicating whether the EXIT trap fired and what the cp result was.
+Filenames are **stable per host** — within a single cluster launch, each host overwrites its own files in place. On every cluster launch the driver also wipes the entire cluster-level log dir (`$VOL_DIR/_init_logs/<cluster-id>/`) so stale per-host subdirs from earlier launches don't accumulate over time. (Important for autoscaling clusters where worker hostnames change between launches.) Workers themselves only clear their own subdir, so they don't race with peer workers or with the still-running driver during the initial startup window.
+
+`init.log` is the full output; `_NN_<step>.txt` are small breadcrumb files marking how far the script got (one per major step: sidecar verify, tarball extract, dpkg, pip, JAR install, etc.) and `_99_trap_*.txt` markers indicating whether the EXIT trap fired and what the cp result was.
 
 From any working cluster in the same workspace:
 
