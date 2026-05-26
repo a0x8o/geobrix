@@ -20,6 +20,48 @@ object RST_ExpressionUtil {
     /** DataType of the raster field (second field) of the tile struct for the given tile expression. */
     def rasterType(tileExpr: Expression): DataType = tileExpr.dataType.asInstanceOf[StructType].fields(1).dataType
 
+    /**
+      * Raster DataType inside an `ARRAY<tile>` expression, with a friendly
+      * IllegalArgumentException when the caller actually passed a single tile.
+      *
+      * Used by the non-aggregating array-of-tiles functions
+      * (`gbx_rst_combineavg`, `gbx_rst_merge`, `gbx_rst_frombands`,
+      * `gbx_rst_mapalgebra`). Without this guard, callers who write
+      * `gbx_rst_combineavg(tile)` instead of `gbx_rst_combineavg(collect_list(tile))`
+      * or the aggregator variant get a raw `ClassCastException: StructType
+      * cannot be cast to ArrayType` from inside Spark's CheckAnalysis,
+      * which is hostile and untraceable from a notebook.
+      *
+      * `funcName` is the SQL-facing name surfaced in the error.
+      * `aggHint` is an optional pointer to the aggregator companion
+      * (e.g. "gbx_rst_combineavg_agg") for functions where the typical
+      * mistake is reaching for the non-agg form when an aggregate across
+      * rows was wanted.
+      *
+      * Note: Spark 4.0's `AnalysisException` no longer exposes a
+      * `(String)` constructor (only the error-class form), so the error
+      * is raised as `IllegalArgumentException` — still surfaces during
+      * Catalyst analysis with the full message, and avoids depending on
+      * Spark-internal error-class catalogs.
+      */
+    def arrayOfTileRasterType(
+        funcName: String,
+        tileExpr: Expression,
+        aggHint: Option[String] = None
+    ): DataType = tileExpr.dataType match {
+        case ArrayType(StructType(fields), _) if fields.length >= 2 =>
+            fields(1).dataType
+        case other =>
+            val aggSuggestion = aggHint
+                .map(name => s" To aggregate the column across rows, use $name(tile).")
+                .getOrElse("")
+            throw new IllegalArgumentException(
+                s"$funcName expects ARRAY<tile> (e.g. collect_list(tile) " +
+                s"or array(t1, t2, ...)), but received ${other.simpleString}." +
+                aggSuggestion
+            )
+    }
+
     /** StructType for a tile with the given tile expression's raster type (cellid, raster, metadata). */
     def tileDataType(tileExpr: Expression): DataType = {
         val rasterDataType = rasterType(tileExpr)

@@ -18,7 +18,9 @@ case class RST_Merge(
 ) extends InvokedExpression {
 
     /** Raster DataType from the tile array element struct. */
-    private def rasterType = tileExpr.dataType.asInstanceOf[ArrayType].elementType.asInstanceOf[StructType].fields(1).dataType
+    private def rasterType = RST_ExpressionUtil.arrayOfTileRasterType(
+        RST_Merge.name, tileExpr, aggHint = Some("gbx_rst_merge_agg")
+    )
     override def children: Seq[Expression] = Seq(tileExpr, ExpressionConfigExpr())
     override def dataType: DataType = RST_ExpressionUtil.tileDataType(rasterType)
     override def nullable: Boolean = true

@@ -18,7 +18,9 @@ case class RST_CombineAvg(
 ) extends InvokedExpression {
 
     /** Raster DataType from the tile array element struct. */
-    private def rasterType = tileExpr.dataType.asInstanceOf[ArrayType].elementType.asInstanceOf[StructType].fields(1).dataType
+    private def rasterType = RST_ExpressionUtil.arrayOfTileRasterType(
+        RST_CombineAvg.name, tileExpr, aggHint = Some("gbx_rst_combineavg_agg")
+    )
     override def children: Seq[Expression] = Seq(tileExpr, ExpressionConfigExpr())
     override def dataType: DataType = RST_ExpressionUtil.tileDataType(rasterType)
     override def nullable: Boolean = true
