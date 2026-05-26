@@ -102,25 +102,19 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
     test("rst_combineavg_agg returns self-contained GTiff bytes (no VRT payload)") {
         val sc = spark
         import com.databricks.labs.gbx.rasterx.functions._
-        import com.databricks.labs.gbx.udfs.st_buffer
         import sc.implicits._
         functions.register(spark)
 
         val tifPath = this.getClass.getResource("/modis/").toString
-        // rst_clip preamble mirrors RST_AggEvalTest — exercises the same
-        // path-setup that PixelCombineRasters relies on (the VRT staging dir
-        // under NodeFilePathUtil.rootPath gets touched during clip). Without
-        // it, combineavg's gdalbuildvrt → read-back-VRT step can't find its
-        // own freshly-written VRT in the test environment.
+        // No rst_clip warmup needed: PixelCombineRasters.combine now
+        // pre-creates NodeFilePathUtil.rootPath itself, so combineavg_agg
+        // is safe as the first op in a fresh JVM.
         val df = Seq(
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"
         ).toDF("path")
             .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
-            .withColumn("bbox", rst_boundingbox(col("tile")))
-            .withColumn("clipper", st_buffer(col("bbox"), lit(-500000.0)))
-            .withColumn("tile", rst_clip(col("tile"), col("clipper"), lit(true)))
             .groupBy(lit(1).alias("g"))
             .agg(rst_combineavg_agg(col("tile")).alias("avg"))
             .select(

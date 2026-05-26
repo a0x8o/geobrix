@@ -2,6 +2,8 @@ package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
 import org.gdal.gdal.{Dataset, gdal}
+import org.gdal.gdalconst.gdalconstConstants
+import org.gdal.osr.SpatialReference
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
@@ -92,6 +94,42 @@ class RST_AggregationsTest extends AnyFunSuite with BeforeAndAfterAll {
         gt(5) should not be 0.0 // pixel height
         
         RasterDriver.releaseDataset(resultDs)
+    }
+
+    test("CombineAvg actually averages pixel values (regression: pixel function must fire)") {
+        // Synthetic control with known answer. Two constant Byte rasters
+        // (50 and 100); the mean must be 75 everywhere. Before the
+        // PixelCombineRasters ordering fix, gdal.Open parsed the VRT XML
+        // BEFORE addPixelFunction wrote PixelFunctionLanguage into the file,
+        // so the in-memory Dataset never saw the Python function and
+        // gdal.Translate fell back to a default multi-source mosaic
+        // (last-source-wins per pixel). On co-extensive inputs the output
+        // then equaled the last input — 50 or 100, never 75 — silently and
+        // without any error. This test would fail (output 100 instead of
+        // 75); after the fix it passes.
+        val tmpDir = Files.createTempDirectory("gbx_combineavg_").toFile
+        val const50  = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/const_50.tif",  50)
+        val const100 = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/const_100.tif", 100)
+        try {
+            val (_, resultDs, _) = RST_CombineAvg.execute(
+                Seq((1L, const50, Map.empty), (1L, const100, Map.empty))
+            )
+            try {
+                val w = resultDs.GetRasterXSize
+                val h = resultDs.GetRasterYSize
+                val band = resultDs.GetRasterBand(1)
+                val buf = Array.ofDim[Double](w * h)
+                band.ReadRaster(0, 0, w, h, gdalconstConstants.GDT_Float64, buf)
+                buf.min shouldBe 75.0 +- 0.5
+                buf.max shouldBe 75.0 +- 0.5
+                (buf.sum / buf.length) shouldBe 75.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(const50)
+            RasterDriver.releaseDataset(const100)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
     }
 
     test("CombineAvg should generate operation metadata") {
@@ -254,5 +292,34 @@ def identity(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize
         val (derivedDs, _) = RST_DerivedBand.execute(Seq(ds1), Map.empty, simplePyfunc, "identity")
         derivedDs should not be null
         RasterDriver.releaseDataset(derivedDs)
+    }
+
+    /**
+     * Create a small in-memory GTiff filled with a single Byte value. Used by
+     * the CombineAvg / DerivedBand numerical-correctness tests that need
+     * deterministic synthetic inputs with a known expected mean. EPSG:4326 +
+     * a fixed geotransform so gdalbuildvrt aligns the rasters.
+     *
+     * Note: closes the writer Dataset and re-opens it for reading. Without
+     * this, downstream gdalbuildvrt sometimes sees an unflushed file and
+     * pulls in zeros for the pixel values.
+     */
+    private def makeConstantByteRaster(path: String, value: Int, w: Int = 32, h: Int = 32): Dataset = {
+        val drv = gdal.GetDriverByName("GTiff")
+        val writer = drv.Create(path, w, h, 1, gdalconstConstants.GDT_Byte, Array[String]("COMPRESS=DEFLATE"))
+        writer.SetGeoTransform(Array[Double](149.0, 0.01, 0.0, -35.0, 0.0, -0.01))
+        val sr = new SpatialReference()
+        sr.ImportFromEPSG(4326)
+        writer.SetProjection(sr.ExportToWkt())
+        val band = writer.GetRasterBand(1)
+        // Use the byte[] overload — GDAL Java bindings dispatch by buffer
+        // element type; an Int[] buffer + GDT_Byte combo silently writes
+        // nothing back to the file.
+        val buf = Array.fill[Byte](w * h)(value.toByte)
+        band.WriteRaster(0, 0, w, h, buf)
+        band.FlushCache()
+        writer.FlushCache()
+        writer.delete()
+        gdal.Open(path)
     }
 }

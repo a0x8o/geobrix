@@ -22,6 +22,13 @@ object PixelCombineRasters {
         val uuid = java.util.UUID.randomUUID().toString.replace("-", "_")
         val outShortName = dss.head.GetDriver().getShortName
         val extension = GDAL.getExtension(outShortName)
+        // Ensure the per-JVM staging dir exists. gdal.BuildVRT silently
+        // produces an unwritten Dataset if the parent dir is missing, and
+        // the subsequent RasterDriver.read(vrtPath) then throws
+        // "No such file or directory". Only ClipToGeom previously created
+        // this dir, leaving combineavg / derivedband broken if they were
+        // the first op to hit a fresh JVM.
+        Files.createDirectories(NodeFilePathUtil.rootPath)
         val vrtPath = s"${NodeFilePathUtil.rootPath}/combine_rasters_vrt_$uuid.vrt"
         val rasterPath = s"/vsimem/combine_rasters_$uuid.$extension"
 
@@ -33,11 +40,18 @@ object PixelCombineRasters {
         )
         vrtRaster._1.delete()
 
+        // Inject the pixel function BEFORE re-opening the VRT. gdal.Open
+        // parses VRT XML into an in-memory band structure at Open time, so
+        // any mutation of the on-disk file performed after Open is invisible
+        // to the Dataset handle passed to gdal.Translate — Translate then
+        // runs a default multi-source mosaic (last-source-wins per pixel)
+        // instead of evaluating the pixel function, silently returning one
+        // of the inputs.
+        addPixelFunction(vrtPath, pythonFunc, pythonFuncName)
+
         // GDAL evaluates <PixelFunctionLanguage>Python</...> during VRT read-back and translate.
         val result = GDALManager.withVrtPython {
             val vrtRefreshed = RasterDriver.read(vrtPath, vrtRaster._2)
-
-            addPixelFunction(vrtPath, pythonFunc, pythonFuncName)
 
             GDALTranslate.executeTranslate(
               rasterPath,
