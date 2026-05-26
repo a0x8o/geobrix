@@ -256,6 +256,68 @@ class RST_AggregationsTest extends AnyFunSuite with BeforeAndAfterAll {
     // RST_DerivedBand Tests (3 tests)
     // ====================================================================
 
+    test("DerivedBand actually transforms pixel values (regression: pixel function must fire)") {
+        // Synthetic doubling — confirms the user-supplied pyfunc fires through
+        // the same PixelCombineRasters path as CombineAvg. Before the fix #1
+        // ordering bug was repaired, the pyfunc never executed and gdal.Translate
+        // returned a multi-source mosaic of the inputs, so a single-input
+        // doubling pyfunc would have silently returned the input unchanged.
+        val tmpDir = Files.createTempDirectory("gbx_derivedband_double_").toFile
+        val input = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/in.tif", 50)
+        val pyfunc = """
+                       |import numpy as np
+                       |def doubleit(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+                       |    out_ar[:] = np.asarray(in_ar[0], dtype=np.float64) * 2
+                       |""".stripMargin
+        try {
+            val (resultDs, _) = RST_DerivedBand.execute(Seq(input), Map.empty, pyfunc, "doubleit")
+            try {
+                val w = resultDs.GetRasterXSize
+                val h = resultDs.GetRasterYSize
+                val buf = Array.ofDim[Double](w * h)
+                resultDs.GetRasterBand(1).ReadRaster(0, 0, w, h, gdalconstConstants.GDT_Float64, buf)
+                buf.min shouldBe 100.0 +- 0.5
+                buf.max shouldBe 100.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(input)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
+    }
+
+    test("DerivedBand averages multi-input pixel values") {
+        // Three co-extensive inputs 50 / 100 / 150 with a numpy-mean pyfunc;
+        // expected output 100 everywhere. Equivalent to CombineAvg on the
+        // simple case but exercising the user-pyfunc code path.
+        val tmpDir = Files.createTempDirectory("gbx_derivedband_avg_").toFile
+        val a = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/a.tif",  50)
+        val b = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/b.tif", 100)
+        val c = makeConstantByteRaster(s"${tmpDir.getAbsolutePath}/c.tif", 150)
+        val pyfunc = """
+                       |import numpy as np
+                       |def meanof(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+                       |    out_ar[:] = np.mean(np.asarray(in_ar, dtype=np.float64), axis=0)
+                       |""".stripMargin
+        try {
+            val (resultDs, _) = RST_DerivedBand.execute(Seq(a, b, c), Map.empty, pyfunc, "meanof")
+            try {
+                val w = resultDs.GetRasterXSize
+                val h = resultDs.GetRasterYSize
+                val buf = Array.ofDim[Double](w * h)
+                resultDs.GetRasterBand(1).ReadRaster(0, 0, w, h, gdalconstConstants.GDT_Float64, buf)
+                buf.min shouldBe 100.0 +- 0.5
+                buf.max shouldBe 100.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(a)
+            RasterDriver.releaseDataset(b)
+            RasterDriver.releaseDataset(c)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
+    }
+
     test("DerivedBand should apply simple Python averaging function") {
         val pyfunc = """
 import numpy as np
