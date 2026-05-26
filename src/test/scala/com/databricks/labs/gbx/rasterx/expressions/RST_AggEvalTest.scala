@@ -69,6 +69,41 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
 
     }
 
+    test("rst_combineavg on a single tile column raises a friendly error pointing at the _agg form") {
+        // Regression for the user-reported notebook error:
+        //   .selectExpr("gbx_rst_combineavg(tile) AS tile")
+        // The non-agg form expects ARRAY<tile>; passing a single tile struct
+        // previously produced a raw ClassCastException from inside Catalyst
+        // analysis. After RST_ExpressionUtil.arrayOfTileRasterType is in
+        // place we should see an IllegalArgumentException with a message that
+        // names the function, the actual type received, and the aggregator
+        // companion that the user likely wanted.
+        val sc = spark
+        import com.databricks.labs.gbx.rasterx.functions._
+        import sc.implicits._
+        functions.register(spark)
+
+        val tifPath = this.getClass.getResource("/modis/").toString
+        val df = Seq(
+          s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"
+        ).toDF("path").withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+
+        val thrown = intercept[Throwable] {
+            df.selectExpr("gbx_rst_combineavg(tile) AS tile").collect()
+        }
+        // Spark wraps analysis-time IllegalArgumentException so the actual
+        // class can be either IllegalArgumentException or one of Spark's
+        // catalyst-wrapper types — what matters is that our diagnostic
+        // message survives in the chain.
+        val joined = LazyList
+            .iterate(Option(thrown))(_.flatMap(t => Option(t.getCause)))
+            .takeWhile(_.isDefined)
+            .flatMap(_.map(_.getMessage).filter(_ != null))
+            .mkString(" || ")
+        joined should include ("gbx_rst_combineavg expects ARRAY<tile>")
+        joined should include ("gbx_rst_combineavg_agg")
+    }
+
     test("rst_derivedband_agg actually transforms pixel values (parity with combineavg_agg fix)") {
         // End-to-end Spark aggregation: three constant Byte tiles (10, 20, 30)
         // averaged then doubled by the pyfunc should yield 40 everywhere

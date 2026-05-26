@@ -23,7 +23,9 @@ case class RST_MapAlgebra(
     jsonSpecExpr: Expression
 ) extends InvokedExpression {
 
-    private def rasterType = tileExpr.dataType.asInstanceOf[ArrayType].elementType.asInstanceOf[StructType].fields(1).dataType
+    private def rasterType = RST_ExpressionUtil.arrayOfTileRasterType(
+        RST_MapAlgebra.name, tileExpr, aggHint = None
+    )
     override def children: Seq[Expression] = Seq(tileExpr, jsonSpecExpr, ExpressionConfigExpr())
     override def dataType: DataType = RST_ExpressionUtil.tileDataType(rasterType)
     override def nullable: Boolean = true
