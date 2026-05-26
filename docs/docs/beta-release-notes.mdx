@@ -15,7 +15,7 @@ This page tracks **API and naming changes** since the GeoBrix project started. A
 
 ## What's new in v0.3.0
 
-Released 2026-05-19. Per-version highlights; full migration tables are in the per-component sections below.
+Released 2026-05-26. Per-version highlights; full migration tables are in the per-component sections below.
 
 - **`rst_clip` CRS axis-order fix (all-black clips).** GDAL 3+ defaults EPSG-imported `SpatialReference`s to authority-compliant axis order (lat/lon for EPSG:4326), which silently swapped axes against JTS/Databricks WKT/WKB cutlines so the clip missed the raster entirely. The reprojection now clones the source/destination `SpatialReference`s and forces `OAMS_TRADITIONAL_GIS_ORDER` before the OGR transform; caller-owned `SpatialReference`s are not mutated.
 - **EWKT / EWKB support for `rst_clip`.** `JTS.fromWKT` / `JTS.fromWKB` auto-detect EWKT/EWKB; new `JTS.toEWKT` / `JTS.toEWKB` helpers emit SRID-preserving forms. `rst_clip` reprojects the cutline when its SRID differs from the raster CRS, and falls back to the raster's CRS (Mosaic-compatible) when the SRID is `0` / unresolvable.
