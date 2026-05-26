@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
+import com.databricks.labs.gbx.rasterx.operations.BandAccessors
 import org.gdal.gdal.{Dataset, gdal}
 import org.gdal.gdalconst.gdalconstConstants
 import org.gdal.osr.SpatialReference
@@ -127,6 +128,108 @@ class RST_AggregationsTest extends AnyFunSuite with BeforeAndAfterAll {
         } finally {
             RasterDriver.releaseDataset(const50)
             RasterDriver.releaseDataset(const100)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
+    }
+
+    test("CombineAvg excludes declared NoData from both sum and divisor") {
+        // Two 4x4 Byte rasters, NoData=255 declared on input A:
+        //   A: half of cells are 100, half are 255 (NoData)
+        //   B: all cells are 50
+        // Expected output per cell:
+        //   - A=100 cells: mean(100, 50) = 75
+        //   - A=255 cells: A excluded, mean = 50
+        // Before fix #2 the pyfunc summed 255 in (sum=305, div=2) → 152.
+        val tmpDir = Files.createTempDirectory("gbx_combineavg_nodata_").toFile
+        val w = 4; val h = 4
+        val aVals = Array[Byte](
+            100, 100, 100, 100,
+            100, 100, 100, 100,
+            -1, -1, -1, -1,   // 0xFF = 255
+            -1, -1, -1, -1
+        )
+        val bVals = Array.fill[Byte](w * h)(50)
+        val a = makeByteRaster(s"${tmpDir.getAbsolutePath}/a.tif", aVals, w, h, nodata = Some(255))
+        val b = makeByteRaster(s"${tmpDir.getAbsolutePath}/b.tif", bVals, w, h, nodata = None)
+        try {
+            val (_, resultDs, _) = RST_CombineAvg.execute(
+                Seq((1L, a, Map.empty), (1L, b, Map.empty))
+            )
+            try {
+                val band = resultDs.GetRasterBand(1)
+                val buf = Array.ofDim[Double](w * h)
+                band.ReadRaster(0, 0, w, h, gdalconstConstants.GDT_Float64, buf)
+                // Top half: both inputs valid → 75
+                buf.slice(0, 8).forall(v => math.abs(v - 75.0) <= 0.5) shouldBe true
+                // Bottom half: A is NoData, only B contributes → 50
+                buf.slice(8, 16).forall(v => math.abs(v - 50.0) <= 0.5) shouldBe true
+                // Output NoData should be stamped (sourced from input A's 255).
+                val outNd = BandAccessors.getNoDataValue(band)
+                outNd shouldBe 255.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(a)
+            RasterDriver.releaseDataset(b)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
+    }
+
+    test("CombineAvg counts valid 0 cells in the divisor") {
+        // Two 4x4 Byte rasters, NO NoData declared on either:
+        //   A: all cells = 0  (a valid measurement of zero, not NoData)
+        //   B: all cells = 100
+        // Expected output: 50 everywhere — both contribute to divisor.
+        // Before fix #2 the pyfunc divisor was `np.sum(stacked > 0, axis=0)`
+        // which counted only B → output 100 everywhere.
+        val tmpDir = Files.createTempDirectory("gbx_combineavg_zero_").toFile
+        val w = 4; val h = 4
+        val a = makeByteRaster(s"${tmpDir.getAbsolutePath}/a.tif", Array.fill[Byte](w * h)(0),   w, h, nodata = None)
+        val b = makeByteRaster(s"${tmpDir.getAbsolutePath}/b.tif", Array.fill[Byte](w * h)(100), w, h, nodata = None)
+        try {
+            val (_, resultDs, _) = RST_CombineAvg.execute(
+                Seq((1L, a, Map.empty), (1L, b, Map.empty))
+            )
+            try {
+                val w2 = resultDs.GetRasterXSize
+                val h2 = resultDs.GetRasterYSize
+                val buf = Array.ofDim[Double](w2 * h2)
+                resultDs.GetRasterBand(1).ReadRaster(0, 0, w2, h2, gdalconstConstants.GDT_Float64, buf)
+                buf.min shouldBe 50.0 +- 0.5
+                buf.max shouldBe 50.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(a)
+            RasterDriver.releaseDataset(b)
+            tmpDir.listFiles().foreach(_.delete())
+            tmpDir.delete()
+        }
+    }
+
+    test("CombineAvg rounds (not truncates) when casting to integer output") {
+        // mean(50, 99) = 74.5; with truncation that becomes 74, with rounding 74
+        // (banker's rounding → nearest even). Pick mean(51, 100) = 75.5 → 76.
+        // Before fix #2: `np.divide(..., casting='unsafe')` truncated → 75.
+        val tmpDir = Files.createTempDirectory("gbx_combineavg_round_").toFile
+        val w = 4; val h = 4
+        val a = makeByteRaster(s"${tmpDir.getAbsolutePath}/a.tif", Array.fill[Byte](w * h)(51),  w, h, nodata = None)
+        val b = makeByteRaster(s"${tmpDir.getAbsolutePath}/b.tif", Array.fill[Byte](w * h)(100), w, h, nodata = None)
+        try {
+            val (_, resultDs, _) = RST_CombineAvg.execute(
+                Seq((1L, a, Map.empty), (1L, b, Map.empty))
+            )
+            try {
+                val w2 = resultDs.GetRasterXSize
+                val h2 = resultDs.GetRasterYSize
+                val buf = Array.ofDim[Double](w2 * h2)
+                resultDs.GetRasterBand(1).ReadRaster(0, 0, w2, h2, gdalconstConstants.GDT_Float64, buf)
+                buf.min shouldBe 76.0 +- 0.5
+                buf.max shouldBe 76.0 +- 0.5
+            } finally RasterDriver.releaseDataset(resultDs)
+        } finally {
+            RasterDriver.releaseDataset(a)
+            RasterDriver.releaseDataset(b)
             tmpDir.listFiles().foreach(_.delete())
             tmpDir.delete()
         }
@@ -294,17 +397,24 @@ def identity(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize
         RasterDriver.releaseDataset(derivedDs)
     }
 
+    private def makeConstantByteRaster(path: String, value: Int, w: Int = 32, h: Int = 32): Dataset =
+        makeByteRaster(path, Array.fill[Byte](w * h)(value.toByte), w, h, nodata = None)
+
     /**
-     * Create a small in-memory GTiff filled with a single Byte value. Used by
+     * Create a small GTiff backed by `values` (length w*h, row-major). Used by
      * the CombineAvg / DerivedBand numerical-correctness tests that need
      * deterministic synthetic inputs with a known expected mean. EPSG:4326 +
-     * a fixed geotransform so gdalbuildvrt aligns the rasters.
+     * a fixed geotransform so gdalbuildvrt aligns the rasters. If `nodata` is
+     * set, it's stamped on the band so the CombineAVG pyfunc can mask those
+     * cells out of both sum and divisor.
      *
      * Note: closes the writer Dataset and re-opens it for reading. Without
      * this, downstream gdalbuildvrt sometimes sees an unflushed file and
-     * pulls in zeros for the pixel values.
+     * pulls in zeros for the pixel values. Also uses the byte[] overload of
+     * WriteRaster — the int[]/GDT_Byte combo silently writes nothing.
      */
-    private def makeConstantByteRaster(path: String, value: Int, w: Int = 32, h: Int = 32): Dataset = {
+    private def makeByteRaster(path: String, values: Array[Byte], w: Int, h: Int, nodata: Option[Int]): Dataset = {
+        require(values.length == w * h, s"expected ${w * h} values, got ${values.length}")
         val drv = gdal.GetDriverByName("GTiff")
         val writer = drv.Create(path, w, h, 1, gdalconstConstants.GDT_Byte, Array[String]("COMPRESS=DEFLATE"))
         writer.SetGeoTransform(Array[Double](149.0, 0.01, 0.0, -35.0, 0.0, -0.01))
@@ -312,11 +422,8 @@ def identity(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize
         sr.ImportFromEPSG(4326)
         writer.SetProjection(sr.ExportToWkt())
         val band = writer.GetRasterBand(1)
-        // Use the byte[] overload — GDAL Java bindings dispatch by buffer
-        // element type; an Int[] buffer + GDT_Byte combo silently writes
-        // nothing back to the file.
-        val buf = Array.fill[Byte](w * h)(value.toByte)
-        band.WriteRaster(0, 0, w, h, buf)
+        nodata.foreach(nd => band.SetNoDataValue(nd.toDouble))
+        band.WriteRaster(0, 0, w, h, values)
         band.FlushCache()
         writer.FlushCache()
         writer.delete()
