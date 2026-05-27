@@ -29,6 +29,47 @@ Convert a legacy point to WKB (same example as [Quick Start](../quick-start)):
   outputConstant="USE_VECTORX_output"
 />
 
+## Vector tile output
+
+GeoBrix can encode geometries into [Mapbox Vector Tile (MVT)](https://github.com/mapbox/vector-tile-spec) protobuf bytes via the `gbx_st_asmvt` aggregator — the entry point for vector-tile publishing pipelines targeting MapLibre, deck.gl, Mapbox GL JS, or Felt.
+
+### `gbx_st_asmvt(geom_wkb, attrs_struct, layer_name)`
+
+Aggregator. Accumulates features in a group and emits a single MVT layer as `BINARY`.
+
+**Inputs:**
+- `geom_wkb` (`BINARY`) — per-feature geometry in **tile-local coordinates** (caller composes any `ST_Intersection` against the tile envelope and coordinate translation upstream).
+- `attrs_struct` (`STRUCT<...>`) — per-feature attributes. All fields stringified in 0.4.0.
+- `layer_name` (`STRING`) — MVT layer name.
+
+**Output:** `BINARY` — the MVT protobuf bytes for one layer of the tile.
+
+**SQL example:**
+
+```sql
+SELECT gbx_st_asmvt(geom_wkb, named_struct('name', name, 'id', id), 'roads') AS mvt
+FROM tile_local_features
+GROUP BY z, x, y
+```
+
+**PySpark example:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.groupBy("z", "x", "y").agg(
+    vx.st_asmvt(col("geom_wkb"), struct(col("name"), col("id")), "roads").alias("mvt")
+)
+```
+
+**Composability:** Output `BINARY` is the natural input to `gbx_pmtiles_agg` (Wave 6) for packaging multiple `(z, x, y)` tiles into a single PMTile file.
+
+**Limitations in 0.4.0:**
+- All attributes are stringified (numeric / boolean preservation deferred).
+- Caller composes any `ST_Simplify` upstream.
+- Caller composes tile-coordinate transform upstream.
+
 ## Learn more
 
 - [VectorX Function Reference](../api/vectorx-functions) — `st_legacyaswkb` API
