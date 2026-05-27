@@ -29,6 +29,7 @@ object Quadbin_KRing extends WithExpressionInfo {
     def execute(cell: Long, k: Int): Array[Long] = Quadbin.kRing(cell, k)
 
     def eval(cell: Long, k: Int): ArrayData = ArrayData.toArrayData(execute(cell, k))
+    def eval(cell: Long, k: Long): ArrayData = eval(cell, k.toInt)
 
     override def name: String = "gbx_quadbin_kring"
 

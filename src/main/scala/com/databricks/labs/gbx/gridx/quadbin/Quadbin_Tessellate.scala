@@ -63,10 +63,14 @@ object Quadbin_Tessellate extends WithExpressionInfo {
         ArrayData.toArrayData(toInternalRows(execute(geom, resolution)))
     }
 
+    def eval(wkb: Array[Byte], resolution: Long): ArrayData = eval(wkb, resolution.toInt)
+
     def eval(wkt: UTF8String, resolution: Int): ArrayData = {
         val geom = JTS.fromWKT(wkt.toString)
         ArrayData.toArrayData(toInternalRows(execute(geom, resolution)))
     }
+
+    def eval(wkt: UTF8String, resolution: Long): ArrayData = eval(wkt, resolution.toInt)
 
     override def name: String = "gbx_quadbin_tessellate"
 

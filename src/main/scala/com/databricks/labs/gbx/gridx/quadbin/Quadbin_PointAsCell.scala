@@ -29,6 +29,7 @@ object Quadbin_PointAsCell extends WithExpressionInfo {
     def execute(lon: Double, lat: Double, resolution: Int): Long = Quadbin.pointToCell(lon, lat, resolution)
 
     def eval(lon: Double, lat: Double, resolution: Int): Long = execute(lon, lat, resolution)
+    def eval(lon: Double, lat: Double, resolution: Long): Long = execute(lon, lat, resolution.toInt)
 
     override def name: String = "gbx_quadbin_pointascell"
 
