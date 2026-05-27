@@ -66,7 +66,9 @@ def test_pmtiles_registration(spark):
     funcs = [r["function"] for r in spark.sql("SHOW USER FUNCTIONS").collect()]
     # Spark prefixes with the default db; check via 'LIKE' instead.
     matches = spark.sql("SHOW USER FUNCTIONS LIKE 'gbx_pmtiles_agg'").collect()
-    assert len(matches) >= 1, f"gbx_pmtiles_agg not found in SHOW FUNCTIONS; saw: {funcs[:20]}"
+    assert (
+        len(matches) >= 1
+    ), f"gbx_pmtiles_agg not found in SHOW FUNCTIONS; saw: {funcs[:20]}"
 
 
 def test_pmtiles_agg_returns_valid_blob(spark, pmtiles_registered):
@@ -78,14 +80,11 @@ def test_pmtiles_agg_returns_valid_blob(spark, pmtiles_registered):
         (1, 1, 1, b"tile_11"),
     ]
     df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"])
-    pmt = (
-        df.agg(
-            pmtiles_registered.pmtiles_agg(
-                f.col("bytes"), f.col("z"), f.col("x"), f.col("y")
-            ).alias("pmt")
-        )
-        .collect()[0]["pmt"]
-    )
+    pmt = df.agg(
+        pmtiles_registered.pmtiles_agg(
+            f.col("bytes"), f.col("z"), f.col("x"), f.col("y")
+        ).alias("pmt")
+    ).collect()[0]["pmt"]
     assert pmt is not None
     assert pmt[:7] == b"PMTiles"
     assert pmt[7] == 3
@@ -96,18 +95,15 @@ def test_pmtiles_agg_with_metadata(spark, pmtiles_registered):
     """metadata JSON should round-trip through the encoded blob."""
     tiles = [(1, 0, 0, b"X")]
     df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"])
-    pmt = (
-        df.agg(
-            pmtiles_registered.pmtiles_agg(
-                f.col("bytes"),
-                f.col("z"),
-                f.col("x"),
-                f.col("y"),
-                f.lit('{"name":"pytest"}'),
-            ).alias("pmt")
-        )
-        .collect()[0]["pmt"]
-    )
+    pmt = df.agg(
+        pmtiles_registered.pmtiles_agg(
+            f.col("bytes"),
+            f.col("z"),
+            f.col("x"),
+            f.col("y"),
+            f.lit('{"name":"pytest"}'),
+        ).alias("pmt")
+    ).collect()[0]["pmt"]
     # metadata_offset at bytes 24..31, metadata_length at 32..39.
     meta_off = struct.unpack_from("<Q", pmt, 24)[0]
     meta_len = struct.unpack_from("<Q", pmt, 32)[0]
@@ -120,20 +116,19 @@ def test_pmtiles_agg_auto_detects_png(spark, pmtiles_registered):
     png_magic = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00])
     tiles = [(1, 0, 0, png_magic)]
     df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"])
-    pmt = (
-        df.agg(
-            pmtiles_registered.pmtiles_agg(
-                f.col("bytes"), f.col("z"), f.col("x"), f.col("y")
-            ).alias("pmt")
-        )
-        .collect()[0]["pmt"]
-    )
+    pmt = df.agg(
+        pmtiles_registered.pmtiles_agg(
+            f.col("bytes"), f.col("z"), f.col("x"), f.col("y")
+        ).alias("pmt")
+    ).collect()[0]["pmt"]
     assert _read_tile_type(pmt) == 2  # PNG
 
 
 def test_pmtiles_datasource_write(spark, pmtiles_registered):
     """The .write.format("pmtiles") DataSource should produce a single file."""
-    tiles = [(2, x, y, f"tile_{x}_{y}".encode("utf-8")) for x in range(3) for y in range(3)]
+    tiles = [
+        (2, x, y, f"tile_{x}_{y}".encode("utf-8")) for x in range(3) for y in range(3)
+    ]
     df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"]).repartition(2)
 
     with tempfile.TemporaryDirectory(prefix="pmtiles-py-test-") as tmp:
