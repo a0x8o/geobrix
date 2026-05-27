@@ -140,6 +140,85 @@ Examples:
 | 10m | 10m × 10m | Building level |
 | 1m | 1m × 1m | Precise location |
 
+## Quadbin (CARTO v0)
+
+GeoBrix v0.4.0 adds a parallel `gridx/quadbin` subpackage that implements the
+[CARTO quadbin v0](https://github.com/CartoDB/quadbin) 64-bit packed (z, x, y)
+tile encoding used by Snowflake, dbt, Felt, and CARTO. Coordinates are
+EPSG:4326 lon/lat on the user-facing API; cells are encoded as web-mercator
+XYZ tiles internally. Resolutions range from `0` (whole world) to `26` (sub-metre).
+
+:::note Registration and import path
+Quadbin functions are under **gridx.quadbin** — independent of `gridx.bng`.
+Use `gridx.quadbin` when importing from `databricks.labs.gbx.gridx.quadbin`
+(Python) or `com.databricks.labs.gbx.gridx.quadbin` (Scala). Call
+`functions.register(spark)` once per session to install the `gbx_quadbin_*`
+SQL functions.
+:::
+
+### Function Categories
+
+#### Encoding and decoding
+
+- `gbx_quadbin_pointascell(lon, lat, resolution)` — Encode an EPSG:4326 (lon, lat) at a zoom level as a BIGINT quadbin cell.
+- `gbx_quadbin_aswkb(cell)` — Cell footprint as an EWKB polygon (SRID=4326).
+- `gbx_quadbin_centroid(cell)` — Cell centroid as an EWKB POINT (SRID=4326).
+- `gbx_quadbin_resolution(cell)` — Resolution (zoom 0..26) of a cell.
+
+#### Neighbourhood and distance
+
+- `gbx_quadbin_kring(cell, k)` — All cells within Chebyshev distance `k` of `cell` (inclusive); world-edge cells clip.
+- `gbx_quadbin_distance(cell_a, cell_b)` — Chebyshev (tile-grid) distance between two cells at the same resolution.
+
+#### Polyfill and tessellation
+
+- `gbx_quadbin_polyfill(geom, resolution)` — Cells covering the geometry's envelope at the given resolution (`0..20`, cell-count guard).
+- `gbx_quadbin_tessellate(geom, resolution)` — Per-cell chips with `{cell, geom}` where `geom` is the cell-clipped polygon EWKB.
+
+#### Aggregation
+
+- `gbx_quadbin_cellunion(cells_array)` — Union an `ARRAY<BIGINT>` of cells into a single (Multi)Polygon EWKB.
+
+### Quadbin SQL examples
+
+```sql
+-- Encode San Francisco (lon, lat) at zoom 10 → BIGINT cell id
+SELECT gbx_quadbin_pointascell(-122.4194, 37.7749, 10) AS sf_cell;
+
+-- Cell geometry (EWKB SRID=4326)
+SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) AS wkb;
+
+-- Cell centroid as EWKB POINT
+SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) AS centroid;
+
+-- Resolution of a cell
+SELECT gbx_quadbin_resolution(gbx_quadbin_pointascell(0.0, 0.0, 12)) AS z;
+
+-- Neighbourhood of 9 cells (3x3 square) at zoom 10
+SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 10), 1) AS ring;
+
+-- Polyfill a polygon's bbox at zoom 5
+SELECT gbx_quadbin_polyfill(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) AS cells;
+
+-- Tessellate into clipped per-cell geoms
+SELECT gbx_quadbin_tessellate(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) AS chips;
+
+-- Union an array of cells back into a single (multi)polygon
+SELECT gbx_quadbin_cellunion(
+    gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1)
+) AS union_geom;
+
+-- Chebyshev distance between two cells at the same resolution
+SELECT gbx_quadbin_distance(
+    gbx_quadbin_pointascell(0.0, 0.0, 10),
+    gbx_quadbin_pointascell(0.0001, 0.0, 10)
+) AS d;
+```
+
 ## Next Steps
 
 - [View API Reference](../api/overview)
