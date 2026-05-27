@@ -143,6 +143,9 @@ map_package_to_suite() {
         util)
             echo "com.databricks.labs.gbx.util.*"
             ;;
+        pmtiles)
+            echo "com.databricks.labs.gbx.pmtiles.*"
+            ;;
         # RasterX sub-packages
         rasterx.operator)
             echo "com.databricks.labs.gbx.rasterx.operator.*"
