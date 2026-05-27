@@ -124,6 +124,21 @@
     "gbx_rst_pixelwidth": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_pixelwidth(tile) as pixel_width, gbx_rst_pixelheight(tile) as pixel_height, gbx_rst_width(tile) * gbx_rst_pixelwidth(tile) as total_width_m FROM rasters;"
     },
+    "gbx_rst_quadbin_rastertogridavg": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid FROM rasters;"
+    },
+    "gbx_rst_quadbin_rastertogridcount": {
+      "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridcount(tile, 5) as pixel_counts FROM rasters;"
+    },
+    "gbx_rst_quadbin_rastertogridmax": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as max_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmax(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_quadbin_rastertogridmedian": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as median_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmedian(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_quadbin_rastertogridmin": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as min_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmin(tile, 7)[0]) AS cell;"
+    },
     "gbx_rst_rastertoworldcoord": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rastertoworldcoord(tile, 100, 200) as coords, gbx_rst_rastertoworldcoord(tile, 100, 200).x as longitude, gbx_rst_rastertoworldcoord(tile, 100, 200).y as latitude FROM rasters;"
     },
@@ -273,6 +288,10 @@
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
     },
+    "_package_pmtiles": "--- pmtiles ---",
+    "gbx_pmtiles_agg": {
+      "examples": "Examples:\n      > SELECT gbx_pmtiles_agg(bytes, z, x, y) AS pmt FROM tiles_z2;"
+    },
     "_package_other": "--- other ---",
     "gbx_quadbin_aswkb": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;"
@@ -300,10 +319,6 @@
     },
     "gbx_quadbin_tessellate": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_tessellate( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as chips;"
-    },
-    "_package_pmtiles": "--- pmtiles ---",
-    "gbx_pmtiles_agg": {
-      "examples": "Examples:\n      > SELECT gbx_pmtiles_agg(bytes, z, x, y) AS pmt FROM tiles_z2;"
     }
   }
 }
