@@ -300,6 +300,10 @@
     },
     "gbx_quadbin_tessellate": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_tessellate( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as chips;"
+    },
+    "_package_pmtiles": "--- pmtiles ---",
+    "gbx_pmtiles_agg": {
+      "examples": "Examples:\n      > SELECT gbx_pmtiles_agg(bytes, z, x, y) AS pmt FROM tiles_z2;"
     }
   }
 }
