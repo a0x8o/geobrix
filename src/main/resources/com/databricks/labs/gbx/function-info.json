@@ -269,6 +269,10 @@
     "_package_vectorx": "--- vectorx ---",
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
+    },
+    "_package_pmtiles": "--- pmtiles ---",
+    "gbx_pmtiles_agg": {
+      "examples": "Examples:\n      > SELECT gbx_pmtiles_agg(bytes, z, x, y) AS pmt FROM tiles_z2;"
     }
   }
 }

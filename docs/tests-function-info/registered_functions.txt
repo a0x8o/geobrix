@@ -90,3 +90,4 @@ gbx_bng_kloopexplode
 gbx_bng_kringexplode
 gbx_bng_tessellateexplode
 gbx_st_legacyaswkb
+gbx_pmtiles_agg

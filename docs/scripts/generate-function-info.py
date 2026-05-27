@@ -37,6 +37,8 @@ MODULES = [
 ]
 # VectorX: optional module (st_*_sql_example -> gbx_st_*)
 VECTORX_MODULE = ("tests.python.api.vectorx_functions_sql", "st_", "gbx_st_")
+# PMTiles: optional module (pmtiles_*_sql_example -> gbx_pmtiles_*)
+PMTILES_MODULE = ("tests.python.api.pmtiles_functions_sql", "pmtiles_", "gbx_pmtiles_")
 REGISTERED_FUNCTIONS_TXT = os.path.join(
     REPO_ROOT, "docs", "tests-function-info", "registered_functions.txt"
 )
@@ -167,6 +169,22 @@ def discover_and_collect(registered: Optional[List[str]] = None) -> dict:
                     result[k] = v
         except ImportError:
             pass
+        # Optional PMTiles module
+        try:
+            mod = __import__(PMTILES_MODULE[0], fromlist=[""])
+            reg_for_pkg = (
+                [n for n in registered if n.startswith(PMTILES_MODULE[2])]
+                if registered
+                else None
+            )
+            collected = _collect_from_module(
+                mod, PMTILES_MODULE[1], PMTILES_MODULE[2], reg_for_pkg
+            )
+            for k, v in collected.items():
+                if k not in result:
+                    result[k] = v
+        except ImportError:
+            pass
         return result
     finally:
         if DOCS_ROOT in sys.path:
@@ -191,6 +209,7 @@ PACKAGE_PREFIXES = [
     ("rasterx", "gbx_rst_"),
     ("gridx", "gbx_bng_"),
     ("vectorx", "gbx_st_"),
+    ("pmtiles", "gbx_pmtiles_"),
 ]
 
 
@@ -272,6 +291,8 @@ def main():
                 path = "docs/tests/python/api/gridx_functions_sql.py"
             elif pkg == "vectorx":
                 path = "docs/tests/python/api/vectorx_functions_sql.py"
+            elif pkg == "pmtiles":
+                path = "docs/tests/python/api/pmtiles_functions_sql.py"
             else:
                 path = "docs/tests/python/api/*_functions_sql.py"
             print(f"  {name}  -> {path}", file=sys.stderr)
