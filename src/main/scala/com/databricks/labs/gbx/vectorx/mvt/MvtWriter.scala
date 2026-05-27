@@ -105,7 +105,10 @@ object MvtWriter {
             // Add each feature; pair every alloc with a delete() to avoid native-side leaks.
             features.foreach { case (wkb, attrs) =>
                 if (wkb != null && wkb.nonEmpty) {
-                    val geom = CreateGeometryFromWkb(wkb)
+                    // GDAL 3.x can throw or return null on malformed WKB depending on
+                    // exception-mode config — handle both so a single bad feature can't
+                    // sink the whole tile.
+                    val geom = Try(CreateGeometryFromWkb(wkb)).toOption.orNull
                     if (geom != null) {
                         val feat = new Feature(layer.GetLayerDefn())
                         try {
@@ -126,8 +129,15 @@ object MvtWriter {
                 }
             }
 
-            layer.SyncToDisk()
-            ds.SyncToDisk()
+            // Reset any error state set by per-feature WKB-parse failures so that
+            // SyncToDisk doesn't surface a stale CPL_ERROR_HANDLER message as a
+            // RuntimeException when GDAL UseExceptions is enabled.
+            gdal.ErrorReset()
+            // SyncToDisk is best-effort: an empty or partially-failed layer can throw
+            // (e.g. "OGR Error: General Error" on Sync) — we catch and let the /vsimem/
+            // walk below decide whether any .pbf was actually produced.
+            Try(layer.SyncToDisk())
+            Try(ds.SyncToDisk())
         } finally {
             ds.delete()
             srs.delete()
