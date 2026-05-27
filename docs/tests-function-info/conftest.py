@@ -17,7 +17,7 @@ GEOBRIX_JAR = PROJECT_ROOT / "target" / "geobrix-0.4.0-jar-with-dependencies.jar
 
 
 def _register_all(spark):
-    """Register RasterX, GridX (BNG), and VectorX with the given Spark session."""
+    """Register RasterX, GridX (BNG + Quadbin), and VectorX with the given Spark session."""
     try:
         from databricks.labs.gbx.rasterx import functions as rx
         rx.register(spark)
@@ -28,6 +28,11 @@ def _register_all(spark):
         bx.register(spark)
     except Exception as e:
         raise RuntimeError("Failed to register GridX BNG") from e
+    try:
+        from databricks.labs.gbx.gridx.quadbin import functions as qx
+        qx.register(spark)
+    except Exception as e:
+        raise RuntimeError("Failed to register GridX Quadbin") from e
     try:
         from databricks.labs.gbx.vectorx.jts.legacy import functions as vx
         vx.register(spark)

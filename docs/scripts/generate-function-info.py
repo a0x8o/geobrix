@@ -34,6 +34,7 @@ RESOURCE_FILE = os.path.join(RESOURCE_DIR, "function-info.json")
 MODULES = [
     ("tests.python.api.rasterx_functions_sql", "rst_", "gbx_rst_"),
     ("tests.python.api.gridx_functions_sql", "bng_", "gbx_bng_"),
+    ("tests.python.api.gridx_functions_sql", "quadbin_", "gbx_quadbin_"),
 ]
 # VectorX: optional module (st_*_sql_example -> gbx_st_*)
 VECTORX_MODULE = ("tests.python.api.vectorx_functions_sql", "st_", "gbx_st_")
@@ -137,6 +138,8 @@ def discover_and_collect(registered: Optional[List[str]] = None) -> dict:
     like upperleftx/upperlefty are picked up for both).
     """
     sys.path.insert(0, DOCS_ROOT)
+    # Examples in rasterx_functions_sql.py import `path_config` from docs/tests/python/
+    sys.path.insert(0, os.path.join(DOCS_ROOT, "tests", "python"))
     result = {}
     try:
         for module_path, local_prefix, spark_prefix in MODULES:

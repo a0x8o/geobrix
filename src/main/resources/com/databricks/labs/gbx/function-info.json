@@ -269,6 +269,34 @@
     "_package_vectorx": "--- vectorx ---",
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
+    },
+    "_package_other": "--- other ---",
+    "gbx_quadbin_aswkb": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;"
+    },
+    "gbx_quadbin_cellunion": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_cellunion( gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1) ) as union_geom;"
+    },
+    "gbx_quadbin_centroid": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) as centroid;"
+    },
+    "gbx_quadbin_distance": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_distance( gbx_quadbin_pointascell(0.0, 0.0, 10), gbx_quadbin_pointascell(0.0001, 0.0, 10) ) as d;"
+    },
+    "gbx_quadbin_kring": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_cellunion( gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1) ) as union_geom;"
+    },
+    "gbx_quadbin_pointascell": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;"
+    },
+    "gbx_quadbin_polyfill": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_polyfill( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as cells;"
+    },
+    "gbx_quadbin_resolution": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_resolution(gbx_quadbin_pointascell(0.0, 0.0, 12)) as z;"
+    },
+    "gbx_quadbin_tessellate": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_tessellate( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as chips;"
     }
   }
 }

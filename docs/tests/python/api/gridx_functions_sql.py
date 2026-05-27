@@ -306,3 +306,104 @@ bng_cellunion_agg_sql_example_output = """
 |South |TQ3080        |
 +------+--------------+
 """
+
+
+# ============================================================================
+# Quadbin (CARTO v0) — 9 grid-math functions
+# ============================================================================
+
+def quadbin_pointascell_sql_example():
+    """Convert lon/lat (EPSG:4326) to a quadbin cell at a given zoom (0..26)."""
+    return """
+SELECT gbx_quadbin_pointascell(-122.4194, 37.7749, 10) as sf_cell;
+"""
+
+
+def quadbin_aswkb_sql_example():
+    """Return the quadbin cell footprint as EWKB (SRID=4326)."""
+    return """
+SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;
+"""
+
+
+def quadbin_centroid_sql_example():
+    """Return the quadbin cell centroid as EWKB POINT (SRID=4326)."""
+    return """
+SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) as centroid;
+"""
+
+
+def quadbin_resolution_sql_example():
+    """Return the resolution (zoom 0..26) of a quadbin cell."""
+    return """
+SELECT gbx_quadbin_resolution(gbx_quadbin_pointascell(0.0, 0.0, 12)) as z;
+"""
+
+
+def quadbin_polyfill_sql_example():
+    """Polyfill a geometry's bbox with quadbin cells at a given zoom (0..20)."""
+    return """
+SELECT gbx_quadbin_polyfill(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) as cells;
+"""
+
+
+def quadbin_kring_sql_example():
+    """Return all cells within Chebyshev distance k of a quadbin cell (inclusive)."""
+    return """
+SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 10), 1) as ring;
+"""
+
+
+def quadbin_tessellate_sql_example():
+    """Tessellate a geometry into quadbin cells; returns array of struct(cell, geom)."""
+    return """
+SELECT gbx_quadbin_tessellate(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) as chips;
+"""
+
+
+def quadbin_cellunion_sql_example():
+    """Union an ARRAY<BIGINT> of quadbin cells to a single MultiPolygon EWKB."""
+    return """
+SELECT gbx_quadbin_cellunion(
+    gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1)
+) as union_geom;
+"""
+
+
+def quadbin_distance_sql_example():
+    """Chebyshev distance between two quadbin cells at the same resolution."""
+    return """
+SELECT gbx_quadbin_distance(
+    gbx_quadbin_pointascell(0.0, 0.0, 10),
+    gbx_quadbin_pointascell(0.0001, 0.0, 10)
+) as d;
+"""
+
+
+quadbin_pointascell_sql_example_output = """
++-------------------+
+|sf_cell            |
++-------------------+
+|5233961839712272383|
++-------------------+
+"""
+
+quadbin_kring_sql_example_output = """
++--------------------------------------------+
+|ring                                        |
++--------------------------------------------+
+|[5227553336189779967, ..., (9 cells)]       |
++--------------------------------------------+
+"""
+
+quadbin_polyfill_sql_example_output = """
++--------------------------------------------+
+|cells                                       |
++--------------------------------------------+
+|[5215660717881425919, ...]                  |
++--------------------------------------------+
+"""
