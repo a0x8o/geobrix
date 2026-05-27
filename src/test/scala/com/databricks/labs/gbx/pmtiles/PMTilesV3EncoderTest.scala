@@ -30,9 +30,9 @@ class PMTilesV3EncoderTest extends AnyFunSuite {
             Iterator((10, 512, 512, tileBytes)),
             metadataJson = "{}"
         )
-        // addressed_tiles_count is uint64 LE at offset 60..67 (per spec field offsets table).
+        // addressed_tiles_count is uint64 LE at offset 72..79 (per spec § 3.1 header layout).
         val count = java.nio.ByteBuffer
-            .wrap(bytes, 60, 8)
+            .wrap(bytes, 72, 8)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN)
             .getLong
         assert(count == 1L, s"expected addressed_tiles_count=1; got $count")
@@ -68,16 +68,16 @@ class PMTilesV3EncoderTest extends AnyFunSuite {
             Iterator((1, 0, 0, payload1), (1, 1, 0, payload2)),
             metadataJson = "{}"
         )
-        // tile-data offset is a uint64 LE at offset 42..49, length at 50..57.
+        // tile-data offset is a uint64 LE at offset 56..63, length at 64..71 (per spec § 3.1).
         val tileDataOff = java.nio.ByteBuffer
-            .wrap(bytes, 42, 8)
+            .wrap(bytes, 56, 8)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN)
             .getLong
         val tileDataLen = java.nio.ByteBuffer
-            .wrap(bytes, 50, 8)
+            .wrap(bytes, 64, 8)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN)
             .getLong
-        assert(tileDataOff > 127, s"tile-data offset must be past the header; got $tileDataOff")
+        assert(tileDataOff >= 127, s"tile-data offset must be at or past the header; got $tileDataOff")
         assert(tileDataLen == (payload1.length + payload2.length).toLong)
         // Check that both payloads appear in the tile-data region.
         val tileData = bytes.slice(tileDataOff.toInt, (tileDataOff + tileDataLen).toInt)
@@ -94,9 +94,9 @@ class PMTilesV3EncoderTest extends AnyFunSuite {
             Iterator((1, 0, 0, sameBytes), (1, 1, 0, sameBytes)),
             metadataJson = "{}"
         )
-        // tile_contents_count (uint64 LE at offset 76..83 — sometimes ≤ addressed_tiles_count when RLE applies)
-        val addressed = java.nio.ByteBuffer.wrap(bytes, 60, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong
-        val contents = java.nio.ByteBuffer.wrap(bytes, 76, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong
+        // addressed_tiles_count at 72..79; tile_contents_count at 88..95 — both uint64 LE.
+        val addressed = java.nio.ByteBuffer.wrap(bytes, 72, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong
+        val contents = java.nio.ByteBuffer.wrap(bytes, 88, 8).order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong
         assert(addressed == 2L, s"addressed=2; got $addressed")
         assert(contents <= addressed, s"tile_contents_count must be <= addressed_tiles_count; got $contents > $addressed")
     }

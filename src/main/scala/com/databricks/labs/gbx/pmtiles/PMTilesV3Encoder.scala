@@ -115,9 +115,9 @@ object PMTilesV3Encoder {
         if (rootDirBytes.length > MAX_ROOT_DIR_BYTES) {
             throw new IllegalArgumentException(
                 s"PMTiles root directory would be ${rootDirBytes.length} bytes (max allowed: " +
-                s"$MAX_ROOT_DIR_BYTES per spec § 4); pyramid too large for the single-blob " +
-                s"`gbx_pmtiles_agg` UDAF path. Use the `.write.format(\"pmtiles\")` DataSource " +
-                s"writer instead — it streams to disk and splits into leaf directories."
+                s"$MAX_ROOT_DIR_BYTES per spec section 4); pyramid too large for the single-blob " +
+                s"gbx_pmtiles_agg UDAF path. Use the .write.format('pmtiles') DataSource " +
+                s"writer instead -- it streams to disk and splits into leaf directories."
             )
         }
         val rootDirLength = rootDirBytes.length.toLong

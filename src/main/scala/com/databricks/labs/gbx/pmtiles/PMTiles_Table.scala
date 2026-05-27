@@ -39,9 +39,9 @@ class PMTiles_Table(schema: StructType, properties: Map[String, String])
     override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
         throw new UnsupportedOperationException(
             "Reading PMTiles archives is not supported in GeoBrix 0.4.0. " +
-            "The `pmtiles` DataSource is write-only — use " +
-            "`df.write.format(\"pmtiles\").save(path)` to encode tile pyramids, and serve " +
-            "the resulting `.pmtiles` file via MapLibre / pmtiles.io / Felt for visualization."
+            "The pmtiles DataSource is write-only -- use " +
+            "df.write.format('pmtiles').save(path) to encode tile pyramids, and serve " +
+            "the resulting .pmtiles file via MapLibre / pmtiles.io / Felt for visualization."
         )
     }
 

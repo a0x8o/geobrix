@@ -185,6 +185,7 @@ class PMTiles_DataSourceTest extends PlanTest with SilentSparkSession {
         assert(msg.contains("Reading PMTiles archives is not supported"),
             s"expected our 'Reading PMTiles archives is not supported in GeoBrix 0.4.0' error; got: $msg")
         assert(msg.contains("0.4.0"), s"expected message to name the version; got: $msg")
-        assert(msg.contains("write-only"), s"expected message to call out write-only; got: $msg")
+        assert(msg.contains("write-only"),
+            s"expected message to call out write-only; got: $msg")
     }
 }

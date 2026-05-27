@@ -25,7 +25,8 @@ class PMTiles_WriteBuilder(schema: StructType, options: Map[String, String])
     /** Builds a Write whose batch is a PMTiles_BatchWrite carrying schema, options, and hConf. */
     override def build(): Write = {
         val path = options.getOrElse("path",
-            throw new IllegalArgumentException("`pmtiles` DataSource requires a `path` option (use `.save(path)`)"))
+            throw new IllegalArgumentException(
+                "pmtiles DataSource requires a path option (use .save(path))"))
         val spark = SparkSession.builder().getOrCreate()
         val hConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
         new Write {

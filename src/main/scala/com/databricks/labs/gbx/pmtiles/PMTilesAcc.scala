@@ -112,8 +112,8 @@ object PMTilesAcc {
             throw new IllegalStateException(
                 s"PMTiles aggregator buffer exceeded ${MAX_BUFFER_BYTES / (1024 * 1024)} MiB " +
                 s"(current = ${currentBytes / (1024 * 1024)} MiB). " +
-                s"Use `.write.format(\"pmtiles\").save(path)` for large pyramids — the " +
-                s"`gbx_pmtiles_agg` UDAF is limited by Spark's 2 GiB cell size."
+                s"Use .write.format('pmtiles').save(path) for large pyramids -- the " +
+                s"gbx_pmtiles_agg UDAF is limited by Spark's 2 GiB cell size."
             )
         }
     }
