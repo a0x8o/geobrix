@@ -62,9 +62,11 @@ final case class PMTiles_Agg(
     override def update(buffer: PMTilesAcc, input: InternalRow): PMTilesAcc = {
         val payload = bytesExpr.eval(input).asInstanceOf[Array[Byte]]
         if (payload == null) return buffer
-        val z = zExpr.eval(input).asInstanceOf[Int]
-        val x = xExpr.eval(input).asInstanceOf[Int]
-        val y = yExpr.eval(input).asInstanceOf[Int]
+        // Python's createDataFrame infers Python int as LongType — coerce both Int and Long
+        // forms here so callers don't have to .cast("int") just to use the UDAF.
+        val z = PMTiles_Agg.toIntCoerce(zExpr.eval(input))
+        val x = PMTiles_Agg.toIntCoerce(xExpr.eval(input))
+        val y = PMTiles_Agg.toIntCoerce(yExpr.eval(input))
         // Metadata is a per-group constant. If still at the default sentinel, snapshot from
         // the row so it survives the executor-shipping (serialize) hop.
         if (buffer.metadataJson == "{}") {
@@ -108,6 +110,23 @@ object PMTiles_Agg extends WithExpressionInfo {
         } else {
             PMTiles_Agg(c(0), c(1), c(2), c(3), c(4))
         }
+    }
+
+    /**
+      * Coerce an `Any` value (Int / Long / java.lang.Integer / java.lang.Long) to an Int.
+      *
+      * PySpark's `createDataFrame` infers Python int columns as LongType by default, but
+      * PMTiles can only address up to z=31 (which fits trivially in Int). Accept both rather
+      * than forcing the caller to insert a `.cast("int")` everywhere.
+      */
+    private[pmtiles] def toIntCoerce(v: Any): Int = v match {
+        case i: Int                  => i
+        case l: Long                 => l.toInt
+        case ji: java.lang.Integer   => ji.intValue()
+        case jl: java.lang.Long      => jl.intValue()
+        case null                    => throw new IllegalArgumentException("PMTiles z/x/y must not be null")
+        case other                   => throw new IllegalArgumentException(
+            s"PMTiles z/x/y must be INT or LONG; got ${other.getClass.getName}")
     }
 
     /**
