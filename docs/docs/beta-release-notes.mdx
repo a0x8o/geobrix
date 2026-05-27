@@ -17,6 +17,7 @@ This page tracks **API and naming changes** since the GeoBrix project started. A
 
 In-flight beta release. Per-version highlights; full migration tables are in the per-component sections below.
 
+- **Vector tile encoding (`gbx_st_asmvt`).** First VectorX expression-level function — aggregates features into MVT protobuf bytes for slippy-map publishing. See [VectorX § Vector tile output](./packages/vectorx#vector-tile-output).
 - **Quadbin grid math (9 functions).** New `gridx/quadbin` subpackage adds CARTO quadbin v0 support — `gbx_quadbin_pointascell`, `gbx_quadbin_aswkb`, `gbx_quadbin_centroid`, `gbx_quadbin_resolution`, `gbx_quadbin_polyfill`, `gbx_quadbin_kring`, `gbx_quadbin_tessellate`, `gbx_quadbin_cellunion`, `gbx_quadbin_distance`. Cell IDs are 64-bit Long; coordinates are EPSG:4326 lon/lat; output geometry is EWKB SRID=4326. Cell encoding matches the [CARTO quadbin-py](https://github.com/CartoDB/quadbin-py) reference implementation (cross-checked at 5 reference points). See [GridX § Quadbin](./packages/gridx#quadbin-carto-v0).
 
 ---
