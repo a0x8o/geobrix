@@ -6,8 +6,10 @@ import org.gdal.ogr.{Feature, FieldDefn, ogr}
 import org.gdal.ogr.ogrConstants.{OFTString, wkbUnknown}
 import org.gdal.osr.SpatialReference
 
+import java.nio.file.{Files, Paths}
 import java.util.{Vector => JVector}
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 /**
   * Helper that wraps GDAL's OGR MVT driver to encode a list of `(geom_wkb, attrs_map)` tuples
@@ -46,6 +48,7 @@ object MvtWriter {
         extent: Int,
         features: Seq[(Array[Byte], Map[String, Any])]
     ): Array[Byte] = {
+        ensureNativeLoaded()
         ogr.RegisterAll()
         val driver = GetDriverByName("MVT")
         if (driver == null) {
@@ -146,6 +149,33 @@ object MvtWriter {
         gdal.RmdirRecursive(rootPath)
 
         bytes
+    }
+
+    @volatile private var nativeLoaded: Boolean = false
+    private val nativeLock = new Object
+
+    /**
+      * Ensure the GDAL JNI shared library is loaded on this JVM (executor or driver).
+      *
+      * `ogr.RegisterAll()` and `ogr.GetDriverByName` both require `libgdalalljni.so`
+      * to have been `System.load`-ed first. RasterX does this via
+      * `GDALManager.loadSharedObjects` when its `register(spark)` runs, but VectorX
+      * has no equivalent yet — and the call has to happen on the *executor* JVM
+      * before any OGR access, not just on the driver. Idempotent guard avoids
+      * reloading the library.
+      */
+    private def ensureNativeLoaded(): Unit = {
+        if (!nativeLoaded) {
+            nativeLock.synchronized {
+                if (!nativeLoaded) {
+                    val path = "/usr/lib/libgdalalljni.so"
+                    Try {
+                        if (Files.exists(Paths.get(path))) System.load(path)
+                    } // any failure surfaces as the original UnsatisfiedLinkError below
+                    nativeLoaded = true
+                }
+            }
+        }
     }
 
     /**
