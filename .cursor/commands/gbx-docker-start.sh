@@ -101,7 +101,28 @@ print_separator
 echo -e "${CYAN}🔍 Checking container status...${NC}"
 print_separator
 
-# Check if container is already running
+# Worktree-aware mount-source check. If a geobrix-dev container exists,
+# verify its /root/geobrix mount source matches the current worktree;
+# otherwise recreate so the agent / user gets the right files in-container.
+existing_mount_source() {
+    docker inspect --format '{{ range .Mounts }}{{ if eq .Destination "/root/geobrix" }}{{ .Source }}{{ end }}{{ end }}' geobrix-dev 2>/dev/null
+}
+
+if docker ps -a --format '{{.Names}}' | grep -q '^geobrix-dev$'; then
+    EXISTING_MOUNT="$(existing_mount_source)"
+    if [ -n "$EXISTING_MOUNT" ] && [ "$EXISTING_MOUNT" != "$PROJECT_ROOT" ]; then
+        echo ""
+        echo -e "${YELLOW}⚠️  Existing 'geobrix-dev' container is mounted to a different worktree:${NC}"
+        echo -e "   existing: ${YELLOW}$EXISTING_MOUNT${NC}"
+        echo -e "   current:  ${YELLOW}$PROJECT_ROOT${NC}"
+        echo -e "${CYAN}🔄 Recreating container with current worktree mount...${NC}"
+        docker stop geobrix-dev >/dev/null 2>&1 || true
+        docker rm geobrix-dev >/dev/null 2>&1 || true
+        # Fall through to the "create new container" branch below.
+    fi
+fi
+
+# Check if container is already running (with the correct mount)
 if docker ps --format '{{.Names}}' | grep -q '^geobrix-dev$'; then
     echo ""
     echo -e "${YELLOW}ℹ️  Container 'geobrix-dev' is already running${NC}"
@@ -109,22 +130,22 @@ if docker ps --format '{{.Names}}' | grep -q '^geobrix-dev$'; then
     echo -e "${CYAN}⚙️  Applying Maven setup (.m2 in project, skipScoverage default)...${NC}"
     docker exec geobrix-dev /bin/bash -c "sh /root/geobrix/scripts/docker/extras/docker_maven_setup.sh"
     print_separator
-    
+
     if [ "$ATTACH" = true ]; then
         echo ""
         echo -e "${CYAN}🔗 Attaching to container...${NC}"
         docker exec -it geobrix-dev bash
     fi
-    
+
     exit 0
 fi
 
-# Check if container exists but is stopped
+# Check if container exists but is stopped (and mount matches; mismatch was handled above)
 if docker ps -a --format '{{.Names}}' | grep -q '^geobrix-dev$'; then
     echo ""
     echo -e "${CYAN}🚀 Starting existing container...${NC}"
     print_separator
-    
+
     docker start geobrix-dev
     EXIT_CODE=$?
     
