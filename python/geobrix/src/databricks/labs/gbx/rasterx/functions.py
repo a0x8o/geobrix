@@ -631,6 +631,81 @@ def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
     )
 
 
+def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute average pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridavg", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute pixel count per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure BIGINT)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridcount", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute maximum pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmax", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute minimum pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmin", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute median pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmedian", _col(tile), _col(resolution)
+    )
+
+
 # Operations
 
 
