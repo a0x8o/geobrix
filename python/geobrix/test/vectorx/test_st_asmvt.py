@@ -39,14 +39,11 @@ def test_st_asmvt_single_point(spark):
     # WKB for POINT(0.5 0.5): 01 01 00 00 00 + 8 bytes x + 8 bytes y (little-endian double).
     pt_wkb = bytes.fromhex("0101000000000000000000E03F000000000000E03F")
     df = spark.createDataFrame([(pt_wkb, "alpha", 1)], ["geom_wkb", "name", "id"])
-    mvt = (
-        df.agg(
-            vx.st_asmvt(
-                col("geom_wkb"), struct(col("name"), col("id")), lit("layer1")
-            ).alias("mvt")
-        )
-        .collect()[0]["mvt"]
-    )
+    mvt = df.agg(
+        vx.st_asmvt(
+            col("geom_wkb"), struct(col("name"), col("id")), lit("layer1")
+        ).alias("mvt")
+    ).collect()[0]["mvt"]
     assert mvt is not None and len(mvt) > 0
     assert mvt[0] == 0x1A
 
@@ -61,13 +58,10 @@ def test_st_asmvt_multiple_features(spark):
         (bytes.fromhex("0101000000CDCCCCCCCCCCEC3FCDCCCCCCCCCCEC3F"), "c", 3),
     ]
     df = spark.createDataFrame(pts, ["geom_wkb", "name", "id"])
-    mvt = (
-        df.agg(
-            vx.st_asmvt(
-                col("geom_wkb"), struct(col("name"), col("id")), lit("points")
-            ).alias("mvt")
-        )
-        .collect()[0]["mvt"]
-    )
+    mvt = df.agg(
+        vx.st_asmvt(
+            col("geom_wkb"), struct(col("name"), col("id")), lit("points")
+        ).alias("mvt")
+    ).collect()[0]["mvt"]
     assert mvt is not None and len(mvt) > 0
     assert b"points" in mvt
