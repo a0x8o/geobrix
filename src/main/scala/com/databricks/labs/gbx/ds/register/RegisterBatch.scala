@@ -20,15 +20,17 @@ class RegisterBatch(schema: StructType, options: Map[String, String]) extends Sc
     /** Overrides Scan.toBatch: returns this batch. */
     override def toBatch: Batch = this
 
-    /** Overrides Batch.planInputPartitions: runs registration (options "functions" = gridx.bng | vectorx.jts.legacy | rasterx | all); returns empty partitions. */
+    /** Overrides Batch.planInputPartitions: runs registration (options "functions" = gridx.bng | gridx.quadbin | vectorx.jts.legacy | rasterx | all); returns empty partitions. */
     override def planInputPartitions(): Array[InputPartition] = {
         val registerWhat = options.getOrElse("functions", "all")
         registerWhat match {
             case "gridx.bng"      => gridx.bng.functions.register(SparkSession.active)
+            case "gridx.quadbin"  => gridx.quadbin.functions.register(SparkSession.active)
             case "vectorx.jts.legacy" => jts.legacy.functions.register(SparkSession.active)
             case "rasterx"        => functions.register(SparkSession.active)
             case "all"            =>
                 gridx.bng.functions.register(SparkSession.active)
+                gridx.quadbin.functions.register(SparkSession.active)
                 jts.legacy.functions.register(SparkSession.active)
                 gbx.rasterx.functions.register(SparkSession.active)
         }

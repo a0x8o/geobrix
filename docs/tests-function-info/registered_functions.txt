@@ -89,4 +89,13 @@ gbx_bng_geomkringexplode
 gbx_bng_kloopexplode
 gbx_bng_kringexplode
 gbx_bng_tessellateexplode
+gbx_quadbin_aswkb
+gbx_quadbin_cellunion
+gbx_quadbin_centroid
+gbx_quadbin_distance
+gbx_quadbin_kring
+gbx_quadbin_pointascell
+gbx_quadbin_polyfill
+gbx_quadbin_resolution
+gbx_quadbin_tessellate
 gbx_st_legacyaswkb
