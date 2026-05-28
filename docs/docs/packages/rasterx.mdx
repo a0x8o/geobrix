@@ -118,6 +118,36 @@ Quadbin output is a natural fit for slippy-map raster heatmaps — cells align w
 - `gbx_rst_merge_agg` - Merge rasters with aggregation
 - `gbx_rst_derivedband_agg` - Derived band aggregate
 
+### Web-mercator tile output
+
+Render a raster as web-mercator (EPSG:3857) XYZ slippy-map tiles. Foundation for the PMTiles publishing pipeline (Wave 6) — every step here is independently useful but the typical pipeline is `rst_to_webmercator → rst_xyzpyramid → pmtiles_agg`.
+
+- `gbx_rst_to_webmercator(tile, [resampling])` - Warp the tile to EPSG:3857. Default `resampling = "bilinear"` (use `"near"` for categorical rasters). One-shot reprojection — cheaper than letting `rst_tilexyz` warp per-tile when many tiles share the same source.
+- `gbx_rst_tilexyz(tile, z, x, y, [format, size, resampling])` - Render a single `(z, x, y)` web-mercator XYZ tile to PNG / JPEG / WEBP bytes. Returns `BinaryType`. Out-of-extent `(z, x, y)` returns a transparent PNG (alpha=0) of the requested size — **NOT** null — because slippy-map tile servers expect a 200-status non-zero body even outside source coverage. Defaults: `format = "PNG"`, `size = 256`, `resampling = "bilinear"`.
+- `gbx_rst_xyzpyramid(tile, min_z, max_z, [format, size, resampling])` - Generator: explodes ONE input tile to MANY rows, one per `(z, x, y)` tile covering the source across `[min_z, max_z]`. Per-row output is `STRUCT<tile: STRUCT<z, x, y, bytes>>`. Pattern-mirrors `gbx_rst_maketiles` for invocation. Guard: `max_z ≤ 20`, and total candidate tile count `≤ 10^6` across the requested zoom range (lower `max_z` or upstream-resample if you hit the cap).
+
+Most workflows start with `gbx_rst_to_webmercator` because rasters typically arrive in EPSG:4326 or a UTM zone — neither renders directly in slippy viewers. The XYZ output uses the standard Google / OSM / MapboxGL / MapLibre / PMTiles tile scheme (Y north-down).
+
+```text
+            source CRS (4326, UTM, …)
+                      │
+                      │  rst_to_webmercator
+                      ▼
+                EPSG:3857 raster
+                      │
+              ┌───────┴────────┐
+              │                │
+              │ rst_tilexyz    │ rst_xyzpyramid
+              ▼                ▼
+   one PNG (z,x,y)     N rows: (z, x, y, PNG bytes)
+                              │
+                              ▼
+                  Wave 6: gbx_pmtiles_agg
+                              │
+                              ▼
+                       single .pmtiles
+```
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.

@@ -71,6 +71,9 @@ gbx_rst_updatetype
 gbx_rst_worldtorastercoord
 gbx_rst_worldtorastercoordx
 gbx_rst_worldtorastercoordy
+gbx_rst_tilexyz
+gbx_rst_to_webmercator
+gbx_rst_xyzpyramid
 gbx_bng_aswkb
 gbx_bng_aswkt
 gbx_bng_cellarea

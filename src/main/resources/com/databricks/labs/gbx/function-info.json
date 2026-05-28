@@ -178,6 +178,12 @@
     "gbx_rst_summary": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_summary(tile) as summary FROM rasters;"
     },
+    "gbx_rst_tilexyz": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png FROM rasters;"
+    },
+    "gbx_rst_to_webmercator": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_to_webmercator(tile) as web_tile, gbx_rst_srid(gbx_rst_to_webmercator(tile)) as new_srid FROM rasters;"
+    },
     "gbx_rst_tooverlappingtiles": {
       "examples": "Examples:\n      > SELECT path, tile FROM rasters LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, 256, 256, 10)) AS tile;"
     },
@@ -210,6 +216,9 @@
     },
     "gbx_rst_worldtorastercoordy": {
       "examples": "Examples:\n      > SELECT gbx_rst_worldtorastercoordy(tile, -122.4194, 37.7749) as pixel_row FROM rasters;"
+    },
+    "gbx_rst_xyzpyramid": {
+      "examples": "Examples:\n      > SELECT path, t.tile.z as z, t.tile.x as x, t.tile.y as y, t.tile.bytes as png_bytes FROM rasters LATERAL VIEW gbx_rst_xyzpyramid(tile, 4, 6) AS t;"
     },
     "_package_gridx": "--- gridx ---",
     "gbx_bng_aswkb": {

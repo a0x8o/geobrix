@@ -1475,3 +1475,72 @@ rst_merge_agg_sql_example_output = """
 |S2A_001 |[BINARY]            |
 +--------+--------------------+
 """
+
+
+# ============================================================================
+# Web-Mercator Tile Output Functions
+# ============================================================================
+
+def rst_to_webmercator_sql_example():
+    """Reproject a raster to EPSG:3857 (web mercator)"""
+    return """
+-- Reproject to web mercator before slippy-map tiling (default bilinear resampling).
+SELECT
+    path,
+    gbx_rst_to_webmercator(tile) as web_tile,
+    gbx_rst_srid(gbx_rst_to_webmercator(tile)) as new_srid
+FROM rasters;
+"""
+
+
+rst_to_webmercator_sql_example_output = """
++----+--------------------+--------+
+|path|web_tile            |new_srid|
++----+--------------------+--------+
+|... |[BINARY]            |3857    |
++----+--------------------+--------+
+"""
+
+
+def rst_tilexyz_sql_example():
+    """Render a single web-mercator XYZ tile to PNG bytes"""
+    return """
+-- Render tile (z=10, x=512, y=512) as 256x256 PNG bytes.
+SELECT
+    path,
+    gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png
+FROM rasters;
+"""
+
+
+rst_tilexyz_sql_example_output = """
++----+--------------------+
+|path|tile_png            |
++----+--------------------+
+|... |[BINARY]            |
++----+--------------------+
+"""
+
+
+def rst_xyzpyramid_sql_example():
+    """Generate one row per (z, x, y) tile across a zoom range"""
+    return """
+-- Explode a raster into per-tile rows across zoom levels 4..6 (PNG, 256px).
+SELECT
+    path,
+    t.tile.z as z,
+    t.tile.x as x,
+    t.tile.y as y,
+    t.tile.bytes as png_bytes
+FROM rasters
+LATERAL VIEW gbx_rst_xyzpyramid(tile, 4, 6) AS t;
+"""
+
+
+rst_xyzpyramid_sql_example_output = """
++----+---+---+---+--------------------+
+|path|  z|  x|  y|png_bytes           |
++----+---+---+---+--------------------+
+|... |  4|  5|  6|[BINARY]            |
++----+---+---+---+--------------------+
+"""
