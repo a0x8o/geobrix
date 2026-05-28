@@ -7,6 +7,7 @@ import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, R
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.pixel._
 import com.databricks.labs.gbx.rasterx.expressions.resample._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
@@ -155,6 +156,15 @@ object functions extends Serializable {
         rd.register(RST_ResampleToRes)
         rd.register(RST_GridFromPoints)
         rd.register(RST_GridFromPointsAgg)
+
+        // Pixel ops + extraction (thin GDAL wrappers)
+        rd.register(RST_Band)
+        rd.register(RST_BuildOverviews)
+        rd.register(RST_FillNodata)
+        rd.register(RST_Histogram)
+        rd.register(RST_Sample)
+        rd.register(RST_SetSrid)
+        rd.register(RST_Threshold)
 
         sc.getConf.set(flag, "true")
     }
@@ -518,5 +528,65 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_GridFromPointsAgg.name, Seq(
             point, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, power, maxPts
         ))
+
+    // Pixel ops + extraction — Column form + scalar overloads
+    def rst_fillnodata(tileExpr: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, lit(100.0), lit(0)))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, maxSearchDist, lit(0)))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Column, smoothingIter: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, maxSearchDist, smoothingIter))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Double): Column =
+        rst_fillnodata(tileExpr, lit(maxSearchDist))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Double, smoothingIter: Int): Column =
+        rst_fillnodata(tileExpr, lit(maxSearchDist), lit(smoothingIter))
+
+    def rst_sample(tileExpr: Column, geom: Column): Column =
+        ColumnAdapter(RST_Sample.name, Seq(tileExpr, geom))
+
+    def rst_setsrid(tileExpr: Column, srid: Column): Column =
+        ColumnAdapter(RST_SetSrid.name, Seq(tileExpr, srid))
+    def rst_setsrid(tileExpr: Column, srid: Int): Column =
+        rst_setsrid(tileExpr, lit(srid))
+
+    def rst_histogram(tileExpr: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, lit(256), lit(null).cast("double"), lit(null).cast("double"), lit(false)
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, lit(null).cast("double"), lit(null).cast("double"), lit(false)
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Column, minVal: Column, maxVal: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, minVal, maxVal, lit(false)
+        ))
+    def rst_histogram(
+        tileExpr: Column, nBuckets: Column, minVal: Column, maxVal: Column, includeNodata: Column
+    ): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, minVal, maxVal, includeNodata
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Int): Column =
+        rst_histogram(tileExpr, lit(nBuckets))
+
+    def rst_threshold(tileExpr: Column, op: Column, value: Column): Column =
+        ColumnAdapter(RST_Threshold.name, Seq(tileExpr, op, value))
+    def rst_threshold(tileExpr: Column, op: String, value: Double): Column =
+        rst_threshold(tileExpr, lit(op), lit(value))
+
+    def rst_buildoverviews(tileExpr: Column, levels: Column): Column =
+        ColumnAdapter(RST_BuildOverviews.name, Seq(tileExpr, levels, lit("average")))
+    def rst_buildoverviews(tileExpr: Column, levels: Column, resampling: Column): Column =
+        ColumnAdapter(RST_BuildOverviews.name, Seq(tileExpr, levels, resampling))
+    def rst_buildoverviews(tileExpr: Column, levels: Array[Int]): Column =
+        rst_buildoverviews(tileExpr, lit(levels))
+    def rst_buildoverviews(tileExpr: Column, levels: Array[Int], resampling: String): Column =
+        rst_buildoverviews(tileExpr, lit(levels), lit(resampling))
+
+    def rst_band(tileExpr: Column, bandIndex: Column): Column =
+        ColumnAdapter(RST_Band.name, Seq(tileExpr, bandIndex))
+    def rst_band(tileExpr: Column, bandIndex: Int): Column =
+        rst_band(tileExpr, lit(bandIndex))
 
 }
