@@ -4,22 +4,30 @@ sidebar_position: 1
 
 # Writers Overview
 
-GeoBrix ships a single raster writer, `gdal`, registered automatically whenever the GeoBrix JAR is on the classpath. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
+GeoBrix ships two writers: `gdal` for individual rasters and `pmtiles` for tile-pyramid archives. Both are registered automatically whenever the GeoBrix JAR is on the classpath. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
 
 ## Available Writers
 
 | Writer | Format Name | Description |
 |--------|-------------|-------------|
 | [GDAL Writer](./gdal) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+| [PMTiles Writer](./pmtiles) | `pmtiles` | Streams a `(z, x, y, bytes)` tile set into a single PMTiles v3 archive file. |
 
 ## At a Glance
 
+**GDAL writer:**
 - **Input schema:** exactly `(source: string, tile: struct)` — the reader's default schema. Don't `.select()` or add columns.
 - **Mode:** `.mode("append")` only.
 - **Format on disk:** comes from the `driver` stored in each tile's metadata. `ext` controls the filename suffix only.
 - **Target directory:** must already exist; the writer does not create Volume roots.
 
+**PMTiles writer:**
+- **Input schema:** exactly `(z: int, x: int, y: int, bytes: binary)`.
+- **Mode:** `.mode("overwrite")` is required; default `ErrorIfExists` is rejected upstream by Spark.
+- **Output path:** the final `.pmtiles` file, not a directory. Read support is not implemented in 0.4.0.
+
 ## Next Steps
 
-- [GDAL Writer](./gdal) — full details, options, and examples.
-- [Readers Overview](../readers/overview) — the corresponding read path.
+- [GDAL Writer](./gdal) — full details, options, and examples for raster output.
+- [PMTiles Writer](./pmtiles) — full details, options, and examples for tile-pyramid output.
+- [Readers Overview](../readers/overview) — the corresponding read paths.
