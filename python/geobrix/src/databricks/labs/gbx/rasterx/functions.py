@@ -1731,3 +1731,170 @@ def rst_index(
         formula_col,
         _col(band_map),
     )
+
+
+# ---------------------------------------------------------------------------
+# Pixel ops + extraction
+#
+# Seven thin wrappers over GDAL per-pixel / per-tile primitives that the
+# rest of the RasterX surface assumed were "always available" but weren't
+# actually exposed: FillNodata, ReadRaster-at-point sampling, SetProjection,
+# GetHistogram, threshold (via MapAlgebra), BuildOverviews, single-band
+# extraction.
+# ---------------------------------------------------------------------------
+
+
+def rst_fillnodata(
+    tile: ColLike,
+    max_search_dist: ColLike = None,
+    smoothing_iter: ColLike = None,
+) -> Column:
+    """Interpolate NoData pixels from valid neighbours via ``gdal.FillNodata``.
+
+    Args:
+        tile: Raster tile column.
+        max_search_dist: Maximum pixel distance to search for a valid value
+            to fill from (default 100.0).
+        smoothing_iter: Number of 3x3 smoothing iterations after fill
+            (default 0).
+
+    Returns:
+        Raster tile column with NoData holes filled.
+    """
+    msd_col = f.lit(100.0) if max_search_dist is None else _col(max_search_dist)
+    si_col = f.lit(0) if smoothing_iter is None else _col(smoothing_iter)
+    return f.call_function("gbx_rst_fillnodata", _col(tile), msd_col, si_col)
+
+
+def rst_sample(tile: ColLike, geom: ColLike) -> Column:
+    """Sample raster pixel values at a POINT geometry — returns one Double per band.
+
+    The point coordinates must be in the raster's CRS. Out-of-extent points
+    return ``null`` (not a partial array).
+
+    Args:
+        tile: Raster tile column.
+        geom: POINT geometry — WKB ``bytes`` or WKT ``string`` column.
+
+    Returns:
+        Column of ``ARRAY<DOUBLE>`` (one value per band) or ``null`` outside extent.
+    """
+    return f.call_function("gbx_rst_sample", _col(tile), _col(geom))
+
+
+def rst_setsrid(tile: ColLike, srid: ColLike) -> Column:
+    """Stamp an EPSG code on the raster's spatial-reference header (no warp).
+
+    Use when the source raster lost or has incorrect CRS metadata but the
+    actual pixel grid is already aligned with the target CRS. For real
+    reprojection (with pixel-grid warp) use :func:`rst_transform`.
+
+    Args:
+        tile: Raster tile column.
+        srid: EPSG code (positive integer).
+
+    Returns:
+        Raster tile column with rewritten SR header.
+    """
+    return f.call_function("gbx_rst_setsrid", _col(tile), _col(srid))
+
+
+def rst_histogram(
+    tile: ColLike,
+    n_buckets: ColLike = None,
+    min_val: ColLike = None,
+    max_val: ColLike = None,
+    include_nodata: ColLike = None,
+) -> Column:
+    """Per-band pixel histogram via ``band.GetHistogram``.
+
+    Returns ``MAP<STRING, ARRAY<LONG>>`` keyed by ``"band_<i>"`` (1-based) with
+    a length-``n_buckets`` array of bucket counts per band. Pixels outside
+    ``[min_val, max_val]`` are excluded.
+
+    Args:
+        tile: Raster tile column.
+        n_buckets: Number of equal-width buckets across ``[min_val, max_val]``
+            (default 256).
+        min_val: Histogram lower bound (default: derived from band statistics).
+        max_val: Histogram upper bound (default: derived from band statistics).
+        include_nodata: Reserved — GDAL excludes NoData regardless. Default False.
+
+    Returns:
+        Column of ``MAP<STRING, ARRAY<LONG>>``.
+    """
+    nb_col = f.lit(256) if n_buckets is None else _col(n_buckets)
+    min_col = (
+        f.lit(None).cast("double") if min_val is None else _col(min_val)
+    )
+    max_col = (
+        f.lit(None).cast("double") if max_val is None else _col(max_val)
+    )
+    inc_col = f.lit(False) if include_nodata is None else _col(include_nodata)
+    return f.call_function(
+        "gbx_rst_histogram", _col(tile), nb_col, min_col, max_col, inc_col
+    )
+
+
+def rst_threshold(
+    tile: ColLike,
+    op: Union[ColLike, None] = None,
+    value: ColLike = None,
+) -> Column:
+    """Binarise a raster: ``(pixel <op> value)`` -> 0/1.
+
+    Args:
+        tile: Raster tile column.
+        op: Comparison operator — one of ``">"``, ``">="``, ``"<"``, ``"<="``,
+            ``"=="``, ``"!="``. String literals auto-wrapped via ``f.lit``.
+        value: Threshold value (``float``).
+
+    Returns:
+        Single-band Float32 GTiff tile column with values 0 or 1.
+    """
+    op_col = (
+        f.lit(op) if isinstance(op, str) else _col(op) if op is not None else f.lit(None)
+    )
+    return f.call_function("gbx_rst_threshold", _col(tile), op_col, _col(value))
+
+
+def rst_buildoverviews(
+    tile: ColLike,
+    levels: ColLike,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Build internal overviews on a raster via ``Dataset.BuildOverviews``.
+
+    Args:
+        tile: Raster tile column.
+        levels: ``ARRAY<INT>`` of downsampling factors (e.g. ``[2, 4, 8, 16]``).
+            Each factor produces one overview level at ``1 / factor`` resolution.
+        resampling: Overview resampling algorithm — one of ``nearest``,
+            ``average``, ``rms``, ``gauss``, ``cubic``, ``cubicspline``,
+            ``lanczos``, ``bilinear``, ``mode``, ``none``. Defaults to
+            ``"average"``. String literals auto-wrapped via ``f.lit``.
+
+    Returns:
+        Raster tile column with embedded overview pyramid.
+    """
+    res_col = (
+        f.lit("average")
+        if resampling is None
+        else (
+            f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+        )
+    )
+    return f.call_function("gbx_rst_buildoverviews", _col(tile), _col(levels), res_col)
+
+
+def rst_band(tile: ColLike, band_index: ColLike) -> Column:
+    """Extract a single band as a new single-band tile via ``gdal.Translate -b <i>``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        band_index: 1-based band index to extract.
+
+    Returns:
+        Single-band raster tile column.
+    """
+    return f.call_function("gbx_rst_band", _col(tile), _col(band_index))
