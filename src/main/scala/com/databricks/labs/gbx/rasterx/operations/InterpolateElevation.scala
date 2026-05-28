@@ -1,37 +1,16 @@
 package com.databricks.labs.gbx.rasterx.operations
 
-/** Delaunay triangulation and Z interpolation for DTM. Used by RST_DTMFromGeoms.
- * Not yet implemented for production (RST_DTMFromGeoms is unregistered).
- * Excluded from scoverage (see pom.xml excludedFiles).
- */
+/** Delaunay triangulation and Z interpolation for DTM. Used by RST_DTMFromGeoms. */
 import com.databricks.labs.gbx.vectorx.jts.{JTS, JTSConformingDelaunayTriangulationBuilder}
 import org.locationtech.jts.geom.util.{LinearComponentExtracter, PolygonExtracter}
 import org.locationtech.jts.geom._
 import org.locationtech.jts.index.strtree.STRtree
 import org.locationtech.jts.linearref.LengthIndexedLine
 
-import java.util.Locale
 import scala.jdk.CollectionConverters._
 
 /** Delaunay triangulation from points and breaklines; interpolates Z at grid points and builds point grids. */
 object InterpolateElevation {
-
-    object TriangulationSplitPointTypeEnum extends Enumeration {
-
-        val MIDPOINT: TriangulationSplitPointTypeEnum.Value = Value("MIDPOINT")
-        val NONENCROACHING: TriangulationSplitPointTypeEnum.Value = Value("NONENCROACHING")
-
-        def fromString(value: String): TriangulationSplitPointTypeEnum.Value =
-            TriangulationSplitPointTypeEnum.values
-                .find(_.toString == value.toUpperCase(Locale.ROOT))
-                .getOrElse(
-                  throw new Error(
-                    s"Invalid mode for triangulation split point type: $value." +
-                        s" Must be one of ${TriangulationSplitPointTypeEnum.values.mkString(",")}"
-                  )
-                )
-
-    }
 
     /** Builds triangulation from multipoint and breaklines, then interpolates Z for each grid point. */
     def interpolate(
@@ -159,18 +138,6 @@ object InterpolateElevation {
         val mp = JTS.multiPoint(pts.toArray)
         mp.setSRID(srid)
         mp
-    }
-
-    /** Builds a regular grid of points (origin + xCells x yCells, cell sizes xSize x ySize). */
-    def pointGrid(origin: Point, xCells: Int, yCells: Int, xSize: Double, ySize: Double): MultiPoint = {
-        val gridPoints = for (i <- 0 until xCells; j <- 0 until yCells) yield {
-            val x = origin.getX + i * xSize + xSize / 2
-            val y = origin.getY + j * ySize + ySize / 2
-            val gridPoint = JTS.point(new Coordinate(x, y))
-            gridPoint.setSRID(origin.getSRID)
-            gridPoint
-        }
-        JTS.multiPoint(gridPoints.toArray)
     }
 
 }

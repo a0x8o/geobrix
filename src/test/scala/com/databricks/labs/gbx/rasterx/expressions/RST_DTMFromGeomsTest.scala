@@ -82,4 +82,16 @@ class RST_DTMFromGeomsTest extends AnyFunSuite with BeforeAndAfterAll {
             RST_DTMFromGeoms.execute(planePoints(), Seq.empty, 0.0, 0.0, 0.0, 0.0, 100.0, 100.0, 0, 10, 32633, -9999.0)
         }
     }
+
+    test("builder accepts 11 args (no_data defaulted) and 12 args") {
+        val lit = (v: Any) => org.apache.spark.sql.catalyst.expressions.Literal(v)
+        val base = Seq[org.apache.spark.sql.catalyst.expressions.Expression](
+            lit(null), lit(null), lit(0.0), lit(0.0),
+            lit(0.0), lit(0.0), lit(100.0), lit(100.0),
+            lit(10), lit(10), lit(32633)
+        )
+        RST_DTMFromGeoms.builder()(base) shouldBe a[RST_DTMFromGeoms]
+        RST_DTMFromGeoms.builder()(base :+ lit(-1.0)) shouldBe a[RST_DTMFromGeoms]
+        an[IllegalArgumentException] should be thrownBy { RST_DTMFromGeoms.builder()(base.take(5)) }
+    }
 }

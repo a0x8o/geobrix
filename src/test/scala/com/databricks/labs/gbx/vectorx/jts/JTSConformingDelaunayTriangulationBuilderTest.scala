@@ -67,7 +67,7 @@ class JTSConformingDelaunayTriangulationBuilderTest extends AnyFunSuite {
     }
 
     test("setSplitPointFinder should accept MIDPOINT") {
-        import com.databricks.labs.gbx.rasterx.operations.InterpolateElevation.TriangulationSplitPointTypeEnum
+
         val point = gf.createPoint(new Coordinate(0.0, 0.0))
         val builder = JTSConformingDelaunayTriangulationBuilder(point)
         noException should be thrownBy builder.setSplitPointFinder(TriangulationSplitPointTypeEnum.MIDPOINT)
@@ -75,7 +75,7 @@ class JTSConformingDelaunayTriangulationBuilderTest extends AnyFunSuite {
     }
 
     test("setSplitPointFinder should accept NONENCROACHING") {
-        import com.databricks.labs.gbx.rasterx.operations.InterpolateElevation.TriangulationSplitPointTypeEnum
+
         val point = gf.createPoint(new Coordinate(0.0, 0.0))
         val builder = JTSConformingDelaunayTriangulationBuilder(point)
         noException should be thrownBy builder.setSplitPointFinder(TriangulationSplitPointTypeEnum.NONENCROACHING)

@@ -1,12 +1,28 @@
 package com.databricks.labs.gbx.vectorx.jts
 
-import com.databricks.labs.gbx.rasterx.operations.InterpolateElevation.TriangulationSplitPointTypeEnum
 import org.locationtech.jts.geom.util.LinearComponentExtracter
 import org.locationtech.jts.geom.{Coordinate, CoordinateList, Envelope, Geometry, LineString}
 import org.locationtech.jts.triangulate._
 import org.locationtech.jts.triangulate.quadedge.QuadEdgeSubdivision
 
 import java.util
+import java.util.Locale
+
+/** Split-point strategy for conforming Delaunay triangulation. */
+object TriangulationSplitPointTypeEnum extends Enumeration {
+    val MIDPOINT: TriangulationSplitPointTypeEnum.Value = Value("MIDPOINT")
+    val NONENCROACHING: TriangulationSplitPointTypeEnum.Value = Value("NONENCROACHING")
+
+    def fromString(value: String): TriangulationSplitPointTypeEnum.Value =
+        TriangulationSplitPointTypeEnum.values
+            .find(_.toString == value.toUpperCase(Locale.ROOT))
+            .getOrElse(
+              throw new Error(
+                s"Invalid mode for triangulation split point type: $value." +
+                    s" Must be one of ${TriangulationSplitPointTypeEnum.values.mkString(",")}"
+              )
+            )
+}
 
 /** Builds a conforming Delaunay triangulation from a geometry (and optional constraint lines). Used by InterpolateElevation. */
 class JTSConformingDelaunayTriangulationBuilder(geom: Geometry) {
