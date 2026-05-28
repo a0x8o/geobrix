@@ -1481,6 +1481,217 @@ def rst_nbr(
     )
 
 
+# ---------------------------------------------------------------------------
+# Resample family and IDW interpolation
+#
+# Three resample wrappers delegate to gdal.Warp with -tr / -ts; IDW pair
+# (`rst_gridfrompoints` non-aggregator + `rst_gridfrompoints_agg` aggregator)
+# delegates to gdal.Grid with the invdist algorithm.
+# ---------------------------------------------------------------------------
+
+
+def rst_resample(
+    tile: ColLike,
+    factor: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile by a multiplicative ``factor``.
+
+    ``factor > 1`` upsamples, ``0 < factor < 1`` downsamples. CRS and extent
+    are preserved; output dimensions are ``round(srcW * factor) x round(srcH * factor)``.
+
+    Args:
+        tile: Raster tile column.
+        factor: Multiplicative scale factor (``float``).
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``). One of
+            ``near``, ``bilinear``, ``cubic``, ``cubicspline``, ``lanczos``,
+            ``average``, ``mode``, ``max``, ``min``, ``med``, ``q1``, ``q3``.
+            String literals are auto-wrapped via ``f.lit``.
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function("gbx_rst_resample", _col(tile), _col(factor), alg_col)
+
+
+def rst_resample_to_size(
+    tile: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile to an explicit output size ``width_px x height_px``.
+
+    Args:
+        tile: Raster tile column.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``).
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function(
+        "gbx_rst_resample_to_size",
+        _col(tile),
+        _col(width_px),
+        _col(height_px),
+        alg_col,
+    )
+
+
+def rst_resample_to_res(
+    tile: ColLike,
+    x_res: ColLike,
+    y_res: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile to an explicit ground resolution.
+
+    ``x_res`` / ``y_res`` are in source CRS units (metres for UTM, degrees for
+    EPSG:4326). Output extent matches the source bounding box adjusted to the
+    new pixel size.
+
+    Args:
+        tile: Raster tile column.
+        x_res: Target X resolution (``float``, CRS units / pixel).
+        y_res: Target Y resolution (``float``).
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``).
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function(
+        "gbx_rst_resample_to_res",
+        _col(tile),
+        _col(x_res),
+        _col(y_res),
+        alg_col,
+    )
+
+
+def rst_gridfrompoints(
+    points: ColLike,
+    values: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = None,
+    max_pts: ColLike = None,
+) -> Column:
+    """Inverse-Distance-Weighted (IDW) interpolation - non-aggregator form.
+
+    Points (``ARRAY<BINARY>`` WKB or ``ARRAY<STRING>`` WKT) and ``values``
+    (``ARRAY<DOUBLE>``) are passed in a single row. The output is a Float64
+    GTiff tile of shape ``width_px x height_px`` covering
+    ``(xmin, ymin) -> (xmax, ymax)`` in the given SRID.
+
+    Args:
+        points: Column of array of point geometries (WKB or WKT).
+        values: Column of array of double values (same length as ``points``).
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the extent / point geometries.
+        power: IDW exponent (default 2.0).
+        max_pts: Maximum neighbour points per cell (default 12).
+
+    Returns:
+        Raster tile column.
+    """
+    power_col = f.lit(2.0) if power is None else _col(power)
+    max_pts_col = f.lit(12) if max_pts is None else _col(max_pts)
+    return f.call_function(
+        "gbx_rst_gridfrompoints",
+        _col(points),
+        _col(values),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        power_col,
+        max_pts_col,
+    )
+
+
+def rst_gridfrompoints_agg(
+    point: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = None,
+    max_pts: ColLike = None,
+) -> Column:
+    """IDW interpolation aggregator - one point/value per row.
+
+    Aggregator counterpart of :func:`rst_gridfrompoints`. Group rows by an
+    extent key and pass per-row ``point`` / ``value`` columns plus per-group
+    literal extent parameters.
+
+    Args:
+        point: Point geometry column (WKB binary or WKT string).
+        value: Double value column.
+        xmin: Minimum X of the output raster extent (per-group literal).
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID.
+        power: IDW exponent (default 2.0).
+        max_pts: Maximum neighbour points per cell (default 12).
+
+    Returns:
+        Raster tile column.
+    """
+    power_col = f.lit(2.0) if power is None else _col(power)
+    max_pts_col = f.lit(12) if max_pts is None else _col(max_pts)
+    return f.call_function(
+        "gbx_rst_gridfrompoints_agg",
+        _col(point),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        power_col,
+        max_pts_col,
+    )
+
+
 def rst_index(
     tile: ColLike,
     formula_name: ColLike,

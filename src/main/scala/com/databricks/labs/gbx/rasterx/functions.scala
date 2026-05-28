@@ -7,6 +7,7 @@ import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, R
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.resample._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
 import com.databricks.labs.gbx.rasterx.expressions.web._
@@ -147,6 +148,13 @@ object functions extends Serializable {
         rd.register(RST_NBR)
         rd.register(RST_NDWI)
         rd.register(RST_SAVI)
+
+        // Resample (gdal.Warp -tr/-ts wrappers) + IDW (gdal.Grid invdist)
+        rd.register(RST_Resample)
+        rd.register(RST_ResampleToSize)
+        rd.register(RST_ResampleToRes)
+        rd.register(RST_GridFromPoints)
+        rd.register(RST_GridFromPointsAgg)
 
         sc.getConf.set(flag, "true")
     }
@@ -440,5 +448,75 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_Index.name, Seq(tileExpr, formulaName, bandMap))
     def rst_index(tileExpr: Column, formulaName: String, bandMap: Column): Column =
         rst_index(tileExpr, lit(formulaName), bandMap)
+
+    // Resample family - gdal.Warp -tr / -ts wrappers
+    def rst_resample(tileExpr: Column, factor: Column): Column =
+        ColumnAdapter(RST_Resample.name, Seq(tileExpr, factor, lit("bilinear")))
+    def rst_resample(tileExpr: Column, factor: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_Resample.name, Seq(tileExpr, factor, algorithm))
+    def rst_resample(tileExpr: Column, factor: Double): Column =
+        rst_resample(tileExpr, lit(factor))
+    def rst_resample(tileExpr: Column, factor: Double, algorithm: String): Column =
+        rst_resample(tileExpr, lit(factor), lit(algorithm))
+
+    def rst_resample_to_size(tileExpr: Column, widthPx: Column, heightPx: Column): Column =
+        ColumnAdapter(RST_ResampleToSize.name, Seq(tileExpr, widthPx, heightPx, lit("bilinear")))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Column, heightPx: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_ResampleToSize.name, Seq(tileExpr, widthPx, heightPx, algorithm))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Int, heightPx: Int): Column =
+        rst_resample_to_size(tileExpr, lit(widthPx), lit(heightPx))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Int, heightPx: Int, algorithm: String): Column =
+        rst_resample_to_size(tileExpr, lit(widthPx), lit(heightPx), lit(algorithm))
+
+    def rst_resample_to_res(tileExpr: Column, xRes: Column, yRes: Column): Column =
+        ColumnAdapter(RST_ResampleToRes.name, Seq(tileExpr, xRes, yRes, lit("bilinear")))
+    def rst_resample_to_res(tileExpr: Column, xRes: Column, yRes: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_ResampleToRes.name, Seq(tileExpr, xRes, yRes, algorithm))
+    def rst_resample_to_res(tileExpr: Column, xRes: Double, yRes: Double): Column =
+        rst_resample_to_res(tileExpr, lit(xRes), lit(yRes))
+    def rst_resample_to_res(tileExpr: Column, xRes: Double, yRes: Double, algorithm: String): Column =
+        rst_resample_to_res(tileExpr, lit(xRes), lit(yRes), lit(algorithm))
+
+    // IDW interpolation - non-aggregator (arrays in a single row)
+    def rst_gridfrompoints(
+        points: Column, values: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPoints.name, Seq(
+            points, values, xmin, ymin, xmax, ymax, widthPx, heightPx, srid,
+            lit(RST_GridFromPoints.DefaultPower),
+            lit(RST_GridFromPoints.DefaultMaxPoints)
+        ))
+    def rst_gridfrompoints(
+        points: Column, values: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column,
+        power: Column, maxPts: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPoints.name, Seq(
+            points, values, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, power, maxPts
+        ))
+
+    // IDW interpolation - aggregator (one point/value per row)
+    def rst_gridfrompoints_agg(
+        point: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPointsAgg.name, Seq(
+            point, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid,
+            lit(RST_GridFromPoints.DefaultPower),
+            lit(RST_GridFromPoints.DefaultMaxPoints)
+        ))
+    def rst_gridfrompoints_agg(
+        point: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column,
+        power: Column, maxPts: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPointsAgg.name, Seq(
+            point, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, power, maxPts
+        ))
 
 }

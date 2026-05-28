@@ -216,6 +216,46 @@ FROM landsat_l2;
 
 The existing `gbx_rst_ndvi(tile, red_idx, nir_idx)` from the v0.1 baseline keeps its specialized gdal_calc path; the `gbx_rst_index(tile, 'ndvi', band_map)` dispatcher's NDVI formula is numerically identical and exists so the generic API surfaces NDVI alongside the other named indices.
 
+### Resample and IDW interpolation
+
+Five functions for changing a raster's pixel grid and for materializing one from point samples.
+
+- `gbx_rst_resample(tile, factor, [algorithm])` — multiplicative resample. `factor > 1` upsamples, `0 < factor < 1` downsamples. Source CRS and extent are preserved; only pixel density changes. `algorithm` defaults to `"bilinear"`; allowed values match the `gdalwarp -r` set (`near`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `average`, `mode`, `max`, `min`, `med`, `q1`, `q3`).
+- `gbx_rst_resample_to_size(tile, width_px, height_px, [algorithm])` — resample to an explicit output size. Output extent and CRS match the source; the pixel grid is forced to exactly `width_px x height_px`.
+- `gbx_rst_resample_to_res(tile, x_res, y_res, [algorithm])` — resample to an explicit ground resolution in source CRS units (metres for UTM, degrees for EPSG:4326). Output extent matches the source bounding box snapped to the new pixel size.
+- `gbx_rst_gridfrompoints(points, values, xmin, ymin, xmax, ymax, width_px, height_px, srid, [power, [max_pts]])` — Inverse-Distance-Weighted (IDW) interpolation from point samples. `points` is an array of WKB (or WKT) point geometries; `values` is a parallel array of doubles. Output is a single-band Float64 GTiff tile of shape `width_px x height_px` covering `(xmin, ymin) -> (xmax, ymax)` in the given SRID. `power` defaults to `2.0`; `max_pts` (neighbours per output cell) defaults to `12`. NoData = `-9999.0`.
+- `gbx_rst_gridfrompoints_agg(point, value, xmin, ymin, xmax, ymax, width_px, height_px, srid, [power, [max_pts]])` — UDAF aggregator counterpart of `gbx_rst_gridfrompoints`. Groups one point/value per row and emits a single IDW tile per group; extent / size / srid / power / max_pts are per-group literals. Use this when raw observations arrive as rows (one per station, one per sample) rather than pre-collected arrays.
+
+```sql
+-- Resample a raster down to 100 m / pixel then upsample 2x for display.
+SELECT
+    gbx_rst_resample_to_res(tile, 100.0, 100.0, 'average')         AS coarse_100m,
+    gbx_rst_resample(tile, 2.0, 'bilinear')                        AS display_2x,
+    gbx_rst_resample_to_size(tile, 512, 512, 'near')               AS thumbnail
+FROM dems;
+
+-- IDW from one row of (points_array, values_array).
+SELECT gbx_rst_gridfrompoints(
+    array_agg(ST_AsBinary(geom)) OVER (PARTITION BY region_id),
+    array_agg(temperature)       OVER (PARTITION BY region_id),
+    bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+    256, 256, 32633
+) AS idw
+FROM weather_stations;
+
+-- IDW via the aggregator (one point per row, grouped by region).
+SELECT region_id,
+    gbx_rst_gridfrompoints_agg(
+        ST_AsBinary(geom), temperature,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        256, 256, 32633
+    ) AS idw
+FROM weather_stations
+GROUP BY region_id;
+```
+
+The resample family is a thin wrapper over `gdal.Warp` (passing `-tr` or `-ts` plus `-r <algorithm>`); the IDW pair is a thin wrapper over `gdal.Grid` with the `invdist:power=<p>:max_points=<m>` algorithm. The aggregator and non-aggregator share the same compute path — only the input shape differs.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
