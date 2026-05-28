@@ -1,0 +1,54 @@
+---
+description: User-facing docs must not reference internal release-planning vocabulary
+alwaysApply: true
+---
+
+# User-Facing Docs: Voice & Cross-References
+
+**Core principle:** anything under `docs/docs/` is read by end users of GeoBrix — release notes, package pages, notebook walkthroughs, security/installation/etc. End users have no concept of "Wave N", internal subagent names, or in-progress dispatch sequencing. Those terms must never leak into user-facing docs.
+
+## What "user-facing docs" covers
+
+- `docs/docs/beta-release-notes.mdx`
+- `docs/docs/packages/*.mdx` — RasterX, VectorX, GridX, PMTiles per-package pages
+- `docs/docs/notebooks/*.mdx` — end-to-end walkthroughs
+- `docs/docs/security.mdx`, `docs/docs/installation.mdx`, `docs/docs/support.mdx`, etc.
+- Any `*.md` / `*.mdx` under `docs/docs/`
+
+## Forbidden vocabulary in user-facing docs
+
+| ❌ Don't write | ✅ Write instead |
+|---|---|
+| "Composes with `gbx_pmtiles_agg` (Wave 6)" | "Composes with `gbx_pmtiles_agg`" |
+| "the Wave 1 aggregator" | "the aggregator" or "`gbx_st_asmvt`" |
+| "Foundation for the publishing pipeline (Wave 6)" | "Foundation for the publishing pipeline" |
+| "(Wave 5) `TileMath`" | "the web-mercator tile math helper" |
+| references to wave numbers anywhere | name the function or feature directly |
+| references to internal subagents or dispatch sequencing | reference behavior, not the team / process that produced it |
+
+## Where wave numbers ARE legitimate
+
+- `prompts/features/*.md` — implementation plans (internal)
+- Dispatch prompts when launching agents (internal)
+- Git commit messages and merge commit bodies (internal — visible only in `git log`, not on the docs site)
+- `input/` scoping drafts (gitignored — internal scratch)
+- `.cursor/agents/*.md`, `.cursor/rules/*.mdc` (internal — agent-facing)
+- This file itself
+
+## Cross-references in user-facing docs
+
+When a function in one wave needs to reference a function in another wave:
+
+- **Name the function**, not the wave: `gbx_pmtiles_agg`, `gbx_rst_xyzpyramid`, `TileMath` helper
+- **Link to the section** that documents it: `[VectorX § Vector tile output](./packages/vectorx#vector-tile-output)`
+- **Describe the relationship in feature terms**: "builds on", "composes with", "shares the web-mercator tile math with", "the aggregator counterpart of"
+
+## Quick check before merging a wave
+
+Before merging an agent's branch into `beta/0.4.0`:
+
+```bash
+grep -rn -iE "wave [0-9]+|wave-[0-9]+" docs/docs/ 2>/dev/null
+```
+
+Should print nothing. If a wave-N reference slipped into the agent's edits, fix it in the merge commit (or a follow-up `docs: scrub` commit) before pushing.

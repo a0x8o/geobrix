@@ -120,7 +120,7 @@ Quadbin output is a natural fit for slippy-map raster heatmaps — cells align w
 
 ### Web-mercator tile output
 
-Render a raster as web-mercator (EPSG:3857) XYZ slippy-map tiles. Foundation for the PMTiles publishing pipeline (Wave 6) — every step here is independently useful but the typical pipeline is `rst_to_webmercator → rst_xyzpyramid → pmtiles_agg`.
+Render a raster as web-mercator (EPSG:3857) XYZ slippy-map tiles. Foundation for the PMTiles publishing pipeline — every step here is independently useful but the typical pipeline is `rst_to_webmercator → rst_xyzpyramid → pmtiles_agg`.
 
 - `gbx_rst_to_webmercator(tile, [resampling])` - Warp the tile to EPSG:3857. Default `resampling = "bilinear"` (use `"near"` for categorical rasters). One-shot reprojection — cheaper than letting `rst_tilexyz` warp per-tile when many tiles share the same source.
 - `gbx_rst_tilexyz(tile, z, x, y, [format, size, resampling])` - Render a single `(z, x, y)` web-mercator XYZ tile to PNG / JPEG / WEBP bytes. Returns `BinaryType`. Out-of-extent `(z, x, y)` returns a transparent PNG (alpha=0) of the requested size — **NOT** null — because slippy-map tile servers expect a 200-status non-zero body even outside source coverage. Defaults: `format = "PNG"`, `size = 256`, `resampling = "bilinear"`.
@@ -142,7 +142,7 @@ Most workflows start with `gbx_rst_to_webmercator` because rasters typically arr
    one PNG (z,x,y)     N rows: (z, x, y, PNG bytes)
                               │
                               ▼
-                  Wave 6: gbx_pmtiles_agg
+                      gbx_pmtiles_agg
                               │
                               ▼
                        single .pmtiles

@@ -63,7 +63,7 @@ df.groupBy("z", "x", "y").agg(
 )
 ```
 
-**Composability:** Output `BINARY` is the natural input to `gbx_pmtiles_agg` (Wave 6) for packaging multiple `(z, x, y)` tiles into a single PMTile file.
+**Composability:** Output `BINARY` is the natural input to `gbx_pmtiles_agg` for packaging multiple `(z, x, y)` tiles into a single PMTile file.
 
 **Limitations in 0.4.0:**
 - All attributes are stringified (numeric / boolean preservation deferred).
@@ -105,10 +105,10 @@ df.select(
 ).select("t.tile.z", "t.tile.x", "t.tile.y", "t.tile.mvt_bytes")
 ```
 
-**Composability:** The output rows compose directly with `gbx_pmtiles_agg` — group by `(z, x, y)`, then aggregate `mvt_bytes` (typically with one feature per tile in this generator's single-feature scope) to produce a PMTile blob with `tile_type = mvt`. For multi-feature aggregation per tile, pre-explode tile assignments and then `groupBy(z, x, y).agg(gbx_st_asmvt(...))` using the Wave 1 aggregator.
+**Composability:** The output rows compose directly with `gbx_pmtiles_agg` — group by `(z, x, y)`, then aggregate `mvt_bytes` (typically with one feature per tile in this generator's single-feature scope) to produce a PMTile blob with `tile_type = mvt`. For multi-feature aggregation per tile, pre-explode tile assignments and then `groupBy(z, x, y).agg(gbx_st_asmvt(...))` using the aggregator.
 
 **Limitations in 0.4.0:**
-- Single-feature input per row. Multi-feature aggregation per tile is via `groupBy(z, x, y).agg(gbx_st_asmvt(...))` (Wave 1) after pre-exploding tile assignments.
+- Single-feature input per row. Multi-feature aggregation per tile is via `groupBy(z, x, y).agg(gbx_st_asmvt(...))` after pre-exploding tile assignments.
 - `max_z <= 20`; total tile-count across the requested zoom range capped at 10^6 (mirrors `gbx_rst_xyzpyramid`).
 - Attributes are stringified.
 - Inputs must be in EPSG:4326; reproject upstream for other CRS.
