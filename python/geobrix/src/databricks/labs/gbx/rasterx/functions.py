@@ -998,3 +998,129 @@ def rst_worldtorastercoordy(
     return f.call_function(
         "gbx_rst_worldtorastercoordy", _col(tile), _col(world_x), _col(world_y)
     )
+
+
+def rst_to_webmercator(
+    tile: ColLike, resampling: Union[ColLike, None] = None
+) -> Column:
+    """Reproject the tile to EPSG:3857 (web mercator).
+
+    Most slippy-map workflows start here because rasters typically arrive
+    in EPSG:4326 or a UTM zone — neither renders directly in tile servers.
+
+    Args:
+        tile: Raster tile column.
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). Use
+            ``"near"`` for categorical rasters. String literals are auto
+            wrapped in ``f.lit``; pass a ``Column`` to defer.
+
+    Returns:
+        Tile column reprojected to EPSG:3857.
+    """
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function("gbx_rst_to_webmercator", _col(tile), resampling_col)
+
+
+def rst_tilexyz(
+    tile: ColLike,
+    z: ColLike,
+    x: ColLike,
+    y: ColLike,
+    format: Union[ColLike, None] = None,
+    size: ColLike = 256,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Render a single web-mercator XYZ tile to PNG / JPEG / WEBP bytes.
+
+    Returns ``BinaryType`` with the encoded tile bytes for ``(z, x, y)``.
+    Out-of-extent tiles return a transparent PNG (alpha=0) of the requested
+    size — NOT null. Slippy-map tile servers expect a 200-status non-zero
+    body even outside source coverage.
+
+    Args:
+        tile: Raster tile column.
+        z: Zoom level (0 ≤ z ≤ 20).
+        x: Tile X coordinate (0 ≤ x < 2^z).
+        y: Tile Y coordinate (0 ≤ y < 2^z, Y north-down).
+        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+            String literals are auto-wrapped in ``f.lit``.
+        size: Output edge length in pixels (default 256).
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
+            are auto-wrapped in ``f.lit``.
+
+    Returns:
+        Binary column with the encoded image bytes.
+    """
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
+    )
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function(
+        "gbx_rst_tilexyz",
+        _col(tile),
+        _col(z),
+        _col(x),
+        _col(y),
+        format_col,
+        _col(size),
+        resampling_col,
+    )
+
+
+def rst_xyzpyramid(
+    tile: ColLike,
+    min_z: ColLike,
+    max_z: ColLike,
+    format: Union[ColLike, None] = None,
+    size: ColLike = 256,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Generator: emit one row per intersecting (z, x, y) tile across [min_z, max_z].
+
+    Per-row output column is a struct ``tile: STRUCT<z INT, x INT, y INT, bytes BINARY>``.
+    Invoke directly in ``select(...)`` (top-level generator, do not wrap in ``F.explode``).
+    Cell-count is capped at 10^6 candidate tiles across the requested zoom range;
+    ``max_z`` is capped at 20.
+
+    Args:
+        tile: Raster tile column.
+        min_z: Inclusive minimum zoom level.
+        max_z: Inclusive maximum zoom level (≤ 20).
+        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+            String literals are auto-wrapped in ``f.lit``.
+        size: Output edge length in pixels (default 256).
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
+            are auto-wrapped in ``f.lit``.
+
+    Returns:
+        Array column of structs (use ``F.explode`` to get one row per tile).
+    """
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
+    )
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function(
+        "gbx_rst_xyzpyramid",
+        _col(tile),
+        _col(min_z),
+        _col(max_z),
+        format_col,
+        _col(size),
+        resampling_col,
+    )
