@@ -94,11 +94,23 @@ Functions to access raster properties and metadata:
 - `gbx_rst_tooverlappingtiles` - Overlapping tile grid
 - `gbx_rst_h3_tessellate` - Tessellate raster into H3 cells
 
-### H3 grid aggregation
+### Grid aggregations (H3 + quadbin)
+
+Aggregate raster pixel values to discrete-global-grid cells. Each function returns `ARRAY<ARRAY<struct(cellID BIGINT, measure …)>>` — outer array dimension is the raster band, inner array is the (cell, aggregated-value) pairs.
+
+**H3 variants** (cell IDs are H3 indices; resolution 0–15):
 
 - `gbx_rst_h3_rastertogridavg` - Average raster values per H3 cell
 - `gbx_rst_h3_rastertogridcount` - Pixel count per H3 cell
 - `gbx_rst_h3_rastertogridmax`, `gbx_rst_h3_rastertogridmin`, `gbx_rst_h3_rastertogridmedian` - Min/max/median per H3 cell
+
+**Quadbin variants** (CARTO quadbin v0 cell IDs are 64-bit Long, web-mercator XYZ tile grid; resolution / zoom 0–20):
+
+- `gbx_rst_quadbin_rastertogridavg` - Average raster values per quadbin cell
+- `gbx_rst_quadbin_rastertogridcount` - Pixel count per quadbin cell
+- `gbx_rst_quadbin_rastertogridmax`, `gbx_rst_quadbin_rastertogridmin`, `gbx_rst_quadbin_rastertogridmedian` - Min/max/median per quadbin cell
+
+Quadbin output is a natural fit for slippy-map raster heatmaps — cells align with the same XYZ pyramid that PMTiles / MVT readers consume. Both families assume input coordinates are EPSG:4326 lon/lat (use `gbx_rst_transform` upstream if the raster is in another CRS).
 
 ### Aggregations
 

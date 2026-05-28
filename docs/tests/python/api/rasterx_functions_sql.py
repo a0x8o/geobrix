@@ -1191,6 +1191,118 @@ rst_h3_rastertogridmedian_sql_example_output = """
 """
 
 
+def rst_quadbin_rastertogridavg_sql_example():
+    """Aggregate raster values to CARTO quadbin v0 cells using average"""
+    return """
+-- Aggregate raster to quadbin grid
+SELECT
+    path,
+    gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid
+FROM rasters;
+
+-- Get cells from the first band
+SELECT
+    path,
+    cell.cellID as quadbin_cell,
+    cell.measure as avg_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridavg(tile, 6)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridavg_sql_example_output = """
++----+--------------------+
+|path|quadbin_grid        |
++----+--------------------+
+|... |[STRUCT...]         |
++----+--------------------+
+
++----+-------------+---------+
+|path|quadbin_cell |avg_value|
++----+-------------+---------+
+|... |5188146...   |0.45     |
++----+-------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridcount_sql_example():
+    """Count pixels per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    gbx_rst_quadbin_rastertogridcount(tile, 5) as pixel_counts
+FROM rasters;
+"""
+
+
+rst_quadbin_rastertogridcount_sql_example_output = """
++--------------------+
+|pixel_counts        |
++--------------------+
+|[STRUCT...]         |
++--------------------+
+"""
+
+
+def rst_quadbin_rastertogridmax_sql_example():
+    """Get maximum values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as max_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmax(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmax_sql_example_output = """
++-------------+---------+
+|quadbin_cell |max_value|
++-------------+---------+
+|5188146...   |255.0    |
++-------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridmin_sql_example():
+    """Get minimum values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as min_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmin(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmin_sql_example_output = """
++-------------+---------+
+|quadbin_cell |min_value|
++-------------+---------+
+|5188146...   |0.0      |
++-------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridmedian_sql_example():
+    """Get median values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as median_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmedian(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmedian_sql_example_output = """
++-------------+------------+
+|quadbin_cell |median_value|
++-------------+------------+
+|5188146...   |128.0       |
++-------------+------------+
+"""
+
+
 # ============================================================================
 # Generator Functions - Produce Multiple Rows
 # ============================================================================
