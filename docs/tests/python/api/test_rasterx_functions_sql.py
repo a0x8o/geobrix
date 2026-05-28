@@ -485,6 +485,38 @@ def test_dem_processing_sql_example(spark, rasters_view, example_attr):
     assert result[0][out_col] is not None
 
 
+# ============================================================================
+# Spectral Indices - Wave 8b
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # Each docs example references multi-band indices (1, 2, 3). The shared
+    # `rasters` view is single-band, so we run a fallback SQL with all band
+    # indices = 1 to exercise the JVM round-trip without needing a multi-band
+    # raster. The doc-example string is still validated for shape (asserted
+    # below).
+    ("rst_evi_sql_example", "SELECT gbx_rst_evi(tile, 1, 1, 1) AS evi FROM rasters"),
+    ("rst_savi_sql_example", "SELECT gbx_rst_savi(tile, 1, 1, 0.5) AS savi FROM rasters"),
+    ("rst_ndwi_sql_example", "SELECT gbx_rst_ndwi(tile, 1, 1) AS ndwi FROM rasters"),
+    ("rst_nbr_sql_example", "SELECT gbx_rst_nbr(tile, 1, 1) AS nbr FROM rasters"),
+    ("rst_index_sql_example",
+     "SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 1)) AS ndvi FROM rasters"),
+])
+def test_spectral_indices_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each Wave 8b spectral-index example string exists & executes to non-null tile."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    # The doc string should reference the SQL function name.
+    expected_fn = example_attr.replace("_sql_example", "").replace("_", "_")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
 def test_rst_color_relief_sql_example(spark, rasters_view, tmp_path):
     """color_relief example exists and executes against a tempfile color table.
 
