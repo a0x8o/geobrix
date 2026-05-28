@@ -861,6 +861,34 @@ Per-pixel transformations and band-level extraction. See [Pixel ops + extraction
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_threshold_sql_example" outputConstant="rst_threshold_sql_example_output" code={rasterxSqlCode} />
 
+## Analysis
+
+Higher-level analytical transforms wrapping single GDAL primitives — COG layout publishing, proximity surfaces, contour extraction, and viewshed analysis.
+
+### rst_cog_convert
+
+**Signature:** `rst_cog_convert(tile: Column, [compression: Column = lit("DEFLATE"), blocksize: Column = lit(512), overviewResampling: Column = lit("AVERAGE")]): Column` — Re-layout a raster tile as a Cloud Optimized GeoTIFF via `gdal.Translate -of COG`. `compression` is one of `NONE`, `DEFLATE`, `LZW`, `ZSTD`, `LERC`, `JPEG`, `WEBP`. `blocksize` is the internal tile size in pixels (square). `overviewResampling` is the algorithm for the auto-generated overview pyramid. Output is a GTiff-on-disk variant suitable for HTTP range serving.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_cog_convert_sql_example" outputConstant="rst_cog_convert_sql_example_output" code={rasterxSqlCode} />
+
+### rst_proximity
+
+**Signature:** `rst_proximity(tile: Column, [targetValues: Column = null, distUnits: Column = lit("GEO"), maxDistance: Column = null]): Column` — Compute a Float32 raster where each pixel holds the distance to the nearest source pixel via `gdal.ComputeProximity`. `targetValues` is a comma-separated list of source-pixel values (e.g. `"1,2,3"`); `null` means any non-NoData pixel is a target. `distUnits` is `"GEO"` (CRS ground units, default) or `"PIXEL"`. `maxDistance` caps the output; pixels beyond it get the NoData sentinel `-1.0`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_proximity_sql_example" outputConstant="rst_proximity_sql_example_output" code={rasterxSqlCode} />
+
+### rst_contour
+
+**Signature:** `rst_contour(tile: Column, levels: Column, [interval: Column = lit(0.0), base: Column = lit(0.0), attrField: Column = lit("elev")]): Column` — Generate contour LineString features via `gdal.ContourGenerateEx`. Pass a non-empty `levels` `ARRAY<DOUBLE>` for fixed contour values, or pass `array()` and set `interval` (>0) for equal-step contours at `base + n*interval`. Returns `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` — one entry per contour line in the source raster's CRS.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_contour_sql_example" outputConstant="rst_contour_sql_example_output" code={rasterxSqlCode} />
+
+### rst_viewshed
+
+**Signature:** `rst_viewshed(tile: Column, observerGeom: Column, observerHeight: Column, [targetHeight: Column = lit(1.6), maxDistance: Column = null]): Column` — Compute a binary viewshed Byte raster (`255` = visible, `0` = invisible / out-of-range) from a DEM tile and an observer POINT via `gdal.ViewshedGenerate`. `observerGeom` is WKB / WKT POINT in the raster's CRS; non-POINT geometries raise a runtime error. Heights are above the DEM at each pixel. `maxDistance` clips the search radius; `null` = unlimited.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_viewshed_sql_example" outputConstant="rst_viewshed_sql_example_output" code={rasterxSqlCode} />
+
 ---
 
 ## Next Steps

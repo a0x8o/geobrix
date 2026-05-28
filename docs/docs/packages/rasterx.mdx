@@ -294,6 +294,33 @@ SELECT gbx_rst_threshold(tile, '>', 100.0) AS above_100m FROM dems;
 
 `gbx_rst_setsrid` is the cheap "fix a wrong CRS header" — `gbx_rst_transform` is the actual reprojection (it warps pixels). Pick the former when you know the underlying pixel grid is correct but the metadata is missing or wrong; pick the latter when you need to change the coordinate system.
 
+### Analysis
+
+Four higher-level analytical wrappers, each backed by a single GDAL primitive — publishing layout, distance surfaces, contour extraction, and viewshed analysis.
+
+- `gbx_rst_cog_convert(tile, [compression, [blocksize, [overview_resampling]]])` — re-layout a raster tile as a Cloud Optimized GeoTIFF via `gdal.Translate -of COG`. `compression` (default `"DEFLATE"`) is one of `NONE`, `DEFLATE`, `LZW`, `ZSTD`, `LERC`, `JPEG`, `WEBP`. `blocksize` (default `512`) is the square internal tile size in pixels. `overview_resampling` (default `"AVERAGE"`) is the algorithm GDAL uses when it auto-generates the overview pyramid. The output is still a GTiff on disk (downstream `metadata.driver` reads `GTiff`) but laid out so HTTP range requests can extract regions or pyramid levels cheaply. Use as the final step before pushing tiles to object storage.
+- `gbx_rst_proximity(tile, [target_values, [distunits, [max_distance]]])` — compute a Float32 proximity raster via `gdal.ComputeProximity`. Each output pixel carries the distance to the nearest source pixel (default: any non-NoData pixel) or to the nearest pixel whose value appears in `target_values` (comma-separated string, e.g. `'1,2,3'`). `distunits` is `"GEO"` (CRS ground units, default) or `"PIXEL"`. `max_distance` caps the result — pixels beyond it get the output's NoData sentinel `-1.0`. Typical uses: distance-to-coast / road / building rasters, cost-surface pre-processing, buffer maps.
+- `gbx_rst_contour(tile, levels, [interval, [base, [attr_field]]])` → `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` — extract contour LineStrings via `gdal.ContourGenerateEx`. Supply EITHER a non-empty `levels` array (explicit values, FIXED_LEVELS mode) OR pass `array()` plus a positive `interval` (equal-step contours at `base + n*interval`, LEVEL_INTERVAL mode). The output array carries one feature per contour line in the source raster's CRS — mirrors the `(geom_wkb, value)` shape of `gbx_rst_polygonize`.
+- `gbx_rst_viewshed(tile, observer_geom, observer_height, [target_height, [max_distance]])` — compute a binary viewshed via `gdal.ViewshedGenerate`. Output is a Byte raster matching the source extent / CRS: visible pixels = `255`, invisible / out-of-range pixels = `0`. `observer_geom` MUST be a POINT in the raster's CRS (no implicit reprojection — non-POINT geometries are rejected at runtime). `observer_height` is metres above the DEM at the observer pixel (eye + tower height); `target_height` (default `1.6`) is metres above the DEM at each tested pixel (~average eye height). `max_distance` clips the search radius; `null` = unlimited (raster-bounded).
+
+```sql
+-- Publish a DEM as a COG with pyramid overviews ready for HTTP range serving.
+SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE') AS cog FROM dems;
+
+-- Per-pixel distance to any source pixel (e.g. distance-to-road map).
+SELECT gbx_rst_proximity(road_mask_tile, NULL, 'GEO', cast(NULL as double)) AS dist
+FROM road_masks;
+
+-- 10-metre contour lines from a DEM, returned as ARRAY<struct(geom_wkb, value)>.
+SELECT gbx_rst_contour(tile, array(), 10.0, 0.0, 'elev') AS contours FROM dems;
+
+-- Viewshed from a tower 30 m above ground at (lon=15.5, lat=15.5) (raster CRS).
+SELECT gbx_rst_viewshed(tile, 'POINT(15.5 15.5)', 30.0, 1.6, cast(NULL as double)) AS vs
+FROM dems;
+```
+
+`gbx_rst_contour` is the natural reciprocal of `gbx_rst_rasterize` for line outputs — rasterize burns vector geometry into a raster, contour traces vector lines back out of a continuous-value raster. For region extraction (closed polygons rather than contour lines) use `gbx_rst_polygonize`.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
