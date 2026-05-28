@@ -70,6 +70,49 @@ df.groupBy("z", "x", "y").agg(
 - Caller composes any `ST_Simplify` upstream.
 - Caller composes tile-coordinate transform upstream.
 
+### `gbx_st_asmvt_pyramid(geom_wkb, attrs_struct, min_z, max_z, layer_name, [extent])`
+
+Generator. Explodes one per-feature `(geom, attrs)` row into one row per intersecting `(z, x, y)` tile across the inclusive zoom range `[min_z, max_z]`, encoded as MVT protobuf bytes. Pairs with `gbx_rst_xyzpyramid` (the raster sibling) and feeds directly into `gbx_pmtiles_agg`.
+
+**Inputs:**
+- `geom_wkb` (`BINARY`) — per-feature geometry in **EPSG:4326 lon/lat WKB** (the helper performs the per-tile clip + tile-local coordinate transform; no upstream `ST_Intersection` required).
+- `attrs_struct` (`STRUCT<...>`) — per-feature attributes. All fields stringified in 0.4.0.
+- `min_z` (`INT`) — inclusive minimum zoom level (`>= 0`).
+- `max_z` (`INT`) — inclusive maximum zoom level (`<= 20`).
+- `layer_name` (`STRING`) — MVT layer name (constant).
+- `extent` (`INT`, optional) — MVT tile extent in pixels; default `4096` (MVT v2 standard).
+
+**Output:** one row per intersecting tile, with a single struct column `tile: STRUCT<z INT, x INT, y INT, mvt_bytes BINARY>`.
+
+**SQL example:**
+
+```sql
+SELECT t.tile.z, t.tile.x, t.tile.y, t.tile.mvt_bytes
+FROM features
+LATERAL VIEW gbx_st_asmvt_pyramid(geom_wkb, named_struct('name', name, 'id', id), 0, 8, 'roads') t AS tile
+```
+
+**PySpark example:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.select(
+    vx.st_asmvt_pyramid(
+        col("geom_wkb"), struct(col("name"), col("id")), 0, 8, "roads"
+    ).alias("t")
+).select("t.tile.z", "t.tile.x", "t.tile.y", "t.tile.mvt_bytes")
+```
+
+**Composability:** The output rows compose directly with `gbx_pmtiles_agg` — group by `(z, x, y)`, then aggregate `mvt_bytes` (typically with one feature per tile in this generator's single-feature scope) to produce a PMTile blob with `tile_type = mvt`. For multi-feature aggregation per tile, pre-explode tile assignments and then `groupBy(z, x, y).agg(gbx_st_asmvt(...))` using the Wave 1 aggregator.
+
+**Limitations in 0.4.0:**
+- Single-feature input per row. Multi-feature aggregation per tile is via `groupBy(z, x, y).agg(gbx_st_asmvt(...))` (Wave 1) after pre-exploding tile assignments.
+- `max_z <= 20`; total tile-count across the requested zoom range capped at 10^6 (mirrors `gbx_rst_xyzpyramid`).
+- Attributes are stringified.
+- Inputs must be in EPSG:4326; reproject upstream for other CRS.
+
 ## Learn more
 
 - [VectorX Function Reference](../api/vectorx-functions) — `st_legacyaswkb` API

@@ -33,3 +33,15 @@ def test_st_asmvt_sql_example(vectorx_registered):
     result = spark.sql(sql.replace(";", "")).collect()
     assert len(result) == 1
     assert result[0]["mvt_bytes_len"] > 0
+
+
+def test_st_asmvt_pyramid_sql_example(vectorx_registered):
+    """Run the ``gbx_st_asmvt_pyramid`` SQL example and assert one row per tile."""
+    spark = vectorx_registered
+    sql = vectorx_functions_sql.st_asmvt_pyramid_sql_example()
+    result = spark.sql(sql.replace(";", "")).collect()
+    # The example rectangle straddles the prime meridian at z=2 → two tiles emitted.
+    assert len(result) == 2
+    for row in result:
+        assert row["z"] == 2
+        assert row["mvt_bytes_len"] > 0

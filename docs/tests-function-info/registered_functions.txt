@@ -109,5 +109,6 @@ gbx_quadbin_polyfill
 gbx_quadbin_resolution
 gbx_quadbin_tessellate
 gbx_st_asmvt
+gbx_st_asmvt_pyramid
 gbx_st_legacyaswkb
 gbx_pmtiles_agg
