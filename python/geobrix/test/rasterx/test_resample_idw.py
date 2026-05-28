@@ -84,11 +84,15 @@ def test_idw_roundtrip_non_agg_and_agg_match(spark):
     the two paths is asserted in the Scala test.
     """
     # 4 corner points of a 100x100 m extent (EPSG:32633), values 0/10/20/30.
-    from shapely.geometry import Point
+    # WKB-encode each POINT directly (struct: byte-order=little + type=Point=1 + x + y).
+    import struct as _struct
 
-    pts = [Point(0.0, 0.0), Point(100.0, 0.0), Point(0.0, 100.0), Point(100.0, 100.0)]
+    def _point_wkb(x: float, y: float) -> bytes:
+        return _struct.pack("<BIdd", 1, 1, x, y)
+
+    pts = [(0.0, 0.0), (100.0, 0.0), (0.0, 100.0), (100.0, 100.0)]
     vals = [0.0, 10.0, 20.0, 30.0]
-    wkbs = [bytes(p.wkb) for p in pts]
+    wkbs = [_point_wkb(x, y) for x, y in pts]
 
     # Non-aggregator: arrays in a single row.
     df_arr = spark.createDataFrame([Row(points=wkbs, values=vals)])
