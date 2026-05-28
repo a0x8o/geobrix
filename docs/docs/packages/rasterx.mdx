@@ -18,20 +18,25 @@ RasterX is GeoBrix's raster data processing package, providing comprehensive too
 
 ## Overview
 
-RasterX is a refactor and improvement of Mosaic raster functions. Since Databricks product does not (yet) support anything built-in specifically for raster processing, RasterX provides a "fully" gap-filling capability for raster operations on the Databricks platform.
+RasterX is a refactor and improvement of Mosaic raster functions, extended in v0.4.0 with terrain analysis, spectral indices, vector↔raster bridging, web-mercator tile output, and quadbin grid aggregations. Since the Databricks product does not (yet) support anything built-in specifically for raster processing, RasterX provides a "fully" gap-filling capability for raster operations on the Databricks platform.
 
 ## Key Features
 
 - **GDAL-Powered**: Leverages GDAL for robust raster format support
 - **Distributed Processing**: Built on Spark for scalable raster operations
-- **Multiple Format Support**: GeoTIFF, NetCDF, and other GDAL-supported formats
+- **Multiple Format Support**: GeoTIFF, COG, NetCDF, and other GDAL-supported formats
 - **Metadata Extraction**: Comprehensive raster metadata access
-- **Raster Operations**: Clipping, resampling, transformations
-- **Band Operations**: Multi-band raster support
+- **Raster Operations**: Clipping, resampling, transformations, map algebra
+- **Band Operations**: Multi-band raster support, single-band extraction
+- **Terrain Analysis**: Slope, aspect, hillshade, TRI, TPI, roughness, color-relief
+- **Spectral Indices**: EVI, SAVI, NDWI, NBR, NDVI, plus a generic dispatcher
+- **Vector↔Raster Bridge**: Rasterize geometries, polygonize value regions
+- **Tile Publishing**: Web-mercator XYZ tile generation (PNG / JPEG / WebP)
+- **Grid Aggregations**: H3 and CARTO quadbin v0 cell aggregations
 
 ## Function Categories
 
-RasterX exposes 65 SQL functions (registered as `gbx_rst_*`; available in Python and Scala as `rst_*`) across six categories — overview below, full reference on the [RasterX Function Reference](../api/rasterx-functions) page.
+RasterX exposes 87+ SQL functions (registered as `gbx_rst_*`; available in Python and Scala as `rst_*`) — see the [RasterX Function Reference](../api/rasterx-functions) for the complete catalog with signatures and examples.
 
 ![RasterX function categories — Constructors, Accessors, Aggregators, Generators, Operations, H3 Grid](../../../resources/images/rasterx-function-categories.png)
 

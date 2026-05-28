@@ -7,7 +7,7 @@ import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.
 
 # Packages Overview
 
-GeoBrix offers three specialized packages for different spatial processing needs, designed to augment and complement ongoing Databricks product initiatives.
+GeoBrix offers four specialized packages for different spatial processing needs, designed to augment and complement ongoing Databricks product initiatives.
 
 ![GeoBrix Vision](../../../resources/images/geobrix_vision.png)
 
@@ -19,13 +19,18 @@ GeoBrix offers three specialized packages for different spatial processing needs
 
 **Raster Data Processing**
 
-Refactor and improvement of Mosaic raster functions. Product does not (yet) support anything built-in specifically for raster, so this is a "fully" gap-filling capability.
+A full-spectrum raster processing surface for Databricks — successor to Mosaic raster, plus net-new capabilities for tile publishing, terrain analysis, spectral indices, and vector↔raster bridging.
 
-- Process GeoTIFF and other raster formats
-- Raster algebra and transformations
-- Metadata extraction and manipulation
-- Band operations
-- Resampling and reprojection
+- Process GeoTIFF and other GDAL-supported raster formats
+- Raster algebra, transformations, clipping, reprojection
+- Metadata extraction, band operations, NoData handling
+- Resample, IDW interpolation, build overviews
+- Terrain analysis (slope, aspect, hillshade, TRI, TPI, roughness, color-relief)
+- Spectral indices (EVI, SAVI, NDWI, NBR, NDVI, plus a generic dispatcher)
+- Vector↔raster bridge (`rasterize` / `polygonize`)
+- Web-mercator XYZ tile output (`to_webmercator`, `tilexyz`, `xyzpyramid`)
+- Grid aggregations to H3 or CARTO quadbin v0 cells
+- COG output, proximity, contour, viewshed
 
 [Learn more about RasterX →](./rasterx)
 
@@ -35,15 +40,13 @@ Refactor and improvement of Mosaic raster functions. Product does not (yet) supp
 
 ![GridX](../../../resources/images/GridX.png)
 
-**Grid Indexing and Spatial Indexing**
+**Discrete Global Grids**
 
-Refactor of Mosaic discrete global grid indexing functions. Focus has been on porting BNG for Great Britain customers.
+Spatial indexing across multiple discrete-global-grid systems. Currently ships **BNG** (British National Grid) for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned analytics that compose with slippy-map tile pyramids.
 
-- British National Grid (BNG) support
-- Grid cell operations
-- Spatial indexing
-- Cell area calculations
-- Grid-based aggregations
+- British National Grid (BNG) — 21 functions covering cell math, kring/kloop, polyfill, tessellation, aggregators, and generators
+- CARTO Quadbin v0 — 9 functions (`pointascell`, `aswkb`, `centroid`, `resolution`, `polyfill`, `kring`, `tessellate`, `cellunion`, `distance`); cell IDs are 64-bit Long, aligned with the web-mercator XYZ tile grid
+- Cell area calculations, k-ring / k-loop neighborhoods, geometry-to-cell tessellation
 
 [Learn more about GridX →](./gridx)
 
@@ -55,42 +58,67 @@ Refactor of Mosaic discrete global grid indexing functions. Focus has been on po
 
 **Vector Data Operations**
 
-Refactor of select DBLabs Mosaic vector functions that augment existing product ST Geospatial Functions. Right now, this only includes a single function to handle updating existing Mosaic geometry data to those supported by product, so that users do not need to install (older) Mosaic in order to get to using the latest spatial features.
+Augments the Databricks product's built-in `ST_*` functions with vector-tile encoding and legacy-Mosaic migration helpers.
 
-- Legacy Mosaic geometry conversion
+- Mapbox Vector Tile (MVT) encoding via `st_asmvt` aggregator
+- Vector tile pyramid via `st_asmvt_pyramid` generator — composes with `pmtiles_agg` for end-to-end publishing
+- Legacy Mosaic geometry conversion (so users don't need to install Mosaic to migrate)
+- OGR-based reader data sources (Shapefile, GeoJSON, GeoPackage, FileGDB)
 
 [Learn more about VectorX →](./vectorx)
 
 ---
 
+### PMTiles
+
+**Tile Pyramid Packaging**
+
+A container format for serving raster (PNG / JPEG / WebP) or vector (MVT) tile pyramids from a single static file with HTTP range requests — replaces "directory of tiles" deployments. Native Scala v3 encoder, no GDAL/OGR dependency for the container itself.
+
+- `gbx_pmtiles_agg` UDAF — aggregator returning a `BINARY` PMTile blob; ideal for tilesets that fit in a Spark cell (≈100 MiB tile payload / 2 GiB cell limit)
+- `.write.format("pmtiles").save(path)` DataSource — streams larger pyramids to a file via a partitioned commit protocol
+- Auto-detects `tile_type` from magic bytes (PNG / JPEG / WebP / otherwise MVT) — content-agnostic
+- Composes with `gbx_rst_xyzpyramid` (raster) and `gbx_st_asmvt_pyramid` (vector) upstream
+
+[Learn more about PMTiles →](./pmtiles)
+
+---
+
 ## Package Comparison
 
-| Feature | RasterX | GridX | VectorX |
-|---------|---------|-------|---------|
-| **Primary Use** | Raster processing | Grid indexing | Vector operations |
-| **Product Gap** | Full gap-filling | Specialized grids | Legacy support |
-| **GDAL Required** | Yes | No | Yes (for readers) |
-| **Output Format** | Various | Numeric/String | WKB/WKT |
-| **Databricks Types** | Planned | N/A | Compatible |
+| Feature | RasterX | GridX | VectorX | PMTiles |
+|---------|---------|-------|---------|---------|
+| **Primary Use** | Raster processing | Discrete global grids | Vector encoding + legacy | Tile pyramid packaging |
+| **Product Gap** | Full gap-filling | Specialized grids (BNG, quadbin) | Vector-tile encoding, legacy migration | Net-new |
+| **GDAL Required** | Yes | No | Yes (for readers + MVT) | No |
+| **Output Format** | Tile (struct) + arrays | Cell IDs (Long / String) + WKB | BINARY (MVT bytes), WKB | BINARY (PMTile blob) or file |
+| **Spark Surface** | 65+ SQL functions | 30+ SQL functions | 3+ SQL functions + DataSources | 1 UDAF + 1 DataSource |
 
 ## Choosing the Right Package
 
 ### Use RasterX when:
-- Working with satellite imagery
-- Processing elevation models
-- Analyzing aerial photography
-- Performing raster analytics
-- Need to extract metadata from raster files
+- Working with satellite imagery, DEMs, or aerial photography
+- Performing terrain analysis, spectral indices, or per-pixel transforms
+- Aggregating raster pixels to H3 or quadbin cells for heatmaps
+- Bridging vector geometries to/from rasters
+- Generating web-mercator XYZ tiles for slippy-map publishing
 
 ### Use GridX when:
-- Working with British National Grid data
-- Need spatial indexing for UK datasets
-- Performing grid-based aggregations
-- Working with location-based services in Great Britain
-- Need to calculate grid cell properties
+- Working with British National Grid data (BNG)
+- Indexing global data into web-mercator-aligned quadbin cells
+- Need cell math (area, k-ring, polyfill, tessellation)
+- Building grid-aware aggregations or join keys
 
 ### Use VectorX when:
-- Migrating from DBLabs Mosaic
+- Encoding features as Mapbox Vector Tiles for web maps
+- Generating per-tile MVT layers from a feature collection
+- Reading vector formats (Shapefile, GeoJSON, GeoPackage, FileGDB)
+- Migrating from DBLabs Mosaic (legacy geometry conversion)
+
+### Use PMTiles when:
+- Publishing a tile pyramid (raster or vector) as a single static file
+- Serving from S3/ABFS/GCS without a tile server
+- Aggregating `(z, x, y, bytes)` rows into a deployable map
 
 ## Installation
 
@@ -118,9 +146,11 @@ Or register only what you need:
 
 All GeoBrix SQL functions are registered with a `gbx_` prefix for easy identification:
 
-- **RasterX**: `gbx_rst_*` (e.g., `gbx_rst_boundingbox`)
-- **GridX/BNG**: `gbx_bng_*` (e.g., `gbx_bng_cellarea`)
-- **VectorX**: `gbx_st_*` (e.g., `gbx_st_legacyaswkb`)
+- **RasterX**: `gbx_rst_*` (e.g., `gbx_rst_boundingbox`, `gbx_rst_slope`, `gbx_rst_rasterize`)
+- **GridX / BNG**: `gbx_bng_*` (e.g., `gbx_bng_cellarea`)
+- **GridX / Quadbin**: `gbx_quadbin_*` (e.g., `gbx_quadbin_pointascell`)
+- **VectorX**: `gbx_st_*` (e.g., `gbx_st_asmvt`, `gbx_st_legacyaswkb`)
+- **PMTiles**: `gbx_pmtiles_*` (e.g., `gbx_pmtiles_agg`)
 
 This naming convention makes it easy to:
 - Identify GeoBrix functions in your code
@@ -133,3 +163,4 @@ Explore each package in detail:
 - [RasterX Documentation](./rasterx)
 - [GridX Documentation](./gridx)
 - [VectorX Documentation](./vectorx)
+- [PMTiles Documentation](./pmtiles)

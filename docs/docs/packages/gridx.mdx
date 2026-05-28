@@ -11,18 +11,21 @@ import gridxScalaCode from '!!raw-loader!../../tests/scala/packages/GridxPackage
 ![GridX](../../../resources/images/GridX.png)
 
 :::tip Full API reference
-For the complete list of GridX (BNG) functions with parameters and examples, see the [GridX Function Reference](../api/gridx-functions).
+For the complete list of GridX functions with parameters and examples, see the [GridX Function Reference](../api/gridx-functions).
 :::
 
-GridX is GeoBrix's grid indexing package, providing discrete global grid indexing capabilities with a focus on the British National Grid (BNG) system.
+GridX is GeoBrix's discrete-global-grid indexing package. As of v0.4.0 it ships two grid systems: **British National Grid (BNG)** for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned global indexing.
 
-:::note Registration and import path
-GridX BNG functions are under **gridx.bng**. Use `gridx.bng` when importing from `databricks.labs.gbx.gridx.bng` (Python) or `com.databricks.labs.gbx.gridx.bng` (Scala).
+:::note Registration and import paths
+- BNG: `databricks.labs.gbx.gridx.bng` (Python) / `com.databricks.labs.gbx.gridx.bng` (Scala)
+- Quadbin: `databricks.labs.gbx.gridx.quadbin` (Python) / `com.databricks.labs.gbx.gridx.quadbin` (Scala)
+
+Use `RegisterBatch` with `functions=gridx.bng` or `functions=gridx.quadbin` to register just one subpackage, or `functions=all` for everything.
 :::
 
 ## Overview
 
-GridX is a refactor of Mosaic discrete global grid indexing functions. The current focus has been on porting BNG (British National Grid) for Great Britain customers, providing specialized grid operations for UK-based spatial data.
+GridX is a refactor of Mosaic discrete global grid indexing functions, extended in v0.4.0 with the CARTO quadbin v0 system. **BNG** provides specialized grid operations for UK-based spatial data (Ordnance Survey National Grid / OSGB36); **Quadbin** provides web-mercator-aligned cell IDs whose `(z, x, y)` align with the same XYZ tile grid that PMTiles / MVT readers consume — natural for slippy-map heatmaps and global analytics.
 
 ## British National Grid (BNG)
 

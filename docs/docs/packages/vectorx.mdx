@@ -11,13 +11,18 @@ import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.
 For the complete list of VectorX functions with parameters and examples, see the [VectorX Function Reference](../api/vectorx-functions).
 :::
 
-VectorX converts legacy DBLabs Mosaic geometry strings to Well-Known Binary (WKB) for use with Databricks spatial functions.
+VectorX augments the Databricks product's built-in `ST_*` functions with vector-tile encoding and legacy-Mosaic migration helpers. As of v0.4.0 it covers:
 
-:::note Import path
-Use `databricks.labs.gbx.vectorx.jts.legacy` (Python) or `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala).
+- **Vector tile encoding** — `gbx_st_asmvt` aggregator + `gbx_st_asmvt_pyramid` generator for publishing Mapbox Vector Tile (MVT) layers
+- **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB
+- **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for users migrating from DBLabs Mosaic
+
+:::note Import paths
+- Vector tile encoding: `databricks.labs.gbx.vectorx` (Python) / `com.databricks.labs.gbx.vectorx` (Scala)
+- Legacy Mosaic conversion: `databricks.labs.gbx.vectorx.jts.legacy` (Python) / `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala)
 :::
 
-## Example
+## Example: legacy Mosaic conversion
 
 Convert a legacy point to WKB (same example as [Quick Start](../quick-start)):
 
