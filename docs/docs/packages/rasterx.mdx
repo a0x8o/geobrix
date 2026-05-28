@@ -148,6 +148,25 @@ Most workflows start with `gbx_rst_to_webmercator` because rasters typically arr
                        single .pmtiles
 ```
 
+### Vector↔raster bridge
+
+GeoBrix bridges its vector and raster worlds with two reciprocal functions: `gbx_rst_rasterize` burns a vector geometry into a raster tile, and `gbx_rst_polygonize` extracts vector polygons from a raster's contiguous value regions.
+
+- `gbx_rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` — Burn `value` into all pixels covered by `geom_wkb`. Output is a GTiff-backed tile at the given extent and resolution; pixels outside the geometry receive the NoData sentinel (`-9999.0`, Float64).
+- `gbx_rst_polygonize(tile, [band, [connectedness]])` — Extract `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` from `tile`, one feature per connected component of equal pixel values. NoData pixels are excluded. `band` defaults to `1`; `connectedness` is `4` or `8` (default `4`).
+
+```sql
+-- Vector -> raster: burn a polygon into a 100x100 raster at extent (0,0)-(10,10) in EPSG:4326.
+SELECT gbx_rst_rasterize(polygon_wkb, 1.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326) AS tile
+FROM admin_boundaries;
+
+-- Raster -> vector: emit one feature per contiguous value region.
+SELECT explode(gbx_rst_polygonize(tile)) AS feature
+FROM rasterized_layers;
+```
+
+The pair composes — `polygonize(rasterize(geom, v, ...))` returns at least one feature with value `v` covering approximately the same area as the input `geom`, with edges quantized to the pixel grid. Use `gbx_rst_rasterize` to bring vector context into a raster pipeline (mask, weight, burn-in), and `gbx_rst_polygonize` to extract zones from classified or segmented rasters back into a vector workflow.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
