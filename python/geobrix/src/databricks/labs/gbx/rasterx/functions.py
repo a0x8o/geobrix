@@ -1824,12 +1824,8 @@ def rst_histogram(
         Column of ``MAP<STRING, ARRAY<LONG>>``.
     """
     nb_col = f.lit(256) if n_buckets is None else _col(n_buckets)
-    min_col = (
-        f.lit(None).cast("double") if min_val is None else _col(min_val)
-    )
-    max_col = (
-        f.lit(None).cast("double") if max_val is None else _col(max_val)
-    )
+    min_col = f.lit(None).cast("double") if min_val is None else _col(min_val)
+    max_col = f.lit(None).cast("double") if max_val is None else _col(max_val)
     inc_col = f.lit(False) if include_nodata is None else _col(include_nodata)
     return f.call_function(
         "gbx_rst_histogram", _col(tile), nb_col, min_col, max_col, inc_col
@@ -1853,7 +1849,9 @@ def rst_threshold(
         Single-band Float32 GTiff tile column with values 0 or 1.
     """
     op_col = (
-        f.lit(op) if isinstance(op, str) else _col(op) if op is not None else f.lit(None)
+        f.lit(op)
+        if isinstance(op, str)
+        else _col(op) if op is not None else f.lit(None)
     )
     return f.call_function("gbx_rst_threshold", _col(tile), op_col, _col(value))
 
@@ -1880,9 +1878,7 @@ def rst_buildoverviews(
     res_col = (
         f.lit("average")
         if resampling is None
-        else (
-            f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
-        )
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
     return f.call_function("gbx_rst_buildoverviews", _col(tile), _col(levels), res_col)
 
@@ -1898,3 +1894,166 @@ def rst_band(tile: ColLike, band_index: ColLike) -> Column:
         Single-band raster tile column.
     """
     return f.call_function("gbx_rst_band", _col(tile), _col(band_index))
+
+
+def rst_cog_convert(
+    tile: ColLike,
+    compression: Union[ColLike, None] = None,
+    blocksize: ColLike = None,
+    overview_resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Convert a raster tile to Cloud Optimized GeoTIFF (COG) layout.
+
+    Wraps ``gdal.Translate -of COG`` with the requested compression, internal
+    block size, and overview resampling. The result is still a GTiff on disk
+    (downstream ``metadata.driver`` reads ``GTiff``) but laid out so HTTP range
+    reads can extract regions or overview levels cheaply.
+
+    Args:
+        tile: Raster tile column.
+        compression: Pixel compression — one of ``NONE``, ``DEFLATE``, ``LZW``,
+            ``ZSTD``, ``LERC``, ``JPEG``, ``WEBP``. Default ``"DEFLATE"``.
+            String literals auto-wrapped via ``f.lit``.
+        blocksize: Internal tile size in pixels (square). Default ``512``.
+        overview_resampling: Downsampling algorithm for the overview pyramid —
+            one of ``NEAREST``, ``AVERAGE``, ``GAUSS``, ``CUBIC``, ``CUBICSPLINE``,
+            ``LANCZOS``, ``BILINEAR``, ``MODE``. Default ``"AVERAGE"``.
+
+    Returns:
+        COG-laid-out raster tile column.
+    """
+    comp_col = (
+        f.lit("DEFLATE")
+        if compression is None
+        else (f.lit(compression) if isinstance(compression, str) else _col(compression))
+    )
+    bs_col = f.lit(512) if blocksize is None else _col(blocksize)
+    or_col = (
+        f.lit("AVERAGE")
+        if overview_resampling is None
+        else (
+            f.lit(overview_resampling)
+            if isinstance(overview_resampling, str)
+            else _col(overview_resampling)
+        )
+    )
+    return f.call_function("gbx_rst_cog_convert", _col(tile), comp_col, bs_col, or_col)
+
+
+def rst_proximity(
+    tile: ColLike,
+    target_values: Union[ColLike, None] = None,
+    distunits: Union[ColLike, None] = None,
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a proximity raster: each pixel = distance to nearest source pixel.
+
+    Wraps ``gdal.ComputeProximity``. The output preserves the source extent /
+    CRS / GeoTransform; pixel dtype is Float32. Pixels beyond ``max_distance``
+    or with no source in range get the output's NoData value (``-1.0``).
+
+    Args:
+        tile: Raster tile column.
+        target_values: Optional comma-separated list of source-pixel values to
+            measure distance to (e.g. ``"1,2,3"``). ``None`` = any non-NoData
+            pixel is a target.
+        distunits: ``"GEO"`` (CRS ground units, default) or ``"PIXEL"``.
+        max_distance: Optional cap on output distance (in the same units as
+            ``distunits``). ``None`` = unlimited.
+
+    Returns:
+        Float32 proximity raster tile column.
+    """
+    tv_col = (
+        f.lit(None).cast("string")
+        if target_values is None
+        else (
+            f.lit(target_values)
+            if isinstance(target_values, str)
+            else _col(target_values)
+        )
+    )
+    du_col = (
+        f.lit("GEO")
+        if distunits is None
+        else (f.lit(distunits) if isinstance(distunits, str) else _col(distunits))
+    )
+    md_col = f.lit(None).cast("double") if max_distance is None else _col(max_distance)
+    return f.call_function("gbx_rst_proximity", _col(tile), tv_col, du_col, md_col)
+
+
+def rst_contour(
+    tile: ColLike,
+    levels: ColLike,
+    interval: ColLike = None,
+    base: ColLike = None,
+    attr_field: Union[ColLike, None] = None,
+) -> Column:
+    """Generate contour LineStrings from a raster as ``ARRAY<struct(geom_wkb, value)>``.
+
+    Wraps ``gdal.ContourGenerateEx``. Supply EITHER a non-empty ``levels`` array
+    (explicit contour values) OR ``interval`` (equal-step contours at
+    ``base + n*interval``). Pass ``levels=array()`` to use interval mode.
+
+    Args:
+        tile: Raster tile column.
+        levels: ``ARRAY<DOUBLE>`` of explicit contour values; empty -> use
+            ``interval``.
+        interval: Step between contours; ignored if ``levels`` is non-empty.
+        base: Contour base value; only meaningful with ``interval``. Default 0.
+        attr_field: Internal OGR field name carrying the contour value
+            (default ``"elev"``). Read back via the ``value`` member of each
+            output struct.
+
+    Returns:
+        Column of ``ARRAY<struct(geom_wkb BINARY, value DOUBLE)>``.
+    """
+    int_col = f.lit(0.0) if interval is None else _col(interval)
+    base_col = f.lit(0.0) if base is None else _col(base)
+    af_col = (
+        f.lit("elev")
+        if attr_field is None
+        else (f.lit(attr_field) if isinstance(attr_field, str) else _col(attr_field))
+    )
+    return f.call_function(
+        "gbx_rst_contour", _col(tile), _col(levels), int_col, base_col, af_col
+    )
+
+
+def rst_viewshed(
+    tile: ColLike,
+    observer_geom: ColLike,
+    observer_height: ColLike,
+    target_height: ColLike = None,
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a binary viewshed raster from a DEM and an observer POINT.
+
+    Wraps ``gdal.ViewshedGenerate``. Output is a Byte raster matching the
+    source extent / CRS: visible pixels = ``255``, invisible / out-of-range
+    pixels = ``0``. Non-POINT ``observer_geom`` is rejected at runtime.
+
+    Args:
+        tile: Single-band DEM raster tile column.
+        observer_geom: Observer POINT — WKB ``bytes`` or WKT ``string`` column.
+            Coordinates must be in the raster's CRS.
+        observer_height: Observer height above DEM at the observer pixel
+            (e.g. eye height + tower height).
+        target_height: Target height above DEM at each tested pixel.
+            Default ``1.6`` (~average eye height).
+        max_distance: Optional clipping distance in CRS units; ``None`` =
+            unlimited (only bounded by raster extent).
+
+    Returns:
+        Byte raster tile column (0 / 255).
+    """
+    th_col = f.lit(1.6) if target_height is None else _col(target_height)
+    md_col = f.lit(None).cast("double") if max_distance is None else _col(max_distance)
+    return f.call_function(
+        "gbx_rst_viewshed",
+        _col(tile),
+        _col(observer_geom),
+        _col(observer_height),
+        th_col,
+        md_col,
+    )
