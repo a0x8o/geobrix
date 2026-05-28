@@ -1220,7 +1220,11 @@ def rst_slope(
     Returns:
         Single-band Float32 GTiff tile column.
     """
-    unit_col = f.lit("degrees") if unit is None else (f.lit(unit) if isinstance(unit, str) else _col(unit))
+    unit_col = (
+        f.lit("degrees")
+        if unit is None
+        else (f.lit(unit) if isinstance(unit, str) else _col(unit))
+    )
     scale_col = f.lit(1.0) if scale is None else _col(scale)
     return f.call_function("gbx_rst_slope", _col(tile), unit_col, scale_col)
 
@@ -1334,5 +1338,9 @@ def rst_color_relief(
     Returns:
         3- or 4-band Byte GTiff tile column (RGB or RGBA).
     """
-    ctp_col = f.lit(color_table_path) if isinstance(color_table_path, str) else _col(color_table_path)
+    ctp_col = (
+        f.lit(color_table_path)
+        if isinstance(color_table_path, str)
+        else _col(color_table_path)
+    )
     return f.call_function("gbx_rst_color_relief", _col(tile), ctp_col)

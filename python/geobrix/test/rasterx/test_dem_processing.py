@@ -21,7 +21,9 @@ candidates = sorted(LIBDIR.glob("geobrix-*-jar-with-dependencies.jar"))
 JAR = candidates[-1].resolve()
 
 # An SRTM elevation tile shipped in the essential sample-data bundle.
-SRTM_PATH = "/Volumes/main/default/test-data/geobrix-examples/london/elevation/srtm_n51w001.tif"
+SRTM_PATH = (
+    "/Volumes/main/default/test-data/geobrix-examples/london/elevation/srtm_n51w001.tif"
+)
 
 
 @pytest.fixture(scope="module")
@@ -47,11 +49,7 @@ def color_table_path():
     """Write a tiny gdaldem color table covering elevations 0..1500 m."""
     fd, path = tempfile.mkstemp(prefix="gbx_dem_color_", suffix=".txt")
     os.close(fd)
-    Path(path).write_text(
-        "0 0 0 255\n"
-        "500 0 255 0\n"
-        "1500 255 0 0\n"
-    )
+    Path(path).write_text("0 0 0 255\n" "500 0 255 0\n" "1500 255 0 0\n")
     yield path
     try:
         os.unlink(path)
