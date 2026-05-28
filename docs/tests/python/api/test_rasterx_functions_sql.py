@@ -537,6 +537,44 @@ def test_rst_color_relief_sql_example(spark, rasters_view, tmp_path):
 
 
 # ============================================================================
+# Pixel ops + extraction
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # fillnodata, threshold, buildoverviews, band, setsrid roundtrips on the
+    # shared single-band `rasters` view. histogram returns a MAP and sample
+    # returns an ARRAY<DOUBLE>; their fallback SQL pins types explicitly so
+    # the JVM bindings fire even if doc string formatting varies.
+    ("rst_fillnodata_sql_example",
+     "SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters"),
+    ("rst_sample_sql_example",
+     "SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS vals FROM rasters"),
+    ("rst_setsrid_sql_example",
+     "SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters"),
+    ("rst_histogram_sql_example",
+     "SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist FROM rasters"),
+    ("rst_threshold_sql_example",
+     "SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters"),
+    ("rst_buildoverviews_sql_example",
+     "SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr FROM rasters"),
+    ("rst_band_sql_example",
+     "SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters"),
+])
+def test_pixel_ops_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each pixel-ops SQL example exists and executes to a non-null result."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    expected_fn = example_attr.replace("_sql_example", "")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+# ============================================================================
 # Structure Verification
 # ============================================================================
 

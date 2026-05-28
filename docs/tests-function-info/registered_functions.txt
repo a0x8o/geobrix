@@ -93,6 +93,13 @@ gbx_rst_gridfrompoints_agg
 gbx_rst_resample
 gbx_rst_resample_to_res
 gbx_rst_resample_to_size
+gbx_rst_band
+gbx_rst_buildoverviews
+gbx_rst_fillnodata
+gbx_rst_histogram
+gbx_rst_sample
+gbx_rst_setsrid
+gbx_rst_threshold
 gbx_bng_aswkb
 gbx_bng_aswkt
 gbx_bng_cellarea

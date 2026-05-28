@@ -1929,3 +1929,125 @@ rst_gridfrompoints_agg_sql_example_output = """
 |...      |...|
 +---------+---+
 """
+
+
+def rst_fillnodata_sql_example():
+    """Interpolate NoData pixels from valid neighbours via gdal.FillNodata."""
+    return """
+-- Fill NoData holes searching up to 100 pixels in each direction.
+SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters;
+"""
+
+
+rst_fillnodata_sql_example_output = """
++------+
+|filled|
++------+
+|...   |
++------+
+"""
+
+
+def rst_sample_sql_example():
+    """Sample raster pixel values at a POINT geometry (one Double per band)."""
+    return """
+-- Sample at a known lon/lat (point must be in the raster's CRS).
+SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS values FROM rasters;
+"""
+
+
+rst_sample_sql_example_output = """
++------+
+|values|
++------+
+|...   |
++------+
+"""
+
+
+def rst_setsrid_sql_example():
+    """Re-stamp the raster's spatial-reference header to the given EPSG code."""
+    return """
+-- Tag the tile as EPSG:4326 without warping pixels.
+-- Use rst_transform if you actually need a reprojection.
+SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters;
+"""
+
+
+rst_setsrid_sql_example_output = """
++------+
+|tagged|
++------+
+|...   |
++------+
+"""
+
+
+def rst_histogram_sql_example():
+    """Per-band pixel histogram as MAP<STRING, ARRAY<LONG>>."""
+    return """
+-- 16 equal-width buckets over [0, 1000]; one entry per band keyed band_<i>.
+SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist
+FROM rasters;
+"""
+
+
+rst_histogram_sql_example_output = """
++----+
+|hist|
++----+
+|... |
++----+
+"""
+
+
+def rst_threshold_sql_example():
+    """Binarise a raster: (pixel > value) -> 1, else 0."""
+    return """
+-- Mark all pixels above 100 m as 1, others as 0.
+SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;
+"""
+
+
+rst_threshold_sql_example_output = """
++----+
+|mask|
++----+
+|... |
++----+
+"""
+
+
+def rst_buildoverviews_sql_example():
+    """Build internal overviews (image pyramid) on a raster tile."""
+    return """
+-- Add 2x / 4x overviews to the tile via the 'average' resampling.
+SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr
+FROM rasters;
+"""
+
+
+rst_buildoverviews_sql_example_output = """
++-------+
+|withovr|
++-------+
+|...    |
++-------+
+"""
+
+
+def rst_band_sql_example():
+    """Extract a single band as a new single-band tile."""
+    return """
+-- Pull band 1 (1-based) as a fresh single-band tile.
+SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters;
+"""
+
+
+rst_band_sql_example_output = """
++---+
+|b1 |
++---+
+|...|
++---+
+"""
