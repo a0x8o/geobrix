@@ -214,7 +214,7 @@ SELECT
 FROM landsat_l2;
 ```
 
-The existing `gbx_rst_ndvi(tile, red_idx, nir_idx)` from the v0.1 baseline keeps its specialized gdal_calc path; the Wave 8b dispatcher's `'ndvi'` formula is numerically identical and exists so the generic API surfaces NDVI alongside the other named indices.
+The existing `gbx_rst_ndvi(tile, red_idx, nir_idx)` from the v0.1 baseline keeps its specialized gdal_calc path; the `gbx_rst_index(tile, 'ndvi', band_map)` dispatcher's NDVI formula is numerically identical and exists so the generic API surfaces NDVI alongside the other named indices.
 
 ## Tile payload
 
