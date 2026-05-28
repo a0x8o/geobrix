@@ -76,6 +76,13 @@ gbx_rst_to_webmercator
 gbx_rst_xyzpyramid
 gbx_rst_polygonize
 gbx_rst_rasterize
+gbx_rst_aspect
+gbx_rst_color_relief
+gbx_rst_hillshade
+gbx_rst_roughness
+gbx_rst_slope
+gbx_rst_tpi
+gbx_rst_tri
 gbx_bng_aswkb
 gbx_bng_aswkt
 gbx_bng_cellarea

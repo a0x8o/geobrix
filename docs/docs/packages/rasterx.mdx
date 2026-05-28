@@ -167,6 +167,32 @@ FROM rasterized_layers;
 
 The pair composes — `polygonize(rasterize(geom, v, ...))` returns at least one feature with value `v` covering approximately the same area as the input `geom`, with edges quantized to the pixel grid. Use `gbx_rst_rasterize` to bring vector context into a raster pipeline (mask, weight, burn-in), and `gbx_rst_polygonize` to extract zones from classified or segmented rasters back into a vector workflow.
 
+### Terrain analysis
+
+GeoBrix wraps GDAL's `DEMProcessing` family so you can derive slope, aspect, hillshade, ruggedness, and color-relief layers directly from a digital-elevation-model (DEM) tile. Each function takes a single-band DEM tile in and returns a single derived tile out — the same Spark-tile shape as the rest of RasterX, so downstream pipelines (clip, retile, web-mercator, raster-to-grid, etc.) compose without an explicit materialization step.
+
+- `gbx_rst_slope(tile, [unit, [scale]])` — Slope per pixel. `unit` is `"degrees"` (default) or `"percent"`. `scale` is a vertical exaggeration factor (default `1.0`; use `111120` for an unprojected lon/lat DEM in degrees). Output is single-band Float32.
+- `gbx_rst_aspect(tile, [trigonometric, [zero_for_flat]])` — Compass direction of the slope. `trigonometric=false` (default) gives 0..360 measured clockwise from north; `true` gives counterclockwise from east. `zero_for_flat=false` (default) marks flat areas with `-9999`; `true` writes `0`. Output is single-band Float32.
+- `gbx_rst_hillshade(tile, [azimuth, [altitude, [z_factor]]])` — Shaded-relief image. Defaults match the gdaldem convention: `azimuth=315.0` (NW sun), `altitude=45.0` (45° above horizon), `z_factor=1.0`. Output is single-band Byte (0..255).
+- `gbx_rst_tri(tile)` — Terrain Ruggedness Index: mean absolute difference between a pixel and its 8 neighbours. Useful for landscape ecology and habitat analysis. Output is single-band Float32.
+- `gbx_rst_tpi(tile)` — Topographic Position Index: difference between a pixel's elevation and the mean of its 8 neighbours. Positive values identify ridges/peaks, negative values valleys. Output is single-band Float32.
+- `gbx_rst_roughness(tile)` — Largest inter-cell elevation difference in a 3×3 window. Output is single-band Float32.
+- `gbx_rst_color_relief(tile, color_table_path)` — Apply a gdaldem color table (path on a Volume / local FS) to map elevations to RGB(A) byte values. Each table line is `elevation R G B [A]`; special values `nv`, `default`, `0%`, `100%` are accepted. Output is 3- or 4-band Byte.
+
+```sql
+-- Stack of derived layers from a single DEM tile.
+SELECT
+    gbx_rst_slope(tile, 'degrees', 1.0)         AS slope,
+    gbx_rst_aspect(tile, false, false)          AS aspect,
+    gbx_rst_hillshade(tile, 315.0, 45.0, 1.0)   AS hillshade,
+    gbx_rst_tri(tile)                           AS tri,
+    gbx_rst_tpi(tile)                           AS tpi,
+    gbx_rst_roughness(tile)                     AS roughness
+FROM dem_tiles;
+```
+
+All seven are thin wrappers over `gdal.DEMProcessing` — same options, same numerical results as the gdaldem CLI. They are the foundation for terrain-derived workflows such as solar exposure, viewshed pre-processing, watershed analysis, runoff modelling and road grading.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
