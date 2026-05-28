@@ -256,6 +256,44 @@ GROUP BY region_id;
 
 The resample family is a thin wrapper over `gdal.Warp` (passing `-tr` or `-ts` plus `-r <algorithm>`); the IDW pair is a thin wrapper over `gdal.Grid` with the `invdist:power=<p>:max_points=<m>` algorithm. The aggregator and non-aggregator share the same compute path — only the input shape differs.
 
+### Pixel ops + extraction
+
+Seven thin GDAL wrappers covering common per-pixel and per-tile primitives missing from the earlier waves.
+
+- `gbx_rst_fillnodata(tile, [max_search_dist, [smoothing_iter]])` — interpolate NoData pixels from valid neighbours via `gdal.FillNodata`. `max_search_dist` (default `100.0`) caps how far the algorithm searches for fill candidates; `smoothing_iter` (default `0`) runs that many 3×3 smoothing passes after the fill. Each band is filled independently using its declared NoData value.
+- `gbx_rst_sample(tile, geom)` — sample raster pixel values at a POINT geometry; returns `ARRAY<DOUBLE>` with one value per band, or `null` for points outside the raster extent. The point coordinates must be in the raster's CRS (no implicit reprojection — wrap the input in `gbx_rst_transform` if you need it). POLYGON / LINESTRING are rejected up front.
+- `gbx_rst_setsrid(tile, srid)` — rewrite the raster's spatial-reference header to the given EPSG code **without** warping pixels. Use when the source lost or has wrong CRS metadata but the pixel grid is already aligned with the target CRS. For actual reprojection (with pixel-grid warp), use `gbx_rst_transform`.
+- `gbx_rst_histogram(tile, [n_buckets, [min, [max, [include_nodata]]]])` → `MAP<STRING, ARRAY<LONG>>` keyed by `"band_<i>"` (1-based). `n_buckets` defaults to `256`; `min` / `max` default to per-band statistics if not supplied (passing them explicitly lets the caller align histograms across tiles for comparable distributions). Pixels outside `[min, max]` are excluded.
+- `gbx_rst_threshold(tile, op, value)` — binarise a raster: every pixel matching `pixel <op> value` becomes `1`, every other valid pixel becomes `0`. `op` is one of `>`, `>=`, `<`, `<=`, `==`, `!=`. Output is a single-band Float32 GTiff sized to the input extent; built on `gbx_rst_mapalgebra`.
+- `gbx_rst_buildoverviews(tile, levels, [resampling])` — build internal overviews (image pyramid) on the tile via `Dataset.BuildOverviews`. `levels` is an `ARRAY<INT>` of downsampling factors (e.g. `array(2, 4, 8, 16)`). `resampling` defaults to `"average"`; allowed values are the gdaladdo set (`nearest`, `average`, `rms`, `gauss`, `cubic`, `cubicspline`, `lanczos`, `bilinear`, `mode`, `none`). Use this before tile-server publishing or `gdal_translate -of COG` so the zoom pyramid is pre-computed.
+- `gbx_rst_band(tile, band_index)` — extract a single band as a new single-band tile (`gdal.Translate -b <i>`). 1-based band index. Source CRS, GeoTransform, and pixel values are preserved; only the band count is reduced to 1.
+
+```sql
+-- Fill NoData holes and build an overview pyramid in one chain.
+SELECT
+    gbx_rst_buildoverviews(
+        gbx_rst_fillnodata(tile, 100.0, 0),
+        array(2, 4, 8),
+        'average'
+    ) AS prepped
+FROM dems;
+
+-- Sample elevations at a set of survey points.
+SELECT survey_id,
+       gbx_rst_sample(tile, geom)[0] AS elevation
+FROM dem_join_points;
+
+-- Per-tile elevation histogram, 16 buckets over [0, 1000] m.
+SELECT tile_id,
+       gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist
+FROM dems;
+
+-- Binary mask of "above 100 m" — single-band Float32, 0 / 1.
+SELECT gbx_rst_threshold(tile, '>', 100.0) AS above_100m FROM dems;
+```
+
+`gbx_rst_setsrid` is the cheap "fix a wrong CRS header" — `gbx_rst_transform` is the actual reprojection (it warps pixels). Pick the former when you know the underlying pixel grid is correct but the metadata is missing or wrong; pick the latter when you need to change the coordinate system.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
