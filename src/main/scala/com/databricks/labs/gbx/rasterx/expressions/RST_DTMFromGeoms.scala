@@ -7,7 +7,8 @@ package com.databricks.labs.gbx.rasterx.expressions
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import com.databricks.labs.gbx.rasterx.operations.{GDALRasterize, InterpolateElevation}
-import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, RasterSerializationUtil}
+import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, RasterSerializationUtil, VectorRasterBridge}
+import com.databricks.labs.gbx.util.SerializationUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
@@ -15,7 +16,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
-import org.locationtech.jts.geom.LineString
+import org.locationtech.jts.geom.{Geometry, LineString}
 
 case class RST_DTMFromGeoms(
     pointsArray: Expression,
@@ -109,6 +110,67 @@ object RST_DTMFromGeoms extends WithExpressionInfo {
           pointsArray, // TODO: this will need fixing
           StringType
         )
+
+    /** Pure compute path shared by the non-agg expression and the aggregator.
+     *  Builds a constrained-Delaunay TIN from `points` (+ optional `breaklines`),
+     *  interpolates Z at the bbox cell centers, and writes a single-band Float64
+     *  GTiff tile. Cells outside the triangulated hull are `noData`.
+     */
+    def execute(
+        points: Seq[Geometry],
+        breaklines: Seq[LineString],
+        mergeTolerance: Double,
+        snapTolerance: Double,
+        xmin: Double, ymin: Double, xmax: Double, ymax: Double,
+        widthPx: Int, heightPx: Int, srid: Int,
+        noData: Double
+    ): InternalRow = {
+        // Materialize rootPath defensively
+        import com.databricks.labs.gbx.util.NodeFilePathUtil
+        java.nio.file.Files.createDirectories(NodeFilePathUtil.rootPath)
+        require(widthPx > 0,  s"rst_dtmfromgeoms: width_px must be positive; got $widthPx")
+        require(heightPx > 0, s"rst_dtmfromgeoms: height_px must be positive; got $heightPx")
+        require(xmax > xmin,  s"rst_dtmfromgeoms: xmax ($xmax) must be > xmin ($xmin)")
+        require(ymax > ymin,  s"rst_dtmfromgeoms: ymax ($ymax) must be > ymin ($ymin)")
+        require(points.nonEmpty, "rst_dtmfromgeoms: at least one point is required")
+
+        val mp = JTS.multiPoint(points.toArray)
+        mp.setSRID(srid)
+        val grid = InterpolateElevation.pointGridBBox(xmin, ymin, xmax, ymax, widthPx, heightPx, srid)
+        val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid, mergeTolerance, snapTolerance)
+
+        val ds = VectorRasterBridge.buildEmptyRaster(xmin, ymin, xmax, ymax, widthPx, heightPx, srid, noData)
+        try {
+            val xRes = (xmax - xmin) / widthPx
+            val yRes = (ymax - ymin) / heightPx
+            val arr = Array.fill[Double](widthPx * heightPx)(noData)
+            interpolated.foreach { p =>
+                val col = math.floor((p.getX - xmin) / xRes).toInt
+                val r   = math.floor((ymax - p.getY) / yRes).toInt
+                if (col >= 0 && col < widthPx && r >= 0 && r < heightPx) {
+                    arr(r * widthPx + col) = p.getCoordinate.getZ
+                }
+            }
+            ds.GetRasterBand(1).WriteRaster(0, 0, widthPx, heightPx, arr)
+            ds.FlushCache()
+            tileRow(VectorRasterBridge.toGTiffBytes(ds))
+        } finally {
+            ds.delete()
+        }
+    }
+
+    /** Build the (index_id, raster, metadata) tile row downstream serializers expect. */
+    def tileRow(bytes: Array[Byte]): InternalRow = {
+        val mtd = Map(
+            "driver" -> "GTiff",
+            "extension" -> "tif",
+            "size" -> bytes.length.toString,
+            "parentPath" -> "",
+            "all_parents" -> "",
+            "last_command" -> "gbx_rst_dtmfromgeoms"
+        )
+        InternalRow.fromSeq(Seq(0L, bytes, SerializationUtil.toMapData[String, String](mtd)))
+    }
 
     override def name: String = "gbx_rst_dtmfromgeoms"
 
