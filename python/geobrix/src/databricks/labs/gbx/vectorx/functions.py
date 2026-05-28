@@ -5,8 +5,8 @@ Thin wrappers around GeoBrix Scala functions (``gbx_st_*``). Register with
 descriptions and examples, see the API docs or SQL:
   DESCRIBE FUNCTION EXTENDED gbx_st_<name>;
 
-As of v0.4.0 this package exposes a single expression-level function — the
-``gbx_st_asmvt`` MVT aggregator. Subsequent waves add more.
+As of v0.4.0 this package exposes the ``gbx_st_asmvt`` MVT aggregator and
+``gbx_st_asmvt_pyramid`` MVT pyramid generator. Subsequent waves add more.
 
 Arg types: every wrapper accepts either a pyspark ``Column`` or a plain
 Python scalar. Non-string scalars (``bool``/``int``/``float``/``bytes``) are
@@ -68,4 +68,52 @@ def st_asmvt(geom_wkb: ColLike, attrs: ColLike, layer_name: ColLike) -> Column:
         layer_name = f.lit(layer_name)
     return f.call_function(
         "gbx_st_asmvt", _col(geom_wkb), _col(attrs), _col(layer_name)
+    )
+
+
+def st_asmvt_pyramid(
+    geom_wkb: ColLike,
+    attrs: ColLike,
+    min_z: ColLike,
+    max_z: ColLike,
+    layer_name: Union[ColLike, None] = None,
+    extent: Union[ColLike, None] = None,
+) -> Column:
+    """Generator: emit one row per intersecting ``(z, x, y)`` tile across ``[min_z, max_z]``.
+
+    Per-row output column is a struct
+    ``tile: STRUCT<z INT, x INT, y INT, mvt_bytes BINARY>``. Invoke directly in
+    ``select(...)`` (top-level generator, do not wrap in ``F.explode``).
+
+    Inputs are assumed in EPSG:4326 lon/lat. Per-tile clip + MVT encode happen
+    in the helper; the row output is ready to feed into ``gbx_pmtiles_agg`` for
+    end-to-end vector publishing. ``max_z`` capped at 20; total tile-count
+    across the requested zoom range capped at 10^6.
+
+    Args:
+        geom_wkb:   Per-feature geometry in WKB (BINARY) column.
+        attrs:      Per-feature attribute struct column (all fields stringified in v0.4.0).
+        min_z:      Inclusive minimum zoom level.
+        max_z:      Inclusive maximum zoom level (<= 20).
+        layer_name: Constant MVT layer name. Pass a plain ``str`` for a literal
+                    layer name (auto-wrapped with ``f.lit``).
+        extent:     MVT tile extent in pixels (default 4096).
+
+    Returns:
+        Generator Column producing one row per intersecting tile.
+    """
+    layer_name_col = (
+        f.lit("layer")
+        if layer_name is None
+        else (f.lit(layer_name) if isinstance(layer_name, str) else _col(layer_name))
+    )
+    extent_col = f.lit(4096) if extent is None else _col(extent)
+    return f.call_function(
+        "gbx_st_asmvt_pyramid",
+        _col(geom_wkb),
+        _col(attrs),
+        _col(min_z),
+        _col(max_z),
+        layer_name_col,
+        extent_col,
     )

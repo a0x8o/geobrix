@@ -34,10 +34,16 @@ def _register_all(spark):
     except Exception as e:
         raise RuntimeError("Failed to register GridX Quadbin") from e
     try:
-        from databricks.labs.gbx.vectorx.jts.legacy import functions as vx
+        from databricks.labs.gbx.vectorx.jts.legacy import functions as vx_legacy
+        vx_legacy.register(spark)
+    except Exception as e:
+        raise RuntimeError("Failed to register VectorX legacy") from e
+    try:
+        # Main VectorX module (gbx_st_asmvt + gbx_st_asmvt_pyramid).
+        from databricks.labs.gbx.vectorx import functions as vx
         vx.register(spark)
     except Exception as e:
-        raise RuntimeError("Failed to register VectorX") from e
+        raise RuntimeError("Failed to register VectorX expressions") from e
 
 
 @pytest.fixture(scope="session")

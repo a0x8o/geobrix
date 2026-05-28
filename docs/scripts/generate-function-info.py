@@ -94,7 +94,22 @@ def _collect_from_module(
     fills entries for all matching registered names.
     When registered_for_package is None (legacy): one Python function maps to one
     derived spark name as before.
+
+    Pre-pass: determine which registered names have a *dedicated* example function
+    (Python `<name>_sql_example` whose derived spark name equals the registered name).
+    Substring fallback during the main pass NEVER overrides those — so e.g.
+    `gbx_st_asmvt` and `gbx_st_asmvt_pyramid` each bind to their own example.
     """
+    # Pre-pass: collect the set of exact spark targets each *_sql_example function aims at.
+    dedicated_targets = set()
+    for attr in dir(mod):
+        if not attr.endswith("_sql_example") or not attr.startswith(local_prefix):
+            continue
+        if not callable(getattr(mod, attr)):
+            continue
+        middle = attr[: -len("_sql_example")]
+        dedicated_targets.add(spark_prefix + middle[len(local_prefix):])
+
     result = {}
     for attr in dir(mod):
         if not attr.endswith("_sql_example"):
@@ -117,10 +132,21 @@ def _collect_from_module(
             stmt = first_statement_containing(sql, spark_prefix)
             if not stmt:
                 continue
-            # Assign this example to every registered function that appears in the statement
+            # Determine this example function's "exact target" spark name (e.g.
+            # st_asmvt_pyramid_sql_example -> gbx_st_asmvt_pyramid). Substring matches
+            # against OTHER registered names are tolerated as a fallback (e.g.
+            # gbx_bng_cellunion inherits the gbx_bng_cellunion_agg example because there
+            # is no dedicated cellunion_sql_example), but a name that DOES have its own
+            # dedicated example function never picks up another's example as substring.
+            middle = attr[: -len("_sql_example")]
+            exact_target = spark_prefix + middle[len(local_prefix):]
             for name in registered_for_package:
-                if name in stmt and name not in result:
-                    result[name] = {"examples": format_examples_block(stmt).strip()}
+                if name not in stmt or name in result:
+                    continue
+                if name != exact_target and name in dedicated_targets:
+                    # `name` has its own *_sql_example — skip this substring spillover.
+                    continue
+                result[name] = {"examples": format_examples_block(stmt).strip()}
         else:
             middle = attr[: -len("_sql_example")]
             spark_name = spark_prefix + middle[len(local_prefix) :]
