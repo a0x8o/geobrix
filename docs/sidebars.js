@@ -50,6 +50,7 @@ const sidebars = {
         'packages/rasterx',
         'packages/gridx',
         'packages/vectorx',
+        'packages/pmtiles',
       ],
     },
     {
@@ -79,6 +80,7 @@ const sidebars = {
           items: [
             'writers/overview',
             'writers/gdal',
+            'writers/pmtiles',
           ],
         },
       ],
@@ -98,6 +100,7 @@ const sidebars = {
             'api/rasterx-functions',
             'api/gridx-functions',
             'api/vectorx-functions',
+            'api/pmtiles-functions',
           ],
         },
         'api/scala',
