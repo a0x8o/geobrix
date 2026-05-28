@@ -59,13 +59,13 @@ Default Maven profile is **`skipScoverage`** for fast compile/test (`mvn clean p
 
 ## Commands (the `gbx:*` palette)
 
-The repo has **49 `gbx:*` commands** in `scripts/commands/` (each is a `.md` registration + a `.sh` implementation). They handle Docker setup, env vars, log paths (`--log filename` → `test-logs/filename`), and profile selection. Originally registered for Cursor's command palette (hence the `.md` files), they're now invoked directly from any shell or via the Task tool.
+The repo has **50 `gbx:*` commands** in `scripts/commands/` (each is a `.md` registration + a `.sh` implementation). They handle Docker setup, env vars, log paths (`--log filename` → `test-logs/filename`), and profile selection. Originally registered for Cursor's command palette (hence the `.md` files), they're now invoked directly from any shell or via the Task tool.
 
 **If a command fails, fix the command** — do not work around it. The commands are the canonical entry points; ad-hoc shell invocations diverge over time.
 
 Most-used commands by category:
 
-- **Tests**: `gbx:test:scala`, `gbx:test:python`, `gbx:test:scala-docs`, `gbx:test:python-docs`, `gbx:test:sql-docs`, `gbx:test:docs` (all), `gbx:test:function-info`, `gbx:test:notebooks`
+- **Tests**: `gbx:test:scala`, `gbx:test:python`, `gbx:test:scala-docs`, `gbx:test:python-docs`, `gbx:test:sql-docs`, `gbx:test:docs` (all), `gbx:test:function-info`, `gbx:test:notebooks`, `gbx:test:bindings`
   - Single Scala suite: `gbx:test:scala --suite 'com.databricks.labs.gbx.gridx.*'` or `--suites 'A,B'`
   - Single Python path: `gbx:test:python --path python/geobrix/test/rasterx/`
 - **Coverage**: `gbx:coverage:scala-package <pkg>` (1–3 min, use during dev), `gbx:coverage:gaps` (fast, uses existing data), `gbx:coverage:baseline` (weekly, ~10 min). Full `gbx:coverage:scala` runs ~10 min — use `--parallel` or `--report-only` to speed up.
@@ -96,6 +96,7 @@ Test function:    test_<component>_<op>       (e.g. test_bng_eastnorthasbng)
 - Use `_geom` not `_geometry` (e.g. `bng_geomkring`, not `bng_geometrykring`).
 - Keep `_agg` suffix for aggregators (aligns with Databricks geospatial docs).
 - Quick check: `grep -r "def bng_" python/geobrix/src/` should match `grep -r "gbx_bng_" src/main/scala/.../register`.
+- **Binding parity is enforced.** `gbx:test:bindings` (→ `docs/scripts/check-binding-parity.py`) asserts every name in `registered_functions.txt` exists as a Scala `override def name` literal, a Python `functions.py` binding, and a `function-info.json` key — a function missing from any binding fails (it would surface at runtime as `UNRESOLVED_ROUTINE`). The QC judge runs this on every push via the `binding-parity` command check in `.claude/qc-judge/config.json`. When adding a function, add all three bindings, not just the canonical list.
 
 ### BNG resolution
 
