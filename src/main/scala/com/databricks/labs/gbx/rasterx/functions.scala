@@ -4,6 +4,7 @@ import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_MergeAgg}
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
+import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
 import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
@@ -129,6 +130,15 @@ object functions extends Serializable {
         // Vector<->raster bridge
         rd.register(RST_Rasterize)
         rd.register(RST_Polygonize)
+
+        // Terrain analysis (DEM processing)
+        rd.register(RST_Aspect)
+        rd.register(RST_ColorRelief)
+        rd.register(RST_Hillshade)
+        rd.register(RST_Roughness)
+        rd.register(RST_Slope)
+        rd.register(RST_TPI)
+        rd.register(RST_TRI)
 
         sc.getConf.set(flag, "true")
     }
@@ -339,5 +349,45 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, lit(4)))
     def rst_polygonize(tileExpr: Column, band: Column, connectedness: Column): Column =
         ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, connectedness))
+
+    // Terrain analysis (DEM processing) - Column form
+    def rst_slope(tileExpr: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, lit("degrees"), lit(1.0)))
+    def rst_slope(tileExpr: Column, unit: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, lit(1.0)))
+    def rst_slope(tileExpr: Column, unit: Column, scale: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, scale))
+    def rst_slope(tileExpr: Column, unit: String): Column = rst_slope(tileExpr, lit(unit))
+    def rst_slope(tileExpr: Column, unit: String, scale: Double): Column =
+        rst_slope(tileExpr, lit(unit), lit(scale))
+
+    def rst_aspect(tileExpr: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, lit(false), lit(false)))
+    def rst_aspect(tileExpr: Column, trigonometric: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, trigonometric, lit(false)))
+    def rst_aspect(tileExpr: Column, trigonometric: Column, zeroForFlat: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, trigonometric, zeroForFlat))
+    def rst_aspect(tileExpr: Column, trigonometric: Boolean): Column =
+        rst_aspect(tileExpr, lit(trigonometric))
+    def rst_aspect(tileExpr: Column, trigonometric: Boolean, zeroForFlat: Boolean): Column =
+        rst_aspect(tileExpr, lit(trigonometric), lit(zeroForFlat))
+
+    def rst_hillshade(tileExpr: Column): Column =
+        ColumnAdapter(RST_Hillshade.name, Seq(tileExpr, lit(315.0), lit(45.0), lit(1.0)))
+    def rst_hillshade(tileExpr: Column, azimuth: Column, altitude: Column, zFactor: Column): Column =
+        ColumnAdapter(RST_Hillshade.name, Seq(tileExpr, azimuth, altitude, zFactor))
+    def rst_hillshade(tileExpr: Column, azimuth: Double, altitude: Double): Column =
+        rst_hillshade(tileExpr, lit(azimuth), lit(altitude), lit(1.0))
+    def rst_hillshade(tileExpr: Column, azimuth: Double, altitude: Double, zFactor: Double): Column =
+        rst_hillshade(tileExpr, lit(azimuth), lit(altitude), lit(zFactor))
+
+    def rst_tri(tileExpr: Column): Column = ColumnAdapter(RST_TRI.name, Seq(tileExpr))
+    def rst_tpi(tileExpr: Column): Column = ColumnAdapter(RST_TPI.name, Seq(tileExpr))
+    def rst_roughness(tileExpr: Column): Column = ColumnAdapter(RST_Roughness.name, Seq(tileExpr))
+
+    def rst_color_relief(tileExpr: Column, colorTablePath: Column): Column =
+        ColumnAdapter(RST_ColorRelief.name, Seq(tileExpr, colorTablePath))
+    def rst_color_relief(tileExpr: Column, colorTablePath: String): Column =
+        rst_color_relief(tileExpr, lit(colorTablePath))
 
 }
