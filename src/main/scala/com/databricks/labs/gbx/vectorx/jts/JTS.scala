@@ -22,6 +22,7 @@ object JTS {
     private val geometryFactories = mutable.Map[Long, GeometryFactory]()
     private val wkbReaders = mutable.Map[Long, WKBReader]()
     private val wkbWriters = mutable.Map[Long, WKBWriter]()
+    private val wkb3Writers = mutable.Map[Long, WKBWriter]()
     private val ewkbWriters = mutable.Map[Long, WKBWriter]()
     private val wtkWriters = mutable.Map[Long, WKTWriter]()
     private val wtkReaders = mutable.Map[Long, WKTReader]()
@@ -132,6 +133,13 @@ object JTS {
         val tid = Thread.currentThread().getId
         val writer = wkbWriters.getOrElseUpdate(tid, new WKBWriter())
         writer.write(intersection)
+    }
+
+    /** Encode a JTS Geometry to OGC WKB preserving Z (3 dimensions); per-thread WKBWriter(3). */
+    def toWKB3(geom: org.locationtech.jts.geom.Geometry): Array[Byte] = {
+        val tid = Thread.currentThread().getId
+        val writer = wkb3Writers.getOrElseUpdate(tid, new WKBWriter(3))
+        writer.write(geom)
     }
 
     /** Encodes a JTS Geometry to PostGIS EWKB bytes; embeds SRID when set. Per-thread writer.

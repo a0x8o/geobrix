@@ -94,4 +94,49 @@ class RST_DTMFromGeomsTest extends AnyFunSuite with BeforeAndAfterAll {
         RST_DTMFromGeoms.builder()(base :+ lit(-1.0)) shouldBe a[RST_DTMFromGeoms]
         an[IllegalArgumentException] should be thrownBy { RST_DTMFromGeoms.builder()(base.take(5)) }
     }
+
+    test("DTMFromGeomsAcc serialize/deserialize roundtrips point WKBs") {
+        val buf = DTMFromGeomsAcc.empty
+        planePoints().foreach(p => buf.add(JTS.toWKB3(p)))
+        val restored = DTMFromGeomsAcc.deserialize(buf.serialize)
+        restored.points.length shouldBe 4
+        restored.points.zip(buf.points).foreach { case (a, b) => a shouldBe b }
+    }
+
+    test("RST_DTMFromGeomsAgg produces the same raster as the non-agg execute") {
+        val lit = (v: Any) => org.apache.spark.sql.catalyst.expressions.Literal(v)
+        val buf = DTMFromGeomsAcc.empty
+        planePoints().foreach(p => buf.add(JTS.toWKB3(p)))
+        val agg = RST_DTMFromGeomsAgg(
+            pointExpr = null,
+            breaklinesExpr = lit(null),
+            mergeToleranceExpr = lit(0.0), snapToleranceExpr = lit(0.0),
+            xminExpr = lit(0.0), yminExpr = lit(0.0), xmaxExpr = lit(100.0), ymaxExpr = lit(100.0),
+            widthPxExpr = lit(10), heightPxExpr = lit(10), sridExpr = lit(32633),
+            noDataExpr = lit(-9999.0)
+        )
+        val aggRow = agg.eval(buf).asInstanceOf[InternalRow]
+        val nonAggRow = RST_DTMFromGeoms.execute(
+            planePoints(), Seq.empty[LineString], 0.0, 0.0,
+            0.0, 0.0, 100.0, 100.0, 10, 10, 32633, -9999.0)
+        pixel(aggRow, 0, 0) shouldBe pixel(nonAggRow, 0, 0) +- 1e-9
+        pixel(aggRow, 9, 9) shouldBe pixel(nonAggRow, 9, 9) +- 1e-9
+    }
+
+    test("RST_DTMFromGeomsAgg.update rejects a 2D-WKB point (Z stripped)") {
+        val lit = (v: Any) => org.apache.spark.sql.catalyst.expressions.Literal(v)
+        // JTS.toWKB is the 2D writer -> strips Z, simulating a user passing 2D WKB.
+        val twoDWkb = JTS.toWKB(planePoints().head)
+        val agg = RST_DTMFromGeomsAgg(
+            pointExpr = lit(twoDWkb),
+            breaklinesExpr = lit(null),
+            mergeToleranceExpr = lit(0.0), snapToleranceExpr = lit(0.0),
+            xminExpr = lit(0.0), yminExpr = lit(0.0), xmaxExpr = lit(100.0), ymaxExpr = lit(100.0),
+            widthPxExpr = lit(10), heightPxExpr = lit(10), sridExpr = lit(32633),
+            noDataExpr = lit(-9999.0)
+        )
+        an[IllegalArgumentException] should be thrownBy {
+            agg.update(DTMFromGeomsAcc.empty, org.apache.spark.sql.catalyst.InternalRow.empty)
+        }
+    }
 }
