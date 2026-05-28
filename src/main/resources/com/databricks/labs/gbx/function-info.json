@@ -10,11 +10,17 @@
     "gbx_rst_avg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_avg(tile) as band_averages, gbx_rst_avg(tile)[0] as band1_avg FROM rasters;"
     },
+    "gbx_rst_band": {
+      "examples": "Examples:\n      > SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters;"
+    },
     "gbx_rst_bandmetadata": {
       "examples": "Examples:\n      > SELECT gbx_rst_bandmetadata(tile, 1) as band1_metadata FROM rasters;"
     },
     "gbx_rst_boundingbox": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_boundingbox(tile) as bbox FROM rasters;"
+    },
+    "gbx_rst_buildoverviews": {
+      "examples": "Examples:\n      > SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr FROM rasters;"
     },
     "gbx_rst_clip": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_clip( tile, 'POLYGON((-122 37, -122 38, -121 38, -121 37, -122 37))', true ) as clipped FROM rasters;"
@@ -39,6 +45,9 @@
     },
     "gbx_rst_evi": {
       "examples": "Examples:\n      > SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;"
+    },
+    "gbx_rst_fillnodata": {
+      "examples": "Examples:\n      > SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters;"
     },
     "gbx_rst_filter": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_filter(tile, 3, 'median') as denoised FROM noisy_rasters;"
@@ -93,6 +102,9 @@
     },
     "gbx_rst_hillshade": {
       "examples": "Examples:\n      > SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;"
+    },
+    "gbx_rst_histogram": {
+      "examples": "Examples:\n      > SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist FROM rasters;"
     },
     "gbx_rst_index": {
       "examples": "Examples:\n      > SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2)) AS ndvi FROM rasters;"
@@ -199,6 +211,9 @@
     "gbx_rst_roughness": {
       "examples": "Examples:\n      > SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;"
     },
+    "gbx_rst_sample": {
+      "examples": "Examples:\n      > SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS values FROM rasters;"
+    },
     "gbx_rst_savi": {
       "examples": "Examples:\n      > SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;"
     },
@@ -210,6 +225,9 @@
     },
     "gbx_rst_separatebands": {
       "examples": "Examples:\n      > SELECT path, bands[0] as red_band, bands[1] as green_band, bands[2] as blue_band FROM ( SELECT path, gbx_rst_separatebands(tile) as bands FROM rgb_rasters );"
+    },
+    "gbx_rst_setsrid": {
+      "examples": "Examples:\n      > SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters;"
     },
     "gbx_rst_skewx": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_skewx(tile) as skew_x, gbx_rst_skewy(tile) as skew_y FROM rasters;"
@@ -228,6 +246,9 @@
     },
     "gbx_rst_summary": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_summary(tile) as summary FROM rasters;"
+    },
+    "gbx_rst_threshold": {
+      "examples": "Examples:\n      > SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;"
     },
     "gbx_rst_tilexyz": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png FROM rasters;"
