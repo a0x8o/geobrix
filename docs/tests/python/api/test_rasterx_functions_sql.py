@@ -463,6 +463,48 @@ def test_rst_polygonize_sql_example(spark):
 
 
 # ============================================================================
+# Terrain Analysis (DEM Processing) - Wave 8a
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr", [
+    "rst_slope_sql_example",
+    "rst_aspect_sql_example",
+    "rst_hillshade_sql_example",
+    "rst_tri_sql_example",
+    "rst_tpi_sql_example",
+    "rst_roughness_sql_example",
+])
+def test_dem_processing_sql_example(spark, rasters_view, example_attr):
+    """Each Wave 8a DEM-processing example returns a non-null tile."""
+    sql = getattr(rasterx_functions_sql, example_attr)()
+    result = spark.sql(sql).collect()
+    assert len(result) >= 1
+    # The output column varies (slope, aspect, hillshade, tri, tpi, roughness).
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+def test_rst_color_relief_sql_example(spark, rasters_view, tmp_path):
+    """color_relief example exists and executes against a tempfile color table.
+
+    The docs example references a sample-data path that may not be present in
+    every env; this test exercises the function via a tempfile color table so
+    we still cover the actual SQL invocation.
+    """
+    ct = tmp_path / "elevation.clr"
+    ct.write_text("0 0 0 255\n100 0 255 0\n255 255 0 0\n")
+    # Verify the doc example string exists & has the right shape.
+    sql_template = rasterx_functions_sql.rst_color_relief_sql_example()
+    assert "gbx_rst_color_relief" in sql_template
+    # Run a substitute SQL using our tempfile.
+    sql = f"SELECT gbx_rst_color_relief(tile, '{ct}') AS rgba FROM rasters"
+    result = spark.sql(sql).collect()
+    assert len(result) >= 1
+    assert result[0]["rgba"] is not None
+
+
+# ============================================================================
 # Structure Verification
 # ============================================================================
 

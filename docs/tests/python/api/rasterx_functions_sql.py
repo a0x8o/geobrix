@@ -1594,3 +1594,139 @@ rst_polygonize_sql_example_output = """
 |[[...,42.0]]|
 +----------+
 """
+
+
+# ============================================================================
+# Terrain Analysis (DEM Processing) - Wave 8a
+#
+# Seven thin wrappers around gdal.DEMProcessing. Each one takes a single
+# input tile and produces a derived tile. Examples below use the `rasters`
+# view (load any single-band DEM tile to taste).
+# ============================================================================
+
+
+def rst_slope_sql_example():
+    """Compute slope (degrees) from a DEM tile."""
+    return """
+-- Slope in degrees per pixel. Use unit='percent' for rise/run, or pass scale
+-- 111120 for unprojected geographic CRS (lon/lat in degrees).
+SELECT gbx_rst_slope(tile, 'degrees', 1.0) AS slope FROM rasters;
+"""
+
+
+rst_slope_sql_example_output = """
++-----+
+|slope|
++-----+
+|...  |
++-----+
+"""
+
+
+def rst_aspect_sql_example():
+    """Compute aspect (compass direction of slope) from a DEM tile."""
+    return """
+-- Aspect in compass degrees (0=N, 90=E, 180=S, 270=W). Flat areas get -9999
+-- unless zero_for_flat=true.
+SELECT gbx_rst_aspect(tile, false, false) AS aspect FROM rasters;
+"""
+
+
+rst_aspect_sql_example_output = """
++------+
+|aspect|
++------+
+|...   |
++------+
+"""
+
+
+def rst_hillshade_sql_example():
+    """Compute a shaded relief image from a DEM tile."""
+    return """
+-- 8-bit (0..255) hillshade: NW sun, 45-deg altitude, default z-factor.
+SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;
+"""
+
+
+rst_hillshade_sql_example_output = """
++---------+
+|hillshade|
++---------+
+|...      |
++---------+
+"""
+
+
+def rst_tri_sql_example():
+    """Compute Terrain Ruggedness Index (TRI) from a DEM tile."""
+    return """
+-- TRI: mean absolute neighbour difference; useful for landscape ecology.
+SELECT gbx_rst_tri(tile) AS tri FROM rasters;
+"""
+
+
+rst_tri_sql_example_output = """
++---+
+|tri|
++---+
+|...|
++---+
+"""
+
+
+def rst_tpi_sql_example():
+    """Compute Topographic Position Index (TPI) from a DEM tile."""
+    return """
+-- TPI: difference from neighbour-mean; +ve = ridge, -ve = valley.
+SELECT gbx_rst_tpi(tile) AS tpi FROM rasters;
+"""
+
+
+rst_tpi_sql_example_output = """
++---+
+|tpi|
++---+
+|...|
++---+
+"""
+
+
+def rst_roughness_sql_example():
+    """Compute Roughness (largest neighbour delta) from a DEM tile."""
+    return """
+-- Roughness: max absolute neighbour difference in a 3x3 window.
+SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;
+"""
+
+
+rst_roughness_sql_example_output = """
++---------+
+|roughness|
++---------+
+|...      |
++---------+
+"""
+
+
+def rst_color_relief_sql_example():
+    """Apply a color relief mapping to a DEM tile.
+
+    The color table file is a plain-text gdaldem color file: each line
+    ``elevation R G B [A]``. Special values ``nv``, ``default``, ``0%`` and
+    ``100%`` are accepted.
+    """
+    return f"""
+-- Map elevation values to RGBA colors via a gdaldem color table.
+SELECT gbx_rst_color_relief(tile, '{SAMPLE_DATA_BASE}/colortables/elevation.clr') AS rgba
+FROM rasters;
+"""
+
+
+rst_color_relief_sql_example_output = """
++----+
+|rgba|
++----+
+|... |
++----+
+"""

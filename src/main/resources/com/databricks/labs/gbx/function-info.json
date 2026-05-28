@@ -4,6 +4,9 @@
     "gbx_rst_asformat": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_asformat(tile, 'GTiff') as geotiff_tile FROM netcdf_rasters;"
     },
+    "gbx_rst_aspect": {
+      "examples": "Examples:\n      > SELECT gbx_rst_aspect(tile, false, false) AS aspect FROM rasters;"
+    },
     "gbx_rst_avg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_avg(tile) as band_averages, gbx_rst_avg(tile)[0] as band1_avg FROM rasters;"
     },
@@ -15,6 +18,9 @@
     },
     "gbx_rst_clip": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_clip( tile, 'POLYGON((-122 37, -122 38, -121 38, -121 37, -122 37))', true ) as clipped FROM rasters;"
+    },
+    "gbx_rst_color_relief": {
+      "examples": "Examples:\n      > SELECT gbx_rst_color_relief(tile, '/Volumes/main/default/test-data/geobrix-examples/colortables/elevation.clr') AS rgba FROM rasters;"
     },
     "gbx_rst_combineavg": {
       "examples": "Examples:\n      > SELECT date_trunc('week', date) as week, gbx_rst_fromfile(path, 'GTiff') as tile FROM daily_rasters WHERE date >= '2024-01-01' ) SELECT week, gbx_rst_combineavg(collect_list(tile)) as weekly_composite FROM loaded_tiles GROUP BY week;"
@@ -75,6 +81,9 @@
     },
     "gbx_rst_height": {
       "examples": "Examples:\n      > SELECT gbx_rst_height(tile) as height, gbx_rst_width(tile) as width FROM rasters;"
+    },
+    "gbx_rst_hillshade": {
+      "examples": "Examples:\n      > SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;"
     },
     "gbx_rst_initnodata": {
       "examples": "Examples:\n      > SELECT gbx_rst_initnodata(tile) as tile FROM rasters;"
@@ -160,6 +169,9 @@
     "gbx_rst_rotation": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rotation(tile) as rotation_rad FROM rasters;"
     },
+    "gbx_rst_roughness": {
+      "examples": "Examples:\n      > SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;"
+    },
     "gbx_rst_scalex": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_scalex(tile) as scale_x, gbx_rst_scaley(tile) as scale_y FROM rasters;"
     },
@@ -174,6 +186,9 @@
     },
     "gbx_rst_skewy": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_skewx(tile) as skew_x, gbx_rst_skewy(tile) as skew_y FROM rasters;"
+    },
+    "gbx_rst_slope": {
+      "examples": "Examples:\n      > SELECT gbx_rst_slope(tile, 'degrees', 1.0) AS slope FROM rasters;"
     },
     "gbx_rst_srid": {
       "examples": "Examples:\n      > SELECT gbx_rst_srid(tile) as srid FROM rasters;"
@@ -193,8 +208,14 @@
     "gbx_rst_tooverlappingtiles": {
       "examples": "Examples:\n      > SELECT path, tile FROM rasters LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, 256, 256, 10)) AS tile;"
     },
+    "gbx_rst_tpi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_tpi(tile) AS tpi FROM rasters;"
+    },
     "gbx_rst_transform": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_transform(tile, 4326) as wgs84_tile, gbx_rst_srid(gbx_rst_transform(tile, 4326)) as new_srid FROM rasters;"
+    },
+    "gbx_rst_tri": {
+      "examples": "Examples:\n      > SELECT gbx_rst_tri(tile) AS tri FROM rasters;"
     },
     "gbx_rst_tryopen": {
       "examples": "Examples:\n      > SELECT * FROM rasters WHERE gbx_rst_tryopen(tile) = true;"
