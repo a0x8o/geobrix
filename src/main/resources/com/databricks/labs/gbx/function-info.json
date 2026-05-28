@@ -64,6 +64,12 @@
     "gbx_rst_getsubdataset": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_getsubdataset(tile, 'temperature') as temp_layer FROM netcdf_files;"
     },
+    "gbx_rst_gridfrompoints": {
+      "examples": "Examples:\n      > SELECT gbx_rst_gridfrompoints( points_wkb_array, values_array, 0.0, 0.0, 1000.0, 1000.0, 256, 256, 32633 ) AS idw FROM point_clouds;"
+    },
+    "gbx_rst_gridfrompoints_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_gridfrompoints_agg( station_wkb, observation, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 256, 256, 32633 ) AS idw FROM observations GROUP BY region_id;"
+    },
     "gbx_rst_h3_rastertogridavg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_h3_rastertogridavg(tile, 6) as h3_grid FROM rasters;"
     },
@@ -174,6 +180,15 @@
     },
     "gbx_rst_rastertoworldcoordy": {
       "examples": "Examples:\n      > SELECT gbx_rst_rastertoworldcoordy(tile, 100, 200) as northing FROM rasters;"
+    },
+    "gbx_rst_resample": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample(tile, 2.0, 'bilinear') AS upsampled FROM rasters;"
+    },
+    "gbx_rst_resample_to_res": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample_to_res(tile, 100.0, 100.0, 'average') AS coarse FROM rasters;"
+    },
+    "gbx_rst_resample_to_size": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample_to_size(tile, 512, 512, 'near') AS sized FROM rasters;"
     },
     "gbx_rst_retile": {
       "examples": "Examples:\n      > SELECT path, tile FROM rasters LATERAL VIEW explode(gbx_rst_retile(tile, 256, 256)) AS tile;"

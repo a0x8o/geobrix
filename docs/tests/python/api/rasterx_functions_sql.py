@@ -1830,3 +1830,102 @@ rst_index_sql_example_output = """
 |... |
 +----+
 """
+
+
+def rst_resample_sql_example():
+    """Resample a tile by a multiplicative factor."""
+    return """
+-- Upsample 2x with bilinear interpolation. Output dims = source dims * 2.
+SELECT gbx_rst_resample(tile, 2.0, 'bilinear') AS upsampled FROM rasters;
+"""
+
+
+rst_resample_sql_example_output = """
++---------+
+|upsampled|
++---------+
+|...      |
++---------+
+"""
+
+
+def rst_resample_to_size_sql_example():
+    """Resample a tile to an explicit width x height in pixels."""
+    return """
+-- Force a 512 x 512 tile, near-neighbour for categorical rasters.
+SELECT gbx_rst_resample_to_size(tile, 512, 512, 'near') AS sized FROM rasters;
+"""
+
+
+rst_resample_to_size_sql_example_output = """
++-----+
+|sized|
++-----+
+|...  |
++-----+
+"""
+
+
+def rst_resample_to_res_sql_example():
+    """Resample a tile to an explicit ground resolution in CRS units."""
+    return """
+-- Downsample to a 100 m grid (metric CRS). 'average' weights cells by area.
+SELECT gbx_rst_resample_to_res(tile, 100.0, 100.0, 'average') AS coarse
+FROM rasters;
+"""
+
+
+rst_resample_to_res_sql_example_output = """
++------+
+|coarse|
++------+
+|...   |
++------+
+"""
+
+
+def rst_gridfrompoints_sql_example():
+    """IDW interpolation - arrays of points / values in a single row."""
+    return """
+-- IDW (power=2, max_points=12) from arrays of point WKB and values.
+-- Output is a 256 x 256 Float64 GTiff covering the requested extent.
+SELECT gbx_rst_gridfrompoints(
+    points_wkb_array, values_array,
+    0.0, 0.0, 1000.0, 1000.0,
+    256, 256, 32633
+) AS idw
+FROM point_clouds;
+"""
+
+
+rst_gridfrompoints_sql_example_output = """
++---+
+|idw|
++---+
+|...|
++---+
+"""
+
+
+def rst_gridfrompoints_agg_sql_example():
+    """IDW interpolation aggregator - one point/value per row, grouped by extent key."""
+    return """
+-- Aggregate per-station observations into one IDW tile per region.
+SELECT region_id,
+    gbx_rst_gridfrompoints_agg(
+        station_wkb, observation,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        256, 256, 32633
+    ) AS idw
+FROM observations
+GROUP BY region_id;
+"""
+
+
+rst_gridfrompoints_agg_sql_example_output = """
++---------+---+
+|region_id|idw|
++---------+---+
+|...      |...|
++---------+---+
+"""
