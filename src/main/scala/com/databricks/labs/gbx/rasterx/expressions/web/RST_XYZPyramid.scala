@@ -43,7 +43,10 @@ case class RST_XYZPyramid(
       with CodegenFallback {
 
     private def rasterType: DataType = RST_ExpressionUtil.rasterType(tileExpr)
-    override def dataType: DataType = RST_XYZPyramid.elementSchemaStatic
+    /** Element schema is a single column "tile" wrapping the (z, x, y, bytes) struct —
+     *  mirrors `RST_MakeTiles` so callers `select(rst_xyzpyramid(...).alias("t"))` and
+     *  unpack via `t.tile.z`, `t.tile.bytes`, etc. */
+    override def dataType: DataType = RST_XYZPyramid.tileStruct
     override def position: Boolean = false
     override def inline: Boolean = false
     override def elementSchema: StructType = RST_XYZPyramid.elementSchemaStatic
@@ -139,12 +142,19 @@ object RST_XYZPyramid extends WithExpressionInfo {
     /** Maximum total candidate tiles across the requested zoom range. */
     val MAX_TILE_COUNT: Long = 1000000L
 
-    /** Static schema for the generator output struct. */
-    val elementSchemaStatic: StructType = StructType(Seq(
+    /** The inner (z, x, y, bytes) struct produced per emitted tile. */
+    val tileStruct: StructType = StructType(Seq(
         StructField("z", IntegerType, nullable = false),
         StructField("x", IntegerType, nullable = false),
         StructField("y", IntegerType, nullable = false),
         StructField("bytes", BinaryType, nullable = true)
+    ))
+
+    /** Generator element schema: a single column named "tile" wrapping the inner struct.
+     *  Matches `RST_MakeTiles` so generator outputs are aliased once and unpacked via
+     *  `t.tile.z`, `t.tile.bytes`, etc. */
+    val elementSchemaStatic: StructType = StructType(Seq(
+        StructField("tile", tileStruct, nullable = true)
     ))
 
     override def name: String = "gbx_rst_xyzpyramid"
