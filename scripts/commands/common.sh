@@ -61,24 +61,43 @@ resolve_log_path() {
 # Central logging: truncate log on each run so every command gets a fresh file.
 # Commands that use --log should call this (or setup_log); the only exception is
 # scripts that tee a subprocess only—those must truncate explicitly (: > "$LOG_PATH").
+#
+# Tees all subsequent script output to BOTH the terminal and the log file, reliably under
+# `bash` and `sh` alike. The previous implementation used bash-only process substitution
+# (`exec > >(tee ...)`) which (a) is a parse error under POSIX sh, so it fell back to a
+# file-only redirect that left the terminal silent, and (b) even under bash races the shell
+# exit — bash does not wait for the tee in `>(...)`, so the last lines could be truncated.
+#
+# Mechanism here: a private FIFO drained by a backgrounded `tee`, plus an EXIT trap that
+# closes the write end (so tee sees EOF and flushes) and waits for tee before the script
+# exits. No process substitution → identical behavior in both shells, no lost tail output.
+# Uses `printf '%b'` rather than `echo -e` (which prints a literal "-e" under /bin/sh).
 setup_log_file() {
     local log_path="$1"
+    [ -n "$log_path" ] || return 0
 
-    if [ -n "$log_path" ]; then
-        mkdir -p "$(dirname "$log_path")"
-        : > "$log_path"
-        echo -e "${CYAN}📝 Logging to: ${YELLOW}$log_path${NC}"
-        # Process substitution `>(tee ...)` is bash-only. If this file is sourced by POSIX
-        # `sh` (e.g. `sh gbx-test-python.sh` on macOS runs bash-in-POSIX-mode), the parser
-        # errors at this line and aborts sourcing — defining NONE of the functions below it.
-        # Wrap in `eval` to defer parsing, and fall back to plain append redirection if we're
-        # not in real bash (POSIX sh still gets a log file, just no live stdout via tee).
-        if [ -n "${BASH_VERSION:-}" ] && ! shopt -qo posix 2>/dev/null; then
-            eval 'exec > >(tee -a "$log_path") 2>&1'
-        else
-            exec >>"$log_path" 2>&1
-        fi
+    mkdir -p "$(dirname "$log_path")"
+    : > "$log_path"
+    printf '%b\n' "${CYAN}📝 Logging to: ${YELLOW}${log_path}${NC}"
+
+    # Private FIFO. If FIFOs are unavailable, degrade to file-only logging rather than fail.
+    local fifo
+    fifo="$(mktemp -u "${TMPDIR:-/tmp}/gbx-log.XXXXXX")" || { exec >>"$log_path" 2>&1; return 0; }
+    if ! mkfifo "$fifo" 2>/dev/null; then
+        exec >>"$log_path" 2>&1
+        return 0
     fi
+
+    exec 3>&1                            # save the real terminal stdout on fd 3
+    tee -a "$log_path" <"$fifo" >&3 &    # tee drains the FIFO -> log file + terminal
+    GBX_TEE_PID=$!                       # global on purpose: the EXIT trap below reads it
+    exec >"$fifo" 2>&1                   # route all stdout+stderr into the FIFO
+    rm -f "$fifo"                        # unlink now; open fds keep it alive until closed
+
+    # Flush-safe teardown: capture the real exit code, restore stdout/stderr (closing the
+    # FIFO write end so tee reaches EOF), wait for tee to finish, then exit with that code.
+    # `exit` inside an EXIT trap does not re-run the trap, so this is not recursive.
+    trap 'rc=$?; exec 1>&3 2>&3 3>&-; [ -n "${GBX_TEE_PID:-}" ] && wait "${GBX_TEE_PID}" 2>/dev/null; exit $rc' EXIT
 }
 
 show_banner() {
@@ -128,6 +147,31 @@ generate_timestamp() {
     date +%Y%m%d-%H%M%S
 }
 
+# Warn if the assembly JAR that Spark tests load via spark.jars is stale relative to Scala
+# sources. A stale JAR silently tests old behavior and surfaces as UNRESOLVED_ROUTINE for
+# functions added since the last `mvn package`. Non-fatal — prints a hint and returns.
+# Usage: warn_if_jar_stale "$PROJECT_ROOT"
+warn_if_jar_stale() {
+    local project_root="$1"
+    local rebuild='gbx:docker:exec "mvn clean package -PskipScoverage -DskipTests"'
+    local jar
+    jar=$(ls -t "$project_root"/target/geobrix-*-jar-with-dependencies.jar 2>/dev/null | head -n 1)
+    if [ -z "$jar" ]; then
+        echo -e "${YELLOW}⚠️  No assembly JAR in target/ — Spark tests load geobrix-*-jar-with-dependencies.jar via spark.jars.${NC}"
+        echo -e "${YELLOW}   Build it first: ${rebuild}${NC}"
+        echo ""
+        return
+    fi
+    local newer
+    newer=$(find "$project_root/src/main/scala" -name '*.scala' -newer "$jar" -print 2>/dev/null | head -n 1)
+    if [ -n "$newer" ]; then
+        echo -e "${YELLOW}⚠️  Assembly JAR is older than Scala sources — tests may fail with UNRESOLVED_ROUTINE on newly added functions.${NC}"
+        echo -e "${YELLOW}   Stale JAR: $(basename "$jar")${NC}"
+        echo -e "${YELLOW}   Rebuild:   ${rebuild}${NC}"
+        echo ""
+    fi
+}
+
 # Aliases for backward compatibility
 print_banner() { show_banner "$@"; }
 print_separator() { show_separator "$@"; }
@@ -137,5 +181,5 @@ setup_log() { setup_log_file "$@"; }
 # (observed on macOS bash 3.2: "show_separator: command not found" mid-script).
 export RED GREEN YELLOW BLUE CYAN NC DOCKER_MAVEN_ENV
 export -f check_docker resolve_log_path setup_log_file show_banner show_separator \
-          print_report_link open_report generate_timestamp \
+          print_report_link open_report generate_timestamp warn_if_jar_stale \
           print_banner print_separator setup_log 2>/dev/null || true

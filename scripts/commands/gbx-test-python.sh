@@ -76,6 +76,9 @@ show_banner "🐍 GeoBrix: Python Tests (Non-Docs)"
 check_docker
 setup_log_file "$LOG_PATH"
 
+# Python tests run against the assembly JAR (spark.jars); warn if it predates Scala sources.
+warn_if_jar_stale "$PROJECT_ROOT"
+
 echo -e "${CYAN}🎯 Test path: ${YELLOW}$TEST_PATH${NC}"
 if [ -n "$MARKERS" ]; then
     echo -e "${CYAN}🏷️  Markers: ${YELLOW}$MARKERS${NC}"

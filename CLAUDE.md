@@ -53,6 +53,8 @@ All Maven/test/doc/coverage work runs inside the **`geobrix-dev` Docker containe
 
 Use `gbx:docker:start` / `gbx:docker:exec` rather than `docker run` directly. The container has the corp-proxied Maven mirror (`db-maven-proxy`) configured via `scripts/docker/m2/settings.xml`; if proxy is missing, re-run `docker_maven_setup.sh` inside the container.
 
+**`gbx:docker:start` is the canonical (re)create path** — it runs `scripts/docker/start_docker.sh` *and then* `docker_maven_setup.sh`, which copies the `db-maven-proxy` settings into the container's Maven conf. Recreating the container by calling `start_docker.sh` directly skips that step, so the fresh container falls back to blocked Maven Central and the first build dies on plugin resolution (`Connect to repo.maven.apache.org … Connection refused`). If you ever recreate it by hand, run `docker_maven_setup.sh` inside the container afterward. `start_docker.sh` itself resolves the bind mount from `git rev-parse --show-toplevel` (not `$PWD`) and refuses to mount a `.claude/worktrees/*` path — those get auto-cleaned and dangle the mount, making every `docker exec` fail with "current working directory is outside of container mount namespace root".
+
 Default Maven profile is **`skipScoverage`** for fast compile/test (`mvn clean package -DskipTests`). Coverage commands explicitly trigger the `standard` profile.
 
 ## Commands (the `gbx:*` palette)
