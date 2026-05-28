@@ -6,6 +6,7 @@ import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_D
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
 import com.databricks.labs.gbx.rasterx.expressions.web._
 import com.databricks.labs.gbx.rasterx.expressions._
 import com.databricks.labs.gbx.rasterx.gdal.CheckpointManager
@@ -124,6 +125,10 @@ object functions extends Serializable {
         rd.register(RST_ToWebMercator)
         rd.register(RST_TileXYZ)
         rd.register(RST_XYZPyramid)
+
+        // Vector<->raster bridge
+        rd.register(RST_Rasterize)
+        rd.register(RST_Polygonize)
 
         sc.getConf.set(flag, "true")
     }
@@ -319,5 +324,20 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         format: String, size: Int, resampling: String
     ): Column =
         rst_xyzpyramid(tileExpr, lit(minZ), lit(maxZ), lit(format), lit(size), lit(resampling))
+
+    // Vector<->raster bridge (Column form)
+    def rst_rasterize(
+        geomWkb: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_Rasterize.name, Seq(geomWkb, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid))
+
+    def rst_polygonize(tileExpr: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, lit(1), lit(4)))
+    def rst_polygonize(tileExpr: Column, band: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, lit(4)))
+    def rst_polygonize(tileExpr: Column, band: Column, connectedness: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, connectedness))
 
 }

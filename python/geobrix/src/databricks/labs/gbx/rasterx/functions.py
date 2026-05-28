@@ -1124,3 +1124,72 @@ def rst_xyzpyramid(
         _col(size),
         resampling_col,
     )
+
+
+def rst_rasterize(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Burn a vector geometry into a raster tile at the given extent and resolution.
+
+    Returns a GTiff-backed tile of shape ``width_px x height_px`` covering the
+    bounding box ``(xmin, ymin) -> (xmax, ymax)`` in the given SRID. Pixels
+    inside the geometry receive ``value``; pixels outside receive NoData
+    (-9999.0, Float64).
+
+    Args:
+        geom_wkb: Geometry as WKB ``bytes`` column.
+        value: Burn value (``float``).
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the extent / geometry.
+
+    Returns:
+        Raster tile column.
+    """
+    return f.call_function(
+        "gbx_rst_rasterize",
+        _col(geom_wkb),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+def rst_polygonize(
+    tile: ColLike,
+    band: ColLike = None,
+    connectedness: ColLike = None,
+) -> Column:
+    """Extract vector polygons from a raster tile's contiguous value regions.
+
+    Returns ``ARRAY<struct(geom_wkb BINARY, value DOUBLE)>``, one entry per
+    connected component of equal pixel values. NoData pixels are excluded.
+
+    Args:
+        tile: Raster tile column.
+        band: 1-based band index to polygonize (default 1).
+        connectedness: 4 or 8; passed as GDAL ``8CONNECTED`` option (default 4).
+
+    Returns:
+        Array column of structs (use ``F.explode`` to get one row per polygon).
+    """
+    band_col = f.lit(1) if band is None else _col(band)
+    conn_col = f.lit(4) if connectedness is None else _col(connectedness)
+    return f.call_function("gbx_rst_polygonize", _col(tile), band_col, conn_col)

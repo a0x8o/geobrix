@@ -1544,3 +1544,53 @@ rst_xyzpyramid_sql_example_output = """
 |... |  4|  5|  6|[BINARY]            |
 +----+---+---+---+--------------------+
 """
+
+
+# ============================================================================
+# Vector<->Raster Bridge Functions
+# ============================================================================
+
+def rst_rasterize_sql_example():
+    """Burn a square polygon (WKB) into a 100x100 raster tile."""
+    return """
+-- WKB hex below is POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)). The output `tile`
+-- is a GTiff-backed raster at the given extent and resolution; pixels inside
+-- the polygon carry the burn value (42.0), pixels outside are NoData.
+SELECT gbx_rst_rasterize(
+    unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'),
+    42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326
+) AS tile;
+"""
+
+
+rst_rasterize_sql_example_output = """
++----+
+|tile|
++----+
+|... |
++----+
+"""
+
+
+def rst_polygonize_sql_example():
+    """Extract polygons from contiguous-value regions of a freshly-rasterized tile."""
+    return """
+-- Round-trip: rasterize a polygon then immediately polygonize it. The output
+-- array contains one feature per contiguous value region; each feature carries
+-- the burn value as the `value` field.
+SELECT gbx_rst_polygonize(
+    gbx_rst_rasterize(
+        unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'),
+        42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326
+    )
+) AS features;
+"""
+
+
+rst_polygonize_sql_example_output = """
++----------+
+|features  |
++----------+
+|[[...,42.0]]|
++----------+
+"""

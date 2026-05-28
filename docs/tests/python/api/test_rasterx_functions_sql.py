@@ -440,6 +440,28 @@ def test_rst_separatebands_sql_example(spark, rasters_view):
     assert "bands" in result.columns
 
 
+def test_rst_rasterize_sql_example(spark):
+    """rst_rasterize returns a non-null tile struct for the example burn."""
+    from databricks.labs.gbx.rasterx import functions as rx
+    rx.register(spark)
+    sql = rasterx_functions_sql.rst_rasterize_sql_example()
+    result = spark.sql(sql).collect()
+    assert len(result) == 1
+    assert result[0]["tile"] is not None
+
+
+def test_rst_polygonize_sql_example(spark):
+    """Round-trip rasterize->polygonize returns >=1 feature with the burn value."""
+    from databricks.labs.gbx.rasterx import functions as rx
+    rx.register(spark)
+    sql = rasterx_functions_sql.rst_polygonize_sql_example()
+    result = spark.sql(sql).collect()
+    assert len(result) == 1
+    features = result[0]["features"]
+    assert len(features) > 0
+    assert any(abs(feat["value"] - 42.0) < 1e-6 for feat in features)
+
+
 # ============================================================================
 # Structure Verification
 # ============================================================================

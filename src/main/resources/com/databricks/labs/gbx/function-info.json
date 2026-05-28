@@ -124,6 +124,9 @@
     "gbx_rst_pixelwidth": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_pixelwidth(tile) as pixel_width, gbx_rst_pixelheight(tile) as pixel_height, gbx_rst_width(tile) * gbx_rst_pixelwidth(tile) as total_width_m FROM rasters;"
     },
+    "gbx_rst_polygonize": {
+      "examples": "Examples:\n      > SELECT gbx_rst_polygonize( gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) ) AS features;"
+    },
     "gbx_rst_quadbin_rastertogridavg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid FROM rasters;"
     },
@@ -138,6 +141,9 @@
     },
     "gbx_rst_quadbin_rastertogridmin": {
       "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as min_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmin(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_rasterize": {
+      "examples": "Examples:\n      > SELECT gbx_rst_polygonize( gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) ) AS features;"
     },
     "gbx_rst_rastertoworldcoord": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rastertoworldcoord(tile, 100, 200) as coords, gbx_rst_rastertoworldcoord(tile, 100, 200).x as longitude, gbx_rst_rastertoworldcoord(tile, 100, 200).y as latitude FROM rasters;"
