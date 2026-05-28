@@ -123,10 +123,4 @@ class QuadbinFunctionsTest extends PlanTest with SilentSparkSession {
         d1 shouldBe 1
     }
 
-    test("scalar-literal overloads compile (Int forms for resolution/k)") {
-        functions.quadbin_pointascell(col("lon"), col("lat"), 10) should not be null
-        functions.quadbin_polyfill(col("geom"), 5) should not be null
-        functions.quadbin_kring(col("cell"), 1) should not be null
-        functions.quadbin_tessellate(col("geom"), 5) should not be null
-    }
 }

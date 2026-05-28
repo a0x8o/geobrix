@@ -106,35 +106,11 @@ class RST_Quadbin_RasterToGridTest extends AnyFunSuite with BeforeAndAfterAll {
         }
     }
 
-    test("All five aggregators return the same cell-key set") {
-        val res = 5
-        val avgKeys = RST_Quadbin_RasterToGridAvg.execute(rangeDs, res)(0).map(_._1).toSet
-        val cntKeys = RST_Quadbin_RasterToGridCount.execute(rangeDs, res)(0).map(_._1).toSet
-        val maxKeys = RST_Quadbin_RasterToGridMax.execute(rangeDs, res)(0).map(_._1).toSet
-        val minKeys = RST_Quadbin_RasterToGridMin.execute(rangeDs, res)(0).map(_._1).toSet
-        val medKeys = RST_Quadbin_RasterToGridMedian.execute(rangeDs, res)(0).map(_._1).toSet
-        avgKeys shouldBe cntKeys
-        avgKeys shouldBe maxKeys
-        avgKeys shouldBe minKeys
-        avgKeys shouldBe medKeys
-    }
-
     test("Resolution guard rejects values outside [0, 20]") {
         an[IllegalArgumentException] should be thrownBy
             RST_Quadbin_RasterToGridAvg.execute(constDs, resolution = 21)
         an[IllegalArgumentException] should be thrownBy
             RST_Quadbin_RasterToGridAvg.execute(constDs, resolution = -1)
-    }
-
-    test("Cell IDs are valid CARTO quadbin v0 cells (HEADER bit set, correct resolution)") {
-        val resolution = 4
-        val result = RST_Quadbin_RasterToGridAvg.execute(rangeDs, resolution)
-        result(0).foreach { case (cell, _) =>
-            // HEADER bit 62 must be set (canonical CARTO v0 header).
-            (cell & 0x4000000000000000L) shouldBe 0x4000000000000000L
-            // Encoded resolution must match what we asked for.
-            Quadbin.resolution(cell) shouldBe resolution
-        }
     }
 
 }

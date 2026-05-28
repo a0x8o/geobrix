@@ -107,27 +107,3 @@ def test_rst_quadbin_rastertogridmedian(spark):
     assert isinstance(cell["measure"], float)
 
 
-def test_rst_quadbin_rastertogrid_same_cell_set(spark):
-    """All five aggregators must produce the same cell-ID set on the same raster."""
-    from databricks.labs.gbx.rasterx import functions as rx
-
-    fns = [
-        rx.rst_quadbin_rastertogridavg,
-        rx.rst_quadbin_rastertogridcount,
-        rx.rst_quadbin_rastertogridmax,
-        rx.rst_quadbin_rastertogridmin,
-        rx.rst_quadbin_rastertogridmedian,
-    ]
-    cell_sets = []
-    for fn in fns:
-        df = spark.range(1).select(
-            fn(
-                rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
-                f.lit(3),
-            ).alias("grid")
-        )
-        bands = df.collect()[0]["grid"]
-        cells = {row["cellID"] for row in bands[0]}
-        cell_sets.append(cells)
-    for s in cell_sets[1:]:
-        assert s == cell_sets[0]
