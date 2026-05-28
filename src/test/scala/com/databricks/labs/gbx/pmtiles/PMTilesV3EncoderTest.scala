@@ -38,27 +38,19 @@ class PMTilesV3EncoderTest extends AnyFunSuite {
         assert(count == 1L, s"expected addressed_tiles_count=1; got $count")
     }
 
-    test("hilbertId is deterministic and unique within a zoom") {
-        val ids = (0 until 1024).map(i => PMTilesV3Encoder.hilbertId(5, i % 32, i / 32))
-        assert(ids.distinct.length == 1024, "hilbert ids must be unique within z=5 32×32 grid")
-        // Determinism: same input → same output.
-        assert(PMTilesV3Encoder.hilbertId(5, 7, 9) == PMTilesV3Encoder.hilbertId(5, 7, 9))
-    }
-
-    test("hilbertId base case z=0 returns 0") {
+    test("hilbertId properties: base case, determinism, uniqueness, cross-zoom monotonic") {
+        // Base case: z=0 → 0
         assert(PMTilesV3Encoder.hilbertId(0, 0, 0) == 0L)
-    }
-
-    test("hilbertId monotonic across zooms (z+1 tile ids start after z block)") {
-        // For zoom z, there are 4^z tiles. The PMTiles spec orders tiles by Hilbert id
-        // within the zoom, prefixed by the count of all lower-zoom tiles. So z=1 ids
-        // are all >= 1 (one z=0 tile precedes them), and z=2 ids are all >= 5.
-        val z0 = PMTilesV3Encoder.hilbertId(0, 0, 0)
-        val z1 = (for { x <- 0 until 2; y <- 0 until 2 } yield PMTilesV3Encoder.hilbertId(1, x, y)).min
-        val z2 = (for { x <- 0 until 4; y <- 0 until 4 } yield PMTilesV3Encoder.hilbertId(2, x, y)).min
-        assert(z0 == 0L)
-        assert(z1 >= 1L)
-        assert(z2 >= 5L)
+        // Determinism: same input → same output
+        assert(PMTilesV3Encoder.hilbertId(5, 7, 9) == PMTilesV3Encoder.hilbertId(5, 7, 9))
+        // Uniqueness within a zoom: z=5 32×32 grid → 1024 distinct ids
+        val ids = (0 until 1024).map(i => PMTilesV3Encoder.hilbertId(5, i % 32, i / 32))
+        assert(ids.distinct.length == 1024)
+        // Cross-zoom monotonic: z=1 ids start >= 1 (one z=0 tile precedes); z=2 ids start >= 5
+        val z1Min = (for { x <- 0 until 2; y <- 0 until 2 } yield PMTilesV3Encoder.hilbertId(1, x, y)).min
+        val z2Min = (for { x <- 0 until 4; y <- 0 until 4 } yield PMTilesV3Encoder.hilbertId(2, x, y)).min
+        assert(z1Min >= 1L)
+        assert(z2Min >= 5L)
     }
 
     test("encode preserves tile bytes in the tile-data section") {

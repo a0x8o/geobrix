@@ -113,29 +113,23 @@ class PMTiles_DataSourceTest extends PlanTest with SilentSparkSession {
         } finally deleteRecursively(Paths.get(outPath).getParent)
     }
 
-    test("DataSource rejects wrong column type via PMTiles_DataSource.validateWriteSchema") {
-        // Direct unit test of the schema-validator helper — covers the path Spark itself can't
-        // catch (column present but wrong dtype). Tests the helper directly rather than going
-        // through Spark since the Spark analyzer also coerces ints across some type boundaries.
+    test("validateWriteSchema rejects wrong column type and extra columns") {
         import org.apache.spark.sql.types._
+
+        // bytes as STRING instead of BINARY — error must name the column and mention BINARY.
         val badType = StructType(Array(
             StructField("z", IntegerType, nullable = false),
             StructField("x", IntegerType, nullable = false),
             StructField("y", IntegerType, nullable = false),
-            // bytes as STRING instead of BINARY.
             StructField("bytes", StringType, nullable = true)
         ))
-        val ex = intercept[IllegalArgumentException] {
+        val exType = intercept[IllegalArgumentException] {
             PMTiles_DataSource.validateWriteSchema(badType)
         }
-        assert(ex.getMessage.contains("`bytes`"),
-            s"expected an error naming the wrong-typed `bytes` column; got: ${ex.getMessage}")
-        assert(ex.getMessage.toLowerCase.contains("binary"),
-            s"expected error to mention BINARY; got: ${ex.getMessage}")
-    }
+        assert(exType.getMessage.contains("`bytes`"))
+        assert(exType.getMessage.toLowerCase.contains("binary"))
 
-    test("validateWriteSchema rejects extra columns") {
-        import org.apache.spark.sql.types._
+        // Extra column beyond the canonical schema — error must reference both.
         val extra = StructType(Array(
             StructField("z", IntegerType, nullable = false),
             StructField("x", IntegerType, nullable = false),
@@ -143,13 +137,11 @@ class PMTiles_DataSourceTest extends PlanTest with SilentSparkSession {
             StructField("bytes", BinaryType, nullable = true),
             StructField("ext", StringType, nullable = true)
         ))
-        val ex = intercept[IllegalArgumentException] {
+        val exExtra = intercept[IllegalArgumentException] {
             PMTiles_DataSource.validateWriteSchema(extra)
         }
-        assert(ex.getMessage.contains("(z INT, x INT, y INT, bytes BINARY)"),
-            s"expected error to reference the canonical schema; got: ${ex.getMessage}")
-        assert(ex.getMessage.contains("ext"),
-            s"expected error to name the extra `ext` column; got: ${ex.getMessage}")
+        assert(exExtra.getMessage.contains("(z INT, x INT, y INT, bytes BINARY)"))
+        assert(exExtra.getMessage.contains("ext"))
     }
 
     test("DataSource passes metadataJson option through to the encoded archive") {

@@ -56,43 +56,27 @@ class PMTiles_AggTest extends PlanTest with SilentSparkSession {
         assert(out != null && out(0) == 'P'.toByte)
     }
 
-    test("pmtiles_agg auto-detects PNG tile type from magic bytes") {
+    test("pmtiles_agg auto-detects tile_type from first non-null tile bytes (PNG / JPEG / MVT)") {
         spark.sparkContext.setLogLevel("ERROR")
         functions.register(spark)
         import functions._
 
-        // PNG magic: 89 50 4E 47 0D 0A 1A 0A
         val pngBytes = Array[Byte](0x89.toByte, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D)
-        val df = spark.createDataFrame(Seq((1, 0, 0, pngBytes))).toDF("z", "x", "y", "bytes")
-        val out = df.agg(pmtiles_agg(col("bytes"), col("z"), col("x"), col("y")).as("pmt"))
-            .collect().head.getAs[Array[Byte]]("pmt")
-        // Tile type byte is at offset 99.
-        assert(out(99) == PMTilesV3Encoder.TILE_TYPE_PNG, s"expected PNG tile_type; got ${out(99)}")
-    }
-
-    test("pmtiles_agg auto-detects JPEG tile type") {
-        spark.sparkContext.setLogLevel("ERROR")
-        functions.register(spark)
-        import functions._
-
         val jpegBytes = Array[Byte](0xFF.toByte, 0xD8.toByte, 0xFF.toByte, 0xE0.toByte, 0x00, 0x10)
-        val df = spark.createDataFrame(Seq((1, 0, 0, jpegBytes))).toDF("z", "x", "y", "bytes")
-        val out = df.agg(pmtiles_agg(col("bytes"), col("z"), col("x"), col("y")).as("pmt"))
-            .collect().head.getAs[Array[Byte]]("pmt")
-        assert(out(99) == PMTilesV3Encoder.TILE_TYPE_JPEG, s"expected JPEG tile_type; got ${out(99)}")
-    }
+        val mvtBytes = "plain_text_tile".getBytes("UTF-8") // no image magic → defaults to MVT
 
-    test("pmtiles_agg defaults to MVT for non-image bytes") {
-        spark.sparkContext.setLogLevel("ERROR")
-        functions.register(spark)
-        import functions._
-
-        // Plain text — no image magic; treated as MVT (protobuf).
-        val df = spark.createDataFrame(Seq((1, 0, 0, "plain_text_tile".getBytes("UTF-8"))))
-            .toDF("z", "x", "y", "bytes")
-        val out = df.agg(pmtiles_agg(col("bytes"), col("z"), col("x"), col("y")).as("pmt"))
-            .collect().head.getAs[Array[Byte]]("pmt")
-        assert(out(99) == PMTilesV3Encoder.TILE_TYPE_MVT, s"expected MVT tile_type; got ${out(99)}")
+        // Tile type byte is at offset 99 in the v3 header.
+        val cases = Seq(
+            (pngBytes, PMTilesV3Encoder.TILE_TYPE_PNG, "PNG"),
+            (jpegBytes, PMTilesV3Encoder.TILE_TYPE_JPEG, "JPEG"),
+            (mvtBytes, PMTilesV3Encoder.TILE_TYPE_MVT, "MVT")
+        )
+        cases.foreach { case (bytes, expectedType, label) =>
+            val df = spark.createDataFrame(Seq((1, 0, 0, bytes))).toDF("z", "x", "y", "bytes")
+            val out = df.agg(pmtiles_agg(col("bytes"), col("z"), col("x"), col("y")).as("pmt"))
+                .collect().head.getAs[Array[Byte]]("pmt")
+            assert(out(99) == expectedType, s"expected $label tile_type ($expectedType); got ${out(99)}")
+        }
     }
 
     test("pmtiles_agg returns valid header-only PMTile for empty input") {
