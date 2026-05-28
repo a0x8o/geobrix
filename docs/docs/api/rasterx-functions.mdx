@@ -815,6 +815,54 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 
 ---
 
+## Pixel ops + extraction
+
+Per-pixel transformations and band-level extraction. See [Pixel ops + extraction](../packages/rasterx#pixel-ops--extraction) in the RasterX overview for the workflow context.
+
+### rst_band
+
+**Signature:** `rst_band(tile: Column, bandIndex: Column): Column` — Extract a single band from a multi-band raster as a new single-band tile (`gdal.Translate -b N`). 1-based band index.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_band_sql_example" outputConstant="rst_band_sql_example_output" code={rasterxSqlCode} />
+
+### rst_buildoverviews
+
+**Signature:** `rst_buildoverviews(tile: Column, levels: Column, [resampling: Column = lit("average")]): Column` — Add pyramid overview levels to a tile via `ds.BuildOverviews`. `levels` is an `ARRAY<INT>` (e.g. `array(2, 4, 8, 16)`); `resampling` is one of `nearest`, `average`, `gauss`, `cubic`, `cubicspline`, `lanczos`, `bilinear`, `mode`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_buildoverviews_sql_example" outputConstant="rst_buildoverviews_sql_example_output" code={rasterxSqlCode} />
+
+### rst_fillnodata
+
+**Signature:** `rst_fillnodata(tile: Column, [maxSearchDist: Column = lit(100), smoothingIter: Column = lit(0)]): Column` — Fill NoData pixels via `gdal.FillNodata` using inverse-distance interpolation from neighbors within `maxSearchDist` pixels. `smoothingIter` applies an optional post-fill 3×3 smoothing pass.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_fillnodata_sql_example" outputConstant="rst_fillnodata_sql_example_output" code={rasterxSqlCode} />
+
+### rst_histogram
+
+**Signature:** `rst_histogram(tile: Column, [bands: Column = null, nBuckets: Column = lit(256), min: Column = null, max: Column = null, includeNodata: Column = lit(false)]): Column` — Compute per-band histograms via `band.GetHistogram`. Returns `MAP<STRING, ARRAY<LONG>>` keyed by `"band_<n>"` with bucket counts. If `bands` is null, all bands are processed; if `min` / `max` are null, GDAL auto-detects the range.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_histogram_sql_example" outputConstant="rst_histogram_sql_example_output" code={rasterxSqlCode} />
+
+### rst_sample
+
+**Signature:** `rst_sample(tile: Column, geom: Column): Column` — Sample the raster at the geometry's location(s). For a `POINT`, returns `ARRAY<DOUBLE>` of one value per band at the nearest pixel. Geometry is interpreted in EPSG:4326 lon/lat unless its EWKB carries a different SRID.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_sample_sql_example" outputConstant="rst_sample_sql_example_output" code={rasterxSqlCode} />
+
+### rst_setsrid
+
+**Signature:** `rst_setsrid(tile: Column, srid: Column): Column` — Stamp an EPSG code onto a raster that lacks (or has a wrong) spatial reference. Does NOT reproject — only sets `ds.SetProjection(...)`. Use `rst_transform` when you need an actual reprojection.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_setsrid_sql_example" outputConstant="rst_setsrid_sql_example_output" code={rasterxSqlCode} />
+
+### rst_threshold
+
+**Signature:** `rst_threshold(tile: Column, op: Column, value: Column): Column` — Binarize the raster: pixels matching `op value` get `1`, others get `0`. `op` is one of `>`, `>=`, `<`, `<=`, `==`, `!=`. Output is a `Byte` raster (0/1) sized to the input extent. Implemented as a `gbx_rst_mapalgebra` template.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_threshold_sql_example" outputConstant="rst_threshold_sql_example_output" code={rasterxSqlCode} />
+
+---
+
 ## Next Steps
 
 - [GridX Function Reference](./gridx-functions)
