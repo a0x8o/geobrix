@@ -1344,3 +1344,179 @@ def rst_color_relief(
         else _col(color_table_path)
     )
     return f.call_function("gbx_rst_color_relief", _col(tile), ctp_col)
+
+
+# ---------------------------------------------------------------------------
+# Spectral indices (Wave 8b)
+#
+# Five thin wrappers that build a per-pixel formula string from user-supplied
+# band indices and delegate to ``gbx_rst_mapalgebra`` internally. All return a
+# single-band Float32 GTiff tile sized to the input raster's extent.
+# ---------------------------------------------------------------------------
+
+
+def rst_evi(
+    tile: ColLike,
+    red_idx: ColLike,
+    nir_idx: ColLike,
+    blue_idx: ColLike,
+    l: ColLike = None,
+    c1: ColLike = None,
+    c2: ColLike = None,
+    g: ColLike = None,
+) -> Column:
+    """Enhanced Vegetation Index (EVI).
+
+    Formula: ``G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L)``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        red_idx: 1-based red band index.
+        nir_idx: 1-based NIR band index.
+        blue_idx: 1-based blue band index.
+        l: Canopy background adjustment (default 1.0).
+        c1: Aerosol resistance coefficient for red (default 6.0).
+        c2: Aerosol resistance coefficient for blue (default 7.5).
+        g: Gain factor (default 2.5).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    l_col = f.lit(1.0) if l is None else _col(l)
+    c1_col = f.lit(6.0) if c1 is None else _col(c1)
+    c2_col = f.lit(7.5) if c2 is None else _col(c2)
+    g_col = f.lit(2.5) if g is None else _col(g)
+    return f.call_function(
+        "gbx_rst_evi",
+        _col(tile),
+        _col(red_idx),
+        _col(nir_idx),
+        _col(blue_idx),
+        l_col,
+        c1_col,
+        c2_col,
+        g_col,
+    )
+
+
+def rst_savi(
+    tile: ColLike,
+    red_idx: ColLike,
+    nir_idx: ColLike,
+    l: ColLike = None,
+) -> Column:
+    """Soil-Adjusted Vegetation Index (SAVI).
+
+    Formula: ``(NIR - Red) / (NIR + Red + L) * (1 + L)``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        red_idx: 1-based red band index.
+        nir_idx: 1-based NIR band index.
+        l: Soil-brightness correction factor (default 0.5; ``L=0`` reduces to
+            NDVI; ``L=1`` is appropriate for very low vegetation cover).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    l_col = f.lit(0.5) if l is None else _col(l)
+    return f.call_function(
+        "gbx_rst_savi",
+        _col(tile),
+        _col(red_idx),
+        _col(nir_idx),
+        l_col,
+    )
+
+
+def rst_ndwi(
+    tile: ColLike,
+    green_idx: ColLike,
+    nir_idx: ColLike,
+) -> Column:
+    """Normalized Difference Water Index (NDWI, McFeeters 1996).
+
+    Formula: ``(Green - NIR) / (Green + NIR)``. Positive values typically
+    indicate open water, negative values indicate land/vegetation.
+
+    Args:
+        tile: Multi-band raster tile column.
+        green_idx: 1-based green band index.
+        nir_idx: 1-based NIR band index.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function(
+        "gbx_rst_ndwi",
+        _col(tile),
+        _col(green_idx),
+        _col(nir_idx),
+    )
+
+
+def rst_nbr(
+    tile: ColLike,
+    nir_idx: ColLike,
+    swir_idx: ColLike,
+) -> Column:
+    """Normalized Burn Ratio (NBR).
+
+    Formula: ``(NIR - SWIR) / (NIR + SWIR)``. The difference between pre-fire
+    and post-fire NBR (``dNBR``) is the canonical burn-severity index.
+
+    Args:
+        tile: Multi-band raster tile column.
+        nir_idx: 1-based NIR band index.
+        swir_idx: 1-based SWIR band index.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function(
+        "gbx_rst_nbr",
+        _col(tile),
+        _col(nir_idx),
+        _col(swir_idx),
+    )
+
+
+def rst_index(
+    tile: ColLike,
+    formula_name: ColLike,
+    band_map: ColLike,
+) -> Column:
+    """Generic dispatcher for named spectral indices.
+
+    Built-in formulae (case-insensitive ``formula_name``):
+
+    * ``ndvi``: ``(NIR-Red)/(NIR+Red)`` - bands ``red``, ``nir``.
+    * ``gndvi``: ``(NIR-Green)/(NIR+Green)`` - bands ``green``, ``nir``.
+    * ``msavi``: modified SAVI - bands ``red``, ``nir``.
+    * ``ndvi_re``: red-edge NDVI - bands ``red_edge``, ``nir``.
+    * ``ndmi``: ``(NIR-SWIR)/(NIR+SWIR)`` - bands ``nir``, ``swir``.
+    * ``ndsi``: snow-index ``(Green-SWIR)/(Green+SWIR)`` - bands ``green``, ``swir``.
+
+    For arbitrary user-supplied formulae, drop down to ``rst_mapalgebra``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        formula_name: Built-in formula name (e.g. ``"ndvi"``). Passed as a
+            string literal; wrap in ``f.lit(...)`` if you want a column
+            reference instead.
+        band_map: ``MAP<STRING, INT>`` column wiring the formula's band names
+            to 1-based band indices in ``tile`` (e.g.
+            ``F.create_map(F.lit("red"), F.lit(1), F.lit("nir"), F.lit(2))``).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    formula_col = (
+        f.lit(formula_name) if isinstance(formula_name, str) else _col(formula_name)
+    )
+    return f.call_function(
+        "gbx_rst_index",
+        _col(tile),
+        formula_col,
+        _col(band_map),
+    )

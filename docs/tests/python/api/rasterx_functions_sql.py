@@ -1730,3 +1730,103 @@ rst_color_relief_sql_example_output = """
 |... |
 +----+
 """
+
+
+# ============================================================================
+# Spectral Indices (Multi-band Satellite Math) - Wave 8b
+#
+# Five compositions over gbx_rst_mapalgebra that take user-supplied band
+# indices, build a per-pixel formula string, and dispatch to gdal_calc for
+# evaluation. All return a single-band Float32 GTiff tile.
+# ============================================================================
+
+
+def rst_evi_sql_example():
+    """Enhanced Vegetation Index from red / NIR / blue bands."""
+    return """
+-- EVI = G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L). Defaults follow the
+-- MODIS canonical coefficients: L=1.0, C1=6.0, C2=7.5, G=2.5.
+SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;
+"""
+
+
+rst_evi_sql_example_output = """
++---+
+|evi|
++---+
+|...|
++---+
+"""
+
+
+def rst_savi_sql_example():
+    """Soil-Adjusted Vegetation Index from red / NIR bands."""
+    return """
+-- SAVI = (NIR - Red) / (NIR + Red + L) * (1 + L). L=0.5 (default) is a
+-- balanced soil-vegetation tradeoff; L=0 reduces to NDVI.
+SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;
+"""
+
+
+rst_savi_sql_example_output = """
++----+
+|savi|
++----+
+|... |
++----+
+"""
+
+
+def rst_ndwi_sql_example():
+    """Normalized Difference Water Index from green / NIR bands."""
+    return """
+-- NDWI (McFeeters 1996) = (Green - NIR) / (Green + NIR). Positive values
+-- typically indicate open water.
+SELECT gbx_rst_ndwi(tile, 1, 2) AS ndwi FROM rasters;
+"""
+
+
+rst_ndwi_sql_example_output = """
++----+
+|ndwi|
++----+
+|... |
++----+
+"""
+
+
+def rst_nbr_sql_example():
+    """Normalized Burn Ratio from NIR / SWIR bands."""
+    return """
+-- NBR = (NIR - SWIR) / (NIR + SWIR). Difference of pre-fire and post-fire
+-- NBR (dNBR) is the canonical burn-severity index.
+SELECT gbx_rst_nbr(tile, 2, 3) AS nbr FROM rasters;
+"""
+
+
+rst_nbr_sql_example_output = """
++---+
+|nbr|
++---+
+|...|
++---+
+"""
+
+
+def rst_index_sql_example():
+    """Generic dispatcher for named spectral indices (NDVI shown)."""
+    return """
+-- Generic dispatcher - pick a built-in formula by name and wire bands by a
+-- MAP<STRING, INT>. Built-ins: ndvi, gndvi, msavi, ndvi_re, ndmi, ndsi.
+SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2)) AS ndvi
+FROM rasters;
+"""
+
+
+rst_index_sql_example_output = """
++----+
+|ndvi|
++----+
+|... |
++----+
+"""

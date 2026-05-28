@@ -7,6 +7,7 @@ import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, R
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
 import com.databricks.labs.gbx.rasterx.expressions.web._
 import com.databricks.labs.gbx.rasterx.expressions._
@@ -139,6 +140,13 @@ object functions extends Serializable {
         rd.register(RST_Slope)
         rd.register(RST_TPI)
         rd.register(RST_TRI)
+
+        // Spectral indices (multi-band satellite math over RST_MapAlgebra)
+        rd.register(RST_EVI)
+        rd.register(RST_Index)
+        rd.register(RST_NBR)
+        rd.register(RST_NDWI)
+        rd.register(RST_SAVI)
 
         sc.getConf.set(flag, "true")
     }
@@ -389,5 +397,48 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_ColorRelief.name, Seq(tileExpr, colorTablePath))
     def rst_color_relief(tileExpr: Column, colorTablePath: String): Column =
         rst_color_relief(tileExpr, lit(colorTablePath))
+
+    // Spectral indices (Wave 8b) - all delegate to RST_MapAlgebra under the hood.
+    def rst_evi(
+        tileExpr: Column, redIdx: Column, nirIdx: Column, blueIdx: Column
+    ): Column =
+        ColumnAdapter(RST_EVI.name, Seq(tileExpr, redIdx, nirIdx, blueIdx,
+            lit(1.0), lit(6.0), lit(7.5), lit(2.5)))
+    def rst_evi(
+        tileExpr: Column, redIdx: Column, nirIdx: Column, blueIdx: Column,
+        l: Column, c1: Column, c2: Column, g: Column
+    ): Column =
+        ColumnAdapter(RST_EVI.name, Seq(tileExpr, redIdx, nirIdx, blueIdx, l, c1, c2, g))
+    def rst_evi(tileExpr: Column, redIdx: Int, nirIdx: Int, blueIdx: Int): Column =
+        rst_evi(tileExpr, lit(redIdx), lit(nirIdx), lit(blueIdx))
+    def rst_evi(
+        tileExpr: Column, redIdx: Int, nirIdx: Int, blueIdx: Int,
+        l: Double, c1: Double, c2: Double, g: Double
+    ): Column =
+        rst_evi(tileExpr, lit(redIdx), lit(nirIdx), lit(blueIdx), lit(l), lit(c1), lit(c2), lit(g))
+
+    def rst_savi(tileExpr: Column, redIdx: Column, nirIdx: Column): Column =
+        ColumnAdapter(RST_SAVI.name, Seq(tileExpr, redIdx, nirIdx, lit(0.5)))
+    def rst_savi(tileExpr: Column, redIdx: Column, nirIdx: Column, l: Column): Column =
+        ColumnAdapter(RST_SAVI.name, Seq(tileExpr, redIdx, nirIdx, l))
+    def rst_savi(tileExpr: Column, redIdx: Int, nirIdx: Int): Column =
+        rst_savi(tileExpr, lit(redIdx), lit(nirIdx))
+    def rst_savi(tileExpr: Column, redIdx: Int, nirIdx: Int, l: Double): Column =
+        rst_savi(tileExpr, lit(redIdx), lit(nirIdx), lit(l))
+
+    def rst_ndwi(tileExpr: Column, greenIdx: Column, nirIdx: Column): Column =
+        ColumnAdapter(RST_NDWI.name, Seq(tileExpr, greenIdx, nirIdx))
+    def rst_ndwi(tileExpr: Column, greenIdx: Int, nirIdx: Int): Column =
+        rst_ndwi(tileExpr, lit(greenIdx), lit(nirIdx))
+
+    def rst_nbr(tileExpr: Column, nirIdx: Column, swirIdx: Column): Column =
+        ColumnAdapter(RST_NBR.name, Seq(tileExpr, nirIdx, swirIdx))
+    def rst_nbr(tileExpr: Column, nirIdx: Int, swirIdx: Int): Column =
+        rst_nbr(tileExpr, lit(nirIdx), lit(swirIdx))
+
+    def rst_index(tileExpr: Column, formulaName: Column, bandMap: Column): Column =
+        ColumnAdapter(RST_Index.name, Seq(tileExpr, formulaName, bandMap))
+    def rst_index(tileExpr: Column, formulaName: String, bandMap: Column): Column =
+        rst_index(tileExpr, lit(formulaName), bandMap)
 
 }

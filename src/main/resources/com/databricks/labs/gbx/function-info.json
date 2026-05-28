@@ -37,6 +37,9 @@
     "gbx_rst_derivedband_agg": {
       "examples": "Examples:\n      > SELECT region, gbx_rst_derivedband_agg(tile, 'def f(a): return a', 'f') as result FROM rasters GROUP BY region;"
     },
+    "gbx_rst_evi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;"
+    },
     "gbx_rst_filter": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_filter(tile, 3, 'median') as denoised FROM noisy_rasters;"
     },
@@ -85,6 +88,9 @@
     "gbx_rst_hillshade": {
       "examples": "Examples:\n      > SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;"
     },
+    "gbx_rst_index": {
+      "examples": "Examples:\n      > SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2)) AS ndvi FROM rasters;"
+    },
     "gbx_rst_initnodata": {
       "examples": "Examples:\n      > SELECT gbx_rst_initnodata(tile) as tile FROM rasters;"
     },
@@ -118,8 +124,14 @@
     "gbx_rst_min": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_min(tile) as min_per_band, gbx_rst_min(tile)[0] as band1_min FROM rasters;"
     },
+    "gbx_rst_nbr": {
+      "examples": "Examples:\n      > SELECT gbx_rst_nbr(tile, 2, 3) AS nbr FROM rasters;"
+    },
     "gbx_rst_ndvi": {
       "examples": "Examples:\n      > SELECT path, date, gbx_rst_ndvi(tile, 4, 8) as ndvi_tile, gbx_rst_avg(gbx_rst_ndvi(tile, 4, 8))[0] as mean_ndvi FROM sentinel2_images;"
+    },
+    "gbx_rst_ndwi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_ndwi(tile, 1, 2) AS ndwi FROM rasters;"
     },
     "gbx_rst_numbands": {
       "examples": "Examples:\n      > SELECT gbx_rst_numbands(tile) as bands FROM rasters;"
@@ -171,6 +183,9 @@
     },
     "gbx_rst_roughness": {
       "examples": "Examples:\n      > SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;"
+    },
+    "gbx_rst_savi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;"
     },
     "gbx_rst_scalex": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_scalex(tile) as scale_x, gbx_rst_scaley(tile) as scale_y FROM rasters;"

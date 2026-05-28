@@ -193,6 +193,29 @@ FROM dem_tiles;
 
 All seven are thin wrappers over `gdal.DEMProcessing` — same options, same numerical results as the gdaldem CLI. They are the foundation for terrain-derived workflows such as solar exposure, viewshed pre-processing, watershed analysis, runoff modelling and road grading.
 
+### Spectral indices
+
+GeoBrix ships five canonical multi-band satellite indices that derive a single-band Float32 tile from the per-pixel reflectances in a multi-band input. All five are compositions over `gbx_rst_mapalgebra` — each one builds a per-pixel formula string from the user-supplied 1-based band indices and delegates to the same gdal_calc evaluator. No new GDAL surface, no `withVrtPython` bracket; the output is always a stand-alone GTiff matching the input extent.
+
+- `gbx_rst_evi(tile, red_idx, nir_idx, blue_idx, [L, [C1, [C2, [G]]]])` — Enhanced Vegetation Index. `G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L)`. Defaults follow the MODIS canonical coefficients: `L=1.0`, `C1=6.0`, `C2=7.5`, `G=2.5`. Recommended over NDVI for high-biomass canopies (the blue band correction reduces aerosol and soil-background contamination).
+- `gbx_rst_savi(tile, red_idx, nir_idx, [L])` — Soil-Adjusted Vegetation Index. `(NIR - Red) / (NIR + Red + L) * (1 + L)`. `L` is the soil-brightness correction factor (default `0.5`); `L=0` reduces to NDVI; `L=1` is appropriate for very low vegetation cover.
+- `gbx_rst_ndwi(tile, green_idx, nir_idx)` — Normalized Difference Water Index (McFeeters 1996). `(Green - NIR) / (Green + NIR)`. Positive values typically mark open water; negative values mark land / vegetation.
+- `gbx_rst_nbr(tile, nir_idx, swir_idx)` — Normalized Burn Ratio. `(NIR - SWIR) / (NIR + SWIR)`. Computing pre-fire NBR and post-fire NBR and subtracting (`dNBR`) is the canonical burn-severity index.
+- `gbx_rst_index(tile, formula_name, band_map)` — Generic dispatcher for named indices. `formula_name` is a built-in name (case-insensitive); `band_map` is a `MAP<STRING, INT>` wiring the formula's named bands to 1-based band indices. Built-ins: `ndvi`, `gndvi`, `msavi`, `ndvi_re` (red-edge NDVI), `ndmi`, `ndsi`. For arbitrary user-supplied formulae, drop down to `gbx_rst_mapalgebra` directly.
+
+```sql
+-- A handful of indices off a single multi-band tile.
+SELECT
+    gbx_rst_evi(tile, red_idx => 4, nir_idx => 5, blue_idx => 2)        AS evi,
+    gbx_rst_savi(tile, 4, 5, 0.5)                                       AS savi,
+    gbx_rst_ndwi(tile, 3, 5)                                            AS ndwi,
+    gbx_rst_nbr(tile, 5, 6)                                             AS nbr,
+    gbx_rst_index(tile, 'msavi', map('red', 4, 'nir', 5))               AS msavi
+FROM landsat_l2;
+```
+
+The existing `gbx_rst_ndvi(tile, red_idx, nir_idx)` from the v0.1 baseline keeps its specialized gdal_calc path; the Wave 8b dispatcher's `'ndvi'` formula is numerically identical and exists so the generic API surfaces NDVI alongside the other named indices.
+
 ## Tile payload
 
 Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
