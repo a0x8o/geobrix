@@ -6,6 +6,7 @@ import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_D
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.web._
 import com.databricks.labs.gbx.rasterx.expressions._
 import com.databricks.labs.gbx.rasterx.gdal.CheckpointManager
 import com.databricks.labs.gbx.rasterx.util.CleanupListener
@@ -118,6 +119,11 @@ object functions extends Serializable {
         rd.register(RST_WorldToRasterCoord)
         rd.register(RST_WorldToRasterCoordX)
         rd.register(RST_WorldToRasterCoordY)
+
+        // Web-mercator tile output
+        rd.register(RST_ToWebMercator)
+        rd.register(RST_TileXYZ)
+        rd.register(RST_XYZPyramid)
 
         sc.getConf.set(flag, "true")
     }
@@ -275,5 +281,43 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         rst_worldtorastercoordx(tileExpr, lit(worldX), lit(worldY))
     def rst_worldtorastercoordy(tileExpr: Column, worldX: Double, worldY: Double): Column =
         rst_worldtorastercoordy(tileExpr, lit(worldX), lit(worldY))
+
+    // Web-mercator tile output (Column form)
+    def rst_to_webmercator(tileExpr: Column): Column =
+        ColumnAdapter(RST_ToWebMercator.name, Seq(tileExpr, lit("bilinear")))
+    def rst_to_webmercator(tileExpr: Column, resampling: Column): Column =
+        ColumnAdapter(RST_ToWebMercator.name, Seq(tileExpr, resampling))
+    def rst_to_webmercator(tileExpr: Column, resampling: String): Column =
+        rst_to_webmercator(tileExpr, lit(resampling))
+
+    def rst_tilexyz(tileExpr: Column, z: Column, x: Column, y: Column): Column =
+        ColumnAdapter(RST_TileXYZ.name, Seq(tileExpr, z, x, y, lit("PNG"), lit(256), lit("bilinear")))
+    def rst_tilexyz(
+        tileExpr: Column, z: Column, x: Column, y: Column,
+        format: Column, size: Column, resampling: Column
+    ): Column =
+        ColumnAdapter(RST_TileXYZ.name, Seq(tileExpr, z, x, y, format, size, resampling))
+    def rst_tilexyz(tileExpr: Column, z: Int, x: Int, y: Int): Column =
+        rst_tilexyz(tileExpr, lit(z), lit(x), lit(y))
+    def rst_tilexyz(
+        tileExpr: Column, z: Int, x: Int, y: Int,
+        format: String, size: Int, resampling: String
+    ): Column =
+        rst_tilexyz(tileExpr, lit(z), lit(x), lit(y), lit(format), lit(size), lit(resampling))
+
+    def rst_xyzpyramid(tileExpr: Column, minZ: Column, maxZ: Column): Column =
+        ColumnAdapter(RST_XYZPyramid.name, Seq(tileExpr, minZ, maxZ, lit("PNG"), lit(256), lit("bilinear")))
+    def rst_xyzpyramid(
+        tileExpr: Column, minZ: Column, maxZ: Column,
+        format: Column, size: Column, resampling: Column
+    ): Column =
+        ColumnAdapter(RST_XYZPyramid.name, Seq(tileExpr, minZ, maxZ, format, size, resampling))
+    def rst_xyzpyramid(tileExpr: Column, minZ: Int, maxZ: Int): Column =
+        rst_xyzpyramid(tileExpr, lit(minZ), lit(maxZ))
+    def rst_xyzpyramid(
+        tileExpr: Column, minZ: Int, maxZ: Int,
+        format: String, size: Int, resampling: String
+    ): Column =
+        rst_xyzpyramid(tileExpr, lit(minZ), lit(maxZ), lit(format), lit(size), lit(resampling))
 
 }
