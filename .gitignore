@@ -43,9 +43,6 @@ __pycache__/
 /.coverage
 /python/coverage-report/
 /python/geobrix/test/coverage-report/
-/.claude/scheduled_tasks.lock
-/.claude/judge/
-/.claude/settings.local.json
-/.claude/settings.local.json.bak*
-/.claude/worktrees/
+/.claude/
+!/.claude/qc-judge/
 /input/

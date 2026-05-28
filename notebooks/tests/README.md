@@ -33,7 +33,7 @@ Verbosity: `GBX_NOTEBOOK_VERBOSITY=quiet|truncated|full` (see table below).
 Run only this example:
 
 ```bash
-bash .cursor/commands/gbx-test-notebooks.sh --path test_basic_testbook.py
+bash scripts/commands/gbx-test-notebooks.sh --path test_basic_testbook.py
 ```
 
 ## No-kernel option: run notebook as script
@@ -47,7 +47,7 @@ bash .cursor/commands/gbx-test-notebooks.sh --path test_basic_testbook.py
 Use this when the kernel is broken so you can still smoke-test notebook code:
 
 ```bash
-bash .cursor/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py
+bash scripts/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py
 ```
 
 To test another notebook, call `run_notebook_cell_by_cell(path_to_ipynb, cwd=repo_root)` (or `run_notebook_as_script(...)`) in a new test.
@@ -60,7 +60,7 @@ To test another notebook, call `run_notebook_cell_by_cell(path_to_ipynb, cwd=rep
 | `truncated` (default) | Notebook name; per cell: label source/result as `(full)` or `(truncated)`, then print actual content if (full) or truncated content (300 chars) if (truncated). |
 | `full` | Full notebook contents, full cell source, full execution result per cell. |
 
-Example: `GBX_NOTEBOOK_VERBOSITY=full bash .cursor/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py`
+Example: `GBX_NOTEBOOK_VERBOSITY=full bash scripts/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py`
 
 ## Run tests (Docker — required)
 
@@ -68,13 +68,13 @@ Notebook tests **must** run inside the `geobrix-dev` Docker container. From **re
 
 ```bash
 # Default: cell-by-cell run of fixtures + sample-data notebooks
-bash .cursor/commands/gbx-test-notebooks.sh
+bash scripts/commands/gbx-test-notebooks.sh
 
 # Only sample-data notebooks
-bash .cursor/commands/gbx-test-notebooks.sh --path sample-data
+bash scripts/commands/gbx-test-notebooks.sh --path sample-data
 
 # Run pytest for a specific test file
-bash .cursor/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py
+bash scripts/commands/gbx-test-notebooks.sh --path test_notebook_via_script.py
 ```
 
 ## Kernel timeouts in Docker

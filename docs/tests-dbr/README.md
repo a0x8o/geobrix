@@ -110,7 +110,7 @@ gbx:test:python-dbr --markers databricks
 gbx:test:python-dbr --log dbr-tests.log
 ```
 
-See `.cursor/commands/gbx-test-python-dbr.md` for full documentation.
+See `scripts/commands/gbx-test-python-dbr.md` for full documentation.
 
 ### In Databricks Workspace
 

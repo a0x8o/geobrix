@@ -22,7 +22,7 @@ GeoBrix is a multi-artifact repo: Scala/JVM core, Python bindings, docs, and too
 | `notebooks/` | Sample notebooks (e.g. `sample-data/setup_sample_data.ipynb`) and `notebooks/tests/` |
 | `scripts/` | CI, Docker, and one-off scripts |
 | `sample-data/` | Scripts and outputs for sample data (host); in-cluster uses Volumes path |
-| `.cursor/commands/` | `gbx:*` palette commands — `.md` registration + `.sh` implementation (see below) |
+| `scripts/commands/` | `gbx:*` palette commands — `.md` registration + `.sh` implementation (see below) |
 | `CLAUDE.md` | Project conventions and working patterns — read this first when starting work here |
 
 ### Packages and readers
@@ -101,7 +101,7 @@ You can run the **Essential bundle** and **primitive Volume tests** on a live Da
 
 ## `gbx:*` commands
 
-The repo provides `gbx:*` commands so both humans and AI agents can run tests, coverage, docs, and Docker in a consistent way. Each command is a `.md` registration + `.sh` implementation under `.cursor/commands/` (the directory name is historical; the commands are usable from any shell).
+The repo provides `gbx:*` commands so both humans and AI agents can run tests, coverage, docs, and Docker in a consistent way. Each command is a `.md` registration + `.sh` implementation under `scripts/commands/` (the directory name is historical; the commands are usable from any shell).
 
 Conventions and architectural guidance live in [`CLAUDE.md`](https://github.com/databrickslabs/geobrix/blob/main/CLAUDE.md) at the repo root — read that for cross-language naming, BNG resolution rules, GDAL resource management, doc-test single-source pattern, and the user-facing-docs voice rule. Agents (Cursor or Claude) read CLAUDE.md as their entry point.
 
@@ -111,8 +111,8 @@ Conventions and architectural guidance live in [`CLAUDE.md`](https://github.com/
 
 #### How to invoke
 
-- **From Cursor UI** — Use the command palette (`/` or type the command name) and run the desired `gbx:*` command. Each command is backed by a `.md` (registration) and a `.sh` (implementation) in `.cursor/commands/`.
-- **From a shell** — Run the script directly, e.g. `bash .cursor/commands/gbx-test-scala.sh [OPTIONS]`. This is the form most often used by terminals, CI, or AI agents (Claude, Cursor) invoking them via a shell tool.
+- **From Cursor UI** — Use the command palette (`/` or type the command name) and run the desired `gbx:*` command. Each command is backed by a `.md` (registration) and a `.sh` (implementation) in `scripts/commands/`.
+- **From a shell** — Run the script directly, e.g. `bash scripts/commands/gbx-test-scala.sh [OPTIONS]`. This is the form most often used by terminals, CI, or AI agents (Claude, Cursor) invoking them via a shell tool.
 
 #### Naming
 
@@ -222,7 +222,7 @@ When working with Claude or Cursor in this repo, agents should:
 - **Read `CLAUDE.md` first** — it documents project conventions and translates cross-project working patterns into geobrix-specific behavior (Docker container, `gh` account switching, etc.).
 - **Dispatch long-running work to subagents** — `gbx:*` test/build commands typically take minutes and benefit from running in an isolated context, freeing the main session for review.
 - **Use `gbx:*` commands rather than ad-hoc shell** for tests, coverage, docs, and Docker — they handle env vars, log paths, and container setup consistently.
-- **Add or fix a command rather than work around it** — if a `gbx:*` command is broken, fix the script in `.cursor/commands/<name>.sh`; don't invoke the underlying tool directly and let the command rot.
+- **Add or fix a command rather than work around it** — if a `gbx:*` command is broken, fix the script in `scripts/commands/<name>.sh`; don't invoke the underlying tool directly and let the command rot.
 
 ---
 
