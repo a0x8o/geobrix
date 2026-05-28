@@ -46,7 +46,9 @@ def test_rst_to_webmercator_roundtrip(spark):
 
     df = spark.range(1).select(
         rx.rst_srid(
-            rx.rst_to_webmercator(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")))
+            rx.rst_to_webmercator(
+                rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+            )
         ).alias("srid")
     )
     row = df.collect()[0]

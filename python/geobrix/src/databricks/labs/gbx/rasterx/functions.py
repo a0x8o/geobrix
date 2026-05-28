@@ -1000,7 +1000,9 @@ def rst_worldtorastercoordy(
     )
 
 
-def rst_to_webmercator(tile: ColLike, resampling: Union[ColLike, None] = None) -> Column:
+def rst_to_webmercator(
+    tile: ColLike, resampling: Union[ColLike, None] = None
+) -> Column:
     """Reproject the tile to EPSG:3857 (web mercator).
 
     Most slippy-map workflows start here because rasters typically arrive
@@ -1015,12 +1017,12 @@ def rst_to_webmercator(tile: ColLike, resampling: Union[ColLike, None] = None) -
     Returns:
         Tile column reprojected to EPSG:3857.
     """
-    resampling_col = f.lit("bilinear") if resampling is None else (
-        f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
-    return f.call_function(
-        "gbx_rst_to_webmercator", _col(tile), resampling_col
-    )
+    return f.call_function("gbx_rst_to_webmercator", _col(tile), resampling_col)
 
 
 def rst_tilexyz(
@@ -1053,11 +1055,15 @@ def rst_tilexyz(
     Returns:
         Binary column with the encoded image bytes.
     """
-    format_col = f.lit("PNG") if format is None else (
-        f.lit(format) if isinstance(format, str) else _col(format)
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
     )
-    resampling_col = f.lit("bilinear") if resampling is None else (
-        f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
     return f.call_function(
         "gbx_rst_tilexyz",
@@ -1099,11 +1105,15 @@ def rst_xyzpyramid(
     Returns:
         Array column of structs (use ``F.explode`` to get one row per tile).
     """
-    format_col = f.lit("PNG") if format is None else (
-        f.lit(format) if isinstance(format, str) else _col(format)
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
     )
-    resampling_col = f.lit("bilinear") if resampling is None else (
-        f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
     return f.call_function(
         "gbx_rst_xyzpyramid",
