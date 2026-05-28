@@ -59,14 +59,17 @@ object InterpolateElevation {
             })
             .toMap
             .collect({ case (pt, Some(ply)) => pt -> ply })
-            .map({ case (point: Point, poly: Polygon) =>
+            .flatMap({ case (point: Point, poly: Polygon) =>
                 val polyCoords = poly.getCoordinates
                 val tri = new Triangle(polyCoords(0), polyCoords(1), polyCoords(2))
                 val z = tri.interpolateZ(point.getCoordinate)
-                if (z.isNaN) { throw new Exception("Interpolated Z value is NaN") }
-                val ip = JTS.point(new Coordinate(point.getX, point.getY, z))
-                ip.setSRID(multipoint.getSRID)
-                ip
+                if (z.isNaN) {
+                    None // cell with degenerate triangle -> caller treats as no_data
+                } else {
+                    val ip = JTS.point(new Coordinate(point.getX, point.getY, z))
+                    ip.setSRID(multipoint.getSRID)
+                    Some(ip)
+                }
             })
             .toSeq
     }
@@ -133,6 +136,29 @@ object InterpolateElevation {
             })
             geomFact.createPolygon(coords)
         })
+    }
+
+    /** Regular grid of cell-center points over a bbox.
+     *  Ordering: column-major (x index varies slowest, y index varies fastest).
+     *  Cell size is derived: xRes = (xmax-xmin)/widthPx, yRes = (ymax-ymin)/heightPx.
+     *  Centers: x = xmin + (i + 0.5)*xRes, y = ymin + (j + 0.5)*yRes.
+     */
+    def pointGridBBox(
+        xmin: Double, ymin: Double, xmax: Double, ymax: Double,
+        widthPx: Int, heightPx: Int, srid: Int
+    ): MultiPoint = {
+        val xRes = (xmax - xmin) / widthPx
+        val yRes = (ymax - ymin) / heightPx
+        val pts = for (i <- 0 until widthPx; j <- 0 until heightPx) yield {
+            val x = xmin + (i + 0.5) * xRes
+            val y = ymin + (j + 0.5) * yRes
+            val p = JTS.point(new Coordinate(x, y))
+            p.setSRID(srid)
+            p
+        }
+        val mp = JTS.multiPoint(pts.toArray)
+        mp.setSRID(srid)
+        mp
     }
 
     /** Builds a regular grid of points (origin + xCells x yCells, cell sizes xSize x ySize). */
