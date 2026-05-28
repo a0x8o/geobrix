@@ -100,6 +100,10 @@ gbx_rst_histogram
 gbx_rst_sample
 gbx_rst_setsrid
 gbx_rst_threshold
+gbx_rst_cog_convert
+gbx_rst_contour
+gbx_rst_proximity
+gbx_rst_viewshed
 gbx_bng_aswkb
 gbx_bng_aswkt
 gbx_bng_cellarea

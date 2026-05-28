@@ -575,6 +575,37 @@ def test_pixel_ops_sql_example(spark, rasters_view, example_attr, fallback_sql):
 
 
 # ============================================================================
+# Analysis (COG / proximity / contour / viewshed)
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # cog_convert returns a tile; proximity returns a tile (Float32 distance
+    # raster); contour returns ARRAY<struct(geom_wkb, value)>; viewshed
+    # returns a tile (Byte 0/255 visibility mask).
+    ("rst_cog_convert_sql_example",
+     "SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 256, 'AVERAGE') AS cog FROM rasters"),
+    ("rst_proximity_sql_example",
+     "SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist FROM rasters"),
+    ("rst_contour_sql_example",
+     "SELECT gbx_rst_contour(tile, array(), 100.0, 0.0, 'elev') AS contours FROM rasters"),
+    ("rst_viewshed_sql_example",
+     "SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs FROM rasters"),
+])
+def test_analysis_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each analysis SQL example exists and executes to a non-null result."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    expected_fn = example_attr.replace("_sql_example", "")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+# ============================================================================
 # Structure Verification
 # ============================================================================
 
