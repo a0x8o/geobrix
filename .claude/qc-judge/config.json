@@ -1,0 +1,13 @@
+{
+  "release_notes_path": "docs/docs/beta-release-notes.mdx",
+  "internals_extra_patterns": [
+    "wave\\s*\\d+",
+    "@databricks\\.com",
+    "GBX-\\d+"
+  ],
+  "checks": {
+    "docs-match-code": {
+      "prompt": "You are checking whether new public symbols in the GeoBrix codebase have documentation.\n\n# Full diff\n{input_0}\n\n# All current docs files\n{input_1}\n\n# Task\n1. From the diff, identify new public symbols. Project conventions:\n   - Scala: `def`/`object`/`class` in `src/main/scala/.../{rasterx,gridx,vectorx}/`\n   - Python: top-level `def`/`class` in `python/geobrix/src/databricks/labs/gbx/`\n   - SQL: new `gbx_rst_*`, `gbx_bng_*`, `gbx_st_*` UDFs visible in registration files\n2. For each new symbol, check whether `docs/` references it (case-sensitive substring or close match).\n3. Flag symbols with no apparent doc entry.\n\nReply with exactly one line (tab-separated):\nPASS|FAIL|REVIEW\thigh|low\tone-line reason — if FAIL, list up to 3 undocumented symbols"
+    }
+  }
+}

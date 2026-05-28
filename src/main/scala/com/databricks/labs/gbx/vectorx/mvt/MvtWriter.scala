@@ -24,7 +24,7 @@ import scala.util.Try
   * int/double preservation is deferred. Field schema is derived from the first non-null
   * attrs map.
   *
-  * GDAL resource management (per `.cursor/rules/gdal-resource-management.mdc`): every
+  * GDAL resource management (per "GDAL resource management" in CLAUDE.md): every
   * OGR `Feature` and `Geometry` allocated inside the loop is `.delete()`'d immediately,
   * the layer/datasource are closed via `ds.delete()`, and `gdal.RmdirRecursive` cleans
   * up the `/vsimem/` directory at the end.

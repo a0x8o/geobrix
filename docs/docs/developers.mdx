@@ -5,7 +5,7 @@ title: Developers
 
 # Developers
 
-This page is for contributors and developers working in the GeoBrix repository. It describes how the project is organized and how to use the Cursor integration (rules, commands, agents, and skills) effectively.
+This page is for contributors and developers working in the GeoBrix repository. It describes how the project is organized and how to use the `gbx:*` commands effectively.
 
 ## How the project is organized
 
@@ -22,7 +22,8 @@ GeoBrix is a multi-artifact repo: Scala/JVM core, Python bindings, docs, and too
 | `notebooks/` | Sample notebooks (e.g. `sample-data/setup_sample_data.ipynb`) and `notebooks/tests/` |
 | `scripts/` | CI, Docker, and one-off scripts |
 | `sample-data/` | Scripts and outputs for sample data (host); in-cluster uses Volumes path |
-| `.cursor/` | Cursor integration: **rules**, **commands**, **agents**, **skills** (see below) |
+| `.cursor/commands/` | `gbx:*` palette commands — `.md` registration + `.sh` implementation (see below) |
+| `CLAUDE.md` | Project conventions and working patterns — read this first when starting work here |
 
 ### Packages and readers
 
@@ -35,9 +36,9 @@ GeoBrix is a multi-artifact repo: Scala/JVM core, Python bindings, docs, and too
 
 - **Unit tests**: `src/test/scala/` (Scala), `python/geobrix/test/` (Python).
 - **Documentation tests**: `docs/tests/python/`, `docs/tests/scala/` — validate code examples used in the docs; single source of truth.
-- **Notebook tests**: `notebooks/tests/` mirrors `notebooks/`; run via Cursor commands or CI.
+- **Notebook tests**: `notebooks/tests/` mirrors `notebooks/`; run via `gbx:*` commands or CI.
 
-Development and CI use a **Docker** image (`geobrix-dev`) for a consistent environment; many Cursor commands run inside that container.
+Development and CI use a **Docker** image (`geobrix-dev`) for a consistent environment; most `gbx:*` commands run inside that container.
 
 ### Git LFS — required to clone the GDAL platform tarball
 
@@ -94,22 +95,15 @@ You can run the **Essential bundle** and **primitive Volume tests** on a live Da
 - `gbx:test:primitive-databricks` — Pushes the primitive notebook and runs it on the cluster. Validates volume exists, create subdirs, read/write/copy via FUSE (pathlib/shutil). No GeoBrix dependency.
 - `gbx:test:bundle-databricks` — Pushes the bundle runner notebook and runs it on the cluster. If `GBX_BUNDLE_WHEEL_VOLUME_PATH` is set, the notebook has: (1) `%pip install --quiet <wheel>`, (2) `%pip install --quiet --no-deps --force-reinstall <wheel>`, (3) `dbutils.library.restartPython()`, then the bundle cell. Run those cells in order so the restarted process loads the new GeoBrix code.
 
-**Rule** — For Volume path handling (FUSE, pathlib, no random access), see `.cursor/rules/unity-catalog-volumes.mdc`.
+**Convention** — For Volume path handling (FUSE, pathlib, no random access), see the "Unity Catalog Volumes" section in [`CLAUDE.md`](https://github.com/databrickslabs/geobrix/blob/main/CLAUDE.md).
 
 ---
 
-## Cursor
+## `gbx:*` commands
 
-The repo includes a full Cursor setup so that both humans and AI agents can run tests, coverage, docs, and Docker in a consistent way. The main pieces are **rules**, **commands**, **agents**, and **skills**.
+The repo provides `gbx:*` commands so both humans and AI agents can run tests, coverage, docs, and Docker in a consistent way. Each command is a `.md` registration + `.sh` implementation under `.cursor/commands/` (the directory name is historical; the commands are usable from any shell).
 
-### Rules
-
-**Rules** are persistent guidance that shape how agents (and developers) should behave. They live in `.cursor/rules/` as `.mdc` files.
-
-- **Always-applied rules** — Loaded every session (e.g. `00-agent-context.mdc`, behavior and progress rules).
-- **Topic- or file-scoped rules** — Applied when relevant (e.g. test organization, docs single-source, GDAL resource management, Maven config).
-
-The **entry point** is `00-agent-context.mdc`: it defines how to delegate work (topic → subagent), where to find finer rule detail (topic → rule files), and the difference between commands, skills, and rules. When in doubt, check that rule and the topic→rule table there.
+Conventions and architectural guidance live in [`CLAUDE.md`](https://github.com/databrickslabs/geobrix/blob/main/CLAUDE.md) at the repo root — read that for cross-language naming, BNG resolution rules, GDAL resource management, doc-test single-source pattern, and the user-facing-docs voice rule. Agents (Cursor or Claude) read CLAUDE.md as their entry point.
 
 ### Commands
 
@@ -117,8 +111,8 @@ The **entry point** is `00-agent-context.mdc`: it defines how to delegate work (
 
 #### How to invoke
 
-- **From Cursor UI** — Use the command palette (e.g. type `/` or the command name) and run the desired `gbx:*` command. Each command is backed by a `.md` (registration) and a `.sh` (implementation) in `.cursor/commands/`.
-- **From a shell** — Run the script directly, e.g. `bash .cursor/commands/gbx-test-scala.sh [OPTIONS]`. Useful in terminals or when an agent runs them via the Shell tool.
+- **From Cursor UI** — Use the command palette (`/` or type the command name) and run the desired `gbx:*` command. Each command is backed by a `.md` (registration) and a `.sh` (implementation) in `.cursor/commands/`.
+- **From a shell** — Run the script directly, e.g. `bash .cursor/commands/gbx-test-scala.sh [OPTIONS]`. This is the form most often used by terminals, CI, or AI agents (Claude, Cursor) invoking them via a shell tool.
 
 #### Naming
 
@@ -129,7 +123,7 @@ Commands follow **`gbx:<category>:<action>`**:
 | `test` | Run tests (Scala, Python, docs, SQL docs, notebooks, function-info) |
 | `coverage` | Code coverage (Scala/Python, unit/docs, gaps, baseline, package-targeted) |
 | `data` | Sample data: download (essential/complete bundle), generate minimal bundle, push JAR/wheel to Volume |
-| `docs` | Documentation server (start, stop, restart, dev, serve-local, static-build, function-info, prompt-session) |
+| `docs` | Documentation server (start, stop, restart, dev, serve-local, static-build, function-info) |
 | `docker` | Container lifecycle (exec, start, stop, restart, rebuild, attach) |
 | `ci` | CI / GitHub Actions: push, trigger, status, watch, logs, docs menu, setup |
 | `lint` | Scala: scalastyle; Python: isort, black, flake8 (same as CI) |
@@ -187,7 +181,6 @@ Doc tests use the **in-repo minimal bundle** (no download step). Generate it onc
 | `gbx:docs:static-build` | Create offline/portable docs zip | Build with relative paths and hash router; zip to `resources/static/` by default (use `--output <path>`); leaves `docs/build/` unchanged for serving |
 | `gbx:docs:restart` | Restart after stop | Stop + start with same options |
 | `gbx:docs:function-info` | After changing doc SQL examples | Regenerates `function-info.json` from doc SQL |
-| `gbx:prompt-session` | Start of session or context switch | Prints agent-context rule for review |
 
 **Docker**
 
@@ -212,7 +205,7 @@ Doc tests use the **in-repo minimal bundle** (no download step). Generate it onc
 
 | Command | When to use | What it does |
 |---------|-------------|--------------|
-| `gbx:ci:push` | Initiate remote build on current branch (e.g. beta/0.3.0) | Pushes branch to origin, then watches the **build main** workflow run |
+| `gbx:ci:push` | Initiate remote build on current branch (e.g. beta/0.4.0) | Pushes branch to origin, then watches the **build main** workflow run |
 | `gbx:ci:trigger` | Push then manually trigger build main (e.g. workflow_dispatch) | Pushes branch, lists runs, prompts to trigger **build main** on current branch |
 | `gbx:ci:status` | Check recent CI runs | Shows recent workflow runs for current branch (optional: `[LIMIT]`) |
 | `gbx:ci:watch` | Stream a CI run | Watches latest run (or `[RUN_ID]`) in real time |
@@ -222,21 +215,14 @@ Doc tests use the **in-repo minimal bundle** (no download step). Generate it onc
 
 Most commands accept `--help`. Common options: `--log <path>` for test/output logs (truncated each run), `--open` for coverage reports, and command-specific flags (e.g. `--suite`, `--path`, `--skip-build`). **Doc test commands** set `GBX_SAMPLE_DATA_ROOT=/Volumes/main/default/test-data` in the container by default so the minimal bundle is used (required for remote/CI); use `--no-sample-data-root` to leave it unset and use the full-bundle path or your own env. They do not run a sample-data download; the minimal or full bundle must be present via the Volumes mount.
 
-### Agents (subagents)
+### Working with agents
 
-**Agents** (subagents) are topic-owned “specialists” defined under `.cursor/agents/`. Each has an `.md` file (e.g. `test.md`, `coverage.md`, `docs.md`, `docker.md`, `rasterx.md`, `gridx.md`, `vectorx.md`, `gdal.md`, `data.md`, `function-info.md`).
+When working with Claude or Cursor in this repo, agents should:
 
-- They **own** the `gbx:*` commands for their topic and hold detailed knowledge for that area.
-- **When to delegate**: Use them for domain work (e.g. “run tests”, “fix coverage”, “docs server”, “Docker”, “RasterX API”, “GDAL drivers”). The topic → subagent table in `00-agent-context.mdc` is the canonical list.
-- Invoking a subagent should include the root Cursor rule (or `00-agent-context`) so the invoked agent has project context.
-
-### Skills
-
-**Skills** are reusable **procedures** (step-by-step guidance), not runnable commands. They live under `.cursor/skills/` (e.g. `add-or-fix-gbx-command/`, `create-cursor-rule/`).
-
-- **When to use**: For “how to do X in a standard way” — e.g. “add or fix a GeoBrix command”, “create or update a Cursor rule”. An agent (or you) follows the skill’s instructions.
-- **Add/fix command**: Use the **add-or-fix-gbx-command** skill when adding a new `gbx:*` command or fixing an existing one; then the subagent for that command’s topic can own further improvements.
-- **Create/update rule**: Use the **create-cursor-rule** skill when creating or updating a rule; then update `00-agent-context` (topic→rules) and the owning subagent if needed.
+- **Read `CLAUDE.md` first** — it documents project conventions and translates cross-project working patterns into geobrix-specific behavior (Docker container, `gh` account switching, etc.).
+- **Dispatch long-running work to subagents** — `gbx:*` test/build commands typically take minutes and benefit from running in an isolated context, freeing the main session for review.
+- **Use `gbx:*` commands rather than ad-hoc shell** for tests, coverage, docs, and Docker — they handle env vars, log paths, and container setup consistently.
+- **Add or fix a command rather than work around it** — if a `gbx:*` command is broken, fix the script in `.cursor/commands/<name>.sh`; don't invoke the underlying tool directly and let the command rot.
 
 ---
 
@@ -247,8 +233,8 @@ Most commands accept `--help`. Common options: `--log <path>` for test/output lo
 - **Docs**: `gbx:docs:dev` while editing; `gbx:docs:stop` to stop.
 - **Docker**: `gbx:docker:start` then `gbx:docker:exec` (or `attach`) for builds and tests.
 - **Databricks cluster**: `gbx:test:primitive-databricks` then `gbx:test:bundle-databricks` with `databricks_cluster_config.env` set.
-- **Context**: `gbx:prompt-session` to print the agent-context rule.
-- **Full command list and options**: See `.cursor/rules/cursor-commands.mdc` in the repo.
+- **Conventions and patterns**: Read [`CLAUDE.md`](https://github.com/databrickslabs/geobrix/blob/main/CLAUDE.md) at the repo root.
+- **Full command list and options**: See the "Commands" section above, or run any `gbx:*` command with `--help`.
 
 ---
 
@@ -268,7 +254,7 @@ Workflows live in **`.github/workflows/`**. They define when and how tests and b
 
 ### Initiating a build from a branch
 
-Pushing to a branch (except `python/**` and `scala/**`) **successfully triggers** the **build main** workflow. To run the main build on your current branch (e.g. `beta/0.3.0`):
+Pushing to a branch (except `python/**` and `scala/**`) **successfully triggers** the **build main** workflow. To run the main build on your current branch (e.g. `beta/0.4.0`):
 
 - **Push and watch** — **`gbx:ci:push`**. Pushes the current branch to origin (push triggers **build main**), then streams the run.
 - **Trigger after push** — **`gbx:ci:trigger`**. Pushes, then prompts to trigger **build main** (workflow_dispatch).
