@@ -6,15 +6,18 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 import gridxFunctionsExamples from '!!raw-loader!../../tests/python/api/gridx_functions.py';
 import gridxFunctionsSqlExamples from '!!raw-loader!../../tests/python/api/gridx_functions_sql.py';
 
-# GridX Function Reference (BNG)
+# GridX Function Reference
 
-Complete reference for all GridX British National Grid (BNG) functions with detailed descriptions, parameters, return values, and examples.
+Complete reference for all GridX discrete-global-grid functions — British National Grid (BNG) and CARTO Quadbin v0.
 
 ## Overview
 
-GridX provides functions for working with the British National Grid coordinate system, a specialized grid system used in Great Britain for spatial indexing and location-based services.
+GridX covers two grid families:
 
-**Function Count**: 23 functions organized into 7 categories:
+- **BNG (British National Grid)** — the Ordnance Survey grid used in Great Britain for spatial indexing and location-based services.
+- **Quadbin (CARTO v0)** — a global zoom-indexed tile addressing scheme aligned with web-mercator slippy maps, compatible with CARTO's CDB_QuadKey IDs.
+
+**BNG**: 23 functions organized into 7 categories:
 - **Conversion Functions** (2): Convert cells to geometries
 - **Core Functions** (4): Basic cell operations
 - **Cell Operations** (2): Intersection and union
@@ -24,8 +27,10 @@ GridX provides functions for working with the British National Grid coordinate s
 - **Aggregator Functions** (2): Aggregate operations
 - **Generator Functions** (5): Explode arrays into rows
 
+**Quadbin**: 9 grid-math functions (point-to-cell, footprints, polyfill, k-ring, tessellation, union, distance, resolution).
+
 :::note SQL examples
-Examples on this page use **SQL** (and Python where shown); in SQL, GridX functions are prefixed with **`gbx_`** (e.g. `gbx_bng_aswkb`, `gbx_bng_cellarea`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+Examples on this page use **SQL** (and Python where shown); in SQL, GridX functions are prefixed with **`gbx_`** (e.g. `gbx_bng_aswkb`, `gbx_quadbin_pointascell`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
 :::
 
 ## Common setup
@@ -510,6 +515,149 @@ Explode tessellated cells into separate rows.
 
 ---
 
+## Quadbin
+
+CARTO Quadbin v0 cells encode `(z, x, y)` web-mercator tile coordinates as a single `BIGINT`. Cell IDs are interoperable with CARTO's CDB_QuadKey and align with the slippy-map tile grid used by `gbx_rst_xyzpyramid` and `gbx_st_asmvt_pyramid`.
+
+Resolution (zoom) range:
+- `gbx_quadbin_pointascell`, `gbx_quadbin_resolution`, `gbx_quadbin_kring`, `gbx_quadbin_distance` accept zoom `0..26`.
+- `gbx_quadbin_polyfill` and `gbx_quadbin_tessellate` accept zoom `0..20`.
+
+### quadbin_pointascell
+
+Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at the given zoom.
+
+**Signature:** `quadbin_pointascell(lon: Column, lat: Column, zoom: Column): Column`
+
+**Returns:**
+- `BIGINT` quadbin cell ID
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_pointascell_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_pointascell_sql_example_output" />
+
+---
+
+### quadbin_aswkb
+
+Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygon of the tile in lon/lat.
+
+**Signature:** `quadbin_aswkb(cellId: Column): Column`
+
+**Returns:**
+- Binary EWKB polygon (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_aswkb_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_centroid
+
+Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
+
+**Signature:** `quadbin_centroid(cellId: Column): Column`
+
+**Returns:**
+- Binary EWKB point (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_centroid_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_resolution
+
+Return the resolution (zoom) of a quadbin cell.
+
+**Signature:** `quadbin_resolution(cellId: Column): Column`
+
+**Returns:**
+- `INT` zoom level (0..26)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_resolution_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_polyfill
+
+Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
+
+**Signature:** `quadbin_polyfill(geom: Column, zoom: Column): Column`
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs covering the bbox
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_polyfill_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_polyfill_sql_example_output" />
+
+---
+
+### quadbin_kring
+
+Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of the center cell).
+
+**Signature:** `quadbin_kring(cellId: Column, k: Column): Column`
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs (length `(2k+1)^2`)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_kring_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_kring_sql_example_output" />
+
+---
+
+### quadbin_tessellate
+
+Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
+
+**Signature:** `quadbin_tessellate(geom: Column, zoom: Column): Column`
+
+**Returns:**
+- `ARRAY<STRUCT<cell: BIGINT, geom: BINARY>>`
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_tessellate_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_cellunion
+
+Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
+
+**Signature:** `quadbin_cellunion(cellIds: Column): Column`
+
+**Returns:**
+- Binary EWKB multipolygon (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_distance
+
+Chebyshev (king-move) distance between two quadbin cells at the same resolution.
+
+**Signature:** `quadbin_distance(cellA: Column, cellB: Column): Column`
+
+**Returns:**
+- `INT` cell-step distance
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_distance_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
 ## BNG Reference Format
 
 ### Standard Format
@@ -561,4 +709,5 @@ Generator functions (e.g. `bng_kringexplode`, `bng_kloopexplode`) are more effic
 
 - [RasterX Function Reference](./rasterx-functions)
 - [VectorX Function Reference](./vectorx-functions)
+- [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
 - [GridX Package Documentation](../packages/gridx)

@@ -4,10 +4,11 @@ sidebar_position: 7
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import vectorxFunctionsExamples from '!!raw-loader!../../tests/python/api/vectorx_functions.py';
+import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_functions_sql.py';
 
 # VectorX Function Reference
 
-VectorX provides a single conversion function for legacy DBLabs Mosaic geometry format.
+VectorX augments the product's native ST functions with legacy-geometry migration and vector-tile output.
 
 :::note SQL examples
 Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
@@ -37,7 +38,56 @@ Converts legacy Mosaic geometry to Well-Known Binary (WKB).
 
 <CodeFromTest code={vectorxFunctionsExamples} functionName="ST_LEGACYASWKB_SQL_EXAMPLE" language="sql" source="docs/tests/python/api/vectorx_functions.py" testFile="docs/tests/python/api/test_vectorx_functions.py" outputConstant="ST_LEGACYASWKB_SQL_EXAMPLE_output" />
 
+---
+
+## Vector tile output
+
+Encode features into [Mapbox Vector Tile (MVT)](https://github.com/mapbox/vector-tile-spec) protobufs. Pair the per-tile MVT bytes with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a vector pyramid as a single `.pmtiles` archive.
+
+### st_asmvt
+
+Aggregator that encodes a group of features into a single MVT protobuf blob.
+
+**Signature:** `st_asmvt(geomWkb: Column, attrs: Column, layerName: Column): Column`
+
+**Parameters:**
+- `geomWkb` — Feature geometry as WKB (binary)
+- `attrs` — Struct of feature attributes (any names and types)
+- `layerName` — MVT layer name (string)
+
+**Returns:**
+- Binary MVT (vector tile) protobuf blob
+
+Typical use: `GROUP BY (z, x, y)` after composing tile-local coordinates upstream, so each group becomes one tile.
+
+**SQL:**
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
+
+---
+
+### st_asmvt_pyramid
+
+Generator that explodes one feature into one row per intersecting `(z, x, y)` tile across a zoom range, with the MVT bytes already encoded per tile.
+
+**Signature:** `st_asmvt_pyramid(geomWkb: Column, attrs: Column, minZoom: Column, maxZoom: Column, layerName: Column): Column`
+
+**Parameters:**
+- `geomWkb` — Feature geometry as WKB (binary, EPSG:4326)
+- `attrs` — Struct of feature attributes
+- `minZoom`, `maxZoom` — Inclusive zoom-level range (0..22)
+- `layerName` — MVT layer name (string)
+
+**Returns:**
+- Array of struct rows; each row's `tile` struct exposes `(z, x, y, mvt_bytes)`. Use `LATERAL VIEW` to materialize rows and pipe `mvt_bytes` straight into `gbx_pmtiles_agg`.
+
+**SQL:**
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_pyramid_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
+
 ## Next Steps
 
 - [Quick Start](../quick-start) — Register and use VectorX with the legacy example
+- [PMTiles Function Reference](./pmtiles-functions) — Aggregate MVT tiles into a single `.pmtiles` archive
+- [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
 - [API Overview](./overview) — All GeoBrix APIs

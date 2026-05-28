@@ -15,13 +15,18 @@ Complete reference for all RasterX functions with detailed descriptions, paramet
 
 RasterX provides functions for working with raster (pixel) data in Spark—loading, querying, transforming, and aggregating rasters from formats such as GeoTIFF, COG, and NetCDF.
 
-**Function Count**: 65 functions organized into 6 categories (see [rasterx/functions.scala](https://github.com/databrickslabs/geobrix/blob/main/src/main/scala/com/databricks/labs/gbx/rasterx/functions.scala)):
-- **Accessor Functions** (29): Read raster properties and metadata (bounds, dimensions, CRS, bands, pixel size, georeference, format, type, NoData, subdatasets, summary, etc.)
-- **Aggregator Functions** (3): Combine or merge rasters in group-by (combineavg_agg, derivedband_agg, merge_agg)
-- **Constructor Functions** (3): Create or load rasters from paths, binary content, or bands
-- **Generator Functions** (5): Produce multiple tiles or bands (h3_tessellate, maketiles, retile, separatebands, tooverlappingtiles)
-- **Grid Functions (H3)** (5): Aggregate raster values to H3 cells (rastertogrid avg/count/max/min/median)
-- **Operations** (20): Transform and analyze rasters (clip, transform, merge, asformat, ndvi, filter, convolve, map algebra, coordinate conversion, isEmpty, tryOpen, initNoData, updateType, combineavg, derivedband)
+**Function Count**: organized into the following categories (see [rasterx/functions.scala](https://github.com/databrickslabs/geobrix/blob/main/src/main/scala/com/databricks/labs/gbx/rasterx/functions.scala)):
+- **Accessor Functions**: Read raster properties and metadata (bounds, dimensions, CRS, bands, pixel size, georeference, format, type, NoData, subdatasets, summary, etc.)
+- **Aggregator Functions**: Combine or merge rasters in group-by (combineavg_agg, derivedband_agg, merge_agg)
+- **Constructor Functions**: Create or load rasters from paths, binary content, or bands
+- **Generator Functions**: Produce multiple tiles or bands (h3_tessellate, maketiles, retile, separatebands, tooverlappingtiles)
+- **Grid Functions (H3)**: Aggregate raster values to H3 cells (rastertogrid avg/count/max/min/median)
+- **Grid Functions (quadbin)**: Aggregate raster values to CARTO quadbin v0 cells (rastertogrid avg/count/max/min/median)
+- **Operations**: Transform and analyze rasters (clip, transform, merge, asformat, ndvi, filter, convolve, map algebra, coordinate conversion, isEmpty, tryOpen, initNoData, updateType, combineavg, derivedband)
+- **Web-Mercator Tile Output**: Reproject to EPSG:3857 and emit slippy-map XYZ tiles (to_webmercator, tilexyz, xyzpyramid)
+- **Vector↔raster bridge**: Burn polygons into rasters and trace contiguous regions back to polygons (rasterize, polygonize)
+- **Terrain Analysis**: DEM-derived surfaces from `gdal.DEMProcessing` (slope, aspect, hillshade, TRI, TPI, roughness, color relief)
+- **Spectral Indices**: Multi-band satellite math (EVI, SAVI, NDWI, NBR, plus the generic `rst_index` dispatcher)
 
 :::note SQL examples
 Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
@@ -454,6 +459,52 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ---
 
+## Grid Functions (quadbin)
+
+Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an array (one entry per band) of `struct<cellID: BIGINT, measure: DOUBLE>` rows; explode the array element you want to drive per-cell rows. Resolution is the quadbin zoom (0..26).
+
+### rst_quadbin_rastertogridavg
+
+**Signature:** `rst_quadbin_rastertogridavg(tile: Column, resolution: Column): Column` — Mean pixel value per quadbin cell.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridavg_sql_example" outputConstant="rst_quadbin_rastertogridavg_sql_example_output" code={rasterxSqlCode} />
+
+### rst_quadbin_rastertogridcount
+
+**Signature:** `rst_quadbin_rastertogridcount(tile: Column, resolution: Column): Column` — Pixel count per quadbin cell.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridcount_sql_example" outputConstant="rst_quadbin_rastertogridcount_sql_example_output" code={rasterxSqlCode} />
+
+### rst_quadbin_rastertogridmax
+
+**Signature:** `rst_quadbin_rastertogridmax(tile: Column, resolution: Column): Column` — Max pixel value per quadbin cell.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmax_sql_example" outputConstant="rst_quadbin_rastertogridmax_sql_example_output" code={rasterxSqlCode} />
+
+### rst_quadbin_rastertogridmin
+
+**Signature:** `rst_quadbin_rastertogridmin(tile: Column, resolution: Column): Column` — Min pixel value per quadbin cell.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmin_sql_example" outputConstant="rst_quadbin_rastertogridmin_sql_example_output" code={rasterxSqlCode} />
+
+### rst_quadbin_rastertogridmedian
+
+**Signature:** `rst_quadbin_rastertogridmedian(tile: Column, resolution: Column): Column` — Median pixel value per quadbin cell.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmedian_sql_example" outputConstant="rst_quadbin_rastertogridmedian_sql_example_output" code={rasterxSqlCode} />
+
+---
+
 ## Operations
 
 Transform and analyze rasters (20 total).
@@ -604,9 +655,171 @@ Transform and analyze rasters (20 total).
 
 ---
 
+## Web-Mercator Tile Output
+
+Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pair with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a raster pyramid as a single `.pmtiles` archive.
+
+### rst_to_webmercator
+
+**Signature:** `rst_to_webmercator(tile: Column): Column` — Reproject a raster to EPSG:3857 (Web Mercator) using bilinear resampling by default. The returned tile carries `srid = 3857`.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_to_webmercator_sql_example" outputConstant="rst_to_webmercator_sql_example_output" code={rasterxSqlCode} />
+
+### rst_tilexyz
+
+**Signature:** `rst_tilexyz(tile: Column, z: Column, x: Column, y: Column, format: Column, tileSize: Column, resampling: Column): Column` — Render a single web-mercator XYZ tile from a raster as encoded image bytes (e.g. PNG, JPEG, WebP) at the given tile coordinates and pixel size.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tilexyz_sql_example" outputConstant="rst_tilexyz_sql_example_output" code={rasterxSqlCode} />
+
+### rst_xyzpyramid
+
+**Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_xyzpyramid_sql_example" outputConstant="rst_xyzpyramid_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+## Vector↔raster bridge
+
+Move data between the raster (`tile`) and vector (`geom`) worlds.
+
+### rst_rasterize
+
+**Signature:** `rst_rasterize(geom: Column, burnValue: Column, xMin: Column, yMin: Column, xMax: Column, yMax: Column, width: Column, height: Column, srid: Column): Column` — Burn a polygon (WKB) into a fresh GeoTIFF tile at the given extent and pixel dimensions. Pixels inside the polygon carry `burnValue`; pixels outside are NoData.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_rasterize_sql_example" outputConstant="rst_rasterize_sql_example_output" code={rasterxSqlCode} />
+
+### rst_polygonize
+
+**Signature:** `rst_polygonize(tile: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_polygonize_sql_example" outputConstant="rst_polygonize_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+## Terrain Analysis
+
+Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) derivatives. Each function takes a single-band DEM tile and returns a derived tile of the same footprint.
+
+### rst_slope
+
+**Signature:** `rst_slope(tile: Column, unit: Column, scale: Column): Column` — Compute slope per pixel. `unit` is `'degrees'` or `'percent'`; `scale` is the elevation/horizontal unit ratio (use `111120` for unprojected lon/lat in degrees).
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_slope_sql_example" outputConstant="rst_slope_sql_example_output" code={rasterxSqlCode} />
+
+### rst_aspect
+
+**Signature:** `rst_aspect(tile: Column, trigonometric: Column, zeroForFlat: Column): Column` — Compass direction of steepest descent in degrees (0=N, 90=E, 180=S, 270=W). Flat areas return `-9999` unless `zeroForFlat = true`. Set `trigonometric = true` for mathematical convention (0=E, counter-clockwise).
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_aspect_sql_example" outputConstant="rst_aspect_sql_example_output" code={rasterxSqlCode} />
+
+### rst_hillshade
+
+**Signature:** `rst_hillshade(tile: Column, azimuth: Column, altitude: Column, zFactor: Column): Column` — 8-bit (0..255) shaded relief image. Common values: NW sun azimuth `315.0`, altitude `45.0`, `zFactor = 1.0`.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_hillshade_sql_example" outputConstant="rst_hillshade_sql_example_output" code={rasterxSqlCode} />
+
+### rst_tri
+
+**Signature:** `rst_tri(tile: Column): Column` — Terrain Ruggedness Index — mean absolute difference between a pixel and its 8 neighbours. Useful for landscape-ecology habitat scoring.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tri_sql_example" outputConstant="rst_tri_sql_example_output" code={rasterxSqlCode} />
+
+### rst_tpi
+
+**Signature:** `rst_tpi(tile: Column): Column` — Topographic Position Index — pixel value minus the mean of its 8 neighbours. Positive values are ridges, negative values are valleys.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tpi_sql_example" outputConstant="rst_tpi_sql_example_output" code={rasterxSqlCode} />
+
+### rst_roughness
+
+**Signature:** `rst_roughness(tile: Column): Column` — Largest absolute difference between a pixel and any of its 8 neighbours in a 3×3 window.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_roughness_sql_example" outputConstant="rst_roughness_sql_example_output" code={rasterxSqlCode} />
+
+### rst_color_relief
+
+**Signature:** `rst_color_relief(tile: Column, colorTablePath: Column): Column` — Apply a `gdaldem` color table (`elevation R G B [A]` per line) to produce an RGBA visualization tile. Special values `nv`, `default`, `0%`, and `100%` are honored.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_color_relief_sql_example" outputConstant="rst_color_relief_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+## Spectral Indices
+
+Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-based GDAL band indices; the output is always a single-band Float32 GeoTIFF tile. `gbx_rst_ndvi` is documented under [Operations](#rst_ndvi).
+
+### rst_evi
+
+**Signature:** `rst_evi(tile: Column, redBand: Column, nirBand: Column, blueBand: Column): Column` — Enhanced Vegetation Index. Formula: `G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L)` with MODIS canonical coefficients `G=2.5, L=1.0, C1=6.0, C2=7.5`.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_evi_sql_example" outputConstant="rst_evi_sql_example_output" code={rasterxSqlCode} />
+
+### rst_savi
+
+**Signature:** `rst_savi(tile: Column, redBand: Column, nirBand: Column, l: Column): Column` — Soil-Adjusted Vegetation Index. Formula: `(NIR - Red) / (NIR + Red + L) * (1 + L)`. `L = 0.5` (the canonical default) is a balanced soil/vegetation tradeoff; `L = 0` reduces SAVI to NDVI.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_savi_sql_example" outputConstant="rst_savi_sql_example_output" code={rasterxSqlCode} />
+
+### rst_ndwi
+
+**Signature:** `rst_ndwi(tile: Column, greenBand: Column, nirBand: Column): Column` — Normalized Difference Water Index (McFeeters 1996). Formula: `(Green - NIR) / (Green + NIR)`. Positive values typically indicate open water.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_ndwi_sql_example" outputConstant="rst_ndwi_sql_example_output" code={rasterxSqlCode} />
+
+### rst_nbr
+
+**Signature:** `rst_nbr(tile: Column, nirBand: Column, swirBand: Column): Column` — Normalized Burn Ratio. Formula: `(NIR - SWIR) / (NIR + SWIR)`. The pre-/post-fire difference (`dNBR`) is the canonical burn-severity index.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_nbr_sql_example" outputConstant="rst_nbr_sql_example_output" code={rasterxSqlCode} />
+
+### rst_index
+
+**Signature:** `rst_index(tile: Column, indexName: Column, bandMap: Column): Column` — Generic dispatcher that picks a built-in formula by name and wires bands via a `MAP<STRING, INT>` (e.g. `map('red', 1, 'nir', 2)`). Built-in names: `ndvi`, `gndvi`, `msavi`, `ndvi_re`, `ndmi`, `ndsi`.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_index_sql_example" outputConstant="rst_index_sql_example_output" code={rasterxSqlCode} />
+
+---
+
 ## Next Steps
 
 - [GridX Function Reference](./gridx-functions)
 - [VectorX Function Reference](./vectorx-functions)
+- [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
+- [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
 - [RasterX Package Documentation](../packages/rasterx)
 

@@ -1,0 +1,69 @@
+---
+sidebar_position: 8
+---
+
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import pmtilesSqlCode from '!!raw-loader!../../tests/python/api/pmtiles_functions_sql.py';
+
+# PMTiles Function Reference
+
+Complete reference for PMTiles SQL functions. The PMTiles package is a peer of RasterX / VectorX / GridX: it encodes tile pyramids (raster or vector) into the [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) single-file archive format. Tile content bytes (PNG / JPEG / WebP / MVT) pass through verbatim, so PMTiles is container-only.
+
+## Overview
+
+GeoBrix exposes two PMTiles entry points; pick based on pyramid size:
+
+| Entry point | When to use | Limit |
+|---|---|---|
+| **`gbx_pmtiles_agg` UDAF** (this page) | The full pyramid fits in a single Spark cell. Returns a `BINARY` column. Convenient for one-shot bundle generation. | ~100 MiB of tile payload by default; hard ceiling at the 2 GiB Spark cell limit. |
+| [**PMTiles Writer**](../writers/pmtiles) (`.write.format("pmtiles")`) | Larger pyramids; streaming partitioned commit writes one `.pmtiles` file with no in-memory consolidation. | Bound only by available disk on the driver during commit. |
+
+Both paths share the same native-Scala PMTiles v3 encoder, so the bytes they emit are byte-compatible.
+
+:::note SQL examples
+Examples on this page use **SQL**. PMTiles functions are prefixed with **`gbx_`** (e.g. `gbx_pmtiles_agg`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+:::
+
+## Registration
+
+The PMTiles UDAF and DataSource are registered automatically when the GeoBrix JAR is on the Spark classpath — no explicit `register(spark)` call is required. See the [PMTiles package page](../packages/pmtiles) for details.
+
+---
+
+## pmtiles_agg
+
+Aggregate a per-tile `(z, x, y, bytes)` row set into a single PMTile v3 archive blob.
+
+**Signature:** `pmtiles_agg(bytes: Column, z: Column, x: Column, y: Column, metadataJson: Column): Column`
+
+**Parameters:**
+- `bytes` — Tile payload (BINARY). PNG / JPEG / WebP magic bytes are auto-detected; everything else is treated as MVT.
+- `z`, `x`, `y` — Tile coordinates (INT or BIGINT — the UDAF coerces LongType inputs).
+- `metadataJson` — Optional JSON metadata string written into the PMTile header. Pass `'{}'` (or omit, using the 4-argument form) for no metadata.
+
+**Returns:**
+- Binary blob containing the full PMTile v3 archive.
+
+**SQL:**
+
+<CodeFromTest code={pmtilesSqlCode} functionName="pmtiles_agg_sql_example" language="sql" source="docs/tests/python/api/pmtiles_functions_sql.py" testFile="docs/tests/python/api/test_pmtiles_functions_sql.py" />
+
+The 4-argument form omits the metadata JSON (defaults to `'{}'`):
+
+<CodeFromTest code={pmtilesSqlCode} functionName="pmtiles_agg_4arg_sql_example" language="sql" source="docs/tests/python/api/pmtiles_functions_sql.py" testFile="docs/tests/python/api/test_pmtiles_functions_sql.py" />
+
+### Typical pipelines
+
+- **Raster pyramid:** `gbx_rst_xyzpyramid(tile, minZoom, maxZoom)` produces per-tile rows of PNG bytes — pipe straight into `gbx_pmtiles_agg`.
+- **Vector pyramid:** `gbx_st_asmvt_pyramid(geom_wkb, attrs, minZoom, maxZoom, layer)` produces per-tile MVT bytes — pipe straight into `gbx_pmtiles_agg`.
+
+For pyramids that exceed the Spark cell ceiling, use the [PMTiles Writer](../writers/pmtiles) instead.
+
+---
+
+## Next Steps
+
+- [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to disk.
+- [PMTiles Package Documentation](../packages/pmtiles) — Concepts, limits, and serving notes.
+- [RasterX Function Reference](./rasterx-functions) — Generate tile bytes with `gbx_rst_xyzpyramid`.
+- [VectorX Function Reference](./vectorx-functions) — Generate MVT tiles with `gbx_st_asmvt_pyramid`.
