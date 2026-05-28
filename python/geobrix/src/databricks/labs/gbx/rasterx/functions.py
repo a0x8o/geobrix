@@ -1193,3 +1193,146 @@ def rst_polygonize(
     band_col = f.lit(1) if band is None else _col(band)
     conn_col = f.lit(4) if connectedness is None else _col(connectedness)
     return f.call_function("gbx_rst_polygonize", _col(tile), band_col, conn_col)
+
+
+# ---------------------------------------------------------------------------
+# Terrain analysis (DEM processing) - Wave 8a
+#
+# Seven thin wrappers around gdal.DEMProcessing. All take a single source tile
+# and return a derived tile. Defaults match the GDAL conventions.
+# ---------------------------------------------------------------------------
+
+
+def rst_slope(
+    tile: ColLike,
+    unit: ColLike = None,
+    scale: ColLike = None,
+) -> Column:
+    """Compute slope from a DEM tile via ``gdal.DEMProcessing("slope")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        unit: ``"degrees"`` (default) or ``"percent"``.
+        scale: Vertical exaggeration (default 1.0). Use 111120 for
+            unprojected geographic CRS (degrees lon/lat) and 1.0 for
+            projected CRS in metres.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    unit_col = f.lit("degrees") if unit is None else (f.lit(unit) if isinstance(unit, str) else _col(unit))
+    scale_col = f.lit(1.0) if scale is None else _col(scale)
+    return f.call_function("gbx_rst_slope", _col(tile), unit_col, scale_col)
+
+
+def rst_aspect(
+    tile: ColLike,
+    trigonometric: ColLike = None,
+    zero_for_flat: ColLike = None,
+) -> Column:
+    """Compute aspect (slope direction) from a DEM tile via ``gdal.DEMProcessing("aspect")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        trigonometric: If true, output trigonometric angles measured
+            counterclockwise from east; if false (default), output compass
+            angles measured clockwise from north.
+        zero_for_flat: If true, flat areas get value 0; if false (default),
+            flat areas get -9999.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    trig_col = f.lit(False) if trigonometric is None else _col(trigonometric)
+    zff_col = f.lit(False) if zero_for_flat is None else _col(zero_for_flat)
+    return f.call_function("gbx_rst_aspect", _col(tile), trig_col, zff_col)
+
+
+def rst_hillshade(
+    tile: ColLike,
+    azimuth: ColLike = None,
+    altitude: ColLike = None,
+    z_factor: ColLike = None,
+) -> Column:
+    """Compute hillshade (shaded relief) from a DEM tile via ``gdal.DEMProcessing("hillshade")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        azimuth: Light-source azimuth in degrees (default 315.0;
+            0=N, 90=E, 180=S, 270=W).
+        altitude: Light-source altitude above horizon in degrees
+            (default 45.0).
+        z_factor: Vertical exaggeration (default 1.0).
+
+    Returns:
+        Single-band Byte GTiff tile column with values 0..255.
+    """
+    az_col = f.lit(315.0) if azimuth is None else _col(azimuth)
+    alt_col = f.lit(45.0) if altitude is None else _col(altitude)
+    z_col = f.lit(1.0) if z_factor is None else _col(z_factor)
+    return f.call_function("gbx_rst_hillshade", _col(tile), az_col, alt_col, z_col)
+
+
+def rst_tri(tile: ColLike) -> Column:
+    """Compute Terrain Ruggedness Index (TRI) via ``gdal.DEMProcessing("TRI")``.
+
+    TRI is the mean absolute difference between a pixel and its 8 neighbours;
+    used in landscape ecology and habitat analysis.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_tri", _col(tile))
+
+
+def rst_tpi(tile: ColLike) -> Column:
+    """Compute Topographic Position Index (TPI) via ``gdal.DEMProcessing("TPI")``.
+
+    TPI is the difference between a pixel's elevation and the mean of its 8
+    neighbours; positive values indicate ridges/peaks, negative values
+    valleys.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_tpi", _col(tile))
+
+
+def rst_roughness(tile: ColLike) -> Column:
+    """Compute Roughness via ``gdal.DEMProcessing("Roughness")``.
+
+    Roughness is the largest inter-cell difference of a central pixel and
+    its 8 neighbours.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_roughness", _col(tile))
+
+
+def rst_color_relief(
+    tile: ColLike,
+    color_table_path: ColLike,
+) -> Column:
+    """Apply a color relief mapping to a DEM tile via ``gdal.DEMProcessing("color-relief")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        color_table_path: Path (FUSE-mounted Volume or local) to a gdaldem
+            color file. Each line is ``elevation R G B [A]``; special values
+            ``nv``, ``default``, ``0%``, ``100%`` are accepted.
+
+    Returns:
+        3- or 4-band Byte GTiff tile column (RGB or RGBA).
+    """
+    ctp_col = f.lit(color_table_path) if isinstance(color_table_path, str) else _col(color_table_path)
+    return f.call_function("gbx_rst_color_relief", _col(tile), ctp_col)
