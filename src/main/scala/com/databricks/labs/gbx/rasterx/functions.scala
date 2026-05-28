@@ -77,6 +77,7 @@ object functions extends Serializable {
         // Aggregators
         rd.register(RST_CombineAvgAgg)
         rd.register(RST_DerivedBandAgg)
+        rd.register(RST_DTMFromGeomsAgg)
         rd.register(RST_MergeAgg)
 
         // Constructors
@@ -109,7 +110,7 @@ object functions extends Serializable {
         rd.register(RST_CombineAvg)
         rd.register(RST_Convolve)
         rd.register(RST_DerivedBand)
-//        rd.register(RST_DTMFromGeoms)
+        rd.register(RST_DTMFromGeoms)
         rd.register(RST_Filter)
         rd.register(RST_InitNoData)
         rd.register(RST_IsEmpty)
