@@ -3,6 +3,7 @@ package com.databricks.labs.gbx.rasterx
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_MergeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.analysis._
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
@@ -165,6 +166,12 @@ object functions extends Serializable {
         rd.register(RST_Sample)
         rd.register(RST_SetSrid)
         rd.register(RST_Threshold)
+
+        // Analysis (COG / proximity / contour / viewshed — GDAL wrappers)
+        rd.register(RST_CogConvert)
+        rd.register(RST_Contour)
+        rd.register(RST_Proximity)
+        rd.register(RST_Viewshed)
 
         sc.getConf.set(flag, "true")
     }
@@ -588,5 +595,66 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_Band.name, Seq(tileExpr, bandIndex))
     def rst_band(tileExpr: Column, bandIndex: Int): Column =
         rst_band(tileExpr, lit(bandIndex))
+
+    // Analysis (COG / proximity / contour / viewshed) — Column form + scalar overloads
+    def rst_cog_convert(tileExpr: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, lit("DEFLATE"), lit(512), lit("AVERAGE")))
+    def rst_cog_convert(tileExpr: Column, compression: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, lit(512), lit("AVERAGE")))
+    def rst_cog_convert(tileExpr: Column, compression: Column, blocksize: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, blocksize, lit("AVERAGE")))
+    def rst_cog_convert(
+        tileExpr: Column, compression: Column, blocksize: Column, overviewResampling: Column
+    ): Column = ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, blocksize, overviewResampling))
+    def rst_cog_convert(tileExpr: Column, compression: String): Column =
+        rst_cog_convert(tileExpr, lit(compression))
+    def rst_cog_convert(tileExpr: Column, compression: String, blocksize: Int): Column =
+        rst_cog_convert(tileExpr, lit(compression), lit(blocksize))
+    def rst_cog_convert(
+        tileExpr: Column, compression: String, blocksize: Int, overviewResampling: String
+    ): Column = rst_cog_convert(tileExpr, lit(compression), lit(blocksize), lit(overviewResampling))
+
+    def rst_proximity(tileExpr: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, lit(null).cast("string"), lit("GEO"), lit(null).cast("double")
+        ))
+    def rst_proximity(tileExpr: Column, targetValues: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, targetValues, lit("GEO"), lit(null).cast("double")
+        ))
+    def rst_proximity(tileExpr: Column, targetValues: Column, distUnits: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, targetValues, distUnits, lit(null).cast("double")
+        ))
+    def rst_proximity(
+        tileExpr: Column, targetValues: Column, distUnits: Column, maxDistance: Column
+    ): Column = ColumnAdapter(RST_Proximity.name, Seq(tileExpr, targetValues, distUnits, maxDistance))
+
+    def rst_contour(tileExpr: Column, levels: Column): Column =
+        ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, lit(0.0), lit(0.0), lit("elev")))
+    def rst_contour(tileExpr: Column, levels: Column, interval: Column): Column =
+        ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, lit(0.0), lit("elev")))
+    def rst_contour(
+        tileExpr: Column, levels: Column, interval: Column, base: Column
+    ): Column = ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, base, lit("elev")))
+    def rst_contour(
+        tileExpr: Column, levels: Column, interval: Column, base: Column, attrField: Column
+    ): Column = ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, base, attrField))
+
+    def rst_viewshed(tileExpr: Column, observerGeom: Column, observerHeight: Column): Column =
+        ColumnAdapter(RST_Viewshed.name, Seq(
+            tileExpr, observerGeom, observerHeight, lit(1.6), lit(null).cast("double")
+        ))
+    def rst_viewshed(
+        tileExpr: Column, observerGeom: Column, observerHeight: Column, targetHeight: Column
+    ): Column = ColumnAdapter(RST_Viewshed.name, Seq(
+        tileExpr, observerGeom, observerHeight, targetHeight, lit(null).cast("double")
+    ))
+    def rst_viewshed(
+        tileExpr: Column, observerGeom: Column, observerHeight: Column,
+        targetHeight: Column, maxDistance: Column
+    ): Column = ColumnAdapter(RST_Viewshed.name, Seq(
+        tileExpr, observerGeom, observerHeight, targetHeight, maxDistance
+    ))
 
 }

@@ -2051,3 +2051,75 @@ rst_band_sql_example_output = """
 |...|
 +---+
 """
+
+
+def rst_cog_convert_sql_example():
+    """Re-layout a tile as a Cloud Optimized GeoTIFF for HTTP range serving."""
+    return """
+-- Convert to COG with DEFLATE compression, 512-pixel blocks, AVERAGE overviews.
+SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE') AS cog
+FROM rasters;
+"""
+
+
+rst_cog_convert_sql_example_output = """
++---+
+|cog|
++---+
+|...|
++---+
+"""
+
+
+def rst_proximity_sql_example():
+    """Compute per-pixel distance to the nearest non-NoData (or target-value) source pixel."""
+    return """
+-- Distance in pixels to any non-NoData pixel; cap distances at 100 pixels.
+SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist
+FROM rasters;
+"""
+
+
+rst_proximity_sql_example_output = """
++----+
+|dist|
++----+
+|... |
++----+
+"""
+
+
+def rst_contour_sql_example():
+    """Generate contour LineStrings at an equal interval from an elevation tile."""
+    return """
+-- Equal-interval contours every 10 m. Pass array() of fixed levels to override.
+SELECT gbx_rst_contour(tile, array(), 10.0, 0.0, 'elev') AS contours
+FROM rasters;
+"""
+
+
+rst_contour_sql_example_output = """
++--------+
+|contours|
++--------+
+|...     |
++--------+
+"""
+
+
+def rst_viewshed_sql_example():
+    """Binary viewshed mask from a DEM and an observer POINT (coords in raster CRS)."""
+    return """
+-- Visibility from observer at (-73.5, 40.5), eye 100 m, target 1.6 m, cap 5000 m.
+SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs
+FROM rasters;
+"""
+
+
+rst_viewshed_sql_example_output = """
++---+
+|vs |
++---+
+|...|
++---+
+"""

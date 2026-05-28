@@ -25,6 +25,9 @@
     "gbx_rst_clip": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_clip( tile, 'POLYGON((-122 37, -122 38, -121 38, -121 37, -122 37))', true ) as clipped FROM rasters;"
     },
+    "gbx_rst_cog_convert": {
+      "examples": "Examples:\n      > SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE') AS cog FROM rasters;"
+    },
     "gbx_rst_color_relief": {
       "examples": "Examples:\n      > SELECT gbx_rst_color_relief(tile, '/Volumes/main/default/test-data/geobrix-examples/colortables/elevation.clr') AS rgba FROM rasters;"
     },
@@ -33,6 +36,9 @@
     },
     "gbx_rst_combineavg_agg": {
       "examples": "Examples:\n      > SELECT region, gbx_rst_combineavg_agg(tile) as regional_average FROM rasters GROUP BY region;"
+    },
+    "gbx_rst_contour": {
+      "examples": "Examples:\n      > SELECT gbx_rst_contour(tile, array(), 10.0, 0.0, 'elev') AS contours FROM rasters;"
     },
     "gbx_rst_convolve": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_convolve(tile, kernel) as filtered FROM rasters_with_kernels;"
@@ -166,6 +172,9 @@
     "gbx_rst_polygonize": {
       "examples": "Examples:\n      > SELECT gbx_rst_polygonize( gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) ) AS features;"
     },
+    "gbx_rst_proximity": {
+      "examples": "Examples:\n      > SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist FROM rasters;"
+    },
     "gbx_rst_quadbin_rastertogridavg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid FROM rasters;"
     },
@@ -282,6 +291,9 @@
     },
     "gbx_rst_upperlefty": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_upperleftx(tile) as upper_left_x, gbx_rst_upperlefty(tile) as upper_left_y FROM rasters;"
+    },
+    "gbx_rst_viewshed": {
+      "examples": "Examples:\n      > SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs FROM rasters;"
     },
     "gbx_rst_width": {
       "examples": "Examples:\n      > SELECT gbx_rst_width(tile) as width FROM rasters;"
