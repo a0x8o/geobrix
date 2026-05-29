@@ -1584,11 +1584,11 @@ SELECT gbx_rst_rasterize(
 
 
 rst_rasterize_sql_example_output = """
-+----+
-|tile|
-+----+
-|... |
-+----+
++--------------------+
+|tile                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1659,11 +1659,11 @@ SELECT gbx_rst_slope(tile, 'degrees', 1.0) AS slope FROM rasters;
 
 
 rst_slope_sql_example_output = """
-+-----+
-|slope|
-+-----+
-|...  |
-+-----+
++--------------------+
+|slope               |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1677,11 +1677,11 @@ SELECT gbx_rst_aspect(tile, false, false) AS aspect FROM rasters;
 
 
 rst_aspect_sql_example_output = """
-+------+
-|aspect|
-+------+
-|...   |
-+------+
++--------------------+
+|aspect              |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1694,11 +1694,11 @@ SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;
 
 
 rst_hillshade_sql_example_output = """
-+---------+
-|hillshade|
-+---------+
-|...      |
-+---------+
++--------------------+
+|hillshade           |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1711,11 +1711,11 @@ SELECT gbx_rst_tri(tile) AS tri FROM rasters;
 
 
 rst_tri_sql_example_output = """
-+---+
-|tri|
-+---+
-|...|
-+---+
++--------------------+
+|tri                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1728,11 +1728,11 @@ SELECT gbx_rst_tpi(tile) AS tpi FROM rasters;
 
 
 rst_tpi_sql_example_output = """
-+---+
-|tpi|
-+---+
-|...|
-+---+
++--------------------+
+|tpi                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1745,11 +1745,11 @@ SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;
 
 
 rst_roughness_sql_example_output = """
-+---------+
-|roughness|
-+---------+
-|...      |
-+---------+
++--------------------+
+|roughness           |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1768,11 +1768,11 @@ FROM rasters;
 
 
 rst_color_relief_sql_example_output = """
-+----+
-|rgba|
-+----+
-|... |
-+----+
++--------------------+
+|rgba                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1795,11 +1795,11 @@ SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;
 
 
 rst_evi_sql_example_output = """
-+---+
-|evi|
-+---+
-|...|
-+---+
++--------------------+
+|evi                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1813,11 +1813,11 @@ SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;
 
 
 rst_savi_sql_example_output = """
-+----+
-|savi|
-+----+
-|... |
-+----+
++--------------------+
+|savi                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1831,11 +1831,11 @@ SELECT gbx_rst_ndwi(tile, 1, 2) AS ndwi FROM rasters;
 
 
 rst_ndwi_sql_example_output = """
-+----+
-|ndwi|
-+----+
-|... |
-+----+
++--------------------+
+|ndwi                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1849,11 +1849,11 @@ SELECT gbx_rst_nbr(tile, 2, 3) AS nbr FROM rasters;
 
 
 rst_nbr_sql_example_output = """
-+---+
-|nbr|
-+---+
-|...|
-+---+
++--------------------+
+|nbr                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1868,11 +1868,11 @@ FROM rasters;
 
 
 rst_index_sql_example_output = """
-+----+
-|ndvi|
-+----+
-|... |
-+----+
++--------------------+
+|ndvi                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1885,11 +1885,11 @@ SELECT gbx_rst_resample(tile, 2.0, 'bilinear') AS upsampled FROM rasters;
 
 
 rst_resample_sql_example_output = """
-+---------+
-|upsampled|
-+---------+
-|...      |
-+---------+
++--------------------+
+|upsampled           |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1902,11 +1902,11 @@ SELECT gbx_rst_resample_to_size(tile, 512, 512, 'near') AS sized FROM rasters;
 
 
 rst_resample_to_size_sql_example_output = """
-+-----+
-|sized|
-+-----+
-|...  |
-+-----+
++--------------------+
+|sized               |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1920,11 +1920,11 @@ FROM rasters;
 
 
 rst_resample_to_res_sql_example_output = """
-+------+
-|coarse|
-+------+
-|...   |
-+------+
++--------------------+
+|coarse              |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1943,11 +1943,11 @@ FROM point_clouds;
 
 
 rst_gridfrompoints_sql_example_output = """
-+---+
-|idw|
-+---+
-|...|
-+---+
++--------------------+
+|idw                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -1967,11 +1967,11 @@ GROUP BY region_id;
 
 
 rst_gridfrompoints_agg_sql_example_output = """
-+---------+---+
-|region_id|idw|
-+---------+---+
-|...      |...|
-+---------+---+
++---------+--------------------+
+|region_id|idw                 |
++---------+--------------------+
+|R-01     |[BINARY]            |
++---------+--------------------+
 """
 
 
@@ -1984,11 +1984,11 @@ SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters;
 
 
 rst_fillnodata_sql_example_output = """
-+------+
-|filled|
-+------+
-|...   |
-+------+
++--------------------+
+|filled              |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2001,11 +2001,11 @@ SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS values FROM rasters;
 
 
 rst_sample_sql_example_output = """
-+------+
-|values|
-+------+
-|...   |
-+------+
++--------------------+
+|values              |
++--------------------+
+|[12.5, 88.0, 240.0] |
++--------------------+
 """
 
 
@@ -2019,11 +2019,11 @@ SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters;
 
 
 rst_setsrid_sql_example_output = """
-+------+
-|tagged|
-+------+
-|...   |
-+------+
++--------------------+
+|tagged              |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2037,11 +2037,11 @@ FROM rasters;
 
 
 rst_histogram_sql_example_output = """
-+----+
-|hist|
-+----+
-|... |
-+----+
++------------------------------------+
+|hist                                |
++------------------------------------+
+|{band_1 -> [120, 340, 510, 88]}    |
++------------------------------------+
 """
 
 
@@ -2054,11 +2054,11 @@ SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;
 
 
 rst_threshold_sql_example_output = """
-+----+
-|mask|
-+----+
-|... |
-+----+
++--------------------+
+|mask                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2072,11 +2072,11 @@ FROM rasters;
 
 
 rst_buildoverviews_sql_example_output = """
-+-------+
-|withovr|
-+-------+
-|...    |
-+-------+
++--------------------+
+|withovr             |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2089,11 +2089,11 @@ SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters;
 
 
 rst_band_sql_example_output = """
-+---+
-|b1 |
-+---+
-|...|
-+---+
++--------------------+
+|b1                  |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2107,11 +2107,11 @@ FROM rasters;
 
 
 rst_cog_convert_sql_example_output = """
-+---+
-|cog|
-+---+
-|...|
-+---+
++--------------------+
+|cog                 |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2125,11 +2125,11 @@ FROM rasters;
 
 
 rst_proximity_sql_example_output = """
-+----+
-|dist|
-+----+
-|... |
-+----+
++--------------------+
+|dist                |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
@@ -2143,11 +2143,11 @@ FROM rasters;
 
 
 rst_contour_sql_example_output = """
-+--------+
-|contours|
-+--------+
-|...     |
-+--------+
++----------------------------------------+
+|contours                                |
++----------------------------------------+
+|[{[BINARY], 100.0}, {[BINARY], 200.0}] |
++----------------------------------------+
 """
 
 
@@ -2161,11 +2161,11 @@ FROM rasters;
 
 
 rst_viewshed_sql_example_output = """
-+---+
-|vs |
-+---+
-|...|
-+---+
++--------------------+
+|vs                  |
++--------------------+
+|[BINARY]            |
++--------------------+
 """
 
 
