@@ -61,18 +61,21 @@ _SNAP_TOL = 0.01
 
 # Explicit schema for the common (pts, breaks, merge_tol, snap_tol, finder) row.
 # PySpark cannot infer the type of an empty Python list [], so we declare it explicitly.
-_TIN_SCHEMA = StructType([
-    StructField("pts", ArrayType(StringType()), nullable=False),
-    StructField("breaks", ArrayType(StringType()), nullable=False),
-    StructField("merge_tol", DoubleType(), nullable=False),
-    StructField("snap_tol", DoubleType(), nullable=False),
-    StructField("finder", StringType(), nullable=False),
-])
+_TIN_SCHEMA = StructType(
+    [
+        StructField("pts", ArrayType(StringType()), nullable=False),
+        StructField("breaks", ArrayType(StringType()), nullable=False),
+        StructField("merge_tol", DoubleType(), nullable=False),
+        StructField("snap_tol", DoubleType(), nullable=False),
+        StructField("finder", StringType(), nullable=False),
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # test_st_triangulate
 # ---------------------------------------------------------------------------
+
 
 def test_st_triangulate_emits_triangle_rows(spark):
     """Triangulate returns at least 1 triangle WKB row for a non-collinear square."""
@@ -108,6 +111,7 @@ def test_st_triangulate_emits_triangle_rows(spark):
 # test_st_interpolateelevationbbox
 # ---------------------------------------------------------------------------
 
+
 def test_st_interpolateelevationbbox_emits_elevation_rows(spark):
     """BBox grid interpolation returns 100 Z-point rows for a 10x10 grid over a 100x100 square."""
     from databricks.labs.gbx.vectorx import functions as vx
@@ -119,13 +123,15 @@ def test_st_interpolateelevationbbox_emits_elevation_rows(spark):
         "POINT Z (0 100 0)",
         "POINT Z (100 100 0)",
     ]
-    bbox_schema = StructType([
-        StructField("pts", ArrayType(StringType()), nullable=False),
-        StructField("breaks", ArrayType(StringType()), nullable=False),
-        StructField("merge_tol", DoubleType(), nullable=False),
-        StructField("snap_tol", DoubleType(), nullable=False),
-        StructField("finder", StringType(), nullable=False),
-    ])
+    bbox_schema = StructType(
+        [
+            StructField("pts", ArrayType(StringType()), nullable=False),
+            StructField("breaks", ArrayType(StringType()), nullable=False),
+            StructField("merge_tol", DoubleType(), nullable=False),
+            StructField("snap_tol", DoubleType(), nullable=False),
+            StructField("finder", StringType(), nullable=False),
+        ]
+    )
     df = spark.createDataFrame(
         [(pts_wkt, [], _MERGE_TOL, _SNAP_TOL, _SPLIT_FINDER)],
         schema=bbox_schema,
@@ -137,12 +143,12 @@ def test_st_interpolateelevationbbox_emits_elevation_rows(spark):
             col("merge_tol"),
             col("snap_tol"),
             col("finder"),
-            lit(0.0),    # xmin
-            lit(0.0),    # ymin
+            lit(0.0),  # xmin
+            lit(0.0),  # ymin
             lit(100.0),  # xmax
             lit(100.0),  # ymax
-            lit(10),     # width_px
-            lit(10),     # height_px
+            lit(10),  # width_px
+            lit(10),  # height_px
             lit(32633),  # srid
         ).alias("t")
     ).collect()
@@ -159,6 +165,7 @@ def test_st_interpolateelevationbbox_emits_elevation_rows(spark):
 # ---------------------------------------------------------------------------
 # test_st_interpolateelevationgeom
 # ---------------------------------------------------------------------------
+
 
 def test_st_interpolateelevationgeom_emits_elevation_rows(spark):
     """Origin-grid interpolation returns >= 1 Z-point row for a 3x3 grid over a 10x10 square."""
@@ -177,10 +184,10 @@ def test_st_interpolateelevationgeom_emits_elevation_rows(spark):
             col("snap_tol"),
             col("finder"),
             lit("POINT (1 1)"),  # grid_origin: inside the 10x10 square
-            lit(3),              # grid_cols
-            lit(3),              # grid_rows
-            lit(3.0),            # cell_size_x  (1,4,7 → all inside [0,10])
-            lit(3.0),            # cell_size_y
+            lit(3),  # grid_cols
+            lit(3),  # grid_rows
+            lit(3.0),  # cell_size_x  (1,4,7 → all inside [0,10])
+            lit(3.0),  # cell_size_y
         ).alias("t")
     ).collect()
 

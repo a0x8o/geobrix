@@ -20,9 +20,7 @@ JAR = candidates[-1].resolve()
 def _polygon_wkb(x0: float, y0: float, x1: float, y1: float) -> bytes:
     """WKB (little-endian) for a closed rectangular polygon from two corners."""
     # WKB layout: byte_order(1B) + wkb_type(4B) + ring_count(4B) + point_count(4B) + 5*point(16B each)
-    coords = [
-        (x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)  # closed ring
-    ]
+    coords = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]  # closed ring
     # byte_order=1 (little-endian), wkb_type=3 (Polygon), num_rings=1, num_points=5
     header = struct.pack("<BII I", 1, 3, 1, 5)
     points = b"".join(struct.pack("<dd", x, y) for x, y in coords)
@@ -49,8 +47,9 @@ def spark():
 
 def test_rst_rasterize_agg_returns_tile(spark):
     """rst_rasterize_agg streams WKB polygon rows and returns a non-null tile."""
-    from databricks.labs.gbx.rasterx import functions as F
     from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.rasterx import functions as F
 
     # Two non-overlapping polygons within a 100x100 extent (EPSG:32633).
     #   Polygon A: lower-left quadrant (0,0)-(50,50), burn value 10.0
@@ -70,12 +69,12 @@ def test_rst_rasterize_agg_returns_tile(spark):
             F.rst_rasterize_agg(
                 f.col("geom_wkb"),
                 f.col("value"),
-                f.lit(0.0),    # xmin
-                f.lit(0.0),    # ymin
+                f.lit(0.0),  # xmin
+                f.lit(0.0),  # ymin
                 f.lit(100.0),  # xmax
                 f.lit(100.0),  # ymax
-                f.lit(100),    # width_px
-                f.lit(100),    # height_px
+                f.lit(100),  # width_px
+                f.lit(100),  # height_px
                 f.lit(32633),  # srid
             ).alias("tile")
         )

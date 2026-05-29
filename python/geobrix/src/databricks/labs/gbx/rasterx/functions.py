@@ -1807,10 +1807,18 @@ def rst_dtmfromgeoms(
     nd = f.lit(-9999.0) if no_data is None else _col(no_data)
     return f.call_function(
         "gbx_rst_dtmfromgeoms",
-        _col(points), _col(breaklines),
-        _col(merge_tolerance), _col(snap_tolerance),
-        _col(xmin), _col(ymin), _col(xmax), _col(ymax),
-        _col(width_px), _col(height_px), _col(srid), nd,
+        _col(points),
+        _col(breaklines),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        nd,
     )
 
 
@@ -1840,10 +1848,18 @@ def rst_dtmfromgeoms_agg(
     nd = f.lit(-9999.0) if no_data is None else _col(no_data)
     return f.call_function(
         "gbx_rst_dtmfromgeoms_agg",
-        _col(point), _col(breaklines),
-        _col(merge_tolerance), _col(snap_tolerance),
-        _col(xmin), _col(ymin), _col(xmax), _col(ymax),
-        _col(width_px), _col(height_px), _col(srid), nd,
+        _col(point),
+        _col(breaklines),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        nd,
     )
 
 

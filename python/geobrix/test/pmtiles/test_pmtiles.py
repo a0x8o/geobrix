@@ -80,17 +80,24 @@ def test_pmtiles_agg_blob_metadata_and_png_detect(spark, pmtiles_registered):
     df_meta = spark.createDataFrame([(1, 0, 0, b"X")], schema=["z", "x", "y", "bytes"])
     pmt_meta = df_meta.agg(
         pmtiles_registered.pmtiles_agg(
-            f.col("bytes"), f.col("z"), f.col("x"), f.col("y"),
+            f.col("bytes"),
+            f.col("z"),
+            f.col("x"),
+            f.col("y"),
             f.lit('{"name":"pytest"}'),
         ).alias("pmt")
     ).collect()[0]["pmt"]
     meta_off = struct.unpack_from("<Q", pmt_meta, 24)[0]
     meta_len = struct.unpack_from("<Q", pmt_meta, 32)[0]
-    assert pmt_meta[meta_off : meta_off + meta_len].decode("utf-8") == '{"name":"pytest"}'
+    assert (
+        pmt_meta[meta_off : meta_off + meta_len].decode("utf-8") == '{"name":"pytest"}'
+    )
 
     # PNG magic auto-detect (tile_type byte at offset 99 = 2).
     png_magic = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00])
-    df_png = spark.createDataFrame([(1, 0, 0, png_magic)], schema=["z", "x", "y", "bytes"])
+    df_png = spark.createDataFrame(
+        [(1, 0, 0, png_magic)], schema=["z", "x", "y", "bytes"]
+    )
     pmt_png = df_png.agg(
         pmtiles_registered.pmtiles_agg(
             f.col("bytes"), f.col("z"), f.col("x"), f.col("y")

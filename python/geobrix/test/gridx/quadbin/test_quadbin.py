@@ -46,10 +46,9 @@ def quadbin_registered(spark):
 def _cell_at(spark, qx, lon: float, lat: float, z: int) -> int:
     """Compute a quadbin cell id via the SQL function (round-trip through Spark)."""
     df = spark.createDataFrame([(lon, lat)], ["lon", "lat"])
-    return (
-        df.select(qx.quadbin_pointascell(f.col("lon"), f.col("lat"), z).alias("cell"))
-        .first()["cell"]
-    )
+    return df.select(
+        qx.quadbin_pointascell(f.col("lon"), f.col("lat"), z).alias("cell")
+    ).first()["cell"]
 
 
 def test_quadbin_pointascell(spark, quadbin_registered):
@@ -96,10 +95,9 @@ def test_quadbin_polyfill(spark, quadbin_registered):
     # Small bbox near (0, 0) → small number of cells
     wkt = "POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"
     df = spark.createDataFrame([(wkt,)], ["geom"])
-    cells = (
-        df.select(qx.quadbin_polyfill(f.col("geom"), 5).alias("cells"))
-        .first()["cells"]
-    )
+    cells = df.select(qx.quadbin_polyfill(f.col("geom"), 5).alias("cells")).first()[
+        "cells"
+    ]
     assert cells is not None
     assert len(cells) >= 1
 
@@ -117,10 +115,9 @@ def test_quadbin_tessellate(spark, quadbin_registered):
     qx = quadbin_registered
     wkt = "POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"
     df = spark.createDataFrame([(wkt,)], ["geom"])
-    chips = (
-        df.select(qx.quadbin_tessellate(f.col("geom"), 5).alias("chips"))
-        .first()["chips"]
-    )
+    chips = df.select(qx.quadbin_tessellate(f.col("geom"), 5).alias("chips")).first()[
+        "chips"
+    ]
     assert chips is not None
     assert len(chips) >= 1
     for chip in chips:

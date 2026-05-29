@@ -37,7 +37,9 @@ def register(_spark: SparkSession) -> None:
         _spark: Spark session (optional; uses active session if not provided).
     """
     _spark = SparkSession.builder.getOrCreate()
-    _spark.read.format("register_ds").option("functions", "gridx.quadbin").load().collect()
+    _spark.read.format("register_ds").option(
+        "functions", "gridx.quadbin"
+    ).load().collect()
 
 
 def quadbin_pointascell(lon: ColLike, lat: ColLike, resolution: ColLike) -> Column:

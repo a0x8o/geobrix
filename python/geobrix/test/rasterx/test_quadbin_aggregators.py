@@ -105,5 +105,3 @@ def test_rst_quadbin_rastertogridmedian(spark):
     cell, _ = _collect_first(spark, rx.rst_quadbin_rastertogridmedian)
     assert cell["cellID"] is not None
     assert isinstance(cell["measure"], float)
-
-

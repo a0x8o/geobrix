@@ -34,21 +34,31 @@ def spark():
 
 
 def test_rst_dtmfromgeoms_returns_tile(spark):
-    from databricks.labs.gbx.rasterx import functions as F
     from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.rasterx import functions as F
 
     # Four Z-valued corner points of a 100x100 extent, as WKT (z = 2x+3y+5). Z MUST be preserved.
     pts = [
-        "POINT Z (0 0 5)", "POINT Z (100 0 205)",
-        "POINT Z (0 100 305)", "POINT Z (100 100 505)",
+        "POINT Z (0 0 5)",
+        "POINT Z (100 0 205)",
+        "POINT Z (0 100 305)",
+        "POINT Z (100 100 505)",
     ]
     df = spark.createDataFrame([(pts,)], ["points"])
     out = df.select(
         F.rst_dtmfromgeoms(
-            f.col("points"), f.array().cast("array<string>"),
-            f.lit(0.0), f.lit(0.0),
-            f.lit(0.0), f.lit(0.0), f.lit(100.0), f.lit(100.0),
-            f.lit(10), f.lit(10), f.lit(32633),
+            f.col("points"),
+            f.array().cast("array<string>"),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(100.0),
+            f.lit(100.0),
+            f.lit(10),
+            f.lit(10),
+            f.lit(32633),
         ).alias("dtm")
     ).collect()
     assert out[0]["dtm"] is not None
@@ -56,22 +66,32 @@ def test_rst_dtmfromgeoms_returns_tile(spark):
 
 
 def test_rst_dtmfromgeoms_agg_returns_tile(spark):
-    from databricks.labs.gbx.rasterx import functions as F
     from pyspark.sql import functions as f
 
+    from databricks.labs.gbx.rasterx import functions as F
+
     rows = [
-        (1, "POINT Z (0 0 5)"), (1, "POINT Z (100 0 205)"),
-        (1, "POINT Z (0 100 305)"), (1, "POINT Z (100 100 505)"),
+        (1, "POINT Z (0 0 5)"),
+        (1, "POINT Z (100 0 205)"),
+        (1, "POINT Z (0 100 305)"),
+        (1, "POINT Z (100 100 505)"),
     ]
     df = spark.createDataFrame(rows, ["region", "pt"])
     out = (
         df.groupBy("region")
         .agg(
             F.rst_dtmfromgeoms_agg(
-                f.col("pt"), f.array().cast("array<string>"),
-                f.lit(0.0), f.lit(0.0),
-                f.lit(0.0), f.lit(0.0), f.lit(100.0), f.lit(100.0),
-                f.lit(10), f.lit(10), f.lit(32633),
+                f.col("pt"),
+                f.array().cast("array<string>"),
+                f.lit(0.0),
+                f.lit(0.0),
+                f.lit(0.0),
+                f.lit(0.0),
+                f.lit(100.0),
+                f.lit(100.0),
+                f.lit(10),
+                f.lit(10),
+                f.lit(32633),
             ).alias("dtm")
         )
         .collect()

@@ -43,8 +43,9 @@ def spark():
 
 def test_rst_frombands_agg_returns_tile(spark):
     """rst_frombands_agg stacks two single-band tiles into a non-null tile."""
-    from databricks.labs.gbx.rasterx import functions as F
     from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.rasterx import functions as F
 
     # Load the same single-band MODIS TIF twice with different band indices.
     # The aggregator sorts by band_index and stacks, so the result should have >= 1 band.

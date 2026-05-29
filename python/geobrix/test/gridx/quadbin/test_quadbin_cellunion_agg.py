@@ -45,10 +45,9 @@ def quadbin_registered(spark):
 def _cell_at(spark, qx, lon: float, lat: float, z: int) -> int:
     """Compute a quadbin cell id via the SQL binding."""
     df = spark.createDataFrame([(lon, lat)], ["lon", "lat"])
-    return (
-        df.select(qx.quadbin_pointascell(f.col("lon"), f.col("lat"), z).alias("cell"))
-        .first()["cell"]
-    )
+    return df.select(
+        qx.quadbin_pointascell(f.col("lon"), f.col("lat"), z).alias("cell")
+    ).first()["cell"]
 
 
 def test_quadbin_cellunion_agg_returns_binary(spark, quadbin_registered):
@@ -58,10 +57,7 @@ def test_quadbin_cellunion_agg_returns_binary(spark, quadbin_registered):
     # Get a centre cell and a neighbour cell via kring (k=1 yields 9 cells).
     centre = _cell_at(spark, qx, 0.0, 0.0, 8)
     df_centre = spark.createDataFrame([(centre,)], ["cell"])
-    ring = (
-        df_centre.select(qx.quadbin_kring(f.col("cell"), 1).alias("r"))
-        .first()["r"]
-    )
+    ring = df_centre.select(qx.quadbin_kring(f.col("cell"), 1).alias("r")).first()["r"]
     # Use the centre and first neighbour — two distinct cells in the same group.
     neighbour = next(c for c in ring if c != centre)
 
@@ -73,9 +69,7 @@ def test_quadbin_cellunion_agg_returns_binary(spark, quadbin_registered):
 
     out = (
         df.groupBy("key")
-        .agg(
-            qx.quadbin_cellunion_agg(f.col("cell")).alias("union_geom")
-        )
+        .agg(qx.quadbin_cellunion_agg(f.col("cell")).alias("union_geom"))
         .collect()
     )
     assert len(out) == 1

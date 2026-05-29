@@ -99,10 +99,17 @@ def test_idw_roundtrip_non_agg_and_agg_match(spark):
     df_non_agg = df_arr.select(
         f.call_function(
             "gbx_rst_gridfrompoints",
-            f.col("points"), f.col("values"),
-            f.lit(0.0), f.lit(0.0), f.lit(100.0), f.lit(100.0),
-            f.lit(50), f.lit(50), f.lit(32633),
-            f.lit(2.0), f.lit(12),
+            f.col("points"),
+            f.col("values"),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(100.0),
+            f.lit(100.0),
+            f.lit(50),
+            f.lit(50),
+            f.lit(32633),
+            f.lit(2.0),
+            f.lit(12),
         ).alias("out")
     )
     rows_na = df_non_agg.collect()
@@ -119,10 +126,17 @@ def test_idw_roundtrip_non_agg_and_agg_match(spark):
     df_agg = df_long.groupBy("grp").agg(
         f.call_function(
             "gbx_rst_gridfrompoints_agg",
-            f.col("point"), f.col("value"),
-            f.lit(0.0), f.lit(0.0), f.lit(100.0), f.lit(100.0),
-            f.lit(50), f.lit(50), f.lit(32633),
-            f.lit(2.0), f.lit(12),
+            f.col("point"),
+            f.col("value"),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(100.0),
+            f.lit(100.0),
+            f.lit(50),
+            f.lit(50),
+            f.lit(32633),
+            f.lit(2.0),
+            f.lit(12),
         ).alias("out")
     )
     rows_a = df_agg.collect()
