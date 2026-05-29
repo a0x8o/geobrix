@@ -440,6 +440,78 @@ def rst_merge_agg(tile: ColLike) -> Column:
     return f.call_function("gbx_rst_merge_agg", _col(tile))
 
 
+def rst_rasterize_agg(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Rasterize streaming (geom_wkb, value) rows into a single raster tile (use with groupBy).
+
+    Streams one geometry/value pair per row; the extent and pixel-size arguments
+    are per-group constants.  Overlap is last-wins (nondeterministic across the group).
+
+    Args:
+        geom_wkb: BINARY column of geometry WKB (Polygon, MultiPolygon, etc.).
+        value: DOUBLE burn value column.
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the geometry / output raster.
+
+    Returns:
+        Column of raster tile.
+    """
+    return f.call_function(
+        "gbx_rst_rasterize_agg",
+        _col(geom_wkb),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
+    """Stack single-band tiles into a multi-band tile by explicit band index (use with groupBy).
+
+    Streams one (tile, band_index) pair per row.  On evaluation the tiles are sorted
+    by ``band_index`` ascending and stacked via ``gbx_rst_frombands``.  Unlike the
+    non-aggregator :func:`rst_frombands` (which reads ARRAY position as band order),
+    this aggregator accepts an explicit integer ``band_index`` to guarantee ordering
+    independent of row arrival order.
+
+    .. note::
+        ``band_index`` must be ``IntegerType`` (not ``LongType``).  PySpark infers
+        Python ``int`` literals as ``LongType``; cast explicitly when needed:
+        ``f.col("band_index").cast("int")``.
+
+    Args:
+        tile: Single-band raster tile column.
+        band_index: IntegerType column (1-based) indicating the output band position.
+
+    Returns:
+        Column of multi-band raster tile.
+    """
+    return f.call_function(
+        "gbx_rst_frombands_agg",
+        _col(tile),
+        _col(band_index).cast("int"),
+    )
+
+
 # Constructors
 
 

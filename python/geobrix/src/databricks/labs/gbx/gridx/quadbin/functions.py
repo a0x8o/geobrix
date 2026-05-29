@@ -154,3 +154,19 @@ def quadbin_distance(cell_a: ColLike, cell_b: ColLike) -> Column:
         Column of INT (cells must share resolution; otherwise the underlying eval throws).
     """
     return f.call_function("gbx_quadbin_distance", _col(cell_a), _col(cell_b))
+
+
+def quadbin_cellunion_agg(cell: ColLike) -> Column:
+    """Aggregate quadbin cell BIGINTs into their union geometry (use with groupBy).
+
+    Streams one cell id per row and returns the unioned MultiPolygon as EWKB
+    (SRID=4326).  Parity with ``gbx_bng_cellunion_agg`` and Mosaic
+    ``grid_cell_union_agg``.
+
+    Args:
+        cell: BIGINT column of quadbin cell ids.
+
+    Returns:
+        Column of BINARY (EWKB Polygon or MultiPolygon, SRID 4326).
+    """
+    return f.call_function("gbx_quadbin_cellunion_agg", _col(cell))
