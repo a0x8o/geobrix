@@ -144,4 +144,7 @@ gbx_quadbin_tessellate
 gbx_st_asmvt
 gbx_st_asmvt_pyramid
 gbx_st_legacyaswkb
+gbx_st_triangulate
+gbx_st_interpolateelevationbbox
+gbx_st_interpolateelevationgeom
 gbx_pmtiles_agg

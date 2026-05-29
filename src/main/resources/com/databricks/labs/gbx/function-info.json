@@ -399,8 +399,17 @@
     "gbx_st_asmvt_pyramid": {
       "examples": "Examples:\n      > SELECT unhex('010300000001000000050000000000000000003EC000000000000024400000000000003E4000000000000024400000000000003E4000000000000034400000000000003EC000000000000034400000000000003EC00000000000002440') AS geom_wkb, named_struct('name', 'region-a', 'id', 1L) AS attrs ) SELECT t.tile.z AS z, length(t.tile.mvt_bytes) AS mvt_bytes_len FROM features LATERAL VIEW gbx_st_asmvt_pyramid(geom_wkb, attrs, 2, 2, 'regions') t AS tile;"
     },
+    "gbx_st_interpolateelevationbbox": {
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700) AS elev_point FROM survey;"
+    },
+    "gbx_st_interpolateelevationgeom": {
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0) AS elev_point FROM survey;"
+    },
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
+    },
+    "gbx_st_triangulate": {
+      "examples": "Examples:\n      > SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING') AS triangle FROM survey;"
     },
     "_package_pmtiles": "--- pmtiles ---",
     "gbx_pmtiles_agg": {

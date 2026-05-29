@@ -47,3 +47,50 @@ SELECT t.tile.z AS z, length(t.tile.mvt_bytes) AS mvt_bytes_len
 FROM features
 LATERAL VIEW gbx_st_asmvt_pyramid(geom_wkb, attrs, 2, 2, 'regions') t AS tile;
 """
+
+
+def st_triangulate_sql_example():
+    """Build a Delaunay triangulation from mass-point and breakline geometries (SQL).
+
+    Accepts a column of mass-point geometries (`masspoints`), a column of breakline
+    geometries (`breaklines`), a snap tolerance, a minimum triangle area, and a
+    conforming-mesh strategy. Returns one triangle geometry per row.
+    """
+    return """
+SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING') AS triangle FROM survey;
+"""
+
+
+st_triangulate_sql_example_output = "triangle"
+
+
+def st_interpolateelevationbbox_sql_example():
+    """Interpolate elevation on a regular grid covering a bounding box from a TIN (SQL).
+
+    Builds a triangulated irregular network from mass points and breaklines, then
+    samples it on a grid of `cols x rows` cells within the specified bounding box
+    (xmin, ymin, xmax, ymax) in the given SRID. Returns one point-with-Z geometry
+    per grid cell.
+    """
+    return """
+SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700) AS elev_point FROM survey;
+"""
+
+
+st_interpolateelevationbbox_sql_example_output = "elev_point"
+
+
+def st_interpolateelevationgeom_sql_example():
+    """Interpolate elevation at locations derived from a geometry's bounding box (SQL).
+
+    Builds a triangulated irregular network from mass points and breaklines, then
+    samples it on a grid anchored to the bounding box of the supplied geometry.
+    `cell_width` and `cell_height` control the grid resolution (negative height
+    steps downward). Returns one point-with-Z geometry per grid cell.
+    """
+    return """
+SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0) AS elev_point FROM survey;
+"""
+
+
+st_interpolateelevationgeom_sql_example_output = "elev_point"
