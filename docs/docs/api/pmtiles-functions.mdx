@@ -7,28 +7,138 @@ import pmtilesSqlCode from '!!raw-loader!../../tests/python/api/pmtiles_function
 
 # PMTiles Function Reference
 
-Complete reference for PMTiles SQL functions. The PMTiles package is a peer of RasterX / VectorX / GridX: it encodes tile pyramids (raster or vector) into the [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) single-file archive format. Tile content bytes (PNG / JPEG / WebP / MVT) pass through verbatim, so PMTiles is container-only.
+GeoBrix encodes tile pyramids (raster or vector) into the [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) single-file archive format. PMTiles replaces the "directory of tiles" pattern with one compact, hash-deduplicated, range-readable file servable directly from cloud object storage. Tile content bytes (PNG / JPEG / WebP / MVT) pass through verbatim — PMTiles is container-only.
 
-## Overview
+:::note Import path
+`databricks.labs.gbx.pmtiles` (Python) or `com.databricks.labs.gbx.pmtiles` (Scala). PMTiles is a peer of RasterX / VectorX / GridX, not a dependency.
+:::
 
-GeoBrix exposes two PMTiles entry points; pick based on pyramid size:
+## Two entry points
+
+Pick based on pyramid size:
 
 | Entry point | When to use | Limit |
 |---|---|---|
 | **`gbx_pmtiles_agg` UDAF** (this page) | The full pyramid fits in a single Spark cell. Returns a `BINARY` column. Convenient for one-shot bundle generation. | ~100 MiB of tile payload by default; hard ceiling at the 2 GiB Spark cell limit. |
 | [**PMTiles Writer**](../writers/pmtiles) (`.write.format("pmtiles")`) | Larger pyramids; streaming partitioned commit writes one `.pmtiles` file with no in-memory consolidation. | Bound only by available disk on the driver during commit. |
 
-Both paths share the same native-Scala PMTiles v3 encoder, so the bytes they emit are byte-compatible.
-
-:::note SQL examples
-Examples on this page use **SQL**. PMTiles functions are prefixed with **`gbx_`** (e.g. `gbx_pmtiles_agg`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
-:::
+Both paths share the same native-Scala PMTiles v3 encoder — bytes they emit are byte-compatible.
 
 ## Registration
 
-The PMTiles UDAF and DataSource are registered automatically when the GeoBrix JAR is on the Spark classpath — no explicit `register(spark)` call is required. See the [PMTiles package page](../packages/pmtiles) for details.
+Register the UDAF once per session:
+
+```python
+from databricks.labs.gbx.pmtiles import functions as px
+px.register(spark)
+```
+
+```scala
+import com.databricks.labs.gbx.pmtiles.functions
+functions.register(spark)
+```
+
+The DataSource writer (`.write.format("pmtiles")`) does NOT need registration — it is wired through `META-INF/services` as soon as the GeoBrix JAR is on the Spark classpath.
+
+## Quick start
+
+### UDAF: aggregate to a single blob
+
+```python
+from pyspark.sql import functions as f
+from databricks.labs.gbx.pmtiles import functions as px
+
+# tiles_df: (z: int, x: int, y: int, bytes: binary)
+pmt = (
+    tiles_df.agg(
+        px.pmtiles_agg(
+            f.col("bytes"), f.col("z"), f.col("x"), f.col("y"),
+            '{"name":"my_tileset","attribution":"contoso"}',
+        ).alias("pmt")
+    )
+    .collect()[0]["pmt"]
+)
+
+with open("/tmp/out.pmtiles", "wb") as fh:
+    fh.write(pmt)
+```
+
+```sql
+SELECT gbx_pmtiles_agg(bytes, z, x, y, '{"name":"my_tileset"}') AS pmt
+FROM tiles_z2;
+```
+
+### DataSource: stream to a single `.pmtiles` file
+
+```python
+(
+    tiles_df
+    .write
+    .format("pmtiles")
+    .option("metadataJson", '{"name":"my_tileset"}')
+    .mode("overwrite")
+    .save("/tmp/out.pmtiles")
+)
+```
+
+```scala
+tilesDf.write
+    .format("pmtiles")
+    .option("metadataJson", "{\"name\":\"my_tileset\"}")
+    .mode("overwrite")
+    .save("/tmp/out.pmtiles")
+```
+
+The output path is the **final file**, not a directory: scratch `_part_*.tdata` and `_part_*.entries` files are written alongside it during the commit phase and deleted on success.
+
+:::tip Save mode
+Always pass `.mode("overwrite")`. The default `ErrorIfExists` is not supported — the failure is loud and points you at `.mode("overwrite")`.
+:::
+
+## Schema contract
+
+The DataSource writer enforces an exact write schema:
+
+```text
+z      INT       — tile zoom level (0..31)
+x      INT       — tile x within the zoom
+y      INT       — tile y within the zoom
+bytes  BINARY    — tile payload (PNG / JPEG / WebP / MVT)
+```
+
+Missing columns, extra columns, or wrong types all raise a single `IllegalArgumentException` that names the canonical schema. The UDAF is more relaxed: `z`/`x`/`y` accept either `INT` or `LONG` (PySpark's `createDataFrame` infers Python ints as `LongType` by default, which the UDAF coerces in `update`).
+
+## Tile-type detection
+
+The encoder reads the first 12 bytes of the first non-empty tile payload and sets the PMTiles header's `tile_type` byte:
+
+| Magic bytes | tile_type | Meaning |
+|---|---|---|
+| `89 50 4E 47` | 2 (PNG) | PNG raster |
+| `FF D8` | 3 (JPEG) | JPEG raster |
+| `RIFF????WEBP` | 4 (WebP) | WebP raster |
+| _anything else_ | 1 (MVT) | Mapbox Vector Tile (protobuf) |
+
+Override auto-detection via `.option("tileType", "<byte>")` (e.g. `"2"` for PNG when emitting tiles via a custom encoder that doesn't carry standard magic bytes).
+
+## Tile compression
+
+GeoBrix passes tile bytes through unchanged. If your tiles are already compressed (e.g. gzipped MVTs), set `.option("tileCompression", "<byte>")` so the PMTiles header advertises the correct compression to downstream readers:
+
+| Byte | Compression (spec § 3.3) |
+|---|---|
+| `1` | None (default) |
+| `2` | gzip |
+| `3` | brotli |
+| `4` | zstd |
+
+The internal compression (root directory + metadata) is always `none` in v0.4.0; the spec's compressed-root-directory variant ships in a future release.
 
 ---
+
+:::note SQL examples
+Examples below use **SQL**. PMTiles functions are prefixed with **`gbx_`** (e.g. `gbx_pmtiles_agg`). For language-specific usage, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+:::
 
 ## pmtiles_agg
 
@@ -61,9 +171,46 @@ For pyramids that exceed the Spark cell ceiling, use the [PMTiles Writer](../wri
 
 ---
 
+## Serving from object storage
+
+PMTiles is designed to be served as a single static file via HTTP `Range` requests. After uploading the output `.pmtiles` to S3 / ABFS / GCS:
+
+1. **CORS**: enable `GET, HEAD, OPTIONS` for your map host; allow `Range` and `If-Match` headers.
+2. **Content-Type**: serve as `application/vnd.pmtiles`.
+3. **Browse**: drop the URL into [pmtiles.io](https://pmtiles.io) for a visual sanity check.
+4. **Embed in MapLibre** (pin to a specific version and add `integrity`/`crossorigin` SRI attributes for production use):
+
+   ```html
+   <script src="https://unpkg.com/pmtiles@3/dist/pmtiles.js"></script>
+   <script>
+     const protocol = new pmtiles.Protocol();
+     maplibregl.addProtocol("pmtiles", protocol.tile);
+     const map = new maplibregl.Map({
+       container: "map",
+       style: {
+         version: 8,
+         sources: { my: { type: "vector", url: "pmtiles://https://my-bucket/out.pmtiles" } },
+         layers: [/* ... */]
+       }
+     });
+   </script>
+   ```
+
+## Limits in v0.4.0
+
+- **No leaf directories.** If the global root directory would exceed 16,257 bytes (spec § 4), the encoder errors out and asks you to split your input. In practice this only happens with very large pyramids (tens of millions of tiles); the limit will be relaxed in a future release.
+- **No read path.** `spark.read.format("pmtiles")` raises a friendly "Reading PMTiles archives is not supported in GeoBrix 0.4.0" error — use one of the JS / Python pmtiles client libraries for read access.
+- **No cross-task dedup in the DataSource.** Identical tiles across partitions are stored multiple times in the final file. The UDAF path does per-blob SHA-256 dedup, so for known-redundant pyramids prefer the UDAF if your data fits.
+
+## References
+
+- [PMTiles v3 specification](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md)
+- [pmtiles.io online viewer](https://pmtiles.io)
+- [MapLibre GL JS](https://maplibre.org/)
+- [Felt](https://felt.com) — open or import a PMTile by URL
+
 ## Next Steps
 
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to disk.
-- [PMTiles Package Documentation](../packages/pmtiles) — Concepts, limits, and serving notes.
 - [RasterX Function Reference](./rasterx-functions) — Generate tile bytes with `gbx_rst_xyzpyramid`.
 - [VectorX Function Reference](./vectorx-functions) — Generate MVT tiles with `gbx_st_asmvt_pyramid`.
