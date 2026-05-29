@@ -1692,6 +1692,91 @@ def rst_gridfrompoints_agg(
     )
 
 
+# ---------------------------------------------------------------------------
+# Delaunay-TIN Digital Terrain Model (DTM) interpolation
+#
+# Two wrappers: `rst_dtmfromgeoms` (non-aggregator, Z-valued points as an
+# array column) + `rst_dtmfromgeoms_agg` (aggregator, one Z-valued point
+# per row). Both delegate to gbx_rst_dtmfromgeoms / gbx_rst_dtmfromgeoms_agg.
+# ---------------------------------------------------------------------------
+
+
+def rst_dtmfromgeoms(
+    points: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = None,
+) -> Column:
+    """DTM from Z-valued points + optional breaklines via Delaunay-TIN interpolation.
+
+    Output is a single-band Float64 GTiff of ``width_px x height_px`` over the bbox.
+    For N-unit cells set ``width_px = round((xmax-xmin)/N)``,
+    ``height_px = round((ymax-ymin)/N)`` (e.g. a 1000 m extent at 10 m cells -> 100 px).
+
+    Args:
+        points: Array column of Z-valued point geometries (WKB binary or WKT string).
+        breaklines: Array column of breakline LineString geometries; pass an empty array for none.
+        merge_tolerance: Delaunay segment-merge tolerance.
+        snap_tolerance: Vertex-to-breakline snap tolerance.
+        xmin, ymin, xmax, ymax: Output raster extent.
+        width_px, height_px: Output raster size in pixels.
+        srid: EPSG SRID.
+        no_data: No-data sentinel (default -9999.0).
+
+    Returns:
+        Raster tile column.
+    """
+    nd = f.lit(-9999.0) if no_data is None else _col(no_data)
+    return f.call_function(
+        "gbx_rst_dtmfromgeoms",
+        _col(points), _col(breaklines),
+        _col(merge_tolerance), _col(snap_tolerance),
+        _col(xmin), _col(ymin), _col(xmax), _col(ymax),
+        _col(width_px), _col(height_px), _col(srid), nd,
+    )
+
+
+def rst_dtmfromgeoms_agg(
+    point: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = None,
+) -> Column:
+    """DTM aggregator - one Z-valued ``point`` per row, grouped by extent key.
+
+    Aggregator counterpart of :func:`rst_dtmfromgeoms`. ``point`` is the only
+    aggregated (per-row) input; ``breaklines`` and all extent/tolerance args are
+    per-group constants. Produces the same DTM as the non-agg form over the same grid.
+
+    Returns:
+        Raster tile column.
+    """
+    nd = f.lit(-9999.0) if no_data is None else _col(no_data)
+    return f.call_function(
+        "gbx_rst_dtmfromgeoms_agg",
+        _col(point), _col(breaklines),
+        _col(merge_tolerance), _col(snap_tolerance),
+        _col(xmin), _col(ymin), _col(xmax), _col(ymax),
+        _col(width_px), _col(height_px), _col(srid), nd,
+    )
+
+
 def rst_index(
     tile: ColLike,
     formula_name: ColLike,
