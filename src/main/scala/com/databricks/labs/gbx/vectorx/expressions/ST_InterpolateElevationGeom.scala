@@ -12,10 +12,11 @@ package com.databricks.labs.gbx.vectorx.expressions
  *  Points outside the TIN hull are dropped (no_data silently elided).
  *  Each emitted row is a single-column BINARY (WKB, Z-preserving via JTS.toWKB3).
  *
- *  The grid_origin geometry's SRID is passed to the grid builder; if the origin carries SRID 0
- *  the grid points will also have SRID 0 (acceptable -- document downstream handling).
+ *  The grid_origin geometry should carry its SRID; encode it as EWKB (e.g. `JTS.toEWKB`) or use an
+ *  EWKT prefix (`SRID=32633;POINT(...)`) so that the SRID propagates to the output points.
+ *  Plain WKB and plain WKT carry no SRID; in that case output points will have SRID 0.
  *
- *  Registered SQL name: `gbx_st_interpolateelevationgeom` (registration in functions.scala -- Task 5).
+ *  Registered SQL name: `gbx_st_interpolateelevationgeom`.
  *
  *  Signature:
  *    gbx_st_interpolateelevationgeom(
@@ -79,9 +80,11 @@ case class ST_InterpolateElevationGeom(
         val breaklines: Seq[LineString] = {
             val bVal = breaklinesArray.eval(input)
             if (bVal == null) Seq.empty
-            else geomsFromArrayData(bVal.asInstanceOf[ArrayData])
-                .toSeq
-                .map(_.asInstanceOf[LineString])
+            else geomsFromArrayData(bVal.asInstanceOf[ArrayData]).toSeq.map {
+                case l: LineString => l
+                case other => throw new IllegalArgumentException(
+                    s"st_interpolateelevationgeom: breaklines must be LineString geometries; got ${other.getClass.getName}")
+            }
         }
 
         val mergeTol = readDouble(mergeTolerance.eval(input), "merge_tolerance")
@@ -106,9 +109,9 @@ case class ST_InterpolateElevationGeom(
                 "gbx_st_interpolateelevationgeom: grid_origin must be BINARY (WKB) or STRING (WKT); " +
                 s"got ${other.getClass.getName}")
         }
-        val originX = originGeom.getCoordinate.getX
-        val originY = originGeom.getCoordinate.getY
-        val srid    = originGeom.getSRID
+        val originX  = originGeom.getCoordinate.getX
+        val originY  = originGeom.getCoordinate.getY
+        val originSrid = originGeom.getSRID
 
         val cols      = readInt(gridCols.eval(input),    "grid_cols")
         val rows      = readInt(gridRows.eval(input),    "grid_rows")
@@ -116,7 +119,8 @@ case class ST_InterpolateElevationGeom(
         val cSizeY    = readDouble(cellSizeY.eval(input), "cell_size_y")
 
         val mp   = JTS.multiPoint(pts)
-        val grid = InterpolateElevation.pointGridOrigin(originX, originY, cols, rows, cSizeX, cSizeY, srid)
+        mp.setSRID(originSrid)
+        val grid = InterpolateElevation.pointGridOrigin(originX, originY, cols, rows, cSizeX, cSizeY, originSrid)
         val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid,
                                                             mergeTol, snapTol, Some(finder))
 

@@ -12,7 +12,7 @@ package com.databricks.labs.gbx.vectorx.expressions
  *  Points outside the TIN hull are dropped (no_data silently elided).
  *  Each emitted row is a single-column BINARY (WKB, Z-preserving via JTS.toWKB3).
  *
- *  Registered SQL name: `gbx_st_interpolateelevationbbox` (registration in functions.scala -- Task 5).
+ *  Registered SQL name: `gbx_st_interpolateelevationbbox`.
  *
  *  Signature:
  *    gbx_st_interpolateelevationbbox(
@@ -77,9 +77,11 @@ case class ST_InterpolateElevationBBox(
         val breaklines: Seq[LineString] = {
             val bVal = breaklinesArray.eval(input)
             if (bVal == null) Seq.empty
-            else geomsFromArrayData(bVal.asInstanceOf[ArrayData])
-                .toSeq
-                .map(_.asInstanceOf[LineString])
+            else geomsFromArrayData(bVal.asInstanceOf[ArrayData]).toSeq.map {
+                case l: LineString => l
+                case other => throw new IllegalArgumentException(
+                    s"st_interpolateelevationbbox: breaklines must be LineString geometries; got ${other.getClass.getName}")
+            }
         }
 
         val mergeTol = readDouble(mergeTolerance.eval(input), "merge_tolerance")
@@ -103,6 +105,7 @@ case class ST_InterpolateElevationBBox(
         val sridVal   = readInt(srid.eval(input),     "srid")
 
         val mp   = JTS.multiPoint(pts)
+        mp.setSRID(sridVal)
         val grid = InterpolateElevation.pointGridBBox(xminVal, yminVal, xmaxVal, ymaxVal,
                                                       widthVal, heightVal, sridVal)
         val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid,

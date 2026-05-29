@@ -39,11 +39,11 @@ class ST_InterpolateElevationGeomTest extends AnyFunSuite {
         }
     }
 
-    /** Build the grid-origin POINT(0 0) with SRID 32633 as a BINARY literal. */
+    /** Build the grid-origin POINT(0 0) with SRID 32633 as a BINARY literal (EWKB so SRID survives fromWKB). */
     private def originLit: Literal = {
         val originPt = JTS.point(new Coordinate(0.0, 0.0))
         originPt.setSRID(32633)
-        Literal.create(JTS.toWKB3(originPt), BinaryType)
+        Literal.create(JTS.toEWKB(originPt), BinaryType)
     }
 
     /** Invoke the geom generator and collect all emitted rows. */

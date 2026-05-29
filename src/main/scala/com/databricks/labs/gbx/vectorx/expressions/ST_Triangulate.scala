@@ -7,7 +7,7 @@ package com.databricks.labs.gbx.vectorx.expressions
  *  which runs a constrained Delaunay triangulation and returns the triangle Polygons as JTS
  *  geometries. Each polygon is serialised to 2D WKB and emitted as a single-column row.
  *
- *  Registered SQL name: `gbx_st_triangulate` (registration in functions.scala -- Task 5).
+ *  Registered SQL name: `gbx_st_triangulate`.
  *
  *  Signature:
  *    gbx_st_triangulate(points_geom    ARRAY<BINARY|STRING>,
@@ -109,6 +109,8 @@ case class ST_Triangulate(
         case d: java.lang.Double  => d.doubleValue
         case f: java.lang.Float   => f.toDouble
         case d: Double            => d
+        case i: Int               => i.toDouble
+        case l: Long              => l.toDouble
         case null                 => throw new IllegalArgumentException(
             s"gbx_st_triangulate: $fieldName is null")
         case other                => throw new IllegalArgumentException(
