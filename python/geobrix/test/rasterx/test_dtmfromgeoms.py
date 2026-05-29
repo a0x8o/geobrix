@@ -4,6 +4,7 @@ Exercises the full PySpark call_function -> registered UDF -> Scala execute path
 """
 
 import logging
+import struct
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,18 @@ HERE = Path(__file__).resolve()
 LIBDIR = (HERE.parents[2] / "lib").resolve()
 candidates = sorted(LIBDIR.glob("geobrix-*-jar-with-dependencies.jar"))
 JAR = candidates[-1].resolve()
+
+
+def _point_z_wkb(x: float, y: float, z: float) -> bytes:
+    """ISO WKB for a 3D point (byte_order=1 LE, type=1001 Point Z, then x,y,z)."""
+    return struct.pack("<BI", 1, 1001) + struct.pack("<ddd", x, y, z)
+
+
+def _linestring_z_wkb(coords: list) -> bytes:
+    """ISO WKB for a 3D linestring (type=1002 LineString Z)."""
+    header = struct.pack("<BII", 1, 1002, len(coords))
+    pts = b"".join(struct.pack("<ddd", x, y, z) for (x, y, z) in coords)
+    return header + pts
 
 
 @pytest.fixture(scope="module")
@@ -68,15 +81,14 @@ def test_rst_dtmfromgeoms_returns_tile(spark):
 def test_rst_dtmfromgeoms_wkb_points(spark):
     """Regression: WKB (binary) point arrays via PySpark must not NPE on UnsafeArrayData."""
     from pyspark.sql import functions as f
-    from shapely import Point
 
     from databricks.labs.gbx.rasterx import functions as F
 
     pts = [
-        Point(0.0, 0.0, 5.0).wkb,
-        Point(100.0, 0.0, 205.0).wkb,
-        Point(0.0, 100.0, 305.0).wkb,
-        Point(100.0, 100.0, 505.0).wkb,
+        _point_z_wkb(0.0, 0.0, 5.0),
+        _point_z_wkb(100.0, 0.0, 205.0),
+        _point_z_wkb(0.0, 100.0, 305.0),
+        _point_z_wkb(100.0, 100.0, 505.0),
     ]
     df = spark.createDataFrame([(pts,)], "points: array<binary>")
     out = df.select(
@@ -101,11 +113,10 @@ def test_rst_dtmfromgeoms_wkb_points(spark):
 def test_rst_dtmfromgeoms_agg_wkb_breaklines(spark):
     """Regression: agg decodes a non-empty WKB breakline array (the untested decode path)."""
     from pyspark.sql import functions as f
-    from shapely import LineString
 
     from databricks.labs.gbx.rasterx import functions as F
 
-    bl = LineString([(0.0, 50.0, 0.0), (100.0, 50.0, 0.0)]).wkb
+    bl = _linestring_z_wkb([(0.0, 50.0, 0.0), (100.0, 50.0, 0.0)])
     rows = [
         (1, "POINT Z (0 0 5)"),
         (1, "POINT Z (100 0 205)"),
