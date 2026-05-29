@@ -374,6 +374,24 @@ SELECT gbx_quadbin_cellunion(
 """
 
 
+def quadbin_cellunion_agg_sql_example():
+    """Aggregator: union quadbin cells per group into a single MultiPolygon EWKB."""
+    return """
+SELECT region, gbx_quadbin_cellunion_agg(cell) AS coverage
+FROM grid_cells
+GROUP BY region;
+"""
+
+
+quadbin_cellunion_agg_sql_example_output = """
++------+--------+
+|region|coverage|
++------+--------+
+|...   |[BINARY]|
++------+--------+
+"""
+
+
 def quadbin_distance_sql_example():
     """Chebyshev distance between two quadbin cells at the same resolution."""
     return """

@@ -70,6 +70,9 @@
     "gbx_rst_frombands": {
       "examples": "Examples:\n      > SELECT gbx_rst_frombands(array(band1, band2, band3)) as multi_band FROM separated_bands;"
     },
+    "gbx_rst_frombands_agg": {
+      "examples": "Examples:\n      > SELECT scene_id, gbx_rst_frombands_agg(tile, band_index) AS multi_band FROM band_tiles GROUP BY scene_id;"
+    },
     "gbx_rst_fromcontent": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_fromcontent(content, 'GTiff') as tile FROM binary_raster_table;"
     },
@@ -198,6 +201,9 @@
     },
     "gbx_rst_rasterize": {
       "examples": "Examples:\n      > SELECT gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) AS tile;"
+    },
+    "gbx_rst_rasterize_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_rasterize_agg( geom_wkb, burn_value, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 256, 256, 4326 ) AS tile FROM features GROUP BY region_id;"
     },
     "gbx_rst_rastertoworldcoord": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rastertoworldcoord(tile, 100, 200) as coords, gbx_rst_rastertoworldcoord(tile, 100, 200).x as longitude, gbx_rst_rastertoworldcoord(tile, 100, 200).y as latitude FROM rasters;"
@@ -406,6 +412,9 @@
     },
     "gbx_quadbin_cellunion": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_cellunion( gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1) ) as union_geom;"
+    },
+    "gbx_quadbin_cellunion_agg": {
+      "examples": "Examples:\n      > SELECT region, gbx_quadbin_cellunion_agg(cell) AS coverage FROM grid_cells GROUP BY region;"
     },
     "gbx_quadbin_centroid": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) as centroid;"

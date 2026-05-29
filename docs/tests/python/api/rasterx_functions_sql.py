@@ -585,6 +585,26 @@ rst_frombands_sql_example_output = """
 """
 
 
+def rst_frombands_agg_sql_example():
+    """Aggregator: collect ordered bands per group into a single multi-band tile."""
+    return """
+-- Collect per-band tiles in acquisition order into one multi-band raster per scene.
+SELECT scene_id,
+    gbx_rst_frombands_agg(tile, band_index) AS multi_band
+FROM band_tiles
+GROUP BY scene_id;
+"""
+
+
+rst_frombands_agg_sql_example_output = """
++--------+----------+
+|scene_id|multi_band|
++--------+----------+
+|...     |[BINARY]  |
++--------+----------+
+"""
+
+
 # ============================================================================
 # Transformation Functions - Modify Rasters
 # ============================================================================
@@ -1569,6 +1589,30 @@ rst_rasterize_sql_example_output = """
 +----+
 |... |
 +----+
+"""
+
+
+def rst_rasterize_agg_sql_example():
+    """Aggregator: stream geometry/value pairs and produce one tile per group."""
+    return """
+-- Aggregate per-feature burn values into one rasterized tile per region.
+SELECT region_id,
+    gbx_rst_rasterize_agg(
+        geom_wkb, burn_value,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        256, 256, 4326
+    ) AS tile
+FROM features
+GROUP BY region_id;
+"""
+
+
+rst_rasterize_agg_sql_example_output = """
++---------+----+
+|region_id|tile|
++---------+----+
+|...      |... |
++---------+----+
 """
 
 
