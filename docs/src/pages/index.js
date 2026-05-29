@@ -48,17 +48,17 @@ function HomepageFeatures() {
           <Feature
             title="RasterX"
             description="Process satellite imagery, elevation models, and gridded spatial data with GDAL-powered functions."
-            link="/docs/packages/rasterx"
+            link="/docs/api/rasterx-functions"
           />
           <Feature
             title="GridX"
             description="Spatial indexing with British National Grid (BNG) support for efficient location-based analysis."
-            link="/docs/packages/gridx"
+            link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
             description="Migrate legacy Mosaic geometries and work seamlessly with Databricks spatial types."
-            link="/docs/packages/vectorx"
+            link="/docs/api/vectorx-functions"
           />
         </div>
         <div className="row" style={{marginTop: '2rem'}}>

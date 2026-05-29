@@ -114,7 +114,7 @@ PMTiles is designed to be served as a single static file with HTTP `Range` reque
 1. **CORS**: enable `GET, HEAD, OPTIONS` for your map host; allow `Range` and `If-Match` headers.
 2. **Content-Type**: serve as `application/vnd.pmtiles`.
 3. **Browse**: drop the URL into [pmtiles.io](https://pmtiles.io) for a visual sanity check.
-4. **Embed** in [MapLibre GL JS](https://maplibre.org/) via the pmtiles protocol — see the [PMTiles package page](../packages/pmtiles#serving-from-object-storage) for a worked HTML snippet.
+4. **Embed** in [MapLibre GL JS](https://maplibre.org/) via the pmtiles protocol — see the [PMTiles functions page](../api/pmtiles-functions#serving-from-object-storage) for a worked HTML snippet.
 
 ## Limits
 
@@ -124,6 +124,6 @@ PMTiles is designed to be served as a single static file with HTTP `Range` reque
 ## Next Steps
 
 - [PMTiles Function Reference](../api/pmtiles-functions) — `gbx_pmtiles_agg` UDAF (the in-cell counterpart).
-- [PMTiles Package Documentation](../packages/pmtiles) — Concepts, schema contract, and serving notes.
+- [PMTiles Function Reference](../api/pmtiles-functions) — Concepts, schema contract, and serving notes.
 - [RasterX Function Reference](../api/rasterx-functions#rst_xyzpyramid) — Generate per-tile PNG bytes with `gbx_rst_xyzpyramid`.
 - [VectorX Function Reference](../api/vectorx-functions#st_asmvt_pyramid) — Generate per-tile MVT bytes with `gbx_st_asmvt_pyramid`.

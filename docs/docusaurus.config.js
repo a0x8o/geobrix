@@ -145,19 +145,19 @@ const config = {
             ],
           },
           {
-            title: 'Packages',
+            title: 'Functions',
             items: [
               {
                 label: 'RasterX',
-                to: '/docs/packages/rasterx',
+                to: '/docs/api/rasterx-functions',
               },
               {
                 label: 'GridX',
-                to: '/docs/packages/gridx',
+                to: '/docs/api/gridx-functions',
               },
               {
                 label: 'VectorX',
-                to: '/docs/packages/vectorx',
+                to: '/docs/api/vectorx-functions',
               },
             ],
           },

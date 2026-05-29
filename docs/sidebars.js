@@ -43,18 +43,6 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'Packages',
-      collapsed: false,
-      items: [
-        'packages/overview',
-        'packages/rasterx',
-        'packages/gridx',
-        'packages/vectorx',
-        'packages/pmtiles',
-      ],
-    },
-    {
-      type: 'category',
       label: 'Readers & Writers',
       collapsed: false,
       items: [
@@ -87,7 +75,7 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'API Reference',
+      label: 'Functions',
       collapsed: false,
       items: [
         'api/overview',
