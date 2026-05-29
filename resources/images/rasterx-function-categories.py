@@ -14,7 +14,7 @@ Re-render after adding/removing/renaming a RasterX function:
 from dataclasses import dataclass, field
 from textwrap import dedent
 
-# --- Data: 65 functions, organized by category --------------------------------
+# --- Data: 107 functions, organized by category --------------------------------
 
 @dataclass
 class Section:
@@ -60,6 +60,7 @@ CARDS_LEFT = [
             ]),
             Section("Statistics", [
                 "rst_min", "rst_max", "rst_avg", "rst_median", "rst_summary",
+                "rst_sample", "rst_histogram",
             ]),
         ],
     ),
@@ -67,7 +68,27 @@ CARDS_LEFT = [
         title="Aggregators",
         subtitle="Combine tiles in GROUP BY",
         color="#7A4FD3", tint="#ECE6FA",
-        fns=["rst_combineavg_agg", "rst_derivedband_agg", "rst_merge_agg"],
+        fns=[
+            "rst_combineavg_agg", "rst_derivedband_agg", "rst_merge_agg",
+            "rst_frombands_agg", "rst_rasterize_agg",
+            "rst_dtmfromgeoms_agg", "rst_gridfrompoints_agg",
+        ],
+    ),
+    Card(
+        title="Terrain Analysis",
+        subtitle="Elevation-derived surface models via gdaldem",
+        color="#8B5E3C", tint="#F5EDE4",
+        fns=[
+            "rst_slope", "rst_aspect", "rst_hillshade",
+            "rst_tri", "rst_tpi", "rst_roughness",
+            "rst_color_relief", "rst_viewshed",
+        ],
+    ),
+    Card(
+        title="Spectral Indices",
+        subtitle="Band-math indices for vegetation, water, and fire",
+        color="#2E8B57", tint="#E0F4EA",
+        fns=["rst_ndvi", "rst_evi", "rst_savi", "rst_ndwi", "rst_nbr", "rst_index"],
     ),
 ]
 
@@ -89,11 +110,17 @@ CARDS_RIGHT = [
             Section("Transform", [
                 "rst_clip", "rst_transform", "rst_merge",
                 "rst_asformat", "rst_updatetype",
+                "rst_resample", "rst_resample_to_res", "rst_resample_to_size",
+                "rst_setsrid", "rst_band",
             ]),
             Section("Compute", [
-                "rst_ndvi", "rst_filter", "rst_convolve",
+                "rst_filter", "rst_convolve",
                 "rst_mapalgebra", "rst_combineavg",
                 "rst_derivedband", "rst_initnodata",
+                "rst_threshold", "rst_fillnodata", "rst_proximity", "rst_contour",
+            ]),
+            Section("Optimise", [
+                "rst_buildoverviews", "rst_cog_convert",
             ]),
             Section("Coordinates", [
                 "rst_rastertoworldcoord",
@@ -105,6 +132,15 @@ CARDS_RIGHT = [
         ],
     ),
     Card(
+        title="Vector-Raster Bridge",
+        subtitle="Convert between vector geometries and raster tiles",
+        color="#6B48A8", tint="#EEE8F8",
+        fns=[
+            "rst_rasterize", "rst_polygonize",
+            "rst_dtmfromgeoms", "rst_gridfrompoints",
+        ],
+    ),
+    Card(
         title="H3 Grid",
         subtitle="Aggregate raster values onto H3 cells",
         color="#0F8E8B", tint="#D5ECEC",
@@ -113,6 +149,22 @@ CARDS_RIGHT = [
             "rst_h3_rastertogridmax", "rst_h3_rastertogridmin",
             "rst_h3_rastertogridmedian",
         ],
+    ),
+    Card(
+        title="Quadbin Grid",
+        subtitle="Aggregate raster values onto Quadbin cells",
+        color="#1571A8", tint="#DFF0FA",
+        fns=[
+            "rst_quadbin_rastertogridavg", "rst_quadbin_rastertogridcount",
+            "rst_quadbin_rastertogridmax", "rst_quadbin_rastertogridmin",
+            "rst_quadbin_rastertogridmedian",
+        ],
+    ),
+    Card(
+        title="Web-Mercator Tile Output",
+        subtitle="Reproject and slice rasters to XYZ/web-mercator tiles",
+        color="#D44E12", tint="#FAECE3",
+        fns=["rst_to_webmercator", "rst_tilexyz", "rst_xyzpyramid"],
     ),
 ]
 
@@ -205,7 +257,7 @@ def render_card(x, y, card):
         f'fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" '
         f'filter="url(#card-shadow)"/>'
     )
-    # Top accent stripe — rounded only on top corners
+    # Top accent stripe - rounded only on top corners
     r = 14
     stripe_h = 5
     out.append(
@@ -302,21 +354,21 @@ def render():
     # Header block
     parts.append(
         f'<text x="{PAD}" y="{PAD + 28}" font-size="30" font-weight="800" fill="#0F1B2A">'
-        f'GeoBrix · RasterX'
+        f'GeoBrix &#183; RasterX'
         f'</text>'
     )
     parts.append(
         f'<text x="{PAD}" y="{PAD + 56}" font-size="15" fill="#3F4D5E">'
-        f'65 SQL functions for raster data on Spark — registered as '
+        f'107 SQL functions for raster data on Spark &#8212; registered as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan>'
-        f' · also available in Python &amp; Scala as '
+        f' &#183; also available in Python &amp; Scala as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">rst_*</tspan>'
         f'</text>'
     )
     # Version pill (top-right)
-    pill_text = "v0.4.0  ·  Beta"
+    pill_text = "v0.4.0  *  Beta"
     pw = int(len(pill_text) * 6.8) + 24
     parts.append(
         f'<rect x="{CANVAS_W - PAD - pw}" y="{PAD + 8}" rx="13" ry="13" '
@@ -343,7 +395,7 @@ def render():
     # Footer
     parts.append(
         f'<text x="{PAD}" y="{canvas_h - 14}" font-size="11" fill="#7A8794">'
-        f'databrickslabs/geobrix · DBR 17.3 LTS · Scala 2.13 / Spark 4.0 / Python 3.12'
+        f'databrickslabs/geobrix &#183; DBR 17.3 LTS &#183; Scala 2.13 / Spark 4.0 / Python 3.12'
         f'</text>'
     )
     parts.append(
