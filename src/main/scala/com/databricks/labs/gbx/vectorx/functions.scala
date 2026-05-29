@@ -1,7 +1,7 @@
 package com.databricks.labs.gbx.vectorx
 
 import com.databricks.labs.gbx.expressions.RegistryDelegate
-import com.databricks.labs.gbx.vectorx.expressions.{ST_AsMvt, ST_AsMvtPyramid}
+import com.databricks.labs.gbx.vectorx.expressions.{ST_AsMvt, ST_AsMvtPyramid, ST_InterpolateElevationBBox, ST_InterpolateElevationGeom, ST_Triangulate}
 import com.databricks.labs.gbx.vectorx.mvt.MvtWriter
 import org.apache.spark.sql.adapters.{Column => ColumnAdapter}
 import org.apache.spark.sql.functions.lit
@@ -36,6 +36,9 @@ object functions extends Serializable {
 
         // Generators
         rd.register(ST_AsMvtPyramid)
+        rd.register(ST_Triangulate)
+        rd.register(ST_InterpolateElevationBBox)
+        rd.register(ST_InterpolateElevationGeom)
 
         sc.getConf.set(flag, "true")
     }
