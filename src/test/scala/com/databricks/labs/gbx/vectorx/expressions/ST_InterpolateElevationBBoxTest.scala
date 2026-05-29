@@ -1,0 +1,120 @@
+package com.databricks.labs.gbx.vectorx.expressions
+
+import com.databricks.labs.gbx.vectorx.jts.JTS
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.util.GenericArrayData
+import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.UTF8String
+import org.locationtech.jts.geom.{Coordinate, Point}
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+
+/** Unit tests for [[ST_InterpolateElevationBBox]] -- expression-level (no Spark session required).
+ *
+ *  Tilted plane: z = 2x + 3y + 5, sampled at the 4 corners of a 100x100 extent.
+ *  A 10x10 grid over (0,0)-(100,100) in srid=32633 should yield exactly 100 Z-valued Points,
+ *  each satisfying z == 2*x + 3*y + 5 within 1e-6.
+ */
+class ST_InterpolateElevationBBoxTest extends AnyFunSuite {
+
+    /** z = 2x + 3y + 5 */
+    private def planeZ(x: Double, y: Double): Double = 2.0 * x + 3.0 * y + 5.0
+
+    /** Build a Literal wrapping an ARRAY<BINARY> of WKB-encoded geometries. */
+    private def geomArrayLit(wkbs: Array[Byte]*): Literal = {
+        val data = new GenericArrayData(wkbs.toArray.asInstanceOf[Array[Any]])
+        Literal.create(data, ArrayType(BinaryType, containsNull = false))
+    }
+
+    /** Empty ARRAY<BINARY> literal. */
+    private def emptyArrayLit: Literal =
+        Literal.create(new GenericArrayData(Array.empty[Any]), ArrayType(BinaryType, containsNull = false))
+
+    /** 4 corners of a 100x100 square with Z from the tilted plane. */
+    private def cornerPoints: Seq[Array[Byte]] = {
+        val corners = Seq((0.0, 0.0), (100.0, 0.0), (0.0, 100.0), (100.0, 100.0))
+        corners.map { case (x, y) =>
+            JTS.toWKB3(JTS.point(new Coordinate(x, y, planeZ(x, y))))
+        }
+    }
+
+    /** Invoke the generator and collect all emitted rows. */
+    private def evalExpr(expr: ST_InterpolateElevationBBox): Seq[InternalRow] =
+        expr.eval(InternalRow.empty).iterator.toSeq
+
+    // -----------------------------------------------------------------------
+    // Test 1: 10x10 grid over tilted plane => exactly 100 points with correct Z
+    // -----------------------------------------------------------------------
+    test("st_interpolateelevationbbox emits 100 points with correct Z for tilted plane (Int args)") {
+        val pts = cornerPoints
+        val expr = ST_InterpolateElevationBBox(
+            geomArrayLit(pts: _*),
+            emptyArrayLit,
+            Literal(0.0),                                                       // merge_tolerance
+            Literal(0.01),                                                      // snap_tolerance
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType), // split_point_finder
+            Literal(0.0),   // xmin
+            Literal(0.0),   // ymin
+            Literal(100.0), // xmax
+            Literal(100.0), // ymax
+            Literal(10),    // width_px  (Int)
+            Literal(10),    // height_px (Int)
+            Literal(32633)  // srid      (Int)
+        )
+
+        val rows = evalExpr(expr)
+        rows.length shouldBe 100
+
+        rows.foreach { row =>
+            val wkb = row.getBinary(0)
+            wkb should not be null
+            val geom = JTS.fromWKB(wkb)
+            geom shouldBe a[Point]
+            val pt = geom.asInstanceOf[Point]
+            val expectedZ = planeZ(pt.getX, pt.getY)
+            pt.getCoordinate.getZ should be(expectedZ +- 1e-6)
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2: Long args variant (PySpark sends Long for IntegerType columns)
+    // -----------------------------------------------------------------------
+    test("st_interpolateelevationbbox accepts Long for width_px/height_px/srid and still yields 100 points") {
+        val pts = cornerPoints
+        val expr = ST_InterpolateElevationBBox(
+            geomArrayLit(pts: _*),
+            emptyArrayLit,
+            Literal(0.0),
+            Literal(0.01),
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
+            Literal(0.0),
+            Literal(0.0),
+            Literal(100.0),
+            Literal(100.0),
+            Literal(10L),    // width_px  as Long
+            Literal(10L),    // height_px as Long
+            Literal(32633L)  // srid      as Long
+        )
+
+        val rows = evalExpr(expr)
+        rows.length shouldBe 100
+
+        rows.foreach { row =>
+            val wkb = row.getBinary(0)
+            val pt = JTS.fromWKB(wkb).asInstanceOf[Point]
+            val expectedZ = planeZ(pt.getX, pt.getY)
+            pt.getCoordinate.getZ should be(expectedZ +- 1e-6)
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3: builder rejects wrong arity
+    // -----------------------------------------------------------------------
+    test("ST_InterpolateElevationBBox.builder rejects wrong number of arguments") {
+        val lit = Literal(0.0)
+        an[IllegalArgumentException] should be thrownBy {
+            ST_InterpolateElevationBBox.builder()(Seq(lit, lit, lit))
+        }
+    }
+}
