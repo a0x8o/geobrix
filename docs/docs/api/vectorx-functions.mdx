@@ -5,10 +5,20 @@ sidebar_position: 7
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import vectorxFunctionsExamples from '!!raw-loader!../../tests/python/api/vectorx_functions.py';
 import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_functions_sql.py';
+import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.py';
 
 # VectorX Function Reference
 
-VectorX augments the product's native ST functions with legacy-geometry migration and vector-tile output.
+VectorX augments the product's native `ST_*` functions with vector-tile encoding and legacy-geometry migration helpers. As of v0.4.0 it covers:
+
+- **Vector tile encoding** — `gbx_st_asmvt` aggregator + `gbx_st_asmvt_pyramid` generator for publishing Mapbox Vector Tile (MVT) layers
+- **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB
+- **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating from DBLabs Mosaic
+
+:::note Import paths
+- Vector tile encoding: `databricks.labs.gbx.vectorx` (Python) / `com.databricks.labs.gbx.vectorx` (Scala)
+- Legacy Mosaic conversion: `databricks.labs.gbx.vectorx.jts.legacy` (Python) / `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala)
+:::
 
 :::note SQL examples
 Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
@@ -24,7 +34,7 @@ Run this once before the examples below. It registers VectorX so you can use `st
 
 ## st_legacyaswkb
 
-Converts legacy Mosaic geometry to Well-Known Binary (WKB).
+Converts a legacy Mosaic geometry string to Well-Known Binary (WKB). Use this when migrating data written by DBLabs Mosaic — pass the raw geometry column through `st_legacyaswkb` to obtain a standard WKB binary that all downstream ST functions accept.
 
 **Parameters:** `legacyGeometry` — Column containing legacy geometry string (e.g. `{1, [[[x, y]]], [[]]}`).
 
@@ -38,25 +48,34 @@ Converts legacy Mosaic geometry to Well-Known Binary (WKB).
 
 <CodeFromTest code={vectorxFunctionsExamples} functionName="ST_LEGACYASWKB_SQL_EXAMPLE" language="sql" source="docs/tests/python/api/vectorx_functions.py" testFile="docs/tests/python/api/test_vectorx_functions.py" outputConstant="ST_LEGACYASWKB_SQL_EXAMPLE_output" />
 
+**Quick Start example** (point geometry round-trip):
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="USE_VECTORX"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+  outputConstant="USE_VECTORX_output"
+/>
+
 ---
 
 ## Vector tile output
 
-Encode features into [Mapbox Vector Tile (MVT)](https://github.com/mapbox/vector-tile-spec) protobufs. Pair the per-tile MVT bytes with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a vector pyramid as a single `.pmtiles` archive.
+Encode features into [Mapbox Vector Tile (MVT)](https://github.com/mapbox/vector-tile-spec) protobufs. Pair the per-tile MVT bytes with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a vector pyramid as a single `.pmtiles` archive targeting MapLibre, deck.gl, Mapbox GL JS, or Felt.
 
 ### st_asmvt
 
-Aggregator that encodes a group of features into a single MVT protobuf blob.
+Aggregator that encodes a group of features into a single MVT protobuf blob for one `(z, x, y)` tile.
 
 **Signature:** `st_asmvt(geomWkb: Column, attrs: Column, layerName: Column): Column`
 
 **Parameters:**
-- `geomWkb` — Feature geometry as WKB (binary)
-- `attrs` — Struct of feature attributes (any names and types)
-- `layerName` — MVT layer name (string)
+- `geomWkb` (`BINARY`) — Feature geometry in **tile-local coordinates** as WKB. Compose any `ST_Intersection` against the tile envelope and coordinate translation upstream.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. All fields are stringified in 0.4.0.
+- `layerName` (`STRING`) — MVT layer name.
 
-**Returns:**
-- Binary MVT (vector tile) protobuf blob
+**Returns:** `BINARY` — the MVT protobuf bytes for one layer of the tile.
 
 Typical use: `GROUP BY (z, x, y)` after composing tile-local coordinates upstream, so each group becomes one tile.
 
@@ -64,26 +83,65 @@ Typical use: `GROUP BY (z, x, y)` after composing tile-local coordinates upstrea
 
 <CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
 
+**PySpark:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.groupBy("z", "x", "y").agg(
+    vx.st_asmvt(col("geom_wkb"), struct(col("name"), col("id")), "roads").alias("mvt")
+)
+```
+
+**Composability:** The `BINARY` output is the natural input to `gbx_pmtiles_agg` for packaging multiple `(z, x, y)` tiles into a single PMTiles file.
+
+**Limitations in 0.4.0:**
+- All attributes are stringified (numeric/boolean preservation deferred).
+- Caller composes any `ST_Simplify` upstream.
+- Caller composes tile-coordinate transform upstream.
+
 ---
 
 ### st_asmvt_pyramid
 
-Generator that explodes one feature into one row per intersecting `(z, x, y)` tile across a zoom range, with the MVT bytes already encoded per tile.
+Generator that explodes one feature into one row per intersecting `(z, x, y)` tile across a zoom range, with the MVT bytes already encoded per tile. Pairs with `gbx_rst_xyzpyramid` (the raster sibling) and feeds directly into `gbx_pmtiles_agg`.
 
 **Signature:** `st_asmvt_pyramid(geomWkb: Column, attrs: Column, minZoom: Column, maxZoom: Column, layerName: Column): Column`
 
 **Parameters:**
-- `geomWkb` — Feature geometry as WKB (binary, EPSG:4326)
-- `attrs` — Struct of feature attributes
-- `minZoom`, `maxZoom` — Inclusive zoom-level range (0..22)
-- `layerName` — MVT layer name (string)
+- `geomWkb` (`BINARY`) — Feature geometry in **EPSG:4326 lon/lat** as WKB. The function performs the per-tile clip and tile-local coordinate transform; no upstream `ST_Intersection` required.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. All fields are stringified in 0.4.0.
+- `minZoom`, `maxZoom` (`INT`) — Inclusive zoom-level range (`0..20`).
+- `layerName` (`STRING`) — MVT layer name (constant per call).
+- `extent` (`INT`, optional) — MVT tile extent in pixels; default `4096` (MVT v2 standard).
 
-**Returns:**
-- Array of struct rows; each row's `tile` struct exposes `(z, x, y, mvt_bytes)`. Use `LATERAL VIEW` to materialize rows and pipe `mvt_bytes` straight into `gbx_pmtiles_agg`.
+**Returns:** One row per intersecting tile; each row's `tile` struct exposes `(z INT, x INT, y INT, mvt_bytes BINARY)`. Use `LATERAL VIEW` to materialize rows and pipe `mvt_bytes` into `gbx_pmtiles_agg`.
 
 **SQL:**
 
 <CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_pyramid_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
+
+**PySpark:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.select(
+    vx.st_asmvt_pyramid(
+        col("geom_wkb"), struct(col("name"), col("id")), 0, 8, "roads"
+    ).alias("t")
+).select("t.tile.z", "t.tile.x", "t.tile.y", "t.tile.mvt_bytes")
+```
+
+**Composability:** Output rows compose directly with `gbx_pmtiles_agg` — group by `(z, x, y)`, aggregate `mvt_bytes` to produce a PMTiles blob with `tile_type = mvt`. For multi-feature tiles, pre-explode tile assignments and then `groupBy(z, x, y).agg(st_asmvt(...))` using the aggregator.
+
+**Limitations in 0.4.0:**
+- Single-feature input per row. Multi-feature aggregation per tile requires the aggregator pattern above.
+- `max_z <= 20`; total tile count across the zoom range capped at 10^6 (mirrors `gbx_rst_xyzpyramid`).
+- Attributes are stringified.
+- Inputs must be in EPSG:4326; reproject upstream for other CRS.
 
 ## Next Steps
 
