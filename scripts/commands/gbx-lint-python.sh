@@ -61,7 +61,15 @@ run_check_docker() {
     echo -e "${CYAN}Running isort/black/flake8 in Docker (check only)...${NC}"
     echo ""
     show_separator
-    docker exec geobrix-dev /bin/bash -c "cd /root/geobrix/python/geobrix && isort --check-only src test && black --check src test && flake8 src test"
+    # flake8 does NOT read pyproject.toml [tool.flake8] natively — CI relies on the
+    # flake8-pyproject plugin (pinned in requirements-ci.txt) to honor its ignore list
+    # (E203,E266,E501,W503) and max-line-length=88. The dev container's lockfile omits it,
+    # so without this ensure-step flake8 falls back to defaults (79 cols, no ignores) and
+    # floods false E501s that DON'T match CI. Install the CI-pinned version idempotently so
+    # --check actually matches CI. (Pin in sync with python/geobrix/requirements-ci.txt.)
+    docker exec geobrix-dev /bin/bash -c "cd /root/geobrix/python/geobrix && \
+        { pip show flake8-pyproject >/dev/null 2>&1 || pip install -q 'flake8-pyproject==1.2.4' --break-system-packages; } && \
+        isort --check-only src test && black --check src test && flake8 src test"
 }
 
 run_fix_host() {
