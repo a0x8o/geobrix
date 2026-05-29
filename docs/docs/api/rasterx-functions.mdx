@@ -396,7 +396,7 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 ## Aggregator Functions
 
-Combine or merge rasters in group-by (3 total).
+Combine or merge rasters in group-by (6 total).
 
 ### rst_combineavg_agg
 
@@ -414,6 +414,30 @@ Combine or merge rasters in group-by (3 total).
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_derivedband_agg_sql_example" outputConstant="rst_derivedband_agg_sql_example_output" code={rasterxSqlCode} />
 
+### rst_dtmfromgeoms_agg
+
+Streaming aggregator that accepts one Z-valued point WKB per row and produces a TIN/Delaunay DTM raster tile per group; breaklines are supplied as a per-group constant array to enforce hard terrain edges.
+
+**Signature:** `rst_dtmfromgeoms_agg(point: Column, breaklines: Column, mergeTolerance: Column, snapTolerance: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `point` — WKB point geometry with Z coordinate (one per row); `breaklines` — constant WKB array of breakline geometries per group (pass `null` or empty array if unused); remaining parameters match `rst_dtmfromgeoms`
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_dtmfromgeoms_agg_sql_example" outputConstant="rst_dtmfromgeoms_agg_sql_example_output" code={rasterxSqlCode} />
+
+### rst_frombands_agg
+
+Streaming aggregator that collects ordered per-band tiles (one row per band) into a single multi-band raster tile per group; use when bands arrive as separate rows rather than a pre-built array.
+
+**Signature:** `rst_frombands_agg(tile: Column, bandIndex: Column): Column`
+
+**Parameters:** `tile` — Single-band raster tile; `bandIndex` — 1-based band position within the output raster
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_frombands_agg_sql_example" outputConstant="rst_frombands_agg_sql_example_output" code={rasterxSqlCode} />
+
 ### rst_merge_agg
 
 **Signature:** `rst_merge_agg(tile: Column): Column` — Merge tiles per group.
@@ -422,11 +446,23 @@ Combine or merge rasters in group-by (3 total).
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_merge_agg_sql_example" outputConstant="rst_merge_agg_sql_example_output" code={rasterxSqlCode} />
 
+### rst_rasterize_agg
+
+Streaming aggregator that burns geometry/value pairs (one row per feature) into a single rasterized tile per group; use when features arrive as individual rows rather than as a pre-built collection.
+
+**Signature:** `rst_rasterize_agg(geom: Column, value: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `geom` — WKB geometry to burn; `value` — numeric burn value; `xmin/ymin/xmax/ymax` — output extent (in the target CRS); `width/height` — output raster dimensions in pixels; `srid` — EPSG code for the output CRS
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_rasterize_agg_sql_example" outputConstant="rst_rasterize_agg_sql_example_output" code={rasterxSqlCode} />
+
 ---
 
 ## Constructor Functions
 
-Create or load rasters from path, binary content, or bands (3 total).
+Create or load rasters from path, binary content, or bands (4 total).
 
 ### rst_fromfile
 
@@ -457,6 +493,20 @@ Create a raster from binary content.
 **SQL:**
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_fromcontent_sql_example" outputConstant="rst_fromcontent_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+### rst_dtmfromgeoms
+
+Create a DTM raster tile via TIN/Delaunay interpolation from an array of Z-valued point WKB geometries, with an optional array of breakline WKB geometries to preserve sharp terrain transitions.
+
+**Signature:** `rst_dtmfromgeoms(points: Column, breaklines: Column, mergeTolerance: Column, snapTolerance: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `points` — Array of WKB point geometries with Z coordinates; `breaklines` — Array of WKB line/polygon geometries enforcing hard edges (pass `null` or empty array if unused); `mergeTolerance/snapTolerance` — Delaunay triangulation tolerances (vertex-merge distance and snapping distance; small values such as `0.0` and `0.01` are typical); `xmin/ymin/xmax/ymax` — output extent in CRS units; `width/height` — output raster dimensions in pixels (for N-metre cells set `width = round((xmax-xmin)/N)`); `srid` — EPSG code for the output CRS. An optional trailing `noData` argument overrides the default fill for cells outside the triangulated hull.
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_dtmfromgeoms_sql_example" outputConstant="rst_dtmfromgeoms_sql_example_output" code={rasterxSqlCode} />
 
 ---
 
