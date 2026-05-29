@@ -392,6 +392,28 @@
     "gbx_bng_tessellateexplode": {
       "examples": "Examples:\n      > SELECT gbx_bng_tessellateexplode( st_geomfromtext('POLYGON((-0.1 51.5, -0.1 51.6, 0.0 51.6, 0.0 51.5, -0.1 51.5))'), 3 ) as cell_info;"
     },
+    "_package_gridx_custom": "--- gridx_custom ---",
+    "gbx_custom_cellaswkb": {
+      "examples": "Examples:\n      > SELECT gbx_custom_cellaswkb(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS geom FROM cells;"
+    },
+    "gbx_custom_cellaswkt": {
+      "examples": "Examples:\n      > SELECT gbx_custom_cellaswkt(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS wkt FROM cells;"
+    },
+    "gbx_custom_centroid": {
+      "examples": "Examples:\n      > SELECT gbx_custom_centroid(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS centroid FROM cells;"
+    },
+    "gbx_custom_grid": {
+      "examples": "Examples:\n      > SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;"
+    },
+    "gbx_custom_kring": {
+      "examples": "Examples:\n      > SELECT gbx_custom_kring(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS ring FROM cells;"
+    },
+    "gbx_custom_pointascell": {
+      "examples": "Examples:\n      > SELECT gbx_custom_pointascell(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cell FROM points;"
+    },
+    "gbx_custom_polyfill": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_custom_polyfill(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cells FROM regions;"
+    },
     "_package_vectorx": "--- vectorx ---",
     "gbx_st_asmvt": {
       "examples": "Examples:\n      > SELECT unhex('01010000009A9999999999B93F9A9999999999B93F') AS geom_wkb, named_struct('name', 'a', 'id', 1L) AS attrs UNION ALL SELECT unhex('0101000000000000000000E03F000000000000E03F'), named_struct('name', 'b', 'id', 2L) ) SELECT length(gbx_st_asmvt(geom_wkb, attrs, 'layer1')) AS mvt_bytes_len FROM features;"

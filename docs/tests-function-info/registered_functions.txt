@@ -141,6 +141,13 @@ gbx_quadbin_pointascell
 gbx_quadbin_polyfill
 gbx_quadbin_resolution
 gbx_quadbin_tessellate
+gbx_custom_grid
+gbx_custom_pointascell
+gbx_custom_cellaswkb
+gbx_custom_cellaswkt
+gbx_custom_centroid
+gbx_custom_polyfill
+gbx_custom_kring
 gbx_st_asmvt
 gbx_st_asmvt_pyramid
 gbx_st_legacyaswkb

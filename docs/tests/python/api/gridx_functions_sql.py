@@ -425,3 +425,113 @@ quadbin_polyfill_sql_example_output = """
 |[5215660717881425919, ...]                  |
 +--------------------------------------------+
 """
+
+
+# ============================================================================
+# Custom Grid — user-defined regular grid functions
+# ============================================================================
+
+def custom_grid_sql_example():
+    """Define a user-specified regular grid from origin, extent, resolution, and SRID."""
+    return """
+SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;
+"""
+
+
+def custom_pointascell_sql_example():
+    """Index points into a user-defined regular grid."""
+    return """
+SELECT gbx_custom_pointascell(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cell FROM points;
+"""
+
+
+def custom_cellaswkb_sql_example():
+    """Return the WKB footprint of a custom grid cell."""
+    return """
+SELECT gbx_custom_cellaswkb(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS geom FROM cells;
+"""
+
+
+def custom_cellaswkt_sql_example():
+    """Return the WKT footprint of a custom grid cell."""
+    return """
+SELECT gbx_custom_cellaswkt(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS wkt FROM cells;
+"""
+
+
+def custom_centroid_sql_example():
+    """Return the centroid of a custom grid cell."""
+    return """
+SELECT gbx_custom_centroid(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS centroid FROM cells;
+"""
+
+
+def custom_polyfill_sql_example():
+    """Fill a geometry with custom grid cells at the given resolution."""
+    return """
+SELECT region_id, gbx_custom_polyfill(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cells FROM regions;
+"""
+
+
+def custom_kring_sql_example():
+    """Return all custom grid cells within k steps of a center cell."""
+    return """
+SELECT gbx_custom_kring(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS ring FROM cells;
+"""
+
+
+custom_grid_sql_example_output = """
++--------------------+
+|grid                |
++--------------------+
+|{...}               |
++--------------------+
+"""
+
+custom_pointascell_sql_example_output = """
++----+
+|cell|
++----+
+|... |
++----+
+"""
+
+custom_cellaswkb_sql_example_output = """
++--------------------+
+|geom                |
++--------------------+
+|[BINARY]            |
++--------------------+
+"""
+
+custom_cellaswkt_sql_example_output = """
++------------------------------------------+
+|wkt                                       |
++------------------------------------------+
+|POLYGON ((...))                           |
++------------------------------------------+
+"""
+
+custom_centroid_sql_example_output = """
++--------------------+
+|centroid            |
++--------------------+
+|POINT (...)         |
++--------------------+
+"""
+
+custom_polyfill_sql_example_output = """
++---------+--------------+
+|region_id|cells         |
++---------+--------------+
+|1        |[...]         |
++---------+--------------+
+"""
+
+custom_kring_sql_example_output = """
++----+------+
+|cell|ring  |
++----+------+
+|... |[...]  |
++----+------+
+"""

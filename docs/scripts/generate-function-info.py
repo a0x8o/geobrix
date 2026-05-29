@@ -35,6 +35,7 @@ MODULES = [
     ("tests.python.api.rasterx_functions_sql", "rst_", "gbx_rst_"),
     ("tests.python.api.gridx_functions_sql", "bng_", "gbx_bng_"),
     ("tests.python.api.gridx_functions_sql", "quadbin_", "gbx_quadbin_"),
+    ("tests.python.api.gridx_functions_sql", "custom_", "gbx_custom_"),
 ]
 # VectorX: optional module (st_*_sql_example -> gbx_st_*)
 VECTORX_MODULE = ("tests.python.api.vectorx_functions_sql", "st_", "gbx_st_")
@@ -237,6 +238,7 @@ def load_registered_functions_txt() -> list:
 PACKAGE_PREFIXES = [
     ("rasterx", "gbx_rst_"),
     ("gridx", "gbx_bng_"),
+    ("gridx_custom", "gbx_custom_"),
     ("vectorx", "gbx_st_"),
     ("pmtiles", "gbx_pmtiles_"),
 ]
@@ -316,7 +318,7 @@ def main():
             pkg = _package_for(name)
             if pkg == "rasterx":
                 path = "docs/tests/python/api/rasterx_functions_sql.py"
-            elif pkg == "gridx":
+            elif pkg in ("gridx", "gridx_custom"):
                 path = "docs/tests/python/api/gridx_functions_sql.py"
             elif pkg == "vectorx":
                 path = "docs/tests/python/api/vectorx_functions_sql.py"
