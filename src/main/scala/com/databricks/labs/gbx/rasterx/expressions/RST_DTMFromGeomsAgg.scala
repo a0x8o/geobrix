@@ -67,7 +67,7 @@ final case class RST_DTMFromGeomsAgg(
         }
         if (geom.getCoordinate == null || geom.getCoordinate.getZ.isNaN) {
             throw new IllegalArgumentException(
-                "rst_dtmfromgeoms_agg: point has no Z coordinate — supply 3D WKB or WKT with Z values (e.g. 'POINT Z (x y z)')")
+                "rst_dtmfromgeoms_agg: point has no Z coordinate - supply 3D WKB or WKT with Z values (e.g. 'POINT Z (x y z)')")
         }
         buffer.add(JTS.toWKB3(geom))
     }
