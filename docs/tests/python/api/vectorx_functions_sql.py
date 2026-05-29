@@ -61,7 +61,13 @@ SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING') 
 """
 
 
-st_triangulate_sql_example_output = "triangle"
+st_triangulate_sql_example_output = """
++--------+
+|triangle|
++--------+
+|[BINARY]|
++--------+
+"""
 
 
 def st_interpolateelevationbbox_sql_example():
@@ -77,7 +83,13 @@ SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONEN
 """
 
 
-st_interpolateelevationbbox_sql_example_output = "elev_point"
+st_interpolateelevationbbox_sql_example_output = """
++----------+
+|elev_point|
++----------+
+|[BINARY]  |
++----------+
+"""
 
 
 def st_interpolateelevationgeom_sql_example():
@@ -93,4 +105,10 @@ SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONEN
 """
 
 
-st_interpolateelevationgeom_sql_example_output = "elev_point"
+st_interpolateelevationgeom_sql_example_output = """
++----------+
+|elev_point|
++----------+
+|[BINARY]  |
++----------+
+"""
