@@ -5,54 +5,152 @@ sidebar_position: 1
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import overviewExamples from '!!raw-loader!../../tests/python/api/overview.py';
 import scalaApiExamples from '!!raw-loader!../../tests/scala/api/ScalaApiExamples.scala';
+import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
 
-# API Reference Overview
+# Functions Overview
 
-GeoBrix provides APIs in three languages: Scala, Python, and SQL. All APIs provide access to the same underlying functionality with language-appropriate idioms.
+GeoBrix provides four specialized packages for different spatial processing needs. All packages expose Scala, Python, and SQL APIs backed by the same Spark columnar expressions.
 
-## Function References
+![GeoBrix Vision](../../../resources/images/geobrix_vision.png)
 
-For detailed documentation of each function with parameters, return values, and examples:
+## Available Packages
 
-- [RasterX Function Reference](./rasterx-functions) - Complete reference for all raster functions
-- [GridX Function Reference](./gridx-functions) - Complete reference for all BNG grid functions
-- [VectorX Function Reference](./vectorx-functions) - Complete reference for all vector functions
+### RasterX
 
-## API Languages
+![RasterX](../../../resources/images/RasterX.png)
 
-### Scala
-The native implementation language, providing the most direct access to GeoBrix functionality.
+Full-spectrum raster processing for Databricks — successor to Mosaic raster, plus terrain analysis, spectral indices, tile publishing, and vector↔raster bridging.
 
-[Scala API Documentation →](./scala)
+- Process GeoTIFF and other GDAL-supported raster formats
+- Raster algebra, transformations, clipping, reprojection
+- Metadata extraction, band operations, NoData handling
+- Resample, IDW interpolation, build overviews
+- Terrain analysis (slope, aspect, hillshade, TRI, TPI, roughness, color-relief)
+- Spectral indices (EVI, SAVI, NDWI, NBR, NDVI, plus a generic dispatcher)
+- Vector↔raster bridge (`rasterize` / `polygonize`)
+- Web-mercator XYZ tile output (`to_webmercator`, `tilexyz`, `xyzpyramid`)
+- Grid aggregations to H3 or CARTO quadbin v0 cells
+- COG output, proximity, contour, viewshed
 
-### Python
-Python bindings via PySpark, providing Pythonic access to all GeoBrix features.
+[RasterX Function Reference →](./rasterx-functions)
 
-[Python API Documentation →](./python)
+---
 
-### SQL
-SQL functions registered in the Spark catalog, usable from any SQL context.
+### GridX
 
-[SQL API Documentation →](./sql)
+![GridX](../../../resources/images/GridX.png)
+
+Spatial indexing across multiple discrete-global-grid systems: **BNG** (British National Grid) for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned analytics.
+
+- British National Grid (BNG) — 21 functions covering cell math, kring/kloop, polyfill, tessellation, aggregators, and generators
+- CARTO Quadbin v0 — 9 functions (`pointascell`, `aswkb`, `centroid`, `resolution`, `polyfill`, `kring`, `tessellate`, `cellunion`, `distance`); cell IDs are 64-bit Long, aligned with the web-mercator XYZ tile grid
+- Cell area calculations, k-ring / k-loop neighborhoods, geometry-to-cell tessellation
+
+[GridX Function Reference →](./gridx-functions)
+
+---
+
+### VectorX
+
+![VectorX](../../../resources/images/VectorX.png)
+
+Augments Databricks built-in `ST_*` functions with vector-tile encoding and legacy-Mosaic migration helpers.
+
+- Mapbox Vector Tile (MVT) encoding via `st_asmvt` aggregator
+- Vector tile pyramid via `st_asmvt_pyramid` generator — composes with `pmtiles_agg` for end-to-end publishing
+- Legacy Mosaic geometry conversion (migrate without installing Mosaic)
+- OGR-based reader data sources (Shapefile, GeoJSON, GeoPackage, FileGDB)
+
+[VectorX Function Reference →](./vectorx-functions)
+
+---
+
+### PMTiles
+
+Container format for serving raster (PNG / JPEG / WebP) or vector (MVT) tile pyramids from a single static file via HTTP range requests. Native Scala v3 encoder — no GDAL/OGR dependency.
+
+- `gbx_pmtiles_agg` UDAF — aggregator returning a `BINARY` PMTile blob; fits tilesets up to ~100 MiB tile payload / 2 GiB cell limit
+- `.write.format("pmtiles").save(path)` DataSource — streams larger pyramids via a partitioned commit protocol
+- Auto-detects `tile_type` from magic bytes (PNG / JPEG / WebP / otherwise MVT)
+- Composes with `gbx_rst_xyzpyramid` (raster) and `gbx_st_asmvt_pyramid` (vector) upstream
+
+---
+
+## Package Comparison
+
+| Feature | RasterX | GridX | VectorX | PMTiles |
+|---------|---------|-------|---------|---------|
+| **Primary Use** | Raster processing | Discrete global grids | Vector encoding + legacy | Tile pyramid packaging |
+| **Product Gap** | Full gap-filling | Specialized grids (BNG, quadbin) | Vector-tile encoding, legacy migration | Net-new |
+| **GDAL Required** | Yes | No | Yes (readers + MVT) | No |
+| **Output Format** | Tile (struct) + arrays | Cell IDs (Long / String) + WKB | BINARY (MVT bytes), WKB | BINARY (PMTile blob) or file |
+| **Spark Surface** | 65+ SQL functions | 30+ SQL functions | 3+ SQL functions + DataSources | 1 UDAF + 1 DataSource |
+
+## Choosing the Right Package
+
+**Use RasterX when:** working with satellite imagery, DEMs, or aerial photography; performing terrain analysis, spectral indices, or per-pixel transforms; aggregating raster pixels to H3 or quadbin cells; bridging vector geometries to/from rasters; generating web-mercator XYZ tiles.
+
+**Use GridX when:** working with British National Grid data; indexing global data into web-mercator-aligned quadbin cells; needing cell math (area, k-ring, polyfill, tessellation); building grid-aware aggregations or join keys.
+
+**Use VectorX when:** encoding features as Mapbox Vector Tiles; generating per-tile MVT layers; reading vector formats (Shapefile, GeoJSON, GeoPackage, FileGDB); migrating from DBLabs Mosaic.
+
+**Use PMTiles when:** publishing a tile pyramid (raster or vector) as a single static file; serving from S3/ABFS/GCS without a tile server; aggregating `(z, x, y, bytes)` rows into a deployable map.
 
 ## Function Naming Convention
 
-All GeoBrix SQL functions use the `gbx_` prefix to clearly identify them as GeoBrix functions:
+All GeoBrix SQL functions use the `gbx_` prefix:
 
 | Package | Prefix | Example |
 |---------|--------|---------|
 | **RasterX** | `gbx_rst_` | `gbx_rst_boundingbox` |
 | **GridX/BNG** | `gbx_bng_` | `gbx_bng_cellarea` |
-| **VectorX** | `gbx_st_` | `gbx_st_legacyaswkb` |
+| **GridX/Quadbin** | `gbx_quadbin_` | `gbx_quadbin_pointascell` |
+| **VectorX** | `gbx_st_` | `gbx_st_asmvt` |
+| **PMTiles** | `gbx_pmtiles_` | `gbx_pmtiles_agg` |
 
-This makes it easy to:
-- Identify GeoBrix functions in your code
-- Distinguish from Databricks built-in `st_*` functions
-- Track usage and attribution
+The `gbx_` prefix distinguishes GeoBrix functions from Databricks built-in `st_*` functions.
+
+## Registration
+
+Before using GeoBrix functions in Python or SQL, register them with the Spark session.
+
+### Register all packages
+
+<CodeFromTest code={packagesExamples} language="python" functionName="register_all_packages" testFile="docs/tests/python/packages/test_examples.py" validationLevel="compile" />
+
+### Register selectively
+
+<CodeFromTest code={packagesExamples} language="python" functionName="register_only_rasterx" testFile="docs/tests/python/packages/test_examples.py" validationLevel="compile" />
+
+### Scala
+
+<CodeFromTest
+  code={scalaApiExamples}
+  functionName="RegisterAllPackages"
+  language="scala"
+  outputConstant="RegisterAllPackages_output"
+  source="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/scala/api/ScalaApiExamplesDocTest.scala"
+  title="Register All Packages"
+/>
+
+### SQL
+
+SQL functions are registered via Python or Scala. Once registered, they are available in any SQL context:
+
+<CodeFromTest code={overviewExamples} functionName="SQL_SHOW_FUNCTIONS" language="sql" source="docs/tests/python/api/overview.py" testFile="docs/tests/python/api/test_overview.py" outputConstant="SQL_SHOW_FUNCTIONS_output" />
+
+## API Languages
+
+GeoBrix provides the same functionality across three languages:
+
+- [Scala API →](./scala) — native implementation; most direct access
+- [Python API →](./python) — PySpark bindings with Pythonic idioms
+- [SQL API →](./sql) — functions registered in the Spark catalog, usable from any SQL context
 
 ## Scalar values vs `lit(...)` wrapping
 
-Previously, every non-Column argument had to be wrapped in `f.lit(...)` (Python) or `lit(...)` (Scala). That was a regression from Mosaic/DBR built-ins, where booleans and numerics can be passed as plain values. In 0.3.0, plain scalars are accepted across Python, Scala, and SQL bindings.
+In 0.3.0, plain scalars are accepted across Python, Scala, and SQL bindings — no `f.lit(...)` wrapping required for non-string values.
 
 **Python** — wrappers accept `Column` or scalar (`bool`/`int`/`float`/`bytes`); non-string scalars are auto-wrapped with `f.lit(...)`. Strings still follow pyspark's column-reference convention (bare string ≈ `f.col(name)`); wrap in `f.lit("...")` to pass a string literal.
 
@@ -92,74 +190,12 @@ SELECT gbx_bng_pointascell(pt, '1km') FROM ...;
 - **String literals**: `rx.rst_fromfile(f.lit("/path/to.tif"), f.lit("GTiff"))` — a bare string is treated as a column reference.
 - **Nulls / explicit typing**: e.g. `f.lit(None).cast("double")`.
 
-## Registration
-
-Before using GeoBrix functions in Python or SQL, you must register them:
-
-### Python
-
-<CodeFromTest code={overviewExamples} functionName="register_packages_python" language="python" source="docs/tests/python/api/overview.py" testFile="docs/tests/python/api/test_overview.py" outputConstant="register_packages_python_output" />
-
-### Scala
-
-<CodeFromTest
-  code={scalaApiExamples}
-  functionName="RegisterAllPackages"
-  language="scala"
-  outputConstant="RegisterAllPackages_output"
-  source="docs/tests/scala/api/ScalaApiExamples.scala"
-  testFile="docs/tests/scala/api/ScalaApiExamplesDocTest.scala"
-  title="Register All Packages"
-/>
-
-### SQL
-
-SQL functions are registered via Python or Scala. Once registered, they're available in any SQL context:
-
-<CodeFromTest code={overviewExamples} functionName="SQL_SHOW_FUNCTIONS" language="sql" source="docs/tests/python/api/overview.py" testFile="docs/tests/python/api/test_overview.py" outputConstant="SQL_SHOW_FUNCTIONS_output" />
-
-## API Categories
-
-### RasterX Functions
-
-Functions for raster data processing:
-
-- **Accessors**: Get raster properties (width, height, bounds, metadata)
-- **Constructors**: Load or create rasters
-- **Transformations**: Clip, reproject rasters
-- **Grid Operations**: Raster to grid conversions
-- **Band Operations**: Multi-band raster operations
-- **Aggregations**: Combine and merge rasters
-
-[View RasterX Functions →](./python#rasterx-functions)
-
-### GridX Functions
-
-Functions for grid indexing (BNG):
-
-- **Cell Operations**: Create and manipulate grid cells
-- **Coordinate Conversion**: Convert between coordinates and grid references
-- **Grid Properties**: Get grid cell attributes
-- **Spatial Indexing**: Use grid cells for efficient spatial operations
-
-[View GridX Functions →](./python#gridx-functions)
-
-### VectorX Functions
-
-Functions for vector operations:
-
-- **Geometry Conversion**: Convert legacy formats to WKB/WKT
-- **Format Transformation**: Prepare data for Databricks spatial types
-
-[View VectorX Functions →](./python#vectorx-functions)
-
 ## Next Steps
 
+- [RasterX Function Reference](./rasterx-functions)
+- [GridX Function Reference](./gridx-functions)
+- [VectorX Function Reference](./vectorx-functions)
 - [Scala API Reference](./scala)
 - [Python API Reference](./python)
 - [SQL API Reference](./sql)
-- [RasterX Functions](./rasterx-functions)
-- [GridX Functions](./gridx-functions)
-- [VectorX Functions](./vectorx-functions)
-- [Package Documentation](../packages/overview)
 - [Examples](../examples/overview)
