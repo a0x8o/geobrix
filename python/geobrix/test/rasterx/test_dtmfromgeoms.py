@@ -65,6 +65,79 @@ def test_rst_dtmfromgeoms_returns_tile(spark):
     assert out[0]["dtm"]["raster"] is not None
 
 
+def test_rst_dtmfromgeoms_wkb_points(spark):
+    """Regression: WKB (binary) point arrays via PySpark must not NPE on UnsafeArrayData."""
+    from pyspark.sql import functions as f
+    from shapely import Point
+
+    from databricks.labs.gbx.rasterx import functions as F
+
+    pts = [
+        Point(0.0, 0.0, 5.0).wkb,
+        Point(100.0, 0.0, 205.0).wkb,
+        Point(0.0, 100.0, 305.0).wkb,
+        Point(100.0, 100.0, 505.0).wkb,
+    ]
+    df = spark.createDataFrame([(pts,)], "points: array<binary>")
+    out = df.select(
+        F.rst_dtmfromgeoms(
+            f.col("points"),
+            f.array().cast("array<binary>"),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(0.0),
+            f.lit(100.0),
+            f.lit(100.0),
+            f.lit(10),
+            f.lit(10),
+            f.lit(32633),
+        ).alias("dtm")
+    ).collect()
+    assert out[0]["dtm"] is not None
+    assert out[0]["dtm"]["raster"] is not None
+
+
+def test_rst_dtmfromgeoms_agg_wkb_breaklines(spark):
+    """Regression: agg decodes a non-empty WKB breakline array (the untested decode path)."""
+    from pyspark.sql import functions as f
+    from shapely import LineString
+
+    from databricks.labs.gbx.rasterx import functions as F
+
+    bl = LineString([(0.0, 50.0, 0.0), (100.0, 50.0, 0.0)]).wkb
+    rows = [
+        (1, "POINT Z (0 0 5)"),
+        (1, "POINT Z (100 0 205)"),
+        (1, "POINT Z (0 100 305)"),
+        (1, "POINT Z (100 100 505)"),
+    ]
+    df = spark.createDataFrame(rows, ["region", "pt"])
+    out = (
+        df.groupBy("region")
+        .agg(
+            F.rst_dtmfromgeoms_agg(
+                f.col("pt"),
+                f.array(
+                    f.lit(bl).cast("binary")
+                ),  # non-empty WKB breakline array (constant)
+                f.lit(0.0),
+                f.lit(0.01),
+                f.lit(0.0),
+                f.lit(0.0),
+                f.lit(100.0),
+                f.lit(100.0),
+                f.lit(10),
+                f.lit(10),
+                f.lit(32633),
+            ).alias("dtm")
+        )
+        .collect()
+    )
+    assert out[0]["dtm"] is not None
+    assert out[0]["dtm"]["raster"] is not None
+
+
 def test_rst_dtmfromgeoms_agg_returns_tile(spark):
     from pyspark.sql import functions as f
 
