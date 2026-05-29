@@ -185,6 +185,34 @@ class RST_FromBandsAggTest extends AnyFunSuite with BeforeAndAfterAll {
         readBandMean(result, 3) shouldBe 30.0 +- 0.5
     }
 
+    test("update tolerates LongType band_index (PySpark Connect path)") {
+        // PySpark / Spark Connect serialises Python int literals as LongType.
+        // The old code called .asInstanceOf[Int] and threw ClassCastException.
+        // This test constructs the agg with Literal(1L) (a Long literal) and
+        // drives update() directly to confirm no exception is thrown and the
+        // buffer grows by one entry.
+        val tileA = makeSingleBandTileRow("long_idx", 42)
+
+        val tileType = org.apache.spark.sql.types.StructType(Seq(
+            org.apache.spark.sql.types.StructField("cellid",   org.apache.spark.sql.types.LongType, nullable = false),
+            org.apache.spark.sql.types.StructField("raster",   BinaryType,                          nullable = false),
+            org.apache.spark.sql.types.StructField("metadata", org.apache.spark.sql.types.MapType(
+                org.apache.spark.sql.types.StringType, org.apache.spark.sql.types.StringType),      nullable = true)
+        ))
+        val aggLong = RST_FromBandsAgg(
+            tileExpr      = Literal.create(tileA, tileType),
+            bandIndexExpr = Literal(1L),    // Long literal — this is what PySpark sends
+            exprConfExpr  = Literal.create(encodedEmpty(), StringType)
+        )
+
+        val buf = aggLong.createAggregationBuffer()
+        buf should have length 0
+
+        // Must not throw ClassCastException (the pre-fix behaviour).
+        noException should be thrownBy aggLong.update(buf, InternalRow.empty)
+        buf should have length 1
+    }
+
     test("buffer serde roundtrip preserves band indices") {
         val tileA = makeSingleBandTileRow("sA", 11)
         val tileB = makeSingleBandTileRow("sB", 22)

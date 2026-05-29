@@ -85,7 +85,12 @@ case class RST_FromBandsAgg(
     override def update(buffer: ArrayBuffer[Any], input: InternalRow): ArrayBuffer[Any] = {
         val idxRaw = bandIndexExpr.eval(input)
         if (idxRaw == null) return buffer
-        val idx = idxRaw.asInstanceOf[Int]
+        val idx: Int = idxRaw match {
+            case i: Int  => i
+            case l: Long => l.toInt
+            case other   => throw new IllegalArgumentException(
+                s"rst_frombands_agg: band_index must be INT or LONG; got ${other.getClass.getName}")
+        }
         val tileRaw = tileExpr.eval(input)
         if (tileRaw == null) return buffer
         val binaryTileRow = toBinaryTileRow(tileRaw.asInstanceOf[InternalRow])

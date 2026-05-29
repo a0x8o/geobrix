@@ -493,14 +493,12 @@ def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
     this aggregator accepts an explicit integer ``band_index`` to guarantee ordering
     independent of row arrival order.
 
-    .. note::
-        ``band_index`` must be ``IntegerType`` (not ``LongType``).  PySpark infers
-        Python ``int`` literals as ``LongType``; cast explicitly when needed:
-        ``f.col("band_index").cast("int")``.
+    ``band_index`` accepts both ``IntegerType`` and ``LongType`` columns; PySpark
+    infers Python ``int`` literals as ``LongType``, which is handled transparently.
 
     Args:
         tile: Single-band raster tile column.
-        band_index: IntegerType column (1-based) indicating the output band position.
+        band_index: Integer (or long) column (1-based) indicating the output band position.
 
     Returns:
         Column of multi-band raster tile.
@@ -508,7 +506,7 @@ def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
     return f.call_function(
         "gbx_rst_frombands_agg",
         _col(tile),
-        _col(band_index).cast("int"),
+        _col(band_index),
     )
 
 
