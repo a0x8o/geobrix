@@ -71,16 +71,20 @@ case class ST_InterpolateElevationBBox(
         val pointsVal = pointsArray.eval(input)
         if (pointsVal == null) return Iterator.empty
 
-        val pts = geomsFromArrayData(pointsVal.asInstanceOf[ArrayData])
+        val ptsElemType = pointsArray.dataType.asInstanceOf[org.apache.spark.sql.types.ArrayType].elementType
+        val pts = geomsFromArrayData(pointsVal.asInstanceOf[ArrayData], ptsElemType)
         if (pts.isEmpty) return Iterator.empty
 
         val breaklines: Seq[LineString] = {
             val bVal = breaklinesArray.eval(input)
             if (bVal == null) Seq.empty
-            else geomsFromArrayData(bVal.asInstanceOf[ArrayData]).toSeq.map {
-                case l: LineString => l
-                case other => throw new IllegalArgumentException(
-                    s"st_interpolateelevationbbox: breaklines must be LineString geometries; got ${other.getClass.getName}")
+            else {
+                val bElemType = breaklinesArray.dataType.asInstanceOf[org.apache.spark.sql.types.ArrayType].elementType
+                geomsFromArrayData(bVal.asInstanceOf[ArrayData], bElemType).toSeq.map {
+                    case l: LineString => l
+                    case other => throw new IllegalArgumentException(
+                        s"st_interpolateelevationbbox: breaklines must be LineString geometries; got ${other.getClass.getName}")
+                }
             }
         }
 
@@ -116,20 +120,30 @@ case class ST_InterpolateElevationBBox(
         }
     }
 
-    /** Decode an ArrayData of BINARY (WKB) or STRING (WKT) geometry elements. */
-    private def geomsFromArrayData(data: ArrayData): Array[Geometry] = {
+    /** Decode an ArrayData of BINARY (WKB) or STRING (WKT) geometry elements.
+     *
+     *  @param data      the array payload from Catalyst eval
+     *  @param elemType  the declared element DataType (BinaryType or StringType); used to call
+     *                   the typed accessor so that UnsafeArrayData works correctly in Spark 4.0.
+     */
+    private def geomsFromArrayData(data: ArrayData, elemType: DataType): Array[Geometry] = {
         val n = data.numElements()
         val buf = new Array[Geometry](n)
         var out = 0
         var i = 0
         while (i < n) {
             if (!data.isNullAt(i)) {
-                val geom = data.get(i, null) match {
-                    case b: Array[Byte] => JTS.fromWKB(b)
-                    case s: UTF8String  => JTS.fromWKT(s.toString)
-                    case other          => throw new IllegalArgumentException(
-                        "gbx_st_interpolateelevationbbox: geometry array element must be BINARY (WKB) or STRING (WKT); " +
-                        s"got ${if (other == null) "null" else other.getClass.getName}")
+                val geom = elemType match {
+                    case BinaryType => JTS.fromWKB(data.getBinary(i))
+                    case StringType => JTS.fromWKT(data.getUTF8String(i).toString)
+                    case _ =>
+                        data.get(i, elemType) match {
+                            case b: Array[Byte] => JTS.fromWKB(b)
+                            case s: UTF8String  => JTS.fromWKT(s.toString)
+                            case other          => throw new IllegalArgumentException(
+                                "gbx_st_interpolateelevationbbox: geometry array element must be BINARY (WKB) or STRING (WKT); " +
+                                s"got ${if (other == null) "null" else other.getClass.getName}")
+                        }
                 }
                 buf(out) = geom
                 out += 1

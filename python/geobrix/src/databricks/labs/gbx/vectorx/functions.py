@@ -5,8 +5,10 @@ Thin wrappers around GeoBrix Scala functions (``gbx_st_*``). Register with
 descriptions and examples, see the API docs or SQL:
   DESCRIBE FUNCTION EXTENDED gbx_st_<name>;
 
-As of v0.4.0 this package exposes the ``gbx_st_asmvt`` MVT aggregator and
-``gbx_st_asmvt_pyramid`` MVT pyramid generator. Subsequent waves add more.
+As of v0.4.0 this package exposes the ``gbx_st_asmvt`` MVT aggregator,
+``gbx_st_asmvt_pyramid`` MVT pyramid generator, and the TIN/elevation
+generators ``gbx_st_triangulate``, ``gbx_st_interpolateelevationbbox``, and
+``gbx_st_interpolateelevationgeom``.
 
 Arg types: every wrapper accepts either a pyspark ``Column`` or a plain
 Python scalar. Non-string scalars (``bool``/``int``/``float``/``bytes``) are
@@ -116,4 +118,156 @@ def st_asmvt_pyramid(
         _col(max_z),
         layer_name_col,
         extent_col,
+    )
+
+
+def st_triangulate(
+    points_geom: ColLike,
+    breaklines_geom: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    split_point_finder: ColLike,
+) -> Column:
+    """Generator: emit one row per TIN triangle polygon from a constrained Delaunay triangulation.
+
+    Each output row is a struct ``STRUCT<triangle BINARY>`` containing a WKB-encoded triangle
+    polygon. Invoke directly in ``select(...)`` as a top-level generator — do not wrap in
+    ``F.explode``.
+
+    Points that are co-linear or degenerate produce zero rows. Valid non-collinear input of
+    N points produces at least ``N - 2`` triangle rows (Delaunay property).
+
+    Args:
+        points_geom:        Array column of Z-valued point geometries (``ARRAY<BINARY|STRING>``).
+                            Each element is a WKB byte array or a WKT/EWKT string.
+        breaklines_geom:    Array column of LineString geometries (``ARRAY<BINARY|STRING>``).
+                            Pass an empty array (``array().cast(ArrayType(StringType()))``) when
+                            no breaklines are needed.
+        merge_tolerance:    Distance tolerance for merging nearby vertices (``DOUBLE``).
+        snap_tolerance:     Snap tolerance for the triangulator (``DOUBLE``).
+        split_point_finder: Strategy name for constrained edge splitting. Valid values:
+                            ``"NONENCROACHING"`` (default) and ``"MIDPOINT"``.
+
+    Returns:
+        Generator Column producing one ``STRUCT<triangle BINARY>`` row per TIN triangle.
+    """
+    return f.call_function(
+        "gbx_st_triangulate",
+        _col(points_geom),
+        _col(breaklines_geom),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(split_point_finder),
+    )
+
+
+def st_interpolateelevationbbox(
+    points_geom: ColLike,
+    breaklines_geom: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    split_point_finder: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Generator: emit one Z-interpolated grid point per cell over a bounding-box-defined grid.
+
+    Builds a TIN from the input Z-valued points via constrained Delaunay triangulation, then
+    interpolates elevation at each center of a regular ``width_px × height_px`` grid spanning
+    the given bounding box. Grid cells whose centers fall outside the TIN convex hull are
+    silently dropped. Each output row is a struct ``STRUCT<elevation_point BINARY>`` containing
+    a WKB-encoded 3D Point. Invoke directly in ``select(...)`` as a top-level generator.
+
+    Args:
+        points_geom:        Array column of Z-valued point geometries (``ARRAY<BINARY|STRING>``).
+        breaklines_geom:    Array column of LineString geometries (``ARRAY<BINARY|STRING>``).
+        merge_tolerance:    Vertex merge tolerance (``DOUBLE``).
+        snap_tolerance:     Triangulator snap tolerance (``DOUBLE``).
+        split_point_finder: Edge-split strategy — ``"NONENCROACHING"`` or ``"MIDPOINT"``.
+        xmin:               West extent of the grid (``DOUBLE``).
+        ymin:               South extent of the grid (``DOUBLE``).
+        xmax:               East extent of the grid (``DOUBLE``).
+        ymax:               North extent of the grid (``DOUBLE``).
+        width_px:           Number of grid columns (``INT``).
+        height_px:          Number of grid rows (``INT``).
+        srid:               Spatial reference ID to assign to output points (``INT``).
+
+    Returns:
+        Generator Column producing one ``STRUCT<elevation_point BINARY>`` row per interpolated
+        grid point inside the TIN hull.
+    """
+    return f.call_function(
+        "gbx_st_interpolateelevationbbox",
+        _col(points_geom),
+        _col(breaklines_geom),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(split_point_finder),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+def st_interpolateelevationgeom(
+    points_geom: ColLike,
+    breaklines_geom: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    split_point_finder: ColLike,
+    grid_origin: ColLike,
+    grid_cols: ColLike,
+    grid_rows: ColLike,
+    cell_size_x: ColLike,
+    cell_size_y: ColLike,
+) -> Column:
+    """Generator: emit one Z-interpolated grid point per cell over an origin-defined grid.
+
+    Builds a TIN from the input Z-valued points via constrained Delaunay triangulation, then
+    interpolates elevation at each center of a regular grid defined by an origin corner point,
+    column/row counts, and per-cell dimensions. Grid cells whose centers fall outside the TIN
+    convex hull are silently dropped. Each output row is a struct ``STRUCT<elevation_point BINARY>``
+    containing a WKB-encoded 3D Point. Invoke directly in ``select(...)`` as a top-level generator.
+
+    The ``grid_origin`` geometry carries the SRID of the output. Encode it as EWKB (e.g. via
+    ``ST_SetSRID``) or as an EWKT string (``SRID=32633;POINT(...)``) to propagate a non-zero SRID
+    to the output points. Plain WKB and plain WKT carry no SRID; in that case output SRID is 0.
+
+    Args:
+        points_geom:        Array column of Z-valued point geometries (``ARRAY<BINARY|STRING>``).
+        breaklines_geom:    Array column of LineString geometries (``ARRAY<BINARY|STRING>``).
+        merge_tolerance:    Vertex merge tolerance (``DOUBLE``).
+        snap_tolerance:     Triangulator snap tolerance (``DOUBLE``).
+        split_point_finder: Edge-split strategy — ``"NONENCROACHING"`` or ``"MIDPOINT"``.
+        grid_origin:        Single POINT geometry (``BINARY|STRING``) for the grid's origin corner.
+        grid_cols:          Number of grid columns (``INT``).
+        grid_rows:          Number of grid rows (``INT``).
+        cell_size_x:        Width of each grid cell in the CRS units (``DOUBLE``).
+        cell_size_y:        Height of each grid cell in the CRS units (``DOUBLE``).
+
+    Returns:
+        Generator Column producing one ``STRUCT<elevation_point BINARY>`` row per interpolated
+        grid point inside the TIN hull.
+    """
+    return f.call_function(
+        "gbx_st_interpolateelevationgeom",
+        _col(points_geom),
+        _col(breaklines_geom),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(split_point_finder),
+        _col(grid_origin),
+        _col(grid_cols),
+        _col(grid_rows),
+        _col(cell_size_x),
+        _col(cell_size_y),
     )
