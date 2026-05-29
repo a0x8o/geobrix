@@ -1,7 +1,6 @@
-package com.databricks.labs.gbx.rasterx.operations
+package com.databricks.labs.gbx.vectorx.jts
 
-/** Delaunay triangulation and Z interpolation for DTM. Used by RST_DTMFromGeoms. */
-import com.databricks.labs.gbx.vectorx.jts.{JTS, JTSConformingDelaunayTriangulationBuilder}
+/** Delaunay triangulation and Z interpolation for DTM. Used by RST_DTMFromGeoms and VectorX generators. */
 import org.locationtech.jts.geom.util.{LinearComponentExtracter, PolygonExtracter}
 import org.locationtech.jts.geom._
 import org.locationtech.jts.index.strtree.STRtree
@@ -18,9 +17,10 @@ object InterpolateElevation {
         breaklines: Seq[LineString],
         gridPoints: MultiPoint,
         mergeTolerance: Double,
-        snapTolerance: Double
+        snapTolerance: Double,
+        splitPointFinder: Option[TriangulationSplitPointTypeEnum.Value] = None
     ): Seq[Point] = {
-        val triangles = triangulate(multipoint, breaklines, mergeTolerance, snapTolerance)
+        val triangles = triangulate(multipoint, breaklines, mergeTolerance, snapTolerance, splitPointFinder)
 
         val tree = new STRtree(4)
         triangles.foreach(p => tree.insert(p.getEnvelopeInternal, p))
@@ -58,13 +58,14 @@ object InterpolateElevation {
         multiPoint: Geometry,
         breaklines: Seq[Geometry],
         mergeTolerance: Double,
-        snapTolerance: Double
+        snapTolerance: Double,
+        splitPointFinder: Option[TriangulationSplitPointTypeEnum.Value] = None
     ): Seq[Geometry] = {
         val multiLineString = JTS.multiLineString(breaklines)
         val triangulator = JTSConformingDelaunayTriangulationBuilder(multiPoint)
         if (breaklines.nonEmpty) triangulator.setConstraints(multiLineString)
-
         triangulator.setTolerance(mergeTolerance)
+        splitPointFinder.foreach(triangulator.setSplitPointFinder)
 
         val trianglesGeomCollection = triangulator.getTriangles
         val trianglePolygons = PolygonExtracter.getPolygons(trianglesGeomCollection).asScala.map(_.asInstanceOf[Polygon])
@@ -138,6 +139,21 @@ object InterpolateElevation {
         val mp = JTS.multiPoint(pts.toArray)
         mp.setSRID(srid)
         mp
+    }
+
+    /** Grid of cell-center points from an origin corner + cell counts + per-cell sizes.
+     *  Centers: x = originX + (i + 0.5)*cellSizeX, y = originY + (j + 0.5)*cellSizeY.
+     *  cellSizeY may be negative (y-down). Column-major (x slowest, y fastest).
+     */
+    def pointGridOrigin(
+        originX: Double, originY: Double, cols: Int, rows: Int,
+        cellSizeX: Double, cellSizeY: Double, srid: Int
+    ): MultiPoint = {
+        val pts = for (i <- 0 until cols; j <- 0 until rows) yield {
+            val p = JTS.point(new Coordinate(originX + (i + 0.5) * cellSizeX, originY + (j + 0.5) * cellSizeY))
+            p.setSRID(srid); p
+        }
+        val mp = JTS.multiPoint(pts.toArray); mp.setSRID(srid); mp
     }
 
 }

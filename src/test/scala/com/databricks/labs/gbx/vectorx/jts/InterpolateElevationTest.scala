@@ -1,6 +1,5 @@
-package com.databricks.labs.gbx.rasterx.operations
+package com.databricks.labs.gbx.vectorx.jts
 
-import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.locationtech.jts.geom.{Coordinate, LineString}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._

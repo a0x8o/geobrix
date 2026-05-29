@@ -8,7 +8,7 @@ package com.databricks.labs.gbx.rasterx.expressions
  * to -9999.0. Output is a single-band Float64 GTiff tile.
  */
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
-import com.databricks.labs.gbx.rasterx.operations.InterpolateElevation
+import com.databricks.labs.gbx.vectorx.jts.InterpolateElevation
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, VectorRasterBridge}
 import com.databricks.labs.gbx.util.SerializationUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
