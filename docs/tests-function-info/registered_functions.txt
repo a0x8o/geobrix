@@ -90,6 +90,8 @@ gbx_rst_ndwi
 gbx_rst_savi
 gbx_rst_gridfrompoints
 gbx_rst_gridfrompoints_agg
+gbx_rst_dtmfromgeoms
+gbx_rst_dtmfromgeoms_agg
 gbx_rst_resample
 gbx_rst_resample_to_res
 gbx_rst_resample_to_size

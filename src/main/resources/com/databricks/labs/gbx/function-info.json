@@ -49,6 +49,12 @@
     "gbx_rst_derivedband_agg": {
       "examples": "Examples:\n      > SELECT region, gbx_rst_derivedband_agg(tile, 'def f(a): return a', 'f') as result FROM rasters GROUP BY region;"
     },
+    "gbx_rst_dtmfromgeoms": {
+      "examples": "Examples:\n      > SELECT gbx_rst_dtmfromgeoms( points_wkb_array, breaklines_wkb_array, 0.0, 0.01, 0.0, 0.0, 1000.0, 1000.0, 100, 100, 32633 ) AS dtm FROM survey_points;"
+    },
+    "gbx_rst_dtmfromgeoms_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_dtmfromgeoms_agg( point_wkb, breaklines_wkb_array, 0.0, 0.01, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 100, 100, 32633 ) AS dtm FROM survey_points GROUP BY region_id;"
+    },
     "gbx_rst_evi": {
       "examples": "Examples:\n      > SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;"
     },

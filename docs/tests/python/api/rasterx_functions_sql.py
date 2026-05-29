@@ -2123,3 +2123,54 @@ rst_viewshed_sql_example_output = """
 |...|
 +---+
 """
+
+
+def rst_dtmfromgeoms_sql_example():
+    """DTM via Delaunay-TIN interpolation from Z-valued points (+ optional breaklines)."""
+    return """
+-- TIN interpolation from arrays of Z-valued point WKB and breakline WKB.
+-- Output is a 100 x 100 Float64 GTiff over the extent. For N-metre cells set
+-- width_px = round((xmax-xmin)/N): here a 1000 m extent at 10 m cells -> 100 px.
+SELECT gbx_rst_dtmfromgeoms(
+    points_wkb_array, breaklines_wkb_array,
+    0.0, 0.01,
+    0.0, 0.0, 1000.0, 1000.0,
+    100, 100, 32633
+) AS dtm
+FROM survey_points;
+"""
+
+
+rst_dtmfromgeoms_sql_example_output = """
++---+
+|dtm|
++---+
+|...|
++---+
+"""
+
+
+def rst_dtmfromgeoms_agg_sql_example():
+    """DTM aggregator - one Z-valued point per row, grouped by extent key."""
+    return """
+-- Stream survey points per region into one TIN DTM tile. Breaklines are a
+-- per-group constant array; for 10 m cells over a 1000 m extent use 100 px.
+SELECT region_id,
+    gbx_rst_dtmfromgeoms_agg(
+        point_wkb, breaklines_wkb_array,
+        0.0, 0.01,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        100, 100, 32633
+    ) AS dtm
+FROM survey_points
+GROUP BY region_id;
+"""
+
+
+rst_dtmfromgeoms_agg_sql_example_output = """
++---------+---+
+|region_id|dtm|
++---------+---+
+|...      |...|
++---------+---+
+"""
