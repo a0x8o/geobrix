@@ -607,6 +607,152 @@ Explode tessellated cells into separate rows.
 
 ---
 
+## Custom Grid Functions
+
+A custom grid is a user-defined regular rectangular grid specified by its spatial extent, root cell size, and a recursive split factor. Cell IDs are `BIGINT` values; hierarchy is controlled by `cell_splits` (each level subdivides root cells into `cell_splits x cell_splits` sub-cells). Use custom grids when neither BNG nor quadbin matches your coordinate reference system or cell-size requirements — for example, a national grid in EPSG:27700 with non-standard tile sizes.
+
+### gbx_custom_grid
+
+Define a user-specified regular grid from an origin, extent, cell size, split factor, and SRID.
+
+**Signature:** `gbx_custom_grid(boundXMin, boundXMax, boundYMin, boundYMax, cellSplits, rootCellSizeX, rootCellSizeY, srid)`
+
+**Parameters:**
+- `boundXMin` — minimum X bound of the grid extent
+- `boundXMax` — maximum X bound of the grid extent
+- `boundYMin` — minimum Y bound of the grid extent
+- `boundYMax` — maximum Y bound of the grid extent
+- `cellSplits` — number of splits per axis at each resolution level (e.g. 2 = 2x2 = 4 sub-cells per step)
+- `rootCellSizeX` — root cell width in CRS units
+- `rootCellSizeY` — root cell height in CRS units
+- `srid` — spatial reference ID (e.g. 27700 for BNG)
+
+**Returns:**
+- `STRUCT<bound_x_min, bound_x_max, bound_y_min, bound_y_max, cell_splits, root_cell_size_x, root_cell_size_y, srid>` — a grid descriptor struct passed to all other `gbx_custom_*` functions.
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_grid_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_grid_sql_example_output" />
+
+---
+
+### gbx_custom_pointascell
+
+Index a point geometry into a custom grid cell ID at the specified resolution level.
+
+**Signature:** `gbx_custom_pointascell(point, grid, resolution)`
+
+**Parameters:**
+- `point` — point geometry as WKT (STRING) or WKB (BINARY) in the grid's CRS
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `resolution` — resolution level (integer; 0 = root cells, higher = finer)
+
+**Returns:**
+- `BIGINT` cell ID encoding the grid position at the given resolution
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_pointascell_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_pointascell_sql_example_output" />
+
+---
+
+### gbx_custom_cellaswkb
+
+Return the WKB footprint polygon of a custom grid cell.
+
+**Signature:** `gbx_custom_cellaswkb(cell, grid)`
+
+**Parameters:**
+- `cell` — `BIGINT` cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+
+**Returns:**
+- `BINARY` WKB polygon representing the cell boundary
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_cellaswkb_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_cellaswkb_sql_example_output" />
+
+---
+
+### gbx_custom_cellaswkt
+
+Return the WKT footprint polygon of a custom grid cell.
+
+**Signature:** `gbx_custom_cellaswkt(cell, grid)`
+
+**Parameters:**
+- `cell` — `BIGINT` cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+
+**Returns:**
+- `STRING` WKT polygon representing the cell boundary
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_cellaswkt_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_cellaswkt_sql_example_output" />
+
+---
+
+### gbx_custom_centroid
+
+Return the centroid of a custom grid cell as a WKB point.
+
+**Signature:** `gbx_custom_centroid(cell, grid)`
+
+**Parameters:**
+- `cell` — `BIGINT` cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+
+**Returns:**
+- `BINARY` WKB point at the cell center (in the grid's CRS)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_centroid_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_centroid_sql_example_output" />
+
+---
+
+### gbx_custom_polyfill
+
+Fill a geometry with all custom grid cell IDs at the specified resolution.
+
+**Signature:** `gbx_custom_polyfill(geom, grid, resolution)`
+
+**Parameters:**
+- `geom` — input geometry as WKT (STRING) or WKB (BINARY) in the grid's CRS
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `resolution` — resolution level (integer; higher = finer cells)
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs whose footprints intersect the geometry
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_polyfill_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_polyfill_sql_example_output" />
+
+---
+
+### gbx_custom_kring
+
+Return all custom grid cells within `k` steps of a center cell (filled neighborhood, Chebyshev distance).
+
+**Signature:** `gbx_custom_kring(cell, grid, k)`
+
+**Parameters:**
+- `cell` — `BIGINT` center cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `k` — integer ring distance (0 = center only; 1 = 3x3 neighborhood including center)
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs within distance `k` (up to `(2k+1)^2` cells)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_kring_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_kring_sql_example_output" />
+
+---
+
 ## Quadbin
 
 CARTO Quadbin v0 cells encode `(z, x, y)` web-mercator tile coordinates as a single `BIGINT`. Cell IDs are interoperable with CARTO's CDB_QuadKey and align with the slippy-map tile grid used by `gbx_rst_xyzpyramid` and `gbx_st_asmvt_pyramid`.
@@ -732,6 +878,21 @@ Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
 **SQL:**
 
 <CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_cellunion_agg
+
+Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partition) into a single MultiPolygon EWKB. Use this instead of `gbx_quadbin_cellunion` when your cell IDs are spread across rows rather than already collected into an array.
+
+**Signature:** `quadbin_cellunion_agg(cell: Column): Column`
+
+**Returns:**
+- `BINARY` EWKB multipolygon (SRID-tagged 4326) representing the dissolved coverage
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_agg_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_cellunion_agg_sql_example_output" />
 
 ---
 
