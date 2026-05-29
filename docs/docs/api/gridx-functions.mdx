@@ -5,32 +5,124 @@ sidebar_position: 6
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import gridxFunctionsExamples from '!!raw-loader!../../tests/python/api/gridx_functions.py';
 import gridxFunctionsSqlExamples from '!!raw-loader!../../tests/python/api/gridx_functions_sql.py';
+import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
+import gridxScalaCode from '!!raw-loader!../../tests/scala/packages/GridxPackageExamples.scala';
 
 # GridX Function Reference
+
+![GridX](../../../resources/images/GridX.png)
 
 Complete reference for all GridX discrete-global-grid functions — British National Grid (BNG) and CARTO Quadbin v0.
 
 ## Overview
 
-GridX covers two grid families:
+GridX is GeoBrix's discrete-global-grid indexing package. As of v0.4.0 it ships two grid systems: **British National Grid (BNG)** for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned global indexing.
 
-- **BNG (British National Grid)** — the Ordnance Survey grid used in Great Britain for spatial indexing and location-based services.
-- **Quadbin (CARTO v0)** — a global zoom-indexed tile addressing scheme aligned with web-mercator slippy maps, compatible with CARTO's CDB_QuadKey IDs.
+- **BNG (British National Grid)** — the Ordnance Survey National Grid (OSGB36) used in Great Britain for spatial indexing and location-based services. Specialized for UK-based spatial data.
+- **Quadbin (CARTO v0)** — a global zoom-indexed tile addressing scheme aligned with web-mercator slippy maps, compatible with CARTO's CDB_QuadKey IDs. Cell `(z, x, y)` coordinates align with the same XYZ tile grid that PMTiles / MVT readers consume — natural for slippy-map heatmaps and global analytics.
 
-**BNG**: 23 functions organized into 7 categories:
-- **Conversion Functions** (2): Convert cells to geometries
-- **Core Functions** (4): Basic cell operations
-- **Cell Operations** (2): Intersection and union
-- **Coordinate Conversion** (2): Point/coordinate to cell
-- **K-Ring Functions** (4): Neighboring cells
-- **Tessellation Functions** (2): Fill geometries with cells
-- **Aggregator Functions** (2): Aggregate operations
-- **Generator Functions** (5): Explode arrays into rows
+:::note Registration and import paths
+- BNG: `databricks.labs.gbx.gridx.bng` (Python) / `com.databricks.labs.gbx.gridx.bng` (Scala)
+- Quadbin: `databricks.labs.gbx.gridx.quadbin` (Python) / `com.databricks.labs.gbx.gridx.quadbin` (Scala)
 
-**Quadbin**: 9 grid-math functions (point-to-cell, footprints, polyfill, k-ring, tessellation, union, distance, resolution).
+Use `RegisterBatch` with `functions=gridx.bng` or `functions=gridx.quadbin` to register just one subpackage, or `functions=all` for everything.
+:::
 
-:::note SQL examples
-Examples on this page use **SQL** (and Python where shown); in SQL, GridX functions are prefixed with **`gbx_`** (e.g. `gbx_bng_aswkb`, `gbx_quadbin_pointascell`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+## Key Features
+
+- **Grid Cell Operations**: Create, manipulate, and query BNG grid cells
+- **Area Calculations**: Calculate areas of grid cells at different precisions (returns square kilometres)
+- **Coordinate Conversion**: Convert between grid references and coordinates
+- **Spatial Indexing**: Use BNG or quadbin for efficient spatial indexing
+- **Multi-Resolution Support**: Work with different grid resolutions (BNG: 1–6 integer indices; Quadbin: zoom 0..26)
+- **K-Ring / K-Loop Neighbourhoods**: Filled rings and hollow rings for both grid systems
+- **Polyfill and Tessellation**: Cover geometries with cells; tessellation returns per-cell clipped chip geometries
+
+## British National Grid (BNG)
+
+The British National Grid is the national coordinate system for Great Britain, based on the Ordnance Survey National Grid (OSGB36). It divides Great Britain into grid squares identified by letter-based prefixes and numeric coordinates.
+
+### BNG Structure
+
+- **Grid Squares**: 100km x 100km squares identified by two letters (e.g., "TQ" for London, "NT" for Edinburgh)
+- **Eastings and Northings**: Numeric coordinates within each grid square (EPSG:27700)
+- **Resolution Indices**: Integer indices 1..6 (1=100km, 2=10km, 3=1km, 4=100m, 5=10m, 6=1m); negative indices select quadrant sub-cells. String keys (e.g. `"1km"`, `"100m"`) are also accepted via `BNG.resolutionMap`.
+
+### BNG Grid Reference Format
+
+BNG references follow the format: `[Letters][Eastings][Northings]`
+
+Examples:
+- `TQ 38 80` — 1km precision (Tower of London area)
+- `TQ 3800 8000` — 100m precision
+- `TQ 38000 80000` — 10m precision
+- `SU 12 34` — Different grid square
+
+### Precision Levels
+
+| Precision | Grid Size | Example | Use Case |
+|-----------|-----------|---------|----------|
+| 100000m | 100km x 100km | TQ | Regional analysis |
+| 10000m | 10km x 10km | TQ38 | District-level |
+| 1000m | 1km x 1km | TQ3080 | Local area analysis |
+| 100m | 100m x 100m | TQ308808 | Neighborhood level |
+| 10m | 10m x 10m | TQ30808080 | Building level |
+| 1m | 1m x 1m | TQ3080080800 | Precise location |
+
+### Major Grid Squares
+
+Major 100km grid squares in Great Britain:
+- **TQ** — London area
+- **SU** — South Hampshire
+- **NT** — Edinburgh area
+- **SD** — Lake District
+- **ST** — Bristol area
+
+## Quadbin (CARTO v0)
+
+GeoBrix v0.4.0 adds a `gridx/quadbin` subpackage implementing the [CARTO quadbin v0](https://github.com/CartoDB/quadbin) 64-bit packed `(z, x, y)` tile encoding used by Snowflake, dbt, Felt, and CARTO. Coordinates are EPSG:4326 lon/lat on the user-facing API; cells are encoded as web-mercator XYZ tiles internally. Resolutions range from `0` (whole world) to `26` (sub-metre).
+
+:::note Registration
+Quadbin functions are under **gridx.quadbin** — independent of `gridx.bng`. Call `functions.register(spark)` once per session to install the `gbx_quadbin_*` SQL functions.
+:::
+
+## Usage Examples
+
+### Python/PySpark
+
+<CodeFromTest
+  code={packagesExamples}
+  language="python"
+  source="docs/tests/python/packages/examples.py"
+  testFile="docs/tests/python/packages/test_examples.py"
+  functionName="gridx_basic_usage"
+  outputConstant="gridx_basic_usage_output"
+/>
+
+### Scala
+
+<CodeFromTest
+  code={gridxScalaCode}
+  language="scala"
+  source="docs/tests/scala/packages/GridxPackageExamples.scala"
+  testFile="docs/tests/scala/packages/GridxExamplesDocTest.scala"
+  functionName="GRIDX_SCALA_USAGE"
+  outputConstant="GRIDX_SCALA_USAGE_output"
+/>
+
+### SQL
+
+<CodeFromTest
+  code={packagesExamples}
+  language="sql"
+  source="docs/tests/python/packages/examples.py"
+  testFile="docs/tests/python/packages/test_examples.py"
+  functionName="SQL_GRIDX_BNG_USAGE"
+  outputConstant="SQL_GRIDX_BNG_USAGE_output"
+/>
+
+:::note SQL function prefixes
+In SQL, GridX functions are prefixed with **`gbx_`** (e.g. `gbx_bng_aswkb`, `gbx_quadbin_pointascell`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
 :::
 
 ## Common setup
@@ -710,4 +802,3 @@ Generator functions (e.g. `bng_kringexplode`, `bng_kloopexplode`) are more effic
 - [RasterX Function Reference](./rasterx-functions)
 - [VectorX Function Reference](./vectorx-functions)
 - [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
-- [GridX Package Documentation](../packages/gridx)
