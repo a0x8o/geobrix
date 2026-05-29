@@ -5,17 +5,122 @@ sidebar_position: 5
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
-
+import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
+import rasterxScalaCode from '!!raw-loader!../../tests/scala/packages/RasterxPackageExamples.scala';
 
 # RasterX Function Reference
+
+![RasterX](../../../resources/images/RasterX.png)
 
 Complete reference for all RasterX functions with detailed descriptions, parameters, return values, and examples.
 
 ## Overview
 
-RasterX provides functions for working with raster (pixel) data in Spark—loading, querying, transforming, and aggregating rasters from formats such as GeoTIFF, COG, and NetCDF.
+RasterX is GeoBrix's raster data processing package, providing comprehensive tools for working with raster datasets such as satellite imagery, elevation models, and other gridded spatial data. It is a refactor and improvement of Mosaic raster functions, extended in v0.4.0 with terrain analysis, spectral indices, vector-raster bridging, web-mercator tile output, and quadbin grid aggregations. Since the Databricks product does not (yet) support anything built-in specifically for raster processing, RasterX provides a gap-filling capability for raster operations on the Databricks platform.
 
-**Function Count**: organized into the following categories (see [rasterx/functions.scala](https://github.com/databrickslabs/geobrix/blob/main/src/main/scala/com/databricks/labs/gbx/rasterx/functions.scala)):
+## Key Features
+
+- **GDAL-Powered**: Leverages GDAL for robust raster format support
+- **Distributed Processing**: Built on Spark for scalable raster operations
+- **Multiple Format Support**: GeoTIFF, COG, NetCDF, and other GDAL-supported formats
+- **Metadata Extraction**: Comprehensive raster metadata access
+- **Raster Operations**: Clipping, resampling, transformations, map algebra
+- **Band Operations**: Multi-band raster support, single-band extraction
+- **Terrain Analysis**: Slope, aspect, hillshade, TRI, TPI, roughness, color-relief
+- **Spectral Indices**: EVI, SAVI, NDWI, NBR, NDVI, plus a generic dispatcher
+- **Vector-Raster Bridge**: Rasterize geometries, polygonize value regions
+- **Tile Publishing**: Web-mercator XYZ tile generation (PNG / JPEG / WebP)
+- **Grid Aggregations**: H3 and CARTO quadbin v0 cell aggregations
+
+## Tile payload
+
+Every RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
+
+Functions that internally build via an intermediate VRT — `gbx_rst_merge`, `gbx_rst_merge_agg`, `gbx_rst_frombands`, `gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, `gbx_rst_derivedband_agg` — materialize the result to GTiff before returning, so downstream stages on different executors see real raster bytes. Inspect a tile's payload format from `tile.metadata.driver`; for any of the functions above, it will read `GTiff` (not `VRT`). See [Beta Release Notes](../beta-release-notes#whats-new-in-v030) for the v0.3.0 correctness fix that introduced this invariant.
+
+## VRT Python pixel functions
+
+`gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, and `gbx_rst_derivedband_agg` evaluate a Python expression on each pixel via GDAL's [VRT Python pixel-function API](https://gdal.org/en/stable/drivers/raster/vrt.html#using-derived-bands-with-pixel-functions-in-python). That API is gated behind the GDAL config option `GDAL_VRT_ENABLE_PYTHON`, which **GeoBrix sets to `NO` at executor startup** (see [Security - Restrict GDAL drivers](../security#6-vrt-python-pixel-functions-off-by-default-by-design)). When you call one of the four functions above, GeoBrix flips the option to `YES` for the duration of that call only — via the internal `GDALManager.withVrtPython` bracket — and restores `NO` immediately on return. You don't need to set anything on the cluster or in your notebook to use the built-in functions.
+
+### When you need to enable it yourself
+
+If you're invoking the GDAL Python bindings (`from osgeo import gdal`) **directly** — outside the built-in RasterX functions — and you read a VRT that declares a `<PixelFunctionLanguage>Python</...>` band, you'll get an empty/null read unless you enable the option in the same process. Pick one of:
+
+**Python — programmatic, scoped to your read.** Recommended in all cases. Mirrors what GeoBrix does internally, works for both driver-side `pyspark.sql` calls and inside `mapPartitions` / `mapInPandas` UDFs that load VRT-with-pyfunc via `osgeo.gdal`, and survives interleaving with GeoBrix built-in calls (each GeoBrix call resets the option to `NO` on exit, so re-set it on every read):
+
+```python
+from osgeo import gdal
+
+gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
+try:
+    ds = gdal.Open("/path/to/your/vrt-with-pixel-function.vrt")
+    arr = ds.GetRasterBand(1).ReadAsArray()
+    ds = None
+finally:
+    gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
+```
+
+**Cluster env var — for Python-worker processes only.** Setting `spark.executorEnv.GDAL_VRT_ENABLE_PYTHON YES` on the cluster works for Python UDF workers (a separate process from the JVM, where GDAL initializes from env vars). It does **not** help JVM-side reads — GeoBrix calls `gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")` at executor JVM startup, and `SetConfigOption` takes precedence over the env var. Prefer the programmatic form above unless you have a strong reason to globally enable.
+
+**Scala / JVM code.** If you're writing custom Spark expressions that consume Python-pixel VRTs, wrap the read/translate in the same helper GeoBrix uses internally — it refcounts the option so concurrent tasks on the same executor JVM compose safely:
+
+```scala
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+
+val result = GDALManager.withVrtPython {
+    val ds = org.gdal.gdal.gdal.Open(vrtPath)
+    // ... GDAL reads / translates here see the Python pixel function ...
+    ds
+}
+```
+
+### Trusted-modules variant
+
+GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTHON_TRUSTED_MODULES` allowlist if you want pixel-function code restricted to specific Python module prefixes. GeoBrix uses the plain `YES` form because the pixel-function source is constructed in-process from trusted (geobrix-generated) strings, never from user-supplied VRT XML on disk. If your custom code path reads VRTs whose `<PixelFunctionCode>` originates from less-trusted sources, switch to the `TRUSTED_MODULES` form and allowlist only what you intend to load.
+
+## Usage Examples
+
+### Python/PySpark
+
+<CodeFromTest
+  code={packagesExamples}
+  language="python"
+  source="docs/tests/python/packages/examples.py"
+  testFile="docs/tests/python/packages/test_examples.py"
+  functionName="rasterx_basic_usage"
+  outputConstant="rasterx_basic_usage_output"
+/>
+
+### Scala
+
+<CodeFromTest
+  code={rasterxScalaCode}
+  language="scala"
+  source="docs/tests/scala/packages/RasterxPackageExamples.scala"
+  testFile="docs/tests/scala/packages/RasterxExamplesDocTest.scala"
+  functionName="RASTERX_SCALA_USAGE"
+  outputConstant="RASTERX_SCALA_USAGE_output"
+/>
+
+### SQL
+
+<CodeFromTest
+  code={packagesExamples}
+  language="sql"
+  source="docs/tests/python/packages/examples.py"
+  testFile="docs/tests/python/packages/test_examples.py"
+  functionName="SQL_RASTERX_USAGE"
+  outputConstant="SQL_RASTERX_USAGE_output"
+/>
+
+---
+
+## Function Categories
+
+RasterX exposes 87+ SQL functions (registered as `gbx_rst_*`; available in Python and Scala as `rst_*`), organized into the following categories (see [rasterx/functions.scala](https://github.com/databrickslabs/geobrix/blob/main/src/main/scala/com/databricks/labs/gbx/rasterx/functions.scala)):
+
+![RasterX function categories — Constructors, Accessors, Aggregators, Generators, Operations, H3 Grid](../../../resources/images/rasterx-function-categories.png)
+
 - **Accessor Functions**: Read raster properties and metadata (bounds, dimensions, CRS, bands, pixel size, georeference, format, type, NoData, subdatasets, summary, etc.)
 - **Aggregator Functions**: Combine or merge rasters in group-by (combineavg_agg, derivedband_agg, merge_agg)
 - **Constructor Functions**: Create or load rasters from paths, binary content, or bands
@@ -24,7 +129,7 @@ RasterX provides functions for working with raster (pixel) data in Spark—loadi
 - **Grid Functions (quadbin)**: Aggregate raster values to CARTO quadbin v0 cells (rastertogrid avg/count/max/min/median)
 - **Operations**: Transform and analyze rasters (clip, transform, merge, asformat, ndvi, filter, convolve, map algebra, coordinate conversion, isEmpty, tryOpen, initNoData, updateType, combineavg, derivedband)
 - **Web-Mercator Tile Output**: Reproject to EPSG:3857 and emit slippy-map XYZ tiles (to_webmercator, tilexyz, xyzpyramid)
-- **Vector↔raster bridge**: Burn polygons into rasters and trace contiguous regions back to polygons (rasterize, polygonize)
+- **Vector-raster bridge**: Burn polygons into rasters and trace contiguous regions back to polygons (rasterize, polygonize)
 - **Terrain Analysis**: DEM-derived surfaces from `gdal.DEMProcessing` (slope, aspect, hillshade, TRI, TPI, roughness, color relief)
 - **Spectral Indices**: Multi-band satellite math (EVI, SAVI, NDWI, NBR, plus the generic `rst_index` dispatcher)
 
@@ -817,7 +922,7 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 
 ## Pixel ops + extraction
 
-Per-pixel transformations and band-level extraction. See [Pixel ops + extraction](../packages/rasterx#pixel-ops--extraction) in the RasterX overview for the workflow context.
+Per-pixel transformations and band-level extraction.
 
 ### rst_band
 
@@ -897,5 +1002,5 @@ Higher-level analytical transforms wrapping single GDAL primitives — COG layou
 - [VectorX Function Reference](./vectorx-functions)
 - [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
-- [RasterX Package Documentation](../packages/rasterx)
+- [RasterX Readers](../readers/gdal)
 
