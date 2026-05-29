@@ -13,7 +13,7 @@ import org.scalatest.matchers.should.Matchers._
 class Custom_CoverageTest extends PlanTest with SilentSparkSession {
 
     // ------------------------------------------------------------------
-    // Grid: (0,100,0,100,2,10,10,32633) — 10x10 cells at resolution 0
+    // Grid: (0,100,0,100,2,10,10,32633) -- 10x10 cells at resolution 0
     // ------------------------------------------------------------------
     private val gridConf = GridConf(
         boundXMin     = 0L,
@@ -73,7 +73,7 @@ class Custom_CoverageTest extends PlanTest with SilentSparkSession {
     }
 
     // ------------------------------------------------------------------
-    // Custom_KRing: k=1 around cell (1,1) — all 9 interior cells of a
+    // Custom_KRing: k=1 around cell (1,1) -- all 9 interior cells of a
     //   10x10 grid produce a full 3x3 ring since no edge clamping fires.
     //   centerCell is the cell at grid position (1,1) via pointToCellID(15,15,0).
     // ------------------------------------------------------------------

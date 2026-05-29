@@ -10,7 +10,7 @@ import org.apache.spark.sql.types.{ArrayType, DataType, LongType}
 
 /** Catalyst expression: fills a geometry with custom-grid cell IDs at the given resolution.
   *
-  * Cell inclusion uses **centroid-containment** semantics — a cell is included if and only if
+  * Cell inclusion uses **centroid-containment** semantics -- a cell is included if and only if
   * its center point falls strictly inside (or on the boundary of) the input geometry,
   * as determined by JTS `Geometry.contains(centroid)`.
   *
