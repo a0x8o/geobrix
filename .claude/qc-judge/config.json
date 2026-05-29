@@ -26,6 +26,15 @@
       "cmd": "[ -f docs/scripts/check-doc-coverage.py ] || { echo 'absent; skip'; exit 0; }; python3 docs/scripts/check-doc-coverage.py",
       "expect_exit": 0,
       "timeout_seconds": 30
+    },
+    "diagram-coverage": {
+      "name": "RasterX diagram pills and count match the registered rst_ set",
+      "type": "command",
+      "severity": "warn",
+      "enabled": true,
+      "cmd": "[ -f docs/scripts/check-diagram-coverage.py ] || { echo 'absent; skip'; exit 0; }; python3 docs/scripts/check-diagram-coverage.py",
+      "expect_exit": 0,
+      "timeout_seconds": 30
     }
   }
 }
