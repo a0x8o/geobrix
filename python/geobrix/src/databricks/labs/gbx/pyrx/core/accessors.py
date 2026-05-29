@@ -3,6 +3,7 @@
 These contain ALL the raster logic; the Spark layer (functions.py) only wraps
 them in Arrow UDFs. Keeping them Spark-free makes them fast to unit test.
 """
+
 from typing import Dict, Optional
 
 from shapely import wkb as _wkb

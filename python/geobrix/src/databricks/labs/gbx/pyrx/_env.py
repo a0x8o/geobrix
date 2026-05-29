@@ -4,6 +4,7 @@ rasterio's manylinux/macOS wheels ship their own GDAL + PROJ data. We point
 GDAL_DATA / PROJ_DATA at those bundled paths *only if unset*, so pyrx does not
 collide with any cluster-level GDAL installed by the heavyweight init script.
 """
+
 import os
 from typing import Optional, Tuple
 

@@ -1,0 +1,53 @@
+from pyspark.sql import functions as f
+
+from databricks.labs.gbx.pyrx import functions as prx
+
+from .conftest import make_geotiff_bytes
+
+
+def _tile_df(spark, **kw):
+    """One-row DataFrame with a tile struct column named 'tile'."""
+    raster = make_geotiff_bytes(**kw)
+    df = spark.createDataFrame([(raster,)], ["raster"])
+    return df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+
+
+def test_no_jar_in_session(spark):
+    # Guardrail: pyrx must work without the GeoBrix JAR.
+    assert not spark.conf.get("spark.jars", "")
+
+
+def test_rst_width_height(spark):
+    df = _tile_df(spark, width=4, height=3)
+    row = df.select(
+        prx.rst_width("tile").alias("w"),
+        prx.rst_height("tile").alias("h"),
+    ).first()
+    assert row["w"] == 4
+    assert row["h"] == 3
+
+
+def test_rst_srid(spark):
+    df = _tile_df(spark, epsg=4326)
+    assert df.select(prx.rst_srid("tile").alias("s")).first()["s"] == 4326
+
+
+def test_rst_rastertoworldcoordx(spark):
+    df = _tile_df(spark)
+    row = df.select(
+        prx.rst_rastertoworldcoordx("tile", f.lit(0), f.lit(0)).alias("x")
+    ).first()
+    assert row["x"] == 10.25
+
+
+def test_rst_worldtorastercoordx(spark):
+    df = _tile_df(spark)
+    row = df.select(
+        prx.rst_worldtorastercoordx("tile", f.lit(10.6), f.lit(49.9)).alias("c")
+    ).first()
+    assert row["c"] == 1
+
+
+def test_register_is_noop(spark):
+    # swap-compat: rx.register(spark) -> prx.register(spark) must not error.
+    prx.register(spark)

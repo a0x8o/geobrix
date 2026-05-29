@@ -4,6 +4,7 @@ The Spark fixture deliberately creates a plain session with NO spark.jars —
 pyrx is the lightweight, JAR-free API. If this fixture ever needs the JAR,
 something is wrong with the layering.
 """
+
 import logging
 import os
 

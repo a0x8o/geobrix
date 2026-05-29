@@ -4,6 +4,7 @@ The tile struct mirrors the heavyweight rasterx tile exactly:
     struct<cellid: bigint, raster: binary, metadata: map<string,string>>
 pyrx always uses the BINARY raster variant (never executor-only file paths).
 """
+
 from contextlib import contextmanager
 from typing import Dict, Iterator
 
