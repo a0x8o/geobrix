@@ -2,7 +2,7 @@ package com.databricks.labs.gbx.rasterx
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
-import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_MergeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_MergeAgg, RST_RasterizeAgg}
 import com.databricks.labs.gbx.rasterx.expressions.analysis._
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
 import com.databricks.labs.gbx.rasterx.expressions.dem._
@@ -78,7 +78,9 @@ object functions extends Serializable {
         rd.register(RST_CombineAvgAgg)
         rd.register(RST_DerivedBandAgg)
         rd.register(RST_DTMFromGeomsAgg)
+        rd.register(RST_FromBandsAgg)
         rd.register(RST_MergeAgg)
+        rd.register(RST_RasterizeAgg)
 
         // Constructors
         rd.register(RST_FromBands)

@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.gridx.quadbin
 
 import com.databricks.labs.gbx.expressions.RegistryDelegate
+import com.databricks.labs.gbx.gridx.quadbin.agg.Quadbin_CellUnionAgg
 import org.apache.spark.sql.adapters.{Column => ColumnAdapter}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.{Column, SparkSession}
@@ -31,6 +32,7 @@ object functions extends Serializable {
         rd.register(Quadbin_KRing)
         rd.register(Quadbin_Tessellate)
         rd.register(Quadbin_CellUnion)
+        rd.register(Quadbin_CellUnionAgg)
         rd.register(Quadbin_Distance)
 
         sc.getConf.set(flag, "true")
