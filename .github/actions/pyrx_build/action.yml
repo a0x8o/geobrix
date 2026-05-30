@@ -32,20 +32,22 @@ runs:
         python-version: ${{ inputs.python_version }}
     - name: Authenticate for JFrog (pip via OIDC)
       uses: ./.github/actions/jfrog-auth
-    - name: Install pyrx (lightweight extra, no JAR / no apt GDAL)
+    - name: Install pyrx deps (hash-pinned) + package
       shell: bash
       run: |
+        # Bootstrap pip itself to a known version before --require-hashes.
         pip install --upgrade pip==25.0.1
-        # build backend for the wheel build below.
-        pip install build==1.4.4
-        # Install the in-repo package with the pyrx + test extras. This pulls the
-        # rasterio binary wheel (bundled GDAL), shapely, numpy, pyarrow, pytest,
-        # and pyspark — all from the JFrog db-pypi mirror. No native GDAL, no JAR.
-        # NOTE (pre-main hardening): convert this to a --require-hashes lock
-        # (python/geobrix/requirements-pyrx-ci.txt via `uv pip compile`) before
-        # this job gates merges into main, to match scala_build/python_build.
-        pip install "./python/geobrix[pyrx,test]"
-        python -c "import rasterio, pyarrow, shapely; print('rasterio', rasterio.__version__, 'gdal', rasterio.__gdal_version__, 'pyarrow', pyarrow.__version__)"
+        # Hash-pinned supply chain (matches requirements-ci.txt / dev-container
+        # discipline; see docs/docs/security.mdx): every wheel is sha256-verified,
+        # so a compromised mirror serving same-version-different-bytes fails closed.
+        # Regenerate via: uv pip compile --generate-hashes python/geobrix/requirements-pyrx-ci.in
+        # No GDAL exception here — rasterio's bundled-GDAL binary wheel is pinned
+        # in the lock too (the lightweight API installs no native GDAL, no JAR).
+        pip install --require-hashes -r python/geobrix/requirements-pyrx-ci.txt
+        # Install the in-repo package itself with --no-deps; every dependency is
+        # already in the hash-pinned closure above.
+        pip install --no-deps python/geobrix
+        python -c "import rasterio, pyarrow, pandas, shapely; print('rasterio', rasterio.__version__, 'gdal', rasterio.__gdal_version__, 'pyarrow', pyarrow.__version__, 'pandas', pandas.__version__)"
     - name: Build lightweight wheel
       shell: bash
       run: |

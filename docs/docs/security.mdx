@@ -57,12 +57,17 @@ serving a same-version-but-different-bytes wheel fails closed.
 | Path | Lockfile |
 |---|---|
 | CI (Scala + Python build) | [`python/geobrix/requirements-ci.txt`](https://github.com/databrickslabs/geobrix/blob/main/python/geobrix/requirements-ci.txt) |
+| CI (lightweight pyrx build) | [`python/geobrix/requirements-pyrx-ci.txt`](https://github.com/databrickslabs/geobrix/blob/main/python/geobrix/requirements-pyrx-ci.txt) |
 | Dev container | [`python/geobrix/requirements-dev-container.txt`](https://github.com/databrickslabs/geobrix/blob/main/python/geobrix/requirements-dev-container.txt) |
 | Notebook test harness | [`notebooks/tests/requirements.txt`](https://github.com/databrickslabs/geobrix/blob/main/notebooks/tests/requirements.txt) |
 
-GDAL is the documented exception: its Python wheel must match the GDAL native
-version installed on the host, so it is installed separately against the
-detected version. The native side is pinned via the init script (see below).
+GDAL is the documented exception **for the heavyweight build**: its Python
+wheel must match the GDAL native version installed on the host, so it is
+installed separately against the detected version. The native side is pinned
+via the init script (see below). The lightweight `pyrx` build path has no such
+exception — it uses rasterio's bundled-GDAL binary wheel, which is hash-pinned
+in `requirements-pyrx-ci.txt` like every other dependency (no native GDAL, no
+JAR).
 
 ### Pinned GDAL native + multi-layer trust chain
 
