@@ -112,3 +112,29 @@ def test_rst_resample_to_res(spark):
         prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
     ).first()
     assert (row["w"], row["h"]) == (8, 6)
+
+
+def test_rst_clip(spark):
+    import shapely.wkb
+    from shapely.geometry import box
+
+    geom = shapely.wkb.dumps(box(10.5, 49.0, 11.5, 49.5))
+    df = _tile_df(spark, width=4, height=3, epsg=4326)
+    df = df.withColumn("g", f.lit(geom))
+    out = df.select(prx.rst_clip("tile", "g", False).alias("t"))
+    row = out.select(
+        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+    ).first()
+    assert 0 < row["w"] < 4 and 0 < row["h"] < 3
+
+
+def test_rst_updatetype(spark):
+    df = _tile_df(spark, width=4, height=3)
+    out = df.select(prx.rst_updatetype("tile", f.lit("Int32")).alias("t"))
+    assert out.select(prx.rst_type("t").alias("ty")).first()["ty"][0] == "Int32"
+
+
+def test_rst_initnodata(spark):
+    df = _tile_df(spark, nodata=None)
+    out = df.select(prx.rst_initnodata("tile").alias("t"))
+    assert out.select(prx.rst_getnodata("t").alias("nd")).first()["nd"][0] == -9999.0

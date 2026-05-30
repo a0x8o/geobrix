@@ -5,10 +5,22 @@ them in Arrow UDFs. Keeping them Spark-free makes them fast to unit test.
 """
 
 import math
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from shapely import wkb as _wkb
 from shapely.geometry import box
+
+# Rasterio/numpy dtype string -> GDAL data-type name (mirrors heavyweight rst_type).
+_NP_TO_GDAL = {
+    "uint8": "Byte",
+    "int8": "Int8",
+    "uint16": "UInt16",
+    "int16": "Int16",
+    "uint32": "UInt32",
+    "int32": "Int32",
+    "float32": "Float32",
+    "float64": "Float64",
+}
 
 
 def width(ds) -> int:
@@ -78,3 +90,16 @@ def scaley(ds) -> float:
 
 def isempty(ds) -> bool:
     return int(ds.width) == 0 or int(ds.height) == 0 or int(ds.count) == 0
+
+
+def type(ds) -> List[str]:
+    """Return the GDAL data-type name per band (e.g. ['Float32', 'Float32'])."""
+    return [_NP_TO_GDAL.get(str(dt), str(dt)) for dt in ds.dtypes]
+
+
+def getnodata(ds) -> Optional[List[float]]:
+    """Return the NoData value per band as a list of doubles, or None if not set."""
+    nd = ds.nodata
+    if nd is None:
+        return None
+    return [float(nd)] * ds.count

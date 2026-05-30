@@ -8,6 +8,7 @@ Swap-compatible with ``databricks.labs.gbx.rasterx.functions``:
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
 from pyspark.sql.types import (
+    ArrayType,
     BinaryType,
     BooleanType,
     DoubleType,
@@ -24,7 +25,7 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import accessors, coords, resample, warp
+from databricks.labs.gbx.pyrx.core import accessors, coords, edit, resample, warp
 
 
 def register(_spark: SparkSession = None) -> None:
@@ -49,6 +50,8 @@ _u_boundingbox = tile_scalar_udf(accessors.boundingbox, BinaryType())
 _u_scalex = tile_scalar_udf(accessors.scalex, DoubleType())
 _u_scaley = tile_scalar_udf(accessors.scaley, DoubleType())
 _u_isempty = tile_scalar_udf(accessors.isempty, BooleanType())
+_u_type = tile_scalar_udf(accessors.type, ArrayType(StringType()))
+_u_getnodata = tile_scalar_udf(accessors.getnodata, ArrayType(DoubleType()))
 
 
 # metadata: pandas_udf rejects MapType in some Arrow builds; fall back to
@@ -201,6 +204,58 @@ def rst_resample_to_res(
     return _resample_to_res_udf(_col(tile), _col(x_res), _col(y_res), alg)
 
 
+# --- Tier 1d: tile-returning edit UDFs -------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _clip_udf(tile, geom_wkb, all_touched):
+    if tile is None or tile["raster"] is None or geom_wkb is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.clip_to_geom(ds, bytes(geom_wkb), bool(all_touched))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _update_type_udf(tile, new_type):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.update_type(ds, str(new_type))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _init_nodata_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.init_nodata(ds)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_clip(tile: ColLike, clip: ColLike, cutline_all_touched: ColLike) -> Column:
+    """Clip the raster to a geometry (WKB). cutline_all_touched includes pixels touched by the boundary."""
+    return _clip_udf(_col(tile), _col(clip), _col(cutline_all_touched))
+
+
+def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
+    """Cast all raster bands to a new GDAL data type (e.g. 'Int32', 'Float64')."""
+    return _update_type_udf(_col(tile), _col(new_type))
+
+
+def rst_initnodata(tile: ColLike) -> Column:
+    """Ensure a NoData value is set on the raster tile; uses -9999.0 if not already set."""
+    return _init_nodata_udf(_col(tile))
+
+
 # --- Tier 0: accessors ------------------------------------------------------
 def rst_width(tile: ColLike) -> Column:
     return _u_width(_raster_field(_col(tile)))
@@ -252,6 +307,16 @@ def rst_scaley(tile: ColLike) -> Column:
 
 def rst_isempty(tile: ColLike) -> Column:
     return _u_isempty(_raster_field(_col(tile)))
+
+
+def rst_type(tile: ColLike) -> Column:
+    """Return the GDAL data-type name per band (e.g. ['Float32', 'Float32'])."""
+    return _u_type(_raster_field(_col(tile)))
+
+
+def rst_getnodata(tile: ColLike) -> Column:
+    """Return the NoData value per band as an array of doubles, or null if not set."""
+    return _u_getnodata(_raster_field(_col(tile)))
 
 
 # --- Tier 1: coordinate transforms -----------------------------------------
