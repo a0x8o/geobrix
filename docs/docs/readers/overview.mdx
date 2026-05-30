@@ -2,9 +2,17 @@
 sidebar_position: 1
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Readers Overview
 
-GeoBrix provides Spark readers for geospatial file formats. Readers are automatically registered when the GeoBrix JAR is on the classpath.
+GeoBrix provides Spark readers for geospatial file formats.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+Heavyweight readers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and OGR (vector). They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed.
 
 ## Available Readers
 
@@ -172,3 +180,23 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 - [GeoJSON Reader](./geojson) - Named GeoJSON reader
 - [GeoPackage Reader](./geopackage) - Named GeoPackage reader
 - [FileGDB Reader](./filegdb) - Named File Geodatabase reader
+
+</TabItem>
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier ingests rasters today with Spark's built-in `binaryFile` reader plus `rx.rst_fromcontent`:
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+
+df = (spark.read.format("binaryFile").load("/Volumes/.../*.tif")
+        .selectExpr("content")
+        .select(rx.rst_fromcontent("content", "GTiff").alias("tile")))
+```
+
+This approach requires no JAR and no init script — only the `geobrix` Python package installed in the cluster environment.
+
+Dedicated `*_pyrx` readers — e.g. `spark.read.format("gtiff_pyrx")` — built on the [PySpark Python Data Source API](https://spark.apache.org/docs/latest/api/python/tutorial/sql/python_data_source.html) (no JAR, no init script) are planned for a future release.
+
+</TabItem>
+</Tabs>

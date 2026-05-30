@@ -2,9 +2,17 @@
 sidebar_position: 1
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Writers Overview
 
-GeoBrix ships two writers: `gdal` for individual rasters and `pmtiles` for tile-pyramid archives. Both are registered automatically whenever the GeoBrix JAR is on the classpath. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
+GeoBrix provides Spark writers for geospatial file formats.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+Heavyweight writers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and a native Scala PMTiles encoder. They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
 
 ## Available Writers
 
@@ -31,3 +39,30 @@ GeoBrix ships two writers: `gdal` for individual rasters and `pmtiles` for tile-
 - [GDAL Writer](./gdal) — full details, options, and examples for raster output.
 - [PMTiles Writer](./pmtiles) — full details, options, and examples for tile-pyramid output.
 - [Readers Overview](../readers/overview) — the corresponding read paths.
+
+</TabItem>
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier does not yet ship dedicated `*_pyrx` writers. Today, lightweight raster write workflows use standard `rasterio` round-trips: read tiles from a DataFrame, write each tile's bytes to a file using `rasterio`, and optionally copy the result to a Unity Catalog Volume path.
+
+```python
+import rasterio
+import io
+from pathlib import Path
+
+# Example: write tile bytes back to GeoTIFF via rasterio
+for row in df.toLocalIterator():
+    tile_bytes = row.tile.raster
+    with rasterio.open(io.BytesIO(tile_bytes)) as src:
+        profile = src.profile
+        data = src.read()
+
+    out_path = Path("/Volumes/catalog/schema/volume/output.tif")
+    with rasterio.open(out_path, "w", **profile) as dst:
+        dst.write(data)
+```
+
+Dedicated `*_pyrx` writers — e.g. `spark.write.format("gtiff_pyrx")` — built on the [PySpark Python Data Source API](https://spark.apache.org/docs/latest/api/python/tutorial/sql/python_data_source.html) (no JAR, no init script) are planned for a future release.
+
+</TabItem>
+</Tabs>
