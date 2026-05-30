@@ -34,6 +34,7 @@ from databricks.labs.gbx.pyrx.core import (
     coords,
     edit,
     features,
+    indices,
     resample,
     warp,
 )
@@ -282,6 +283,126 @@ def rst_initnodata(tile: ColLike) -> Column:
     return _init_nodata_udf(_col(tile))
 
 
+# --- Tier 1d2: spectral index UDFs -----------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _ndvi_udf(tile, red_band, nir_band):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.ndvi(ds, int(red_band), int(nir_band))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _ndwi_udf(tile, green_idx, nir_idx):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.ndwi(ds, int(green_idx), int(nir_idx))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _nbr_udf(tile, nir_idx, swir_idx):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.nbr(ds, int(nir_idx), int(swir_idx))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _savi_udf(tile, red_idx, nir_idx, l_val):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.savi(ds, int(red_idx), int(nir_idx), l=float(l_val))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _evi_udf(tile, red_idx, nir_idx, blue_idx, l_val, c1, c2, g):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.evi(
+            ds,
+            int(red_idx),
+            int(nir_idx),
+            int(blue_idx),
+            l=float(l_val),
+            c1=float(c1),
+            c2=float(c2),
+            g=float(g),
+        )
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_ndvi(tile: ColLike, red_band: ColLike, nir_band: ColLike) -> Column:
+    """Compute NDVI = (NIR - Red) / (NIR + Red); single-band Float32 tile."""
+    return _ndvi_udf(_col(tile), _col(red_band), _col(nir_band))
+
+
+def rst_ndwi(tile: ColLike, green_idx: ColLike, nir_idx: ColLike) -> Column:
+    """Compute NDWI = (Green - NIR) / (Green + NIR); single-band Float32 tile."""
+    return _ndwi_udf(_col(tile), _col(green_idx), _col(nir_idx))
+
+
+def rst_nbr(tile: ColLike, nir_idx: ColLike, swir_idx: ColLike) -> Column:
+    """Compute NBR = (NIR - SWIR) / (NIR + SWIR); single-band Float32 tile."""
+    return _nbr_udf(_col(tile), _col(nir_idx), _col(swir_idx))
+
+
+def rst_savi(
+    tile: ColLike, red_idx: ColLike, nir_idx: ColLike, l: ColLike = 0.5  # noqa: E741
+) -> Column:
+    """Compute SAVI = (NIR - Red) / (NIR + Red + L) * (1 + L); single-band Float32 tile."""
+    l_col = f.lit(l) if isinstance(l, (int, float)) else _col(l)
+    return _savi_udf(_col(tile), _col(red_idx), _col(nir_idx), l_col)
+
+
+def rst_evi(  # noqa: E741
+    tile: ColLike,
+    red_idx: ColLike,
+    nir_idx: ColLike,
+    blue_idx: ColLike,
+    l: ColLike = 1.0,
+    c1: ColLike = 6.0,
+    c2: ColLike = 7.5,
+    g: ColLike = 2.5,
+) -> Column:
+    """Compute EVI = G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L); single-band Float32 tile."""
+    l_col = f.lit(l) if isinstance(l, (int, float)) else _col(l)
+    c1_col = f.lit(c1) if isinstance(c1, (int, float)) else _col(c1)
+    c2_col = f.lit(c2) if isinstance(c2, (int, float)) else _col(c2)
+    g_col = f.lit(g) if isinstance(g, (int, float)) else _col(g)
+    return _evi_udf(
+        _col(tile),
+        _col(red_idx),
+        _col(nir_idx),
+        _col(blue_idx),
+        l_col,
+        c1_col,
+        c2_col,
+        g_col,
+    )
+
+
 # --- Tier 1e: constructor + fill UDFs (vector bridge) -----------------------
 @f.udf(_serde.TILE_SCHEMA)
 def _rasterize_udf(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid):
@@ -520,6 +641,11 @@ _sql_tile_ops = {
     "gbx_rst_fillnodata": _fillnodata_udf,
     "gbx_rst_rasterize": _rasterize_udf,
     "gbx_rst_polygonize": _polygonize_udf,
+    "gbx_rst_ndvi": _ndvi_udf,
+    "gbx_rst_ndwi": _ndwi_udf,
+    "gbx_rst_nbr": _nbr_udf,
+    "gbx_rst_savi": _savi_udf,
+    "gbx_rst_evi": _evi_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}

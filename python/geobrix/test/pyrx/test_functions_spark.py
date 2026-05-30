@@ -193,6 +193,28 @@ def test_rst_fillnodata(spark):
     assert row["nd"] is not None
 
 
+def test_rst_ndvi(spark):
+    df = _tile_df(spark, width=4, height=3, count=2)
+    out = df.select(prx.rst_ndvi("tile", 1, 2).alias("t"))
+    row = out.select(
+        prx.rst_numbands("t").alias("n"), prx.rst_type("t").alias("ty")
+    ).first()
+    assert row["n"] == 1
+    assert row["ty"][0] == "Float32"
+
+
+def test_rst_evi_savi_ndwi_nbr_single_band(spark):
+    df = _tile_df(spark, width=4, height=3, count=3)
+    for col in (
+        prx.rst_evi("tile", 1, 2, 3),
+        prx.rst_savi("tile", 1, 2),
+        prx.rst_ndwi("tile", 1, 2),
+        prx.rst_nbr("tile", 2, 1),
+    ):
+        n = df.select(prx.rst_numbands(col).alias("n")).first()["n"]
+        assert n == 1
+
+
 def test_rst_polygonize(spark):
     import numpy as np
     from rasterio.io import MemoryFile
