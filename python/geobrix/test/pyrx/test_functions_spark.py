@@ -484,3 +484,31 @@ def test_rst_derivedband(spark):
         prx.rst_derivedband("tile", f.lit(pyfunc), f.lit("double")).alias("t")
     )
     assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+
+
+def test_rst_maketiles(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.arange(100 * 100, dtype="float32").reshape(100, 100)
+    profile = dict(
+        driver="GTiff",
+        width=100,
+        height=100,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(0, 100, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    parts = df.select(f.explode(prx.rst_maketiles("tile", 0.01)).alias("t"))
+    assert parts.count() > 1
+    assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1

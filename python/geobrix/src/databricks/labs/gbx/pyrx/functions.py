@@ -693,6 +693,29 @@ def rst_tooverlappingtiles(
     )
 
 
+@f.udf(ArrayType(_serde.TILE_SCHEMA))
+def _maketiles_udf(tile, size_in_mb):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        parts = tiling.make_tiles(ds, float(size_in_mb))
+    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+
+
+def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
+    """Split a raster into an array of tiles of approximately size_in_mb each.
+
+    Derives a square tile side from the target MB budget and the raster's
+    bytes-per-pixel, then partitions the raster into non-overlapping sub-tiles.
+    Returns ARRAY<tile struct>; explode the result to get one row per sub-tile.
+    Each output tile carries the correct windowed transform and CRS.
+    """
+    return _maketiles_udf(_col(tile), _col(size_in_mb))
+
+
 # --- Tier 1f: terrain UDFs (slope, aspect, hillshade) ----------------------
 @f.udf(_serde.TILE_SCHEMA)
 def _slope_udf(tile, unit, scale):
@@ -1116,6 +1139,7 @@ _sql_tile_ops = {
     "gbx_rst_separatebands": _separatebands_udf,
     "gbx_rst_retile": _retile_udf,
     "gbx_rst_tooverlappingtiles": _tooverlappingtiles_udf,
+    "gbx_rst_maketiles": _maketiles_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
