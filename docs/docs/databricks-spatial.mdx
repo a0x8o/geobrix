@@ -194,4 +194,4 @@ H3 expressions require Photon-enabled clusters or Databricks SQL (Pro/Serverless
 
 - **Readers:** Use [GeoBrix readers](/docs/readers/overview) (GDAL, GeoJSON, Shapefile, etc.) to load vector/raster data; then use `st_geomfromwkb(geom_0)` or similar to get Databricks `GEOMETRY`/`GEOGRAPHY` for ST or H3.
 - **GridX (BNG):** For British National Grid, use [GridX BNG functions](/docs/api/gridx-functions) (e.g. `bng_polyfill`, `bng_tessellate`). For a global hex grid, use Databricks H3.
-- **RasterX:** Use [RasterX](/docs/api/rasterx-functions) for raster I/O and operations; combine with ST/H3 for zonal stats or grid aggregation in SQL.
+- **RasterX:** Use [Raster Functions](/docs/api/raster-functions) for raster I/O and operations; combine with ST/H3 for zonal stats or grid aggregation in SQL.

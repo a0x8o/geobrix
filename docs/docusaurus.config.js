@@ -153,8 +153,8 @@ const config = {
             title: 'Functions',
             items: [
               {
-                label: 'RasterX',
-                to: '/docs/api/rasterx-functions',
+                label: 'Raster Functions',
+                to: '/docs/api/raster-functions',
               },
               {
                 label: 'GridX',

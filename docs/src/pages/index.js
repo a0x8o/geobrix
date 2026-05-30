@@ -48,7 +48,7 @@ function HomepageFeatures() {
           <Feature
             title="RasterX"
             description="Process satellite imagery, elevation models, and gridded spatial data with GDAL-powered functions."
-            link="/docs/api/rasterx-functions"
+            link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
