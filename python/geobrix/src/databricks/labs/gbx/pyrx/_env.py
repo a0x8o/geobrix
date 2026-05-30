@@ -10,11 +10,18 @@ from typing import Optional, Tuple
 
 
 def _bundled_gdal_data() -> Optional[str]:
-    """Return rasterio's bundled GDAL data dir, or None."""
-    try:
-        from rasterio._env import get_gdal_data
+    """Return rasterio's bundled GDAL data dir, or None.
 
-        path = get_gdal_data()
+    Use GDALDataFinder().search() (a deterministic filesystem search) rather than
+    get_gdal_data(), which reflects GDAL's *runtime* config state — that returns
+    None once another component has initialized/torn down GDAL in the same
+    process, so it is unreliable when many rasters are opened across a session.
+    This mirrors the PROJDataFinder().search() approach used for PROJ.
+    """
+    try:
+        from rasterio._env import GDALDataFinder
+
+        path = GDALDataFinder().search()
         return path if path and os.path.isdir(path) else None
     except Exception:
         return None
