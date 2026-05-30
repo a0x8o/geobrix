@@ -14,7 +14,7 @@ import rasterxScalaCode from '!!raw-loader!../../tests/scala/packages/RasterxPac
 
 # RasterX Function Reference
 
-RasterX functions run in two execution tiers. Most are available in both the **lightweight** (pure-Python `pyrx`) and **heavyweight** (`rasterx`) tiers (badged per function below); some are heavyweight-only. See [Choosing an Execution Tier](./execution-tiers) for the comparison and the lightweight install.
+RasterX functions run in two execution tiers — **lightweight** (pure-Python `pyrx`) and **heavyweight** (`rasterx`). As of v0.4.0, **every RasterX function is available in both tiers** (badged `<Tier both/>` per function below); per-function notes call out where the lightweight implementation differs. See [Choosing an Execution Tier](./execution-tiers) for the comparison and the lightweight install.
 
 ![RasterX](../../../resources/images/RasterX.png)
 
@@ -152,9 +152,9 @@ metadata_df.show()
 Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages. In the lightweight tier, the registered `gbx_rst_*` SQL functions require every argument to be passed explicitly — optional defaults are honored only through the Python `prx.*` API.
 :::
 
-## Heavyweight-only functions
+## Tier availability
 
-A number of RasterX functions are available only in the heavyweight (`rasterx`) tier. See **[Heavyweight-Only RasterX Functions](./raster-functions-heavyweight)** for the categorized list and for the VRT Python pixel-function configuration details. (The functions below are also listed in long-form on this page, badged <Tier heavy/>.)
+As of v0.4.0, **all RasterX functions run in both execution tiers** — the lightweight `pyrx` (pure-Python) and heavyweight `rasterx` tiers share the same `rst_*` / `gbx_rst_*` names, and each function below carries a `:::note Lightweight tier (pyrx)` admonition with its backing library and any behavioral differences. For the heavyweight VRT Python pixel-function configuration (used by `gbx_rst_combineavg` / `gbx_rst_derivedband`), see **[VRT Python Pixel Functions](./raster-functions-heavyweight)**.
 
 ## Accessor Functions
 
@@ -1697,7 +1697,11 @@ Powered by **SciPy** (`scipy.ndimage.distance_transform_edt`). Distance to the n
 
 ### rst_contour
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **scikit-image** (`measure.find_contours`). Returns `ARRAY<struct(geom_wkb, value)>` of contour LineStrings (in the raster CRS) at each fixed `level`, or at `base + k*interval` across the data range when `levels` is empty; NoData is masked before tracing. The marching-squares line geometry differs slightly from the heavyweight GDAL contours.
+:::
 
 **Signature:** `rst_contour(tile: Column, levels: Column, [interval: Column = lit(0.0), base: Column = lit(0.0), attrField: Column = lit("elev")]): Column` — Generate contour LineString features via `gdal.ContourGenerateEx`. Pass a non-empty `levels` `ARRAY<DOUBLE>` for fixed contour values, or pass `array()` and set `interval` (>0) for equal-step contours at `base + n*interval`. Returns `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` — one entry per contour line in the source raster's CRS.
 
@@ -1705,7 +1709,11 @@ Powered by **SciPy** (`scipy.ndimage.distance_transform_edt`). Distance to the n
 
 ### rst_viewshed
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **xarray-spatial** (`xrspatial.viewshed`). Returns a Byte tile (255 visible / 0 invisible) from a DEM tile and a POINT observer. The CPU line-of-sight scan differs from the heavyweight GDAL sweep (no earth-curvature correction), but the binary visible/invisible classification matches. Pulls `numba` — the heaviest pyrx dependency.
+:::
 
 **Signature:** `rst_viewshed(tile: Column, observerGeom: Column, observerHeight: Column, [targetHeight: Column = lit(1.6), maxDistance: Column = null]): Column` — Compute a binary viewshed Byte raster (`255` = visible, `0` = invisible / out-of-range) from a DEM tile and an observer POINT via `gdal.ViewshedGenerate`. `observerGeom` is WKB / WKT POINT in the raster's CRS; non-POINT geometries raise an error at execution time. Heights are above the DEM at each pixel. `maxDistance` clips the search radius; `null` = unlimited.
 

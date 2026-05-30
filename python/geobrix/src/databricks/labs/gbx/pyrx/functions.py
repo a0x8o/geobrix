@@ -689,6 +689,60 @@ def _proximity_udf(tile, target_values, distunits, max_distance):
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
+# rst_contour: tile + levels (ARRAY<DOUBLE>) + interval/base/attr_field ->
+# ARRAY<struct(geom_wkb BINARY, value DOUBLE)> (mirrors _polygonize_udf shape).
+_CONTOUR_SCHEMA = ArrayType(
+    StructType(
+        [
+            StructField("geom_wkb", BinaryType(), nullable=False),
+            StructField("value", DoubleType(), nullable=False),
+        ]
+    )
+)
+
+
+@f.udf(_CONTOUR_SCHEMA)
+def _contour_udf(tile, levels, interval, base, attr_field):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    lvls = [] if levels is None else [float(v) for v in levels if v is not None]
+    iv = 0.0 if interval is None else float(interval)
+    bs = 0.0 if base is None else float(base)
+    attr = "elev" if attr_field is None else str(attr_field)
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return analysis_core.contour(ds, lvls, iv, bs, attr)
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _viewshed_udf(tile, observer_geom, observer_height, target_height, max_distance):
+    if tile is None or tile["raster"] is None or observer_geom is None:
+        return None
+    import shapely.wkb
+    import shapely.wkt
+
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    # observer_geom may be WKB (binary) or WKT (string); require a POINT.
+    if isinstance(observer_geom, (bytes, bytearray)):
+        geom = shapely.wkb.loads(bytes(observer_geom))
+    else:
+        geom = shapely.wkt.loads(str(observer_geom))
+    if geom.geom_type != "Point":
+        raise ValueError(
+            f"rst_viewshed requires a POINT observer_geom; got {geom.geom_type}"
+        )
+    oh = 0.0 if observer_height is None else float(observer_height)
+    th = 0.0 if target_height is None else float(target_height)
+    md = None if max_distance is None else float(max_distance)
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = analysis_core.viewshed(ds, geom.x, geom.y, oh, th, md)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
 @f.udf(_serde.TILE_SCHEMA)
 def _cog_convert_udf(tile, compression, blocksize, overview_resampling):
     if tile is None or tile["raster"] is None:
@@ -884,6 +938,94 @@ def rst_cog_convert(
         )
     )
     return _cog_convert_udf(_col(tile), comp_col, bs_col, resamp_col)
+
+
+def rst_contour(
+    tile: ColLike,
+    levels: ColLike,
+    interval: ColLike = 0.0,
+    base: ColLike = 0.0,
+    attr_field: ColLike = "elev",
+) -> Column:
+    """Generate contour lines from a raster as ``(geom_wkb, value)`` features.
+
+    Mirrors the heavyweight ``gbx_rst_contour`` (GDAL ContourGenerateEx),
+    implemented with ``skimage.measure.find_contours``.
+
+    Args:
+        tile:       Tile struct column.
+        levels:     ARRAY<DOUBLE> of explicit contour values (e.g.
+                    ``f.array(f.lit(10.0), f.lit(20.0))``). Pass an empty array
+                    (``f.array().cast("array<double>")``) to use ``interval``.
+        interval:   Equal-interval step; used only when ``levels`` is empty
+                    (must then be > 0). Defaults to 0.0.
+        base:       Contour base value for the interval mode. Defaults to 0.0.
+        attr_field: Value-field label (parity-only; the struct field is always
+                    ``value``). Defaults to "elev".
+
+    Returns:
+        ARRAY<struct(geom_wkb BINARY, value DOUBLE)> — one LineString per
+        contour, in the raster's CRS.
+    """
+    iv = (
+        f.lit(float(interval)) if isinstance(interval, (int, float)) else _col(interval)
+    )
+    bs = f.lit(float(base)) if isinstance(base, (int, float)) else _col(base)
+    attr = f.lit(attr_field) if isinstance(attr_field, str) else _col(attr_field)
+    return _contour_udf(_col(tile), _col(levels), iv, bs, attr)
+
+
+def rst_viewshed(
+    tile: ColLike,
+    observer_geom: ColLike,
+    observer_height: ColLike = 0.0,
+    target_height: ColLike = 1.6,
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a binary viewshed (255 visible / 0 invisible) from a DEM tile.
+
+    Mirrors the heavyweight ``gbx_rst_viewshed`` (GDAL ViewshedGenerate),
+    implemented with ``xrspatial.viewshed``.
+
+    Args:
+        tile:            Tile struct column (the DEM).
+        observer_geom:   POINT observer location in the raster's CRS, as WKB
+                         (BINARY) or WKT (STRING). Non-POINT geometries raise.
+        observer_height: Observer height above the DEM (>= 0). Defaults to 0.0.
+        target_height:   Target height above the DEM at each tested cell (>= 0).
+                         Defaults to 0.0.
+        max_distance:    Optional analysis-distance cap in CRS ground units
+                         (> 0). ``None`` = unlimited.
+
+    Returns:
+        Single-band uint8 (Byte) tile struct: 255 = visible, 0 = invisible.
+
+    PARITY DIVERGENCE: the visibility front-end is xarray-spatial's CPU
+    line-of-sight scan (vertical-angle grid thresholded to a binary mask),
+    not GDAL's GVM_Edge sweep with earth-curvature correction — the binary
+    visible/invisible classification matches but exact edge cells near grazing
+    angles or with curvature can differ.
+    """
+    oh = (
+        f.lit(float(observer_height))
+        if isinstance(observer_height, (int, float))
+        else _col(observer_height)
+    )
+    th = (
+        f.lit(float(target_height))
+        if isinstance(target_height, (int, float))
+        else _col(target_height)
+    )
+    md = (
+        f.lit(None).cast(DoubleType())
+        if max_distance is None
+        else (
+            f.lit(float(max_distance))
+            if isinstance(max_distance, (int, float))
+            else _col(max_distance)
+        )
+    )
+    return _viewshed_udf(_col(tile), _col(observer_geom), oh, th, md)
 
 
 def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
@@ -2931,6 +3073,8 @@ _sql_tile_ops = {
     "gbx_rst_buildoverviews": _buildoverviews_udf,
     "gbx_rst_sample": _sample_udf,
     "gbx_rst_proximity": _proximity_udf,
+    "gbx_rst_contour": _contour_udf,
+    "gbx_rst_viewshed": _viewshed_udf,
     "gbx_rst_cog_convert": _cog_convert_udf,
     "gbx_rst_fillnodata": _fillnodata_udf,
     "gbx_rst_rasterize": _rasterize_udf,

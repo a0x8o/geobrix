@@ -631,3 +631,74 @@ def test_register_enables_cog_convert_sql(spark):
         "SELECT gbx_rst_numbands(gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE')) AS n FROM t"
     ).first()["n"]
     assert n == 1
+
+
+def test_register_enables_contour_sql(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    prx.register(spark)
+    band = np.tile(np.arange(6, dtype="float64"), (5, 1))
+    profile = dict(
+        driver="GTiff",
+        width=6,
+        height=5,
+        count=1,
+        dtype="float64",
+        crs="EPSG:32633",
+        transform=from_origin(100.0, 50.0, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(band, 1)
+        raster = mf.read()
+    df = spark.createDataFrame([(raster,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView("c")
+    # Explode the ARRAY<struct(geom_wkb, value)> and count contours at level 2.5.
+    # SQL-registered UDFs take fixed arity (no Python defaults): pass all 5 args.
+    n = spark.sql(
+        "SELECT count(*) AS n FROM "
+        "(SELECT explode("
+        "gbx_rst_contour(tile, array(cast(2.5 as double)), 0.0, 0.0, 'elev')"
+        ") AS c FROM c)"
+    ).first()["n"]
+    assert n >= 1
+
+
+def test_register_enables_viewshed_sql(spark):
+    import numpy as np
+    import shapely.wkb
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+    from shapely.geometry import Point
+
+    prx.register(spark)
+    dem = np.zeros((7, 7), dtype="float64")
+    dem[:, 3] = 100.0
+    profile = dict(
+        driver="GTiff",
+        width=7,
+        height=7,
+        count=1,
+        dtype="float64",
+        crs="EPSG:32633",
+        transform=from_origin(0.0, 7.0, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(dem, 1)
+        raster = mf.read()
+    obs = shapely.wkb.dumps(Point(0.5, 3.5))
+    df = spark.createDataFrame([(raster, obs)], ["raster", "g"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"), f.col("g")
+    )
+    df.createOrReplaceTempView("v")
+    ty = spark.sql(
+        "SELECT gbx_rst_type(gbx_rst_viewshed(tile, g, 1.0, 0.0, NULL))[0] AS t FROM v"
+    ).first()["t"]
+    assert ty == "Byte"

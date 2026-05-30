@@ -63,6 +63,8 @@ pyrx = [
     "rio-cogeo>=7.0,<8",
     "h3>=4.0,<5",
     "quadbin>=0.2,<0.3",
+    "scikit-image>=0.22,<1",
+    "xarray-spatial>=0.4,<1",
 ]
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
 databricks = [

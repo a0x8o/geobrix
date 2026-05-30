@@ -2,18 +2,9 @@
 sidebar_position: 3
 ---
 
-# Heavyweight-Only RasterX Functions
+# VRT Python Pixel Functions (Heavyweight)
 
-These RasterX functions are available only in the **heavyweight (`rasterx`)** tier — they are not (yet) in the lightweight `pyrx` tier. See [Choosing an Execution Tier](./execution-tiers) for the tier comparison, and the [RasterX Function Reference](./raster-functions) for the full per-function reference (both tiers, badged).
-
-## Function list
-
-### Analysis
-
-| Function | Purpose |
-|---|---|
-| `rst_contour` | extract contour LineString features |
-| `rst_viewshed` | binary viewshed from a DEM and observer |
+As of v0.4.0, **every RasterX function is available in both execution tiers** — see the [RasterX Function Reference](./raster-functions) for the full list (badged per function, with lightweight-tier notes) and [Choosing an Execution Tier](./execution-tiers) for the comparison. This page documents one heavyweight-tier execution detail: the GDAL VRT Python pixel-function configuration used by `gbx_rst_combineavg` / `gbx_rst_derivedband` (and their `_agg` forms).
 
 ## VRT Python pixel functions
 

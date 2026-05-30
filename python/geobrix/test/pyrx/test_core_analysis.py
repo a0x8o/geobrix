@@ -254,3 +254,203 @@ def test_cog_convert_unknown_compression_raises():
     with _serde.open_tile(make_geotiff_bytes()) as ds:
         with pytest.raises(ValueError):
             analysis.cog_convert(ds, "NOT_A_PROFILE", 512, "AVERAGE")
+
+
+# --- contour ----------------------------------------------------------------
+def _ramp_bytes(width=6, height=5, crs="EPSG:32633", ulx=100.0, uly=50.0, px=1.0):
+    """A raster whose value equals the column index (a left-to-right ramp).
+
+    A contour at level v is a near-vertical iso-line at column ~v; in world
+    coords its x ~= ulx + (v + 0.5)*px (pixel-center offset).
+    """
+    band = np.tile(np.arange(width, dtype="float64"), (height, 1))
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float64",
+        crs=crs,
+        transform=from_origin(ulx, uly, px, px),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(band, 1)
+        return mf.read()
+
+
+def test_contour_fixed_level_yields_linestring_at_expected_world_x():
+    import shapely.wkb
+
+    src = _ramp_bytes(width=6, height=5, ulx=100.0, uly=50.0, px=1.0)
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [2.5], 0.0, 0.0, "elev")
+    assert len(out) >= 1
+    entry = out[0]
+    assert set(entry.keys()) == {"geom_wkb", "value"}
+    assert entry["value"] == pytest.approx(2.5)
+    line = shapely.wkb.loads(entry["geom_wkb"])
+    assert line.geom_type == "LineString"
+    assert len(line.coords) >= 2
+    # ramp -> iso x ~= ulx + (2.5 + 0.5) = 103.0 for every vertex
+    xs = [c[0] for c in line.coords]
+    assert all(x == pytest.approx(103.0) for x in xs)
+
+
+def test_contour_each_value_matches_requested_level():
+    src = _ramp_bytes(width=8, height=4)
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [1.5, 3.5, 5.5], 0.0, 0.0, "elev")
+    produced = sorted({e["value"] for e in out})
+    assert produced == pytest.approx([1.5, 3.5, 5.5])
+
+
+def test_contour_empty_levels_with_interval_yields_multiple():
+    src = _ramp_bytes(width=10, height=4)  # data range 0..9
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [], 2.0, 0.0, "elev")
+    vals = sorted({e["value"] for e in out})
+    # base 0 + k*2 within [0..9] inclusive: 0, 2, 4, 6, 8
+    assert vals == pytest.approx([0.0, 2.0, 4.0, 6.0, 8.0])
+    assert len(vals) > 1
+
+
+def test_contour_empty_levels_honors_base_offset():
+    src = _ramp_bytes(width=10, height=4)  # data range 0..9
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [], 3.0, 1.0, "elev")
+    vals = sorted({e["value"] for e in out})
+    # base 1 + k*3 within (0..9): 1, 4, 7
+    assert vals == pytest.approx([1.0, 4.0, 7.0])
+
+
+def test_contour_empty_levels_nonpositive_interval_raises():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [], 0.0, 0.0, "elev")
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [], -1.0, 0.0, "elev")
+
+
+def test_contour_empty_attr_field_raises():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [2.5], 0.0, 0.0, "")
+
+
+def test_contour_returns_list_of_struct_dicts():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [2.5], 0.0, 0.0, "elev")
+    assert isinstance(out, list)
+    assert all(
+        isinstance(e, dict)
+        and isinstance(e["geom_wkb"], (bytes, bytearray))
+        and isinstance(e["value"], float)
+        for e in out
+    )
+
+
+# --- viewshed ---------------------------------------------------------------
+def _dem_with_wall_bytes(crs="EPSG:32633"):
+    """7x7 flat DEM with a tall wall at column 3 (blocks line of sight)."""
+    h, w = 7, 7
+    dem = np.zeros((h, w), dtype="float64")
+    dem[:, 3] = 100.0
+    profile = dict(
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=1,
+        dtype="float64",
+        crs=crs,
+        transform=from_origin(0.0, float(h), 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(dem, 1)
+        return mf.read()
+
+
+def _observer_world_xy(ds, col, row):
+    """World (x, y) at the center of pixel (row, col)."""
+    from rasterio.transform import xy as _xy
+
+    x, y = _xy(ds.transform, row, col, offset="center")
+    return float(x), float(y)
+
+
+def test_viewshed_returns_byte_tile_binary_mask():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        assert o.count == 1
+        assert o.dtypes[0] == "uint8"
+        arr = o.read(1)
+        assert set(np.unique(arr)).issubset({0, 255})
+
+
+def test_viewshed_observer_cell_visible():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        assert arr[3, 0] == 255
+
+
+def test_viewshed_cell_behind_wall_invisible():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # column 5 sits behind the wall at column 3 -> not visible.
+        assert arr[3, 5] == 0
+
+
+def test_viewshed_preserves_georef_and_crs():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        src_transform = ds.transform
+        src_crs = ds.crs
+        ox, oy = _observer_world_xy(ds, col=3, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        assert o.transform == src_transform
+        assert o.crs == src_crs
+        assert (o.width, o.height) == (7, 7)
+
+
+def test_viewshed_negative_observer_height_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, -1.0, 0.0, None)
+
+
+def test_viewshed_negative_target_height_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, -2.0, None)
+
+
+def test_viewshed_nonpositive_max_distance_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, 0.0, 0.0)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, 0.0, -10.0)

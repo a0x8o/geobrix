@@ -48,5 +48,9 @@ rio-cogeo==7.0.2
 h3==4.4.2
 quadbin==0.2.2
 
+# --- contour (scikit-image) + viewshed (xarray-spatial) ---
+scikit-image==0.26.0
+xarray-spatial==0.9.9
+
 # --- test runner ---
 pytest==8.4.2

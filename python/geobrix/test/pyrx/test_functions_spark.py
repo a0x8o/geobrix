@@ -1185,3 +1185,75 @@ def test_rst_cog_convert_column_api(spark):
     # Round-trips: still openable, same band count.
     assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
     assert out.select(prx.rst_width("t").alias("w")).first()["w"] == 64
+
+
+def test_rst_contour_column_api(spark):
+    import numpy as np
+    import shapely.wkb
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    # Left-to-right ramp: value == column index.
+    band = np.tile(np.arange(6, dtype="float64"), (5, 1))
+    profile = dict(
+        driver="GTiff",
+        width=6,
+        height=5,
+        count=1,
+        dtype="float64",
+        crs="EPSG:32633",
+        transform=from_origin(100.0, 50.0, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(band, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    rows = (
+        df.select(f.explode(prx.rst_contour("tile", f.array(f.lit(2.5)))).alias("c"))
+        .select(f.col("c.value").alias("v"), f.col("c.geom_wkb").alias("g"))
+        .collect()
+    )
+    assert len(rows) >= 1
+    assert all(r["v"] == 2.5 for r in rows)
+    line = shapely.wkb.loads(bytes(rows[0]["g"]))
+    assert line.geom_type == "LineString"
+    assert all(abs(c[0] - 103.0) < 1e-6 for c in line.coords)
+
+
+def test_rst_viewshed_column_api(spark):
+    import numpy as np
+    import shapely.wkb
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+    from shapely.geometry import Point
+
+    # 7x7 flat DEM with a tall wall at column 3.
+    dem = np.zeros((7, 7), dtype="float64")
+    dem[:, 3] = 100.0
+    profile = dict(
+        driver="GTiff",
+        width=7,
+        height=7,
+        count=1,
+        dtype="float64",
+        crs="EPSG:32633",
+        transform=from_origin(0.0, 7.0, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(dem, 1)
+        src = mf.read()
+    # Observer at pixel (row=3, col=0) center -> world (0.5, 3.5).
+    obs = shapely.wkb.dumps(Point(0.5, 3.5))
+    df = spark.createDataFrame([(src, obs)], ["raster", "g"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"), f.col("g")
+    )
+    out = df.select(prx.rst_viewshed("tile", f.col("g"), 1.0, 0.0, None).alias("t"))
+    # Byte output, single band.
+    assert out.select(prx.rst_type("t").alias("ty")).first()["ty"][0] == "Byte"
+    assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
