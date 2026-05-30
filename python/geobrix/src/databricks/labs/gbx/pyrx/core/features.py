@@ -4,9 +4,11 @@ geometry. fill_nodata: interpolate across NoData. Both return GTiff bytes."""
 import numpy as np
 import shapely.wkb
 from rasterio.features import rasterize as _rasterize
+from rasterio.features import shapes as _shapes
 from rasterio.fill import fillnodata as _fillnodata
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
+from shapely.geometry import shape as _shape
 
 _NODATA = -9999.0
 
@@ -46,6 +48,32 @@ def rasterize_geom(
         with mf.open(**profile) as dst:
             dst.write(arr, 1)
         return mf.read()
+
+
+def polygonize(ds, band: int = 1, connectedness: int = 4):
+    """Extract vector polygons from contiguous equal-value regions of a band.
+
+    Returns a list of (geom_wkb: bytes, value: float). NoData pixels are
+    excluded via the band mask. ``connectedness`` is 4 or 8.
+    """
+    b = int(band)
+    arr = ds.read(b)
+    msk = ds.read_masks(b)  # 0 where NoData -> excluded from shapes
+    # rasterio.features.shapes requires int16, int32, uint8, or float32.
+    # Upcast float64 (or other types) to float32; other supported dtypes pass through.
+    if arr.dtype not in (
+        np.dtype("int16"),
+        np.dtype("int32"),
+        np.dtype("uint8"),
+        np.dtype("float32"),
+    ):
+        arr = arr.astype("float32")
+    out = []
+    for geom_dict, value in _shapes(
+        arr, mask=msk, connectivity=int(connectedness), transform=ds.transform
+    ):
+        out.append((shapely.wkb.dumps(_shape(geom_dict)), float(value)))
+    return out
 
 
 def fill_nodata(ds, max_search_dist=None, smoothing_iter=None) -> bytes:
