@@ -208,10 +208,6 @@ These functions are available only in the heavyweight tier (not yet in the light
 
 | Function | Purpose |
 |---|---|
-| `rst_maketiles` | subdivide into smaller tiles |
-| `rst_retile` | retile to uniform dimensions |
-| `rst_tooverlappingtiles` | create overlapping tiles |
-| `rst_separatebands` | split multi-band into an array of bands |
 | `rst_h3_tessellate` | tessellate a raster to H3 cells |
 
 ### Web-mercator tile output
@@ -781,7 +777,7 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_maketiles
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_maketiles(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Subdivide into smaller tiles.
 
@@ -791,7 +787,7 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_retile
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Retile to uniform dimensions.
 
@@ -801,7 +797,7 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_separatebands
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_separatebands(tile: Column): Column` — Split multi-band into array of bands.
 
@@ -811,7 +807,7 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_tooverlappingtiles
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_tooverlappingtiles(tile: Column, tileWidth: Column, tileHeight: Column, overlap: Column): Column` — Create overlapping tiles.
 
