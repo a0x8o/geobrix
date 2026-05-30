@@ -48,6 +48,24 @@ def test_rst_worldtorastercoordx(spark):
     assert row["c"] == 1
 
 
+def test_rst_metadata_maptype_roundtrip(spark):
+    # Exercises the MapType return path (non-pandas @f.udf fallback).
+    df = _tile_df(spark, width=4, height=3)
+    meta = df.select(prx.rst_metadata("tile").alias("m")).first()["m"]
+    assert meta["width"] == "4"
+    assert meta["height"] == "3"
+    assert meta["driver"] == "GTiff"
+
+
+def test_rst_boundingbox_binarytype_roundtrip(spark):
+    # Exercises the BinaryType (WKB) return path end-to-end through Spark.
+    import shapely.wkb
+
+    df = _tile_df(spark, width=4, height=3)
+    wkb = df.select(prx.rst_boundingbox("tile").alias("b")).first()["b"]
+    assert shapely.wkb.loads(bytes(wkb)).bounds == (10.0, 48.5, 12.0, 50.0)
+
+
 def test_register_is_noop(spark):
     # swap-compat: rx.register(spark) -> prx.register(spark) must not error.
     prx.register(spark)

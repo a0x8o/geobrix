@@ -4,6 +4,7 @@ These contain ALL the raster logic; the Spark layer (functions.py) only wraps
 them in Arrow UDFs. Keeping them Spark-free makes them fast to unit test.
 """
 
+import math
 from typing import Dict, Optional
 
 from shapely import wkb as _wkb
@@ -27,11 +28,17 @@ def srid(ds) -> Optional[int]:
 
 
 def pixelwidth(ds) -> float:
-    return float(ds.transform.a)
+    # Ground pixel size in X = magnitude including skew: sqrt(scaleX^2 + skewY^2).
+    # Mirrors heavyweight RST_PixelWidth (always non-negative); distinct from the
+    # raw signed scalex(). rasterio Affine: a=scaleX(gt1), d=skewY(gt4).
+    return float(math.hypot(ds.transform.a, ds.transform.d))
 
 
 def pixelheight(ds) -> float:
-    return float(ds.transform.e)
+    # Ground pixel size in Y = magnitude including skew: sqrt(scaleY^2 + skewX^2).
+    # Mirrors heavyweight RST_PixelHeight (always non-negative); distinct from the
+    # raw signed scaley(). rasterio Affine: e=scaleY(gt5), b=skewX(gt2).
+    return float(math.hypot(ds.transform.e, ds.transform.b))
 
 
 def upperleftx(ds) -> float:

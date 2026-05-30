@@ -23,9 +23,19 @@ def test_srid():
 
 
 def test_pixel_size():
+    # pixelwidth/pixelheight are ground pixel SIZE (magnitude, always >= 0),
+    # matching heavyweight RST_PixelWidth/RST_PixelHeight.
     with _ds() as ds:
         assert accessors.pixelwidth(ds) == 0.5
-        assert accessors.pixelheight(ds) == -0.5
+        assert accessors.pixelheight(ds) == 0.5
+
+
+def test_scale_is_raw_signed():
+    # scalex/scaley are the raw signed affine coefficients (north-up => scaley<0),
+    # distinct from the non-negative pixelwidth/pixelheight magnitudes above.
+    with _ds() as ds:
+        assert accessors.scalex(ds) == 0.5
+        assert accessors.scaley(ds) == -0.5
 
 
 def test_boundingbox_wkb():
