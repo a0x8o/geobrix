@@ -118,6 +118,11 @@ const config = {
             position: 'left'
           },
           {
+            to: '/docs/api/execution-tiers',
+            label: 'Lightweight vs Heavyweight',
+            position: 'left'
+          },
+          {
             href: 'https://github.com/databrickslabs/geobrix',
             label: 'GitHub',
             position: 'right',

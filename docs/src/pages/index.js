@@ -93,6 +93,25 @@ export default function Home() {
       <main>
         <HomepageFeatures />
         
+        <section className={styles.tierCallout}>
+          <div className="container">
+            <div className="row">
+              <div className="col col--8 col--offset-2 text--center">
+                <h2>New in 0.4.0 — a lightweight execution tier</h2>
+                <p>
+                  Run the GeoBrix raster API on pure Python + rasterio: no JAR, no init script,
+                  works on serverless, shared clusters, and ARM.
+                </p>
+                <Link
+                  className="button button--primary button--md"
+                  to="/docs/api/execution-tiers">
+                  Compare Execution Tiers →
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className={styles.quickStart}>
           <div className="container">
             <div className="row">
