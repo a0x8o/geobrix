@@ -215,6 +215,42 @@ def test_rst_evi_savi_ndwi_nbr_single_band(spark):
         assert n == 1
 
 
+def test_rst_slope_aspect_hillshade(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    ramp = np.tile(np.arange(6, dtype="float32"), (6, 1))
+    profile = dict(
+        driver="GTiff",
+        width=6,
+        height=6,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 6, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(ramp, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    assert (
+        df.select(prx.rst_type(prx.rst_slope("tile")).alias("t")).first()["t"][0]
+        == "Float32"
+    )
+    assert (
+        df.select(prx.rst_type(prx.rst_hillshade("tile")).alias("t")).first()["t"][0]
+        == "Byte"
+    )
+    assert (
+        df.select(prx.rst_numbands(prx.rst_aspect("tile")).alias("n")).first()["n"] == 1
+    )
+
+
 def test_rst_polygonize(spark):
     import numpy as np
     from rasterio.io import MemoryFile
