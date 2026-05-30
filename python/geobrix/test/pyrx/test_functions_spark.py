@@ -191,3 +191,37 @@ def test_rst_fillnodata(spark):
     # nodata is set but all pixels should now be valid — getnodata returns the
     # configured nodata value (not per-pixel mask), so just verify tile is non-null.
     assert row["nd"] is not None
+
+
+def test_rst_polygonize(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.full((4, 4), -9999.0, dtype="float32")
+    data[1:3, 1:3] = 5.0
+    profile = dict(
+        driver="GTiff",
+        width=4,
+        height=4,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(0, 4, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"])
+    df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    # rst_polygonize returns ARRAY<struct(geom_wkb, value)>; explode and inspect.
+    rows = (
+        df.select(f.explode(prx.rst_polygonize("tile")).alias("p"))
+        .select(f.col("p.value").alias("v"), f.col("p.geom_wkb").alias("g"))
+        .collect()
+    )
+    vals = [r["v"] for r in rows]
+    assert 5.0 in vals
+    assert all(r["g"] is not None for r in rows)

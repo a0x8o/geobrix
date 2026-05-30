@@ -15,6 +15,8 @@ from pyspark.sql.types import (
     IntegerType,
     MapType,
     StringType,
+    StructField,
+    StructType,
 )
 
 from databricks.labs.gbx.pyrx import _serde
@@ -323,6 +325,38 @@ def rst_fillnodata(
     msd = f.lit(None) if max_search_dist is None else _col(max_search_dist)
     smi = f.lit(None) if smoothing_iter is None else _col(smoothing_iter)
     return _fillnodata_udf(_col(tile), msd, smi)
+
+
+_POLYGONIZE_SCHEMA = ArrayType(
+    StructType(
+        [
+            StructField("geom_wkb", BinaryType(), nullable=False),
+            StructField("value", DoubleType(), nullable=False),
+        ]
+    )
+)
+
+
+@f.udf(_POLYGONIZE_SCHEMA)
+def _polygonize_udf(tile, band, connectedness):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        pairs = features.polygonize(ds, int(band), int(connectedness))
+    return [{"geom_wkb": g, "value": v} for g, v in pairs]
+
+
+def rst_polygonize(
+    tile: ColLike, band: ColLike = 1, connectedness: ColLike = 4
+) -> Column:
+    """Extract vector polygons from a raster's contiguous equal-value regions.
+
+    Returns ARRAY<struct(geom_wkb BINARY, value DOUBLE)>; NoData excluded.
+    """
+    return _polygonize_udf(_col(tile), _col(band), _col(connectedness))
 
 
 # --- Tier 0: accessors ------------------------------------------------------
