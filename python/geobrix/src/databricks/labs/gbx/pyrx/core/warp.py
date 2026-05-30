@@ -3,13 +3,9 @@ function returns new GTiff bytes."""
 
 import rasterio
 from rasterio.io import MemoryFile
-from rasterio.warp import Resampling, calculate_default_transform, reproject
+from rasterio.warp import calculate_default_transform, reproject
 
-
-def _resampling(name: str) -> Resampling:
-    # gdalwarp -r names -> rasterio Resampling enum (near/nearest tolerated).
-    key = "nearest" if name == "near" else name
-    return Resampling[key]
+from databricks.labs.gbx.pyrx.core._util import resampling_enum
 
 
 def reproject_to_srid(ds, target_srid: int, resampling: str = "nearest") -> bytes:
@@ -22,7 +18,7 @@ def reproject_to_srid(ds, target_srid: int, resampling: str = "nearest") -> byte
     profile.update(
         driver="GTiff", crs=dst_crs, transform=transform, width=width, height=height
     )
-    resamp = _resampling(resampling)
+    resamp = resampling_enum(resampling)
     with MemoryFile() as mf:
         with mf.open(**profile) as dst:
             for i in range(1, ds.count + 1):
