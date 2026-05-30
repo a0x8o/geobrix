@@ -665,7 +665,11 @@ Create or load rasters from path, binary content, or bands (4 total).
 
 ### rst_fromfile
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Opens the raster at `path` and re-encodes it as a GeoTIFF tile; the `driver` arg is a format hint (rasterio auto-detects on open). A missing/unreadable path returns null.
+:::
 
 Load a raster from a file path.
 
@@ -725,7 +729,11 @@ Create a DTM raster tile via TIN/Delaunay interpolation from an array of Z-value
 
 ### rst_frombands
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Stacks an `ARRAY` of single-band tiles into one multi-band tile in array order (element 0 → band 1), preserving georeference/CRS/dtype/NoData from the first.
+:::
 
 Create a raster from an array of band tiles.
 
@@ -763,7 +771,11 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_h3_tessellate
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning an `ARRAY<tile>` (one per cell, `cellid` = H3 cell id) — `explode()` for one row per cell. The heavyweight tier emits the cells as separate generator rows.
+:::
 
 **Signature:** `rst_h3_tessellate(tile: Column, resolution: Column): Column` — Tessellate raster to H3 cells.
 
@@ -1019,7 +1031,11 @@ Powered by **rasterio** (`rasterio.mask`). The clip geometry is assumed to be in
 
 ### rst_combineavg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Takes an `ARRAY<tile>` and returns the NoData-aware per-pixel mean; input tiles must share the same grid (shape/extent/CRS). cellid is preserved when all inputs share one, else −1.
+:::
 
 **Signature:** `rst_combineavg(tiles: Column): Column` — Average multiple tiles (e.g. temporal composite).
 
@@ -1113,7 +1129,11 @@ Powered by **NumExpr**. Bands map to `A`, `B`, `C`, … and the expression is ev
 
 ### rst_merge
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.merge`). Takes an `ARRAY<tile>` (in one row) and mosaics them into a single tile spanning the union extent (first-tile-wins on overlap, in array order).
+:::
 
 **Signature:** `rst_merge(tiles: Column): Column` — Merge tiles into mosaic.
 
@@ -1545,7 +1565,11 @@ Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pi
 
 ### rst_index
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumExpr**. Generic named-index dispatcher over a `band_map`; single-band Float32. Zero-denominator pixels are set to NoData (−9999).
+:::
 
 **Signature:** `rst_index(tile: Column, indexName: Column, bandMap: Column): Column` — Generic dispatcher that picks a built-in formula by name and wires bands via a `MAP<STRING, INT>` (e.g. `map('red', 1, 'nir', 2)`). Built-in names: `ndvi`, `gndvi`, `msavi`, `ndvi_re`, `ndmi`, `ndsi`.
 

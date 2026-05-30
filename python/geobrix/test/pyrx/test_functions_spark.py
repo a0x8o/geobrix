@@ -816,6 +816,7 @@ def test_rst_rastertoworldcoord_struct_roundtrip(spark):
 # Tier 2: grouped aggregators (rst_*_agg) via .agg()
 # ---------------------------------------------------------------------------
 import numpy as np  # noqa: E402
+import pytest  # noqa: E402
 from rasterio.io import MemoryFile  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
 
@@ -935,6 +936,95 @@ def test_rst_derivedband_agg(spark):
 
 
 # ---------------------------------------------------------------------------
+# Heavyweight-only non-aggregator constructors / array operations
+# (rst_merge, rst_combineavg, rst_frombands, rst_fromfile)
+# ---------------------------------------------------------------------------
+def test_rst_merge_array(spark):
+    # Two adjacent tiles in one row's array -> merged tile spans the union.
+    left = _ras_bytes(np.array([[1, 2], [3, 4]]), ulx=0.0, uly=2.0)
+    right = _ras_bytes(np.array([[5, 6], [7, 8]]), ulx=2.0, uly=2.0)
+    df = spark.createDataFrame([(left, right)], ["a", "b"]).select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    tile = df.select(prx.rst_merge(f.array("ta", "tb")).alias("t")).first()["t"]
+    assert tile is not None
+    assert tile["cellid"] == 0
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.width == 4
+        assert ds.height == 2
+        assert ds.bounds.left == 0.0
+        assert ds.bounds.right == 4.0
+
+
+def test_rst_combineavg_array(spark):
+    a = _ras_bytes(np.array([[2.0, 4.0], [6.0, 8.0]]))
+    b = _ras_bytes(np.array([[4.0, 8.0], [10.0, 12.0]]))
+    df = spark.createDataFrame([(a, b)], ["a", "b"]).select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    tile = df.select(prx.rst_combineavg(f.array("ta", "tb")).alias("t")).first()["t"]
+    # cellid shared across elements (fromcontent -> 0) -> carried as 0.
+    assert tile["cellid"] == 0
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert np.allclose(ds.read(1), [[3.0, 6.0], [8.0, 10.0]])
+
+
+def test_rst_combineavg_array_shape_mismatch_raises(spark):
+    from pyspark.errors import PythonException
+
+    a = _ras_bytes(np.array([[1.0, 2.0], [3.0, 4.0]]))
+    b = _ras_bytes(np.array([[1.0, 2.0, 3.0]]))
+    df = spark.createDataFrame([(a, b)], ["a", "b"]).select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    with pytest.raises(PythonException, match="aligned tiles"):
+        df.select(prx.rst_combineavg(f.array("ta", "tb")).alias("t")).first()
+
+
+def test_rst_frombands_array_order(spark):
+    # Array order IS band order: element 0 -> band 1, element 1 -> band 2.
+    b0 = _ras_bytes(np.full((2, 2), 10.0))
+    b1 = _ras_bytes(np.full((2, 2), 20.0))
+    df = spark.createDataFrame([(b0, b1)], ["a", "b"]).select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    tile = df.select(prx.rst_frombands(f.array("ta", "tb")).alias("t")).first()["t"]
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.count == 2
+        assert np.allclose(ds.read(1), 10.0)
+        assert np.allclose(ds.read(2), 20.0)
+
+
+def test_rst_fromfile_roundtrip(spark, tmp_path):
+    import rasterio
+
+    p = str(tmp_path / "scene.tif")
+    with _serde.open_tile(make_geotiff_bytes(width=4, height=3, epsg=4326)) as src:
+        profile = src.profile.copy()
+        data = src.read()
+    with rasterio.open(p, "w", **profile) as dst:
+        dst.write(data)
+    df = spark.createDataFrame([(p,)], ["path"])
+    tile = df.select(prx.rst_fromfile("path", f.lit("GTiff")).alias("t")).first()["t"]
+    assert tile is not None
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.width == 4
+        assert ds.height == 3
+        assert ds.crs.to_epsg() == 4326
+
+
+def test_rst_fromfile_bad_path_returns_none(spark):
+    # Heavyweight returns NULL on read failure; pyrx matches.
+    df = spark.createDataFrame([("/no/such/raster.tif",)], ["path"])
+    tile = df.select(prx.rst_fromfile("path", f.lit("GTiff")).alias("t")).first()["t"]
+    assert tile is None
+
+
+# ---------------------------------------------------------------------------
 # TIN / IDW constructors + aggregators
 # ---------------------------------------------------------------------------
 def test_rst_gridfrompoints_constructor(spark):
@@ -1026,3 +1116,34 @@ def test_rst_dtmfromgeoms_agg_equals_constructor(spark):
         transform = ds.transform
     wx, wy = transform * (5 + 0.5, 5 + 0.5)
     assert np.isclose(arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6)
+
+
+def test_rst_index_ndvi(spark):
+    df = _tile_df(spark, width=4, height=3, count=2)
+    out = df.select(
+        prx.rst_index(
+            "tile",
+            f.lit("ndvi"),
+            f.create_map(f.lit("red"), f.lit(1), f.lit("nir"), f.lit(2)),
+        ).alias("t")
+    )
+    row = out.select(
+        prx.rst_numbands("t").alias("n"), prx.rst_type("t").alias("ty")
+    ).first()
+    assert row["n"] == 1
+    assert row["ty"][0] == "Float32"
+
+
+def test_rst_h3_tessellate(spark):
+    import h3
+
+    df = _tile_df(spark, width=8, height=8, epsg=4326)
+    parts = df.select(f.explode(prx.rst_h3_tessellate("tile", 4)).alias("t"))
+    assert parts.count() > 0
+    rows = parts.select(
+        prx.rst_numbands("t").alias("n"),
+        f.col("t.cellid").alias("cid"),
+    ).collect()
+    for r in rows:
+        assert r["n"] == 1
+        assert h3.is_valid_cell(h3.int_to_str(r["cid"]))

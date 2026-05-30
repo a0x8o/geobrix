@@ -1,10 +1,26 @@
 """Spark-free spectral indices (NumPy band math). Each returns a single-band
 Float32 GTiff (NoData -9999.0); invalid/divide-by-zero results become NoData."""
 
+import numexpr as ne
 import numpy as np
 from rasterio.io import MemoryFile
 
 _NODATA = -9999.0
+
+# Built-in named-index registry mirroring the heavyweight RST_Index.Registry.
+# ``calc`` uses ``{band}`` placeholders; ``bands`` is the ordered list of band
+# names the formula requires (each must be wired in the band_map).
+_INDEX_REGISTRY = {
+    "ndvi": ("({nir}-{red})/({nir}+{red})", ("red", "nir")),
+    "gndvi": ("({nir}-{green})/({nir}+{green})", ("green", "nir")),
+    "msavi": (
+        "(2*{nir}+1-sqrt((2*{nir}+1)**2-8*({nir}-{red})))/2",
+        ("red", "nir"),
+    ),
+    "ndvi_re": ("({nir}-{red_edge})/({nir}+{red_edge})", ("red_edge", "nir")),
+    "ndmi": ("({nir}-{swir})/({nir}+{swir})", ("nir", "swir")),
+    "ndsi": ("({green}-{swir})/({green}+{swir})", ("green", "swir")),
+}
 
 
 def _band(ds, idx) -> np.ndarray:
@@ -57,3 +73,54 @@ def evi(
     with np.errstate(divide="ignore", invalid="ignore"):
         arr = g * (n - r) / (n + c1 * r - c2 * b + l_)
     return _emit(ds, arr)
+
+
+def builtin_formulae() -> list:
+    """Sorted names of all built-in formulae (for docs / error messages)."""
+    return sorted(_INDEX_REGISTRY.keys())
+
+
+def index(ds, formula_name: str, band_map) -> bytes:
+    """Generic named-index dispatcher (mirrors heavyweight ``RST_Index``).
+
+    Looks up ``formula_name`` (case-insensitive) in the built-in registry,
+    wires each named band to its 1-based index via ``band_map`` (keys are
+    matched case-insensitively), evaluates the per-pixel formula with numexpr,
+    and returns a single-band Float32 GTiff preserving georef/CRS.
+
+    Args:
+        ds:           Open rasterio ``DatasetReader``.
+        formula_name: Built-in index name (e.g. ``"ndvi"``, ``"msavi"``).
+        band_map:     Mapping of band name -> 1-based band index.
+
+    Returns:
+        Single-band Float32 GTiff bytes (NoData ``-9999.0`` for non-finite).
+    """
+    if not formula_name:
+        raise ValueError("rst_index: formula_name required")
+    if not band_map:
+        raise ValueError("rst_index: band_map required (e.g. {'red': 1, 'nir': 2})")
+    key = str(formula_name).lower()
+    band_map_lc = {str(k).lower(): int(v) for k, v in dict(band_map).items()}
+    if key not in _INDEX_REGISTRY:
+        known = ", ".join(builtin_formulae())
+        raise ValueError(f"rst_index: unknown formula '{formula_name}'. Known: {known}")
+    calc, bands = _INDEX_REGISTRY[key]
+    for b in bands:
+        if b not in band_map_lc:
+            have = ", ".join(sorted(band_map_lc.keys()))
+            raise ValueError(
+                f"rst_index: formula '{formula_name}' requires band '{b}' in "
+                f"band_map; got keys {have}"
+            )
+    # Assign A, B, C... aliases to the formula's bands in declared order, then
+    # substitute placeholders and bind each alias to its 1-based pixel array.
+    local_dict = {}
+    expr = calc
+    for i, b in enumerate(bands):
+        alias = chr(ord("A") + i)
+        expr = expr.replace("{" + b + "}", alias)
+        local_dict[alias] = _band(ds, band_map_lc[b])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        arr = ne.evaluate(expr, local_dict=local_dict)
+    return _emit(ds, np.asarray(arr, dtype="float64"))

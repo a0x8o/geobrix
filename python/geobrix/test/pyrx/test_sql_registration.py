@@ -442,3 +442,150 @@ def test_register_enables_dtmfromgeoms_agg_sql(spark):
         "32633), 'GTiff')) AS w FROM v GROUP BY k"
     ).first()["w"]
     assert w == 10
+
+
+# ---------------------------------------------------------------------------
+# Heavyweight-only non-aggregator constructors / array operations via SQL.
+# Arrays are built with the SQL array(...) function over tile columns.
+# ---------------------------------------------------------------------------
+def _two_tile_view(spark, raster_a, raster_b, name="ab"):
+    df = spark.createDataFrame([(raster_a, raster_b)], ["a", "b"]).select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    df.createOrReplaceTempView(name)
+
+
+def test_register_enables_merge_sql(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    def _ras(arr, ulx, uly):
+        arr = np.asarray(arr, dtype="float32")
+        profile = dict(
+            driver="GTiff",
+            width=arr.shape[1],
+            height=arr.shape[0],
+            count=1,
+            dtype="float32",
+            crs="EPSG:32633",
+            transform=from_origin(ulx, uly, 1.0, 1.0),
+            nodata=-9999.0,
+        )
+        with MemoryFile() as mf:
+            with mf.open(**profile) as dst:
+                dst.write(arr, 1)
+            return mf.read()
+
+    prx.register(spark)
+    _two_tile_view(
+        spark, _ras([[1, 2], [3, 4]], 0.0, 2.0), _ras([[5, 6], [7, 8]], 2.0, 2.0)
+    )
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_merge(array(ta, tb))) AS w FROM ab"
+    ).first()["w"]
+    assert w == 4
+
+
+def test_register_enables_combineavg_sql(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    def _ras(arr):
+        arr = np.asarray(arr, dtype="float32")
+        profile = dict(
+            driver="GTiff",
+            width=arr.shape[1],
+            height=arr.shape[0],
+            count=1,
+            dtype="float32",
+            crs="EPSG:32633",
+            transform=from_origin(0.0, 2.0, 1.0, 1.0),
+            nodata=-9999.0,
+        )
+        with MemoryFile() as mf:
+            with mf.open(**profile) as dst:
+                dst.write(arr, 1)
+            return mf.read()
+
+    prx.register(spark)
+    _two_tile_view(
+        spark, _ras([[2.0, 4.0], [6.0, 8.0]]), _ras([[4.0, 8.0], [10.0, 12.0]])
+    )
+    avg = spark.sql(
+        "SELECT gbx_rst_avg(gbx_rst_combineavg(array(ta, tb))) AS a FROM ab"
+    ).first()["a"]
+    # Mean of all four means: (3+6+8+10)/4 = 6.75.
+    assert avg[0] == 6.75
+
+
+def test_register_enables_frombands_sql(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    def _ras(v):
+        arr = np.full((2, 2), float(v), dtype="float32")
+        profile = dict(
+            driver="GTiff",
+            width=2,
+            height=2,
+            count=1,
+            dtype="float32",
+            crs="EPSG:32633",
+            transform=from_origin(0.0, 2.0, 1.0, 1.0),
+            nodata=-9999.0,
+        )
+        with MemoryFile() as mf:
+            with mf.open(**profile) as dst:
+                dst.write(arr, 1)
+            return mf.read()
+
+    prx.register(spark)
+    _two_tile_view(spark, _ras(10.0), _ras(20.0))
+    n = spark.sql(
+        "SELECT gbx_rst_numbands(gbx_rst_frombands(array(ta, tb))) AS n FROM ab"
+    ).first()["n"]
+    assert n == 2
+
+
+def test_register_enables_fromfile_sql(spark, tmp_path):
+    import rasterio
+
+    from databricks.labs.gbx.pyrx import _serde
+
+    p = str(tmp_path / "scene_sql.tif")
+    with _serde.open_tile(make_geotiff_bytes(width=4, height=3, epsg=4326)) as src:
+        profile = src.profile.copy()
+        data = src.read()
+    with rasterio.open(p, "w", **profile) as dst:
+        dst.write(data)
+
+    prx.register(spark)
+    spark.createDataFrame([(p,)], ["path"]).createOrReplaceTempView("fp")
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_fromfile(path, 'GTiff')) AS w FROM fp"
+    ).first()["w"]
+    assert w == 4
+
+
+def test_register_enables_index_sql(spark):
+    prx.register(spark)
+    _tile_view(spark, width=4, height=3, count=2, epsg=4326)
+    n = spark.sql(
+        "SELECT gbx_rst_numbands("
+        "gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2))) AS n FROM t"
+    ).first()["n"]
+    assert n == 1
+
+
+def test_register_enables_h3_tessellate_sql(spark):
+    prx.register(spark)
+    _tile_view(spark, width=8, height=8, epsg=4326)
+    n = spark.sql(
+        "SELECT count(*) AS n FROM t "
+        "LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 4)) AS cell"
+    ).first()["n"]
+    assert n > 0

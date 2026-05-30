@@ -39,7 +39,9 @@ from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
 from databricks.labs.gbx.pyrx.core import ops as ops_core
-from databricks.labs.gbx.pyrx.core import resample, terrain, tiling
+from databricks.labs.gbx.pyrx.core import resample, terrain
+from databricks.labs.gbx.pyrx.core import tessellate as tessellate_core
+from databricks.labs.gbx.pyrx.core import tiling
 from databricks.labs.gbx.pyrx.core import tin as tin_core
 from databricks.labs.gbx.pyrx.core import warp, xyz
 
@@ -255,6 +257,177 @@ def _fromcontent_udf(raster, drv):
 def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
     """Build a tile struct from raster BINARY content and GDAL driver name."""
     return _fromcontent_udf(_col(content), _col(driver))
+
+
+# rst_fromfile: read raster bytes from a (FUSE) path and wrap as a tile.
+# Mirrors the heavyweight gbx_rst_fromfile(path, driver): 2 string args; the
+# driver is a format hint carried into metadata (rasterio auto-detects on open).
+# The heavyweight wraps eval in Option(...).orNull, so a bad/missing path
+# yields NULL rather than raising — match that by returning None on failure.
+@f.udf(_serde.TILE_SCHEMA)
+def _fromfile_udf(path, driver):
+    if path is None:
+        return None
+    import rasterio
+
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    drv = "GTiff" if driver is None else str(driver)
+    try:
+        with rasterio.open(str(path)) as src:
+            data = src.read()
+            profile = src.profile.copy()
+            profile.update(driver="GTiff")
+            from rasterio.io import MemoryFile
+
+            with MemoryFile() as mf:
+                with mf.open(**profile) as dst:
+                    dst.write(data)
+                new_bytes = mf.read()
+    except Exception:
+        # Heavyweight returns NULL on read failure (Option(...).orNull).
+        return None
+    return _serde.build_tile(new_bytes, drv, 0)
+
+
+def rst_fromfile(path: ColLike, driver: ColLike = "GTiff") -> Column:
+    """Build a tile struct by reading the raster at ``path`` into its bytes.
+
+    Mirrors the heavyweight ``gbx_rst_fromfile(path, driver)``: ``path`` is a
+    filesystem path (FUSE ``/Volumes/...`` paths work on Databricks) and
+    ``driver`` is a GDAL driver short-name hint carried into the tile metadata
+    (rasterio auto-detects the actual format on open). A path that cannot be
+    read returns NULL (matching the heavyweight's null-on-error behaviour).
+
+    Args:
+        path:   Raster file path (string column).
+        driver: GDAL driver short name hint. Defaults to "GTiff".
+
+    Returns:
+        Tile struct, or NULL if the path cannot be read.
+    """
+    drv = f.lit(driver) if isinstance(driver, str) else _col(driver)
+    return _fromfile_udf(_col(path), drv)
+
+
+# rst_merge: single ARRAY<tile struct> arg in one row -> mosaic tile.
+# Mirrors gbx_rst_merge: extract each element's raster bytes and mosaic by
+# extent (reuses core.agg.merge_tiles, the same union-extent reducer the
+# heavyweight RST_MergeAgg uses). cellid = 0 (no aggregate group key here).
+@f.udf(_serde.TILE_SCHEMA)
+def _merge_udf(tiles):
+    if not tiles:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = [
+        bytes(t["raster"]) for t in tiles if t is not None and t["raster"] is not None
+    ]
+    if not rasters:
+        return None
+    new_bytes = agg_core.merge_tiles(rasters)
+    return _serde.build_tile(new_bytes, "GTiff", 0)
+
+
+def rst_merge(tiles: ColLike) -> Column:
+    """Mosaic an ARRAY of tiles into one tile spanning their union extent.
+
+    Mirrors the heavyweight ``gbx_rst_merge``: ``tiles`` is a single column of
+    ARRAY<tile struct> (e.g. ``f.array("ta", "tb")``); each element's raster is
+    placed by its own georeference and the output spans the union extent. On
+    overlap the merge is first-tile-wins in array order. Output ``cellid`` is 0.
+
+    Args:
+        tiles: Column of ARRAY<tile struct>.
+
+    Returns:
+        Tile struct spanning the union extent, or NULL on an empty array.
+    """
+    return _merge_udf(_col(tiles))
+
+
+# rst_combineavg: single ARRAY<tile struct> arg -> per-pixel mean tile.
+# Mirrors gbx_rst_combineavg: NoData-aware per-pixel mean across the stack
+# (reuses core.agg.combineavg_tiles). cellid follows the heavyweight rule —
+# head's cellid if every element shares it, else -1.
+@f.udf(_serde.TILE_SCHEMA)
+def _combineavg_udf(tiles):
+    if not tiles:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    elems = [t for t in tiles if t is not None and t["raster"] is not None]
+    if not elems:
+        return None
+    rasters = [bytes(t["raster"]) for t in elems]
+    cellids = {int(t["cellid"]) for t in elems}
+    cellid = int(elems[0]["cellid"]) if len(cellids) == 1 else -1
+    new_bytes = agg_core.combineavg_tiles(rasters)
+    return _serde.build_tile(new_bytes, "GTiff", cellid)
+
+
+def rst_combineavg(tiles: ColLike) -> Column:
+    """NoData-aware per-pixel mean across an ARRAY of aligned tiles.
+
+    Mirrors the heavyweight ``gbx_rst_combineavg``: ``tiles`` is a single column
+    of ARRAY<tile struct>; each declared NoData is excluded from both the sum
+    and the divisor (a valid 0 counts). Output ``cellid`` is the shared input
+    cellid when every element matches, else -1 (matching the heavyweight).
+
+    PARITY DIVERGENCE: assumes the tiles are ALREADY aligned (same
+    shape/extent/CRS) and raises ``ValueError`` on mismatched shapes rather than
+    resampling (inherited from ``core.agg.combineavg_tiles``).
+
+    Args:
+        tiles: Column of ARRAY<tile struct> (same-grid).
+
+    Returns:
+        Tile struct of per-pixel means, or NULL on an empty array.
+    """
+    return _combineavg_udf(_col(tiles))
+
+
+# rst_frombands: single ARRAY<single-band tile> arg -> multi-band tile.
+# Mirrors gbx_rst_frombands: array ORDER is band order (element 0 -> band 1).
+# Reuses core.agg.frombands_tiles by pairing each element with its 0-based
+# position as the band_index, so the reducer's ascending sort preserves order.
+@f.udf(_serde.TILE_SCHEMA)
+def _frombands_udf(bands):
+    if not bands:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    indexed = [
+        (i, bytes(t["raster"]))
+        for i, t in enumerate(bands)
+        if t is not None and t["raster"] is not None
+    ]
+    if not indexed:
+        return None
+    cellid = int(bands[0]["cellid"]) if bands[0] is not None else 0
+    new_bytes = agg_core.frombands_tiles(indexed)
+    return _serde.build_tile(new_bytes, "GTiff", cellid)
+
+
+def rst_frombands(bands: ColLike) -> Column:
+    """Assemble an ARRAY of single-band tiles into one multi-band tile.
+
+    Mirrors the heavyweight ``gbx_rst_frombands``: ``bands`` is a single column
+    of ARRAY<tile struct> and the ARRAY ORDER is the band order (element 0 ->
+    band 1, element 1 -> band 2, ...). Georef/CRS/dtype/nodata are taken from
+    the first element. Output ``cellid`` carries from the first element.
+
+    Args:
+        bands: Column of ARRAY<single-band tile struct>, in band order.
+
+    Returns:
+        Multi-band tile struct, or NULL on an empty array.
+    """
+    return _frombands_udf(_col(bands))
 
 
 # --- Tier 1b: tile-returning warp UDFs -------------------------------------
@@ -724,6 +897,43 @@ def rst_mapalgebra(tiles: ColLike, expression: ColLike) -> Column:
     """
     expr_col = f.lit(expression) if isinstance(expression, str) else _col(expression)
     return _mapalgebra_udf(_col(tiles), expr_col)
+
+
+# --- Tier 1d3: generic named-index dispatcher (rst_index) -------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _index_udf(tile, formula_name, band_map):
+    if tile is None or tile["raster"] is None or formula_name is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = indices.index(ds, str(formula_name), dict(band_map or {}))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_index(tile: ColLike, formula_name: ColLike, band_map: ColLike) -> Column:
+    """Compute a named spectral index via a band-map (mirrors ``gbx_rst_index``).
+
+    ``formula_name`` (case-insensitive) selects a built-in formula; ``band_map``
+    is a MAP<STRING, INT> wiring the formula's named bands to 1-based band
+    indices in the tile. Returns a single-band Float32 tile.
+
+    Built-in formulae: ``ndvi``, ``gndvi``, ``msavi``, ``ndvi_re``, ``ndmi``,
+    ``ndsi``.
+
+    Args:
+        tile:         Tile struct column.
+        formula_name: Built-in index name (string literal or column).
+        band_map:     MAP<STRING, INT> column (e.g. ``map('red', 1, 'nir', 2)``).
+
+    Returns:
+        Single-band Float32 tile struct.
+    """
+    name_col = (
+        f.lit(formula_name) if isinstance(formula_name, str) else _col(formula_name)
+    )
+    return _index_udf(_col(tile), name_col, _col(band_map))
 
 
 # --- Tier 1d2: spectral index UDFs -----------------------------------------
@@ -1212,6 +1422,36 @@ def rst_tooverlappingtiles(
     return _tooverlappingtiles_udf(
         _col(tile), _col(tile_width), _col(tile_height), _col(overlap)
     )
+
+
+@f.udf(ArrayType(_serde.TILE_SCHEMA))
+def _h3_tessellate_udf(tile, resolution):
+    if tile is None or tile["raster"] is None or resolution is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        cells = tessellate_core.tessellate_h3(ds, int(resolution))
+    return [_serde.build_tile(raster, "GTiff", cellid) for cellid, raster in cells]
+
+
+def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> Column:
+    """Tessellate a raster into H3 cells (mirrors ``gbx_rst_h3_tessellate``).
+
+    For every H3 cell overlapping the raster's extent at *resolution*, the
+    raster is clipped to that cell's hexagon and one tile is produced, carrying
+    the H3 cell id as its ``cellid``. Cells with an empty clip are skipped.
+    Returns ARRAY<tile struct>; explode the result to get one row per cell.
+
+    Args:
+        tile:       Tile struct column.
+        resolution: H3 resolution in ``[0, 15]``.
+
+    Returns:
+        ARRAY<tile struct>; one tile per overlapping H3 cell.
+    """
+    return _h3_tessellate_udf(_col(tile), _col(resolution))
 
 
 @f.udf(ArrayType(_serde.TILE_SCHEMA))
@@ -2544,6 +2784,10 @@ _sql_accessors = {
 # objects directly — no wrapper needed.
 _sql_tile_ops = {
     "gbx_rst_fromcontent": _fromcontent_udf,
+    "gbx_rst_fromfile": _fromfile_udf,
+    "gbx_rst_merge": _merge_udf,
+    "gbx_rst_combineavg": _combineavg_udf,
+    "gbx_rst_frombands": _frombands_udf,
     "gbx_rst_transform": _transform_udf,
     "gbx_rst_to_webmercator": _to_webmercator_udf,
     "gbx_rst_resample": _resample_udf,
@@ -2579,10 +2823,12 @@ _sql_tile_ops = {
     "gbx_rst_filter": _filter_udf,
     "gbx_rst_convolve": _convolve_udf,
     "gbx_rst_mapalgebra": _mapalgebra_udf,
+    "gbx_rst_index": _index_udf,
     "gbx_rst_derivedband": _derivedband_udf,
     "gbx_rst_separatebands": _separatebands_udf,
     "gbx_rst_retile": _retile_udf,
     "gbx_rst_tooverlappingtiles": _tooverlappingtiles_udf,
+    "gbx_rst_h3_tessellate": _h3_tessellate_udf,
     "gbx_rst_maketiles": _maketiles_udf,
     "gbx_rst_tilexyz": _tilexyz_udf,
     "gbx_rst_xyzpyramid": _xyzpyramid_udf,
