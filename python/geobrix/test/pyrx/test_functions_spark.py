@@ -429,6 +429,29 @@ def test_rst_mapalgebra(spark):
     assert row["n"] == 1 and row["ty"][0] == "Float32"
 
 
+def test_rst_separatebands(spark):
+    df = _tile_df(spark, width=4, height=3, count=3)
+    parts = df.select(f.explode(prx.rst_separatebands("tile")).alias("t"))
+    assert parts.count() == 3
+    assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+
+
+def test_rst_retile(spark):
+    df = _tile_df(spark, width=4, height=4)
+    parts = df.select(f.explode(prx.rst_retile("tile", 2, 2)).alias("t"))
+    assert parts.count() == 4
+    row = parts.select(
+        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+    ).first()
+    assert (row["w"], row["h"]) == (2, 2)
+
+
+def test_rst_tooverlappingtiles(spark):
+    df = _tile_df(spark, width=4, height=4)
+    parts = df.select(f.explode(prx.rst_tooverlappingtiles("tile", 2, 2, 1)).alias("t"))
+    assert parts.count() >= 4
+
+
 def test_rst_derivedband(spark):
     import numpy as np
     from rasterio.io import MemoryFile

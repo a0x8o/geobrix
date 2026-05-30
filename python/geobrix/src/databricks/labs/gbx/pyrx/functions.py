@@ -33,7 +33,7 @@ from databricks.labs.gbx.pyrx.core import accessors, coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
-from databricks.labs.gbx.pyrx.core import resample, terrain, warp
+from databricks.labs.gbx.pyrx.core import resample, terrain, tiling, warp
 
 
 def register(spark: SparkSession = None) -> None:
@@ -616,6 +616,83 @@ def rst_polygonize(
     return _polygonize_udf(_col(tile), _col(band), _col(connectedness))
 
 
+# --- Tier 1e2: tiling UDFs (separatebands, retile, tooverlappingtiles) ------
+@f.udf(ArrayType(_serde.TILE_SCHEMA))
+def _separatebands_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        parts = tiling.separate_bands(ds)
+    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+
+
+@f.udf(ArrayType(_serde.TILE_SCHEMA))
+def _retile_udf(tile, tile_width, tile_height):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        parts = tiling.retile(ds, int(tile_width), int(tile_height))
+    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+
+
+@f.udf(ArrayType(_serde.TILE_SCHEMA))
+def _tooverlappingtiles_udf(tile, tile_width, tile_height, overlap):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        parts = tiling.to_overlapping_tiles(
+            ds, int(tile_width), int(tile_height), int(overlap)
+        )
+    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+
+
+def rst_separatebands(tile: ColLike) -> Column:
+    """Split a multi-band tile into an array of single-band tiles.
+
+    Returns ARRAY<tile struct>; explode the result to get one row per band.
+    Each output tile carries the same georeferencing and CRS as the input.
+    """
+    return _separatebands_udf(_col(tile))
+
+
+def rst_retile(tile: ColLike, tile_width: ColLike, tile_height: ColLike) -> Column:
+    """Partition a tile into non-overlapping sub-tiles of the given pixel size.
+
+    Edge tiles are narrower/shorter when the raster dimensions are not exact
+    multiples of tile_width/tile_height.  Returns ARRAY<tile struct>; explode
+    the result to get one row per sub-tile.  Each output tile carries the
+    correct windowed transform and CRS.
+    """
+    return _retile_udf(_col(tile), _col(tile_width), _col(tile_height))
+
+
+def rst_tooverlappingtiles(
+    tile: ColLike,
+    tile_width: ColLike,
+    tile_height: ColLike,
+    overlap: ColLike,
+) -> Column:
+    """Partition a tile into overlapping sub-tiles.
+
+    Each tile is tile_width x tile_height pixels; neighboring tiles share
+    *overlap* pixels on each shared edge (step = tile_width - overlap).
+    Edge tiles are clamped to the raster boundary.  Returns ARRAY<tile struct>;
+    explode the result to get one row per sub-tile.
+    """
+    return _tooverlappingtiles_udf(
+        _col(tile), _col(tile_width), _col(tile_height), _col(overlap)
+    )
+
+
 # --- Tier 1f: terrain UDFs (slope, aspect, hillshade) ----------------------
 @f.udf(_serde.TILE_SCHEMA)
 def _slope_udf(tile, unit, scale):
@@ -1036,6 +1113,9 @@ _sql_tile_ops = {
     "gbx_rst_convolve": _convolve_udf,
     "gbx_rst_mapalgebra": _mapalgebra_udf,
     "gbx_rst_derivedband": _derivedband_udf,
+    "gbx_rst_separatebands": _separatebands_udf,
+    "gbx_rst_retile": _retile_udf,
+    "gbx_rst_tooverlappingtiles": _tooverlappingtiles_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
