@@ -69,3 +69,19 @@ def test_rst_boundingbox_binarytype_roundtrip(spark):
 def test_register_is_noop(spark):
     # swap-compat: rx.register(spark) -> prx.register(spark) must not error.
     prx.register(spark)
+
+
+def test_rst_transform_to_3857(spark):
+    df = _tile_df(spark, epsg=4326, count=2)
+    out = df.select(prx.rst_transform("tile", 3857).alias("t"))
+    row = out.select(
+        prx.rst_srid("t").alias("s"), prx.rst_numbands("t").alias("n")
+    ).first()
+    assert row["s"] == 3857
+    assert row["n"] == 2
+
+
+def test_rst_to_webmercator(spark):
+    df = _tile_df(spark, epsg=4326)
+    out = df.select(prx.rst_to_webmercator("tile").alias("t"))
+    assert out.select(prx.rst_srid("t").alias("s")).first()["s"] == 3857

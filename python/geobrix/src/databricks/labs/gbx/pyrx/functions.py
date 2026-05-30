@@ -24,7 +24,7 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import accessors, coords
+from databricks.labs.gbx.pyrx.core import accessors, coords, warp
 
 
 def register(_spark: SparkSession = None) -> None:
@@ -81,6 +81,44 @@ def _fromcontent_udf(raster, drv):
 def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
     """Build a tile struct from raster BINARY content and GDAL driver name."""
     return _fromcontent_udf(_col(content), _col(driver))
+
+
+# --- Tier 1b: tile-returning warp UDFs -------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _transform_udf(tile, target_srid):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = warp.reproject_to_srid(ds, int(target_srid))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _to_webmercator_udf(tile, resampling):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = warp.reproject_to_srid(ds, 3857, resampling=str(resampling))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_transform(tile: ColLike, target_srid: ColLike) -> Column:
+    """Reproject the raster to the target SRID (EPSG code)."""
+    return _transform_udf(_col(tile), _col(target_srid))
+
+
+def rst_to_webmercator(tile: ColLike, resampling: ColLike = "bilinear") -> Column:
+    """Reproject the tile to EPSG:3857 (web mercator). resampling defaults to 'bilinear'."""
+    resampling_col = (
+        f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    )
+    return _to_webmercator_udf(_col(tile), resampling_col)
 
 
 # --- Tier 0: accessors ------------------------------------------------------
