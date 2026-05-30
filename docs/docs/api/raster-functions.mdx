@@ -1,0 +1,217 @@
+---
+sidebar_position: 2
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import Tier from '@site/src/components/Tier';
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
+
+# Raster Functions
+
+These functions are available in **both** execution tiers. The function call is identical across tiers — pick a tier for setup and your choice persists across the docs. See [Choosing an Execution Tier](./execution-tiers) for the tradeoffs.
+
+## Setup
+
+The two tiers have different installation steps, but both alias the module as `rx` so all code below is copy-paste portable.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+```python
+pip install 'geobrix[pyrx]'
+```
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+rx.register(spark)   # optional — only needed to call the gbx_rst_* SQL functions
+```
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+Install the JAR + init script (see the [Installation](../installation) guide), then:
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx
+rx.register(spark)
+```
+
+</TabItem>
+</Tabs>
+
+## Availability
+
+Every function in the reference below is available in both tiers <Tier both/>. Two caveats apply: (a) lightweight terrain and spectral-index functions are NumPy reimplementations — results match the heavyweight outputs closely but are not guaranteed bit-identical with the gdaldem-backed heavyweight results; (b) when calling the `gbx_rst_*` SQL functions in the lightweight tier you must pass all arguments explicitly (e.g. `gbx_rst_to_webmercator(tile, 'bilinear')`, `gbx_rst_polygonize(tile, 1, 4)`) — Python default values are not available in Spark SQL UDFs.
+
+## Function reference
+
+### Accessors <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_width` | `rst_width(tile)` | `INT` — width in pixels |
+| `rst_height` | `rst_height(tile)` | `INT` — height in pixels |
+| `rst_numbands` | `rst_numbands(tile)` | `INT` — number of bands |
+| `rst_srid` | `rst_srid(tile)` | `INT` — EPSG code |
+| `rst_pixelwidth` | `rst_pixelwidth(tile)` | `DOUBLE` — pixel width in CRS units |
+| `rst_pixelheight` | `rst_pixelheight(tile)` | `DOUBLE` — pixel height in CRS units |
+| `rst_upperleftx` | `rst_upperleftx(tile)` | `DOUBLE` — X of upper-left corner |
+| `rst_upperlefty` | `rst_upperlefty(tile)` | `DOUBLE` — Y of upper-left corner |
+| `rst_scalex` | `rst_scalex(tile)` | `DOUBLE` — scale in X (pixel width) |
+| `rst_scaley` | `rst_scaley(tile)` | `DOUBLE` — scale in Y (negative for north-up) |
+| `rst_isempty` | `rst_isempty(tile)` | `BOOLEAN` |
+| `rst_boundingbox` | `rst_boundingbox(tile)` | `BINARY` — bounding box WKB |
+| `rst_metadata` | `rst_metadata(tile)` | `MAP<STRING,STRING>` |
+| `rst_type` | `rst_type(tile)` | `ARRAY<STRING>` — GDAL type name per band |
+| `rst_getnodata` | `rst_getnodata(tile)` | `ARRAY<DOUBLE>` — NoData value per band |
+
+### Coordinates <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_rastertoworldcoordx` | `rst_rastertoworldcoordx(tile, pixel_x, pixel_y)` | `DOUBLE` — world X of pixel centre |
+| `rst_rastertoworldcoordy` | `rst_rastertoworldcoordy(tile, pixel_x, pixel_y)` | `DOUBLE` — world Y of pixel centre |
+| `rst_worldtorastercoordx` | `rst_worldtorastercoordx(tile, world_x, world_y)` | `INT` — pixel column |
+| `rst_worldtorastercoordy` | `rst_worldtorastercoordy(tile, world_x, world_y)` | `INT` — pixel row |
+
+### Constructor <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_fromcontent` | `rst_fromcontent(content, driver)` | Tile struct from raw raster bytes |
+
+### Reproject and resample <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_transform` | `rst_transform(tile, target_srid)` | Reprojected tile |
+| `rst_to_webmercator` | `rst_to_webmercator(tile, resampling="bilinear")` | Tile in EPSG:3857 |
+| `rst_resample` | `rst_resample(tile, factor, algorithm="bilinear")` | Resampled tile (factor >1 upsamples) |
+| `rst_resample_to_size` | `rst_resample_to_size(tile, width_px, height_px, algorithm="bilinear")` | Resampled tile at exact pixel dimensions |
+| `rst_resample_to_res` | `rst_resample_to_res(tile, x_res, y_res, algorithm="bilinear")` | Resampled tile at target ground resolution |
+
+### Edit <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_clip` | `rst_clip(tile, clip, cutline_all_touched)` | Clipped tile; `clip` is WKB |
+| `rst_updatetype` | `rst_updatetype(tile, new_type)` | Tile with new GDAL data type (e.g. `'Int32'`) |
+| `rst_initnodata` | `rst_initnodata(tile)` | Tile with NoData set to -9999.0 if unset |
+
+### Vector bridge <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_rasterize` | `rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` | New raster tile with geometry burned in |
+| `rst_fillnodata` | `rst_fillnodata(tile, max_search_dist=None, smoothing_iter=None)` | Tile with NoData gaps interpolated |
+| `rst_polygonize` | `rst_polygonize(tile, band=1, connectedness=4)` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` |
+
+### Spectral indices <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_ndvi` | `rst_ndvi(tile, red_band, nir_band)` | Single-band Float32 NDVI |
+| `rst_evi` | `rst_evi(tile, red_idx, nir_idx, blue_idx, l=1.0, c1=6.0, c2=7.5, g=2.5)` | Single-band Float32 EVI |
+| `rst_savi` | `rst_savi(tile, red_idx, nir_idx, l=0.5)` | Single-band Float32 SAVI |
+| `rst_ndwi` | `rst_ndwi(tile, green_idx, nir_idx)` | Single-band Float32 NDWI |
+| `rst_nbr` | `rst_nbr(tile, nir_idx, swir_idx)` | Single-band Float32 NBR |
+
+### Terrain <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_slope` | `rst_slope(tile, unit="degrees", scale=1.0)` | Single-band Float32 slope |
+| `rst_aspect` | `rst_aspect(tile, trigonometric=False, zero_for_flat=False)` | Single-band Float32 aspect |
+| `rst_hillshade` | `rst_hillshade(tile, azimuth=315.0, altitude=45.0, z_factor=1.0)` | Single-band Byte hillshade (0–255) |
+| `rst_tri` | `rst_tri(tile)` | Single-band Float32 terrain ruggedness index |
+| `rst_tpi` | `rst_tpi(tile)` | Single-band Float32 topographic position index |
+| `rst_roughness` | `rst_roughness(tile)` | Single-band Float32 roughness |
+| `rst_color_relief` | `rst_color_relief(tile, color_table_path)` | RGB(A) Byte tile from a gdaldem color table |
+
+Terrain and spectral-index functions in the lightweight tier are NumPy reimplementations; results are close to but not guaranteed bit-identical with the heavyweight gdaldem-backed outputs.
+
+### Band math <Tier both/>
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_threshold` | `rst_threshold(tile, op=None, value=None)` | Tile; pixels failing `op value` set to NoData (default `>` 0.0) |
+| `rst_filter` | `rst_filter(tile, kernel_size, operation)` | Focal-filtered tile (`min`/`max`/`mean`/`median`) |
+| `rst_convolve` | `rst_convolve(tile, kernel)` | Float64 tile; 2D kernel convolution |
+| `rst_mapalgebra` | `rst_mapalgebra(tiles, expression)` | Single-band Float32; `numexpr` math over band 1 of each input tile bound to `A, B, C, …` |
+| `rst_derivedband` | `rst_derivedband(tile_expr, pyfunc, func_name)` | Single-band tile; applies a user Python function (GDAL pixel-func signature) |
+
+## Examples
+
+These examples use the lightweight tier; the same calls work unchanged in the heavyweight tier (only the setup import differs).
+
+### Setup
+
+Build an in-memory GeoTIFF with rasterio, wrap it into a tile DataFrame, and register a temp view:
+
+<CodeFromTest
+  language="python"
+  title="Setup — build an in-memory tile DataFrame"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_setup_example"
+  outputConstant="pyrx_setup_example_output"
+  code={pyrxCode}
+/>
+
+### Accessors
+
+Read raster properties from the tile struct:
+
+<CodeFromTest
+  language="python"
+  title="Accessor functions"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_accessors_example"
+  outputConstant="pyrx_accessors_example_output"
+  code={pyrxCode}
+/>
+
+### Reproject
+
+Reproject a tile to a different CRS:
+
+<CodeFromTest
+  language="python"
+  title="rst_transform — reproject to EPSG:3857"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_transform_example"
+  outputConstant="pyrx_transform_example_output"
+  code={pyrxCode}
+/>
+
+### Clip
+
+Clip the raster to a geometry (WKB):
+
+<CodeFromTest
+  language="python"
+  title="rst_clip — clip to a bounding polygon"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_clip_example"
+  outputConstant="pyrx_clip_example_output"
+  code={pyrxCode}
+/>
+
+### Polygonize
+
+Extract vector polygons from contiguous equal-value regions:
+
+<CodeFromTest
+  language="python"
+  title="rst_polygonize — raster to vector"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_polygonize_example"
+  outputConstant="pyrx_polygonize_example_output"
+  code={pyrxCode}
+/>
