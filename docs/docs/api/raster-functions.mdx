@@ -111,16 +111,18 @@ After registering RasterX, create the SQL view so the SQL examples below can use
 
 ### Python/PySpark
 
-These examples assume your tier is set up as above (imported as `rx`, and `register(spark)` called for the SQL examples).
+These examples assume your tier is set up as in [Setup](#setup) above — imported as `rx`, registered (for the SQL examples), and a raster `DataFrame` (`raster_df`, with a `tile` column) loaded for your tier. The calls are identical in both tiers:
 
-<CodeFromTest
-  code={packagesExamples}
-  language="python"
-  source="docs/tests/python/packages/examples.py"
-  testFile="docs/tests/python/packages/test_examples.py"
-  functionName="rasterx_basic_usage"
-  outputConstant="rasterx_basic_usage_output"
-/>
+```python
+# Read raster properties off the `tile` column:
+metadata_df = raster_df.select(
+    rx.rst_width("tile").alias("width"),
+    rx.rst_height("tile").alias("height"),
+    rx.rst_numbands("tile").alias("bands"),
+    rx.rst_srid("tile").alias("srid"),
+)
+metadata_df.show()
+```
 
 ### Scala
 
