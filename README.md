@@ -271,7 +271,5 @@ All GeoBrix SQL functions will be registered with gbx_ prefix. This reflects a l
 See the [scripts](./scripts) folder for more information.
 
 ## Known Limitations
-* The Beta does not yet support Databricks Spatial Types directly but is standardized to WKB or WKT where geometries are involved. In addition to content in the user guide, the provided notebooks, e.g. Shapefile Reader, have examples of converting to our built-in [GEOMETRY](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type#gsc.tab=0) type and using our built-in ST Geospatial Functions.
-* A handful of functions are not yet ported. For raster: `rst_dtmfromgeoms` and for vector: `st_interpolateelevation` and `st_triangulate`.
+* The Beta does not yet support Databricks Spatial Types directly but is standardized to [E]WKB or [E]WKT where geometries are involved. More under [Databricks Spatial Types and Functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial) for converting to our built-in [GEOMETRY](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type#gsc.tab=0) type and using our built-in ST Geospatial Functions.
 * Spatial KNN is not yet ported; neither is H3 support for Geometry-based K-Ring and K-Loop.
-* Custom Gridding is not fully ported.

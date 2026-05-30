@@ -58,7 +58,6 @@ def _tile_df(spark, **kw):
 def pyrx_setup_example(spark):
     """Import pyrx, build an in-memory GeoTIFF, wrap it into a tile DataFrame."""
     from pyspark.sql import functions as f
-
     from databricks.labs.gbx.pyrx import functions as rx
 
     # Build a 4 x 3, 2-band float32 GTiff in memory (origin 10.0, 50.0; 0.5 px; EPSG:4326).
@@ -127,7 +126,6 @@ def pyrx_clip_example(spark):
     import shapely.wkb
     from pyspark.sql import functions as f
     from shapely.geometry import box
-
     from databricks.labs.gbx.pyrx import functions as rx
 
     tile_df = _tile_df(spark, width=4, height=3, epsg=4326)
@@ -157,7 +155,6 @@ def pyrx_polygonize_example(spark):
     from pyspark.sql import functions as f
     from rasterio.io import MemoryFile
     from rasterio.transform import from_origin
-
     from databricks.labs.gbx.pyrx import functions as rx
 
     # Build a 4 x 4 raster with a 2 x 2 block of value 5.0 in the centre;
@@ -202,7 +199,6 @@ pyrx_polygonize_example_output = """
 def pyrx_sql_example(spark):
     """Register pyrx SQL functions and query them from Spark SQL."""
     from pyspark.sql import functions as f
-
     from databricks.labs.gbx.pyrx import functions as rx
 
     rx.register(spark)
