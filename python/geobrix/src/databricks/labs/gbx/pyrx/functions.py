@@ -681,6 +681,40 @@ def rst_roughness(tile: ColLike) -> Column:
     return _roughness_udf(_col(tile))
 
 
+@f.udf(_serde.TILE_SCHEMA)
+def _color_relief_udf(tile, color_table_path):
+    if tile is None or tile["raster"] is None or color_table_path is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = terrain.color_relief(ds, str(color_table_path))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_color_relief(tile: ColLike, color_table_path: ColLike) -> Column:
+    """Map a single-band DEM through a gdaldem color table to an RGB(A) Byte tile.
+
+    Reads a gdaldem-style color file (elevation R G B [A] per line; ``nv`` for
+    NoData pixels; ``<n>%`` for percentage of the band range).  Applies linear
+    interpolation per channel.
+
+    Args:
+        tile:             Tile struct column containing a single-band DEM raster.
+        color_table_path: Column or string path to a gdaldem color file.
+
+    Returns:
+        3-band (RGB) or 4-band (RGBA) Byte tile.
+    """
+    ctp = (
+        f.lit(color_table_path)
+        if isinstance(color_table_path, str)
+        else _col(color_table_path)
+    )
+    return _color_relief_udf(_col(tile), ctp)
+
+
 # --- Tier 0: accessors ------------------------------------------------------
 def rst_width(tile: ColLike) -> Column:
     return _u_width(_raster_field(_col(tile)))
@@ -836,6 +870,7 @@ _sql_tile_ops = {
     "gbx_rst_tri": _tri_udf,
     "gbx_rst_tpi": _tpi_udf,
     "gbx_rst_roughness": _roughness_udf,
+    "gbx_rst_color_relief": _color_relief_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
