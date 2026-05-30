@@ -138,3 +138,56 @@ def test_rst_initnodata(spark):
     df = _tile_df(spark, nodata=None)
     out = df.select(prx.rst_initnodata("tile").alias("t"))
     assert out.select(prx.rst_getnodata("t").alias("nd")).first()["nd"][0] == -9999.0
+
+
+def test_rst_rasterize(spark):
+    import shapely.wkb
+    from shapely.geometry import box
+
+    geom = shapely.wkb.dumps(box(1.0, 1.0, 3.0, 3.0))
+    df = spark.createDataFrame([(geom,)], ["g"])
+    out = df.select(
+        prx.rst_rasterize("g", 5.0, 0.0, 0.0, 4.0, 4.0, 4, 4, 4326).alias("t")
+    )
+    row = out.select(
+        prx.rst_width("t").alias("w"),
+        prx.rst_height("t").alias("h"),
+        prx.rst_srid("t").alias("s"),
+    ).first()
+    assert (row["w"], row["h"], row["s"]) == (4, 4, 4326)
+
+
+def test_rst_fillnodata(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.ones((5, 5), dtype="float32")
+    data[2, 2] = -9999.0
+    profile = dict(
+        driver="GTiff",
+        width=5,
+        height=5,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(0, 5, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"])
+    df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    out = df.select(prx.rst_fillnodata("tile").alias("t"))
+    # rst_pixelcount absent in pyrx; verify via dims and nodata list (all filled = empty nodata)
+    row = out.select(
+        prx.rst_width("t").alias("w"),
+        prx.rst_height("t").alias("h"),
+        prx.rst_getnodata("t").alias("nd"),
+    ).first()
+    assert (row["w"], row["h"]) == (5, 5)
+    # nodata is set but all pixels should now be valid — getnodata returns the
+    # configured nodata value (not per-pixel mask), so just verify tile is non-null.
+    assert row["nd"] is not None

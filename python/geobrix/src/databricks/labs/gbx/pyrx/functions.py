@@ -25,7 +25,14 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import accessors, coords, edit, resample, warp
+from databricks.labs.gbx.pyrx.core import (
+    accessors,
+    coords,
+    edit,
+    features,
+    resample,
+    warp,
+)
 
 
 def register(_spark: SparkSession = None) -> None:
@@ -254,6 +261,68 @@ def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
 def rst_initnodata(tile: ColLike) -> Column:
     """Ensure a NoData value is set on the raster tile; uses -9999.0 if not already set."""
     return _init_nodata_udf(_col(tile))
+
+
+# --- Tier 1e: constructor + fill UDFs (vector bridge) -----------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _rasterize_udf(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid):
+    if geom_wkb is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    new_bytes = features.rasterize_geom(
+        bytes(geom_wkb), value, xmin, ymin, xmax, ymax, width_px, height_px, srid
+    )
+    return _serde.build_tile(new_bytes, "GTiff", 0)
+
+
+def rst_rasterize(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Burn a geometry (WKB) into a new raster tile at the given extent/size/SRID."""
+    return _rasterize_udf(
+        _col(geom_wkb),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _fillnodata_udf(tile, max_search_dist, smoothing_iter):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = features.fill_nodata(ds, max_search_dist, smoothing_iter)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_fillnodata(
+    tile: ColLike,
+    max_search_dist: ColLike = None,
+    smoothing_iter: ColLike = None,
+) -> Column:
+    """Interpolate across NoData gaps in the raster."""
+    msd = f.lit(None) if max_search_dist is None else _col(max_search_dist)
+    smi = f.lit(None) if smoothing_iter is None else _col(smoothing_iter)
+    return _fillnodata_udf(_col(tile), msd, smi)
 
 
 # --- Tier 0: accessors ------------------------------------------------------
