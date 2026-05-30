@@ -15,21 +15,25 @@ GeoBrix offers two execution tiers with different installation paths. See [Choos
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
-The lightweight tier is a single Python wheel — **no init script, no JAR, no native GDAL bundle**. It runs on serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM.
+The lightweight tier is a single Python wheel installed with the `pyrx` extra — **no init script, no JAR, no native GDAL bundle** (rasterio's bundled GDAL does the work). It runs on serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM.
 
-Install the GeoBrix wheel with the `pyrx` extra (as a cluster PyPI library, or in a notebook):
+The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **not** published to PyPI. Install it from a Unity Catalog Volume so the same path works on both Serverless and Classic compute:
+
+1. **Download** `geobrix-<version>-py3-none-any.whl` from the [GeoBrix releases](https://github.com/databrickslabs/geobrix/releases) (0.4.0 or later).
+2. **Stage** it in a Unity Catalog Volume your compute can read, e.g. `/Volumes/<catalog>/<schema>/<volume>/geobrix/`.
+3. **Install** it — either notebook-scoped with the `%pip` magic (installs across the whole cluster for the notebook session; plain `pip` installs only on the driver), or as a [cluster-scoped library](https://docs.databricks.com/aws/en/libraries/notebooks-python-libraries#manage-libraries-with-pip-commands) pointing at the same Volume path (works on Serverless and Classic):
 
 ```python
-%pip install 'geobrix[pyrx]'
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[pyrx]'
 ```
+
+Then import and (optionally) register the SQL functions:
 
 ```python
 from databricks.labs.gbx.pyrx import functions as rx
 # optional — only needed to call the gbx_rst_* SQL functions:
 rx.register(spark)
 ```
-
-That's the entire install — no init script, no JAR, no native GDAL bundle.
 
 ## Verify the lightweight install
 

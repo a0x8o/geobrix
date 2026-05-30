@@ -24,7 +24,7 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 
 | Aspect | Heavyweight (rasterx) | Lightweight (pyrx) |
 |---|---|---|
-| Install | Init script + JAR | `pip install 'geobrix[pyrx]'` |
+| Install | Init script + JAR | Volume-staged wheel (`%pip` or cluster library) |
 | Native GDAL | System/PPA install | Bundled with rasterio (nothing to install) |
 | ARM support | x86 only | x86 and ARM |
 | Serverless / shared clusters / Lakeflow SDP | Not supported | Supported |
