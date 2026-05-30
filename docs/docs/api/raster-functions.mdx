@@ -743,7 +743,11 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridavg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_h3_rastertogridavg(tile: Column, resolution: Column): Column`
 
@@ -753,7 +757,11 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridcount
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_h3_rastertogridcount(tile: Column, resolution: Column): Column` — Pixel count per H3 cell.
 
@@ -763,7 +771,11 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridmax
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_h3_rastertogridmax(tile: Column, resolution: Column): Column` — Max value per H3 cell.
 
@@ -773,7 +785,11 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridmin
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_h3_rastertogridmin(tile: Column, resolution: Column): Column` — Min value per H3 cell.
 
@@ -783,7 +799,11 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridmedian
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_h3_rastertogridmedian(tile: Column, resolution: Column): Column` — Median value per H3 cell.
 
@@ -799,7 +819,11 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridavg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_quadbin_rastertogridavg(tile: Column, resolution: Column): Column` — Mean pixel value per quadbin cell.
 
@@ -809,7 +833,11 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridcount
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_quadbin_rastertogridcount(tile: Column, resolution: Column): Column` — Pixel count per quadbin cell.
 
@@ -819,7 +847,11 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridmax
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_quadbin_rastertogridmax(tile: Column, resolution: Column): Column` — Max pixel value per quadbin cell.
 
@@ -829,7 +861,11 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridmin
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_quadbin_rastertogridmin(tile: Column, resolution: Column): Column` — Min pixel value per quadbin cell.
 
@@ -839,7 +875,11 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridmedian
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
+:::
 
 **Signature:** `rst_quadbin_rastertogridmedian(tile: Column, resolution: Column): Column` — Median pixel value per quadbin cell.
 

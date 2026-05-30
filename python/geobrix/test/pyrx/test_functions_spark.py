@@ -585,3 +585,46 @@ def test_rst_xyzpyramid_array(spark):
     for r in rows:
         assert r["z"] in (1, 2, 3)
         assert bytes(r["bytes"])[:4] == b"\x89PNG"
+
+
+# --- raster->grid aggregation (h3 + quadbin) --------------------------------
+def test_rst_h3_rastertogridcount(spark):
+    df = _tile_df(spark, width=4, height=3, count=1)
+    # outer array (1 band) -> inner array of (cellID, measure); count sums to 12.
+    rows = (
+        df.select(f.explode(prx.rst_h3_rastertogridcount("tile", f.lit(6))).alias("b"))
+        .select(f.explode("b").alias("c"))
+        .select(f.col("c.cellID").alias("cid"), f.col("c.measure").alias("m"))
+        .collect()
+    )
+    assert sum(r["m"] for r in rows) == 12
+    assert all(0 < r["cid"] < 2**63 for r in rows)
+
+
+def test_rst_quadbin_rastertogridcount(spark):
+    df = _tile_df(spark, width=4, height=3, count=1)
+    rows = (
+        df.select(
+            f.explode(prx.rst_quadbin_rastertogridcount("tile", f.lit(10))).alias("b")
+        )
+        .select(f.explode("b").alias("c"))
+        .select(f.col("c.measure").alias("m"))
+        .collect()
+    )
+    assert sum(r["m"] for r in rows) == 12
+
+
+def test_rst_h3_rastertogridavg_multiband_outer_length(spark):
+    df = _tile_df(spark, width=4, height=3, count=2)
+    n = df.select(
+        f.size(prx.rst_h3_rastertogridavg("tile", f.lit(5))).alias("n")
+    ).first()["n"]
+    assert n == 2
+
+
+def test_rst_quadbin_rastertogridmedian(spark):
+    df = _tile_df(spark, width=4, height=3, count=1)
+    n = df.select(
+        f.size(prx.rst_quadbin_rastertogridmedian("tile", f.lit(8))).alias("n")
+    ).first()["n"]
+    assert n == 1

@@ -101,3 +101,25 @@ def test_register_enables_xyzpyramid_sql(spark):
         "SELECT size(gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear')) AS n FROM t"
     ).first()["n"]
     assert n >= 1
+
+
+def test_register_enables_h3_rastertogrid_sql(spark):
+    prx.register(spark)
+    _tile_view(spark, width=4, height=3, epsg=4326)
+    # nested ARRAY<ARRAY<struct>>: outer size == band count (1).
+    n = spark.sql(
+        "SELECT size(gbx_rst_h3_rastertogridcount(tile, 6)) AS n FROM t"
+    ).first()["n"]
+    assert n == 1
+
+
+def test_register_enables_quadbin_rastertogrid_sql(spark):
+    prx.register(spark)
+    _tile_view(spark, width=4, height=3, epsg=4326)
+    # explode both levels and confirm counts sum to the 12 valid pixels.
+    total = spark.sql(
+        "SELECT sum(c.measure) AS total FROM t "
+        "LATERAL VIEW explode(gbx_rst_quadbin_rastertogridcount(tile, 10)) AS b "
+        "LATERAL VIEW explode(b) AS c"
+    ).first()["total"]
+    assert total == 12

@@ -41,5 +41,9 @@ numexpr==2.11.0
 # --- web-mercator XYZ tiling (rio-tiler bundles morecantile + color-operations) ---
 rio-tiler==9.0.6
 
+# --- discrete global grids: raster->H3/quadbin aggregation ---
+h3==4.4.2
+quadbin==0.2.2
+
 # --- test runner ---
 pytest==8.4.2

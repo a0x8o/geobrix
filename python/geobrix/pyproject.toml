@@ -60,6 +60,8 @@ pyrx = [
     "scipy>=1.11.0",
     "numexpr>=2.8.0",
     "rio-tiler>=9.0,<10",
+    "h3>=4.0,<5",
+    "quadbin>=0.2,<0.3",
 ]
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
 databricks = [
