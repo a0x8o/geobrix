@@ -1,0 +1,190 @@
+---
+sidebar_position: 9
+---
+
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
+
+# pyrx — Lightweight Raster Functions
+
+## Overview
+
+`pyrx` is the lightweight, pure-Python implementation of GeoBrix raster functions. It mirrors the RasterX API — same `rst_*` function names and signatures — but runs entirely on PySpark and [rasterio](https://rasterio.readthedocs.io/) with **no JVM JAR and no separately-installed native GDAL**. rasterio's bundled GDAL does the raster work, so `pyrx` installs from a single wheel (`pip install 'geobrix[pyrx]'`) and runs where the heavyweight package can't: serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM as well as x86.
+
+## When to use pyrx vs RasterX
+
+Both expose the same `rst_*` names, so you can switch between them by changing one import:
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx   # heavyweight (Scala JAR + native GDAL)
+from databricks.labs.gbx.pyrx import functions as prx      # lightweight (pure Python + rasterio)
+```
+
+Reach for **pyrx** when you want a fast, dependency-light start, or when your compute can't load the JAR/init-script (serverless, shared clusters, ARM). Reach for **RasterX** for the full function set and JVM-side performance on dedicated clusters.
+
+## Capabilities
+
+- Same tile contract as RasterX: a struct `cellid: bigint, raster: binary, metadata: map<string,string>` whose `raster` is self-contained in-memory GTiff bytes — interoperable with the RasterX tile.
+- Accessor, coordinate, reproject/resample, clip, type/NoData, rasterize, fill, and polygonize functions (the set grows over time).
+- Two ways to call: the Python Column API (`prx.rst_width(col)`) works immediately; or register the SQL functions explicitly (below) to use them from Spark SQL.
+- Bundled GDAL via rasterio — no native install, no init script, ARM-compatible.
+
+## Registering SQL functions (optional, explicit)
+
+Like the heavyweight package, SQL registration is an explicit opt-in. The Python Column API works without it; call `register` only when you want to use the functions from Spark SQL:
+
+<CodeFromTest
+  language="python"
+  title="Register pyrx SQL functions"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_sql_example"
+  outputConstant="pyrx_sql_example_output"
+  code={pyrxCode}
+/>
+
+This installs the same `gbx_rst_*` names the heavyweight package uses, powered by pyspark. Register the lightweight **or** the heavyweight package in a given session — they share the `gbx_rst_*` names, so the last registration wins.
+
+## Tradeoffs
+
+- **Driver coverage** follows rasterio's bundled GDAL build, which is narrower than a full custom GDAL install. For exotic formats, use RasterX.
+- **Execution model:** functions run as Python UDFs in Python worker processes (vectorized over Arrow batches where possible), rather than JVM-native code. Expect different performance characteristics than the Scala path; for the largest distributed workloads on dedicated clusters, RasterX may be faster.
+- **SQL default arguments:** Spark SQL UDFs do not carry Python default values, so when calling the `gbx_rst_*` SQL functions you must pass every argument explicitly (e.g. `gbx_rst_to_webmercator(tile, 'bilinear')`, `gbx_rst_polygonize(tile, 1, 4)`). The Python Column API keeps the defaults (`prx.rst_to_webmercator(tile)`).
+- **Function set is a growing subset** of RasterX; aggregators and some grid/terrain/vector functions are not yet available in pyrx.
+
+## Examples
+
+### Setup
+
+Build an in-memory GeoTIFF with rasterio, wrap it into a tile DataFrame, and register a temp view:
+
+<CodeFromTest
+  language="python"
+  title="pyrx setup — build an in-memory tile DataFrame"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_setup_example"
+  outputConstant="pyrx_setup_example_output"
+  code={pyrxCode}
+/>
+
+### Accessors
+
+Read raster properties from the tile struct:
+
+<CodeFromTest
+  language="python"
+  title="Accessor functions"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_accessors_example"
+  outputConstant="pyrx_accessors_example_output"
+  code={pyrxCode}
+/>
+
+### Reproject
+
+Reproject a tile to a different CRS:
+
+<CodeFromTest
+  language="python"
+  title="rst_transform — reproject to EPSG:3857"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_transform_example"
+  outputConstant="pyrx_transform_example_output"
+  code={pyrxCode}
+/>
+
+### Clip
+
+Clip the raster to a geometry (WKB):
+
+<CodeFromTest
+  language="python"
+  title="rst_clip — clip to a bounding polygon"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_clip_example"
+  outputConstant="pyrx_clip_example_output"
+  code={pyrxCode}
+/>
+
+### Polygonize
+
+Extract vector polygons from contiguous equal-value regions:
+
+<CodeFromTest
+  language="python"
+  title="rst_polygonize — raster to vector"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_polygonize_example"
+  outputConstant="pyrx_polygonize_example_output"
+  code={pyrxCode}
+/>
+
+---
+
+## Function reference
+
+### Accessors
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_width` | `rst_width(tile)` | `INT` — width in pixels |
+| `rst_height` | `rst_height(tile)` | `INT` — height in pixels |
+| `rst_numbands` | `rst_numbands(tile)` | `INT` — number of bands |
+| `rst_srid` | `rst_srid(tile)` | `INT` — EPSG code |
+| `rst_pixelwidth` | `rst_pixelwidth(tile)` | `DOUBLE` — pixel width in CRS units |
+| `rst_pixelheight` | `rst_pixelheight(tile)` | `DOUBLE` — pixel height in CRS units |
+| `rst_upperleftx` | `rst_upperleftx(tile)` | `DOUBLE` — X of upper-left corner |
+| `rst_upperlefty` | `rst_upperlefty(tile)` | `DOUBLE` — Y of upper-left corner |
+| `rst_scalex` | `rst_scalex(tile)` | `DOUBLE` — scale in X (pixel width) |
+| `rst_scaley` | `rst_scaley(tile)` | `DOUBLE` — scale in Y (negative for north-up) |
+| `rst_isempty` | `rst_isempty(tile)` | `BOOLEAN` |
+| `rst_boundingbox` | `rst_boundingbox(tile)` | `BINARY` — bounding box WKB |
+| `rst_metadata` | `rst_metadata(tile)` | `MAP<STRING,STRING>` |
+| `rst_type` | `rst_type(tile)` | `ARRAY<STRING>` — GDAL type name per band |
+| `rst_getnodata` | `rst_getnodata(tile)` | `ARRAY<DOUBLE>` — NoData value per band |
+
+### Coordinates
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_rastertoworldcoordx` | `rst_rastertoworldcoordx(tile, pixel_x, pixel_y)` | `DOUBLE` — world X of pixel centre |
+| `rst_rastertoworldcoordy` | `rst_rastertoworldcoordy(tile, pixel_x, pixel_y)` | `DOUBLE` — world Y of pixel centre |
+| `rst_worldtorastercoordx` | `rst_worldtorastercoordx(tile, world_x, world_y)` | `INT` — pixel column |
+| `rst_worldtorastercoordy` | `rst_worldtorastercoordy(tile, world_x, world_y)` | `INT` — pixel row |
+
+### Constructor
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_fromcontent` | `rst_fromcontent(content, driver)` | Tile struct from raw raster bytes |
+
+### Reproject and resample
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_transform` | `rst_transform(tile, target_srid)` | Reprojected tile |
+| `rst_to_webmercator` | `rst_to_webmercator(tile, resampling="bilinear")` | Tile in EPSG:3857 |
+| `rst_resample` | `rst_resample(tile, factor, algorithm="bilinear")` | Resampled tile (factor >1 upsamples) |
+| `rst_resample_to_size` | `rst_resample_to_size(tile, width_px, height_px, algorithm="bilinear")` | Resampled tile at exact pixel dimensions |
+| `rst_resample_to_res` | `rst_resample_to_res(tile, x_res, y_res, algorithm="bilinear")` | Resampled tile at target ground resolution |
+
+### Edit
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_clip` | `rst_clip(tile, clip, cutline_all_touched)` | Clipped tile; `clip` is WKB |
+| `rst_updatetype` | `rst_updatetype(tile, new_type)` | Tile with new GDAL data type (e.g. `'Int32'`) |
+| `rst_initnodata` | `rst_initnodata(tile)` | Tile with NoData set to -9999.0 if unset |
+
+### Vector bridge
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_rasterize` | `rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` | New raster tile with geometry burned in |
+| `rst_fillnodata` | `rst_fillnodata(tile, max_search_dist=None, smoothing_iter=None)` | Tile with NoData gaps interpolated |
+| `rst_polygonize` | `rst_polygonize(tile, band=1, connectedness=4)` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` |
