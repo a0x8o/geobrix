@@ -87,6 +87,7 @@ const sidebars = {
           items: [
             'api/execution-tiers',
             'api/raster-functions',
+            'api/raster-functions-heavyweight',
             'api/gridx-functions',
             'api/vectorx-functions',
             'api/pmtiles-functions',

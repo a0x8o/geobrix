@@ -43,7 +43,10 @@ RASTERX_SQL_FILE = REPO_ROOT / "docs/tests/python/api/rasterx_functions_sql.py"
 
 # prefix -> docs page(s); value is always a list so callers can iterate uniformly
 PAGE_MAP: dict[str, list[Path]] = {
-    "gbx_rst_": [REPO_ROOT / "docs/docs/api/raster-functions.mdx"],
+    "gbx_rst_": [
+        REPO_ROOT / "docs/docs/api/raster-functions.mdx",
+        REPO_ROOT / "docs/docs/api/raster-functions-heavyweight.mdx",
+    ],
     "gbx_bng_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],
     "gbx_quadbin_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],
     "gbx_custom_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],

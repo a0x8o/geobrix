@@ -149,155 +149,12 @@ metadata_df.show()
 ---
 
 :::note SQL examples
-Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages. In the lightweight tier, the registered `gbx_rst_*` SQL functions require every argument to be passed explicitly — optional defaults are honored only through the Python `prx.*` API.
 :::
 
 ## Heavyweight-only functions
 
-These functions are available only in the heavyweight tier (not yet in the lightweight `pyrx` tier):
-
-### Accessors & statistics
-
-| Function | Purpose |
-|---|---|
-| `rst_avg` | per-band average pixel value |
-| `rst_bandmetadata` | band metadata map |
-| `rst_format` | GDAL format name |
-| `rst_georeference` | geotransform parameters as a map |
-| `rst_getsubdataset` | extract a named subdataset |
-| `rst_max` | per-band maximum pixel value |
-| `rst_median` | per-band median pixel value |
-| `rst_memsize` | in-memory size in bytes |
-| `rst_min` | per-band minimum pixel value |
-| `rst_pixelcount` | total pixel count |
-| `rst_rotation` | rotation in radians |
-| `rst_skewx` | geotransform row rotation (X skew) |
-| `rst_skewy` | geotransform column rotation (Y skew) |
-| `rst_subdatasets` | list of subdataset names |
-| `rst_summary` | statistical summary of values |
-| `rst_histogram` | per-band bucket counts |
-
-### Constructors
-
-| Function | Purpose |
-|---|---|
-| `rst_fromfile` | load a raster from a file path |
-| `rst_frombands` | assemble a raster from an array of band tiles |
-| `rst_dtmfromgeoms` | TIN/Delaunay DTM from Z-valued points |
-| `rst_gridfrompoints` | IDW-interpolated Float64 grid from points |
-
-### Coordinates
-
-| Function | Purpose |
-|---|---|
-| `rst_rastertoworldcoord` | pixel-to-world as a struct |
-| `rst_worldtorastercoord` | world-to-pixel as a struct |
-
-### Operations
-
-| Function | Purpose |
-|---|---|
-| `rst_asformat` | convert to another GDAL format |
-| `rst_combineavg` | average multiple tiles |
-| `rst_merge` | merge tiles into a mosaic |
-| `rst_tryopen` | validate that a raster opens |
-| `rst_setsrid` | stamp an EPSG code (no reprojection) |
-| `rst_band` | extract a single band as a new tile |
-| `rst_buildoverviews` | add pyramid overview levels |
-| `rst_sample` | sample pixel values at a geometry |
-
-### Generators & tiling
-
-| Function | Purpose |
-|---|---|
-| `rst_h3_tessellate` | tessellate a raster to H3 cells |
-
-### Grid aggregation (H3)
-
-| Function | Purpose |
-|---|---|
-| `rst_h3_rastertogridavg` | mean pixel value per H3 cell |
-| `rst_h3_rastertogridcount` | pixel count per H3 cell |
-| `rst_h3_rastertogridmax` | max pixel value per H3 cell |
-| `rst_h3_rastertogridmin` | min pixel value per H3 cell |
-| `rst_h3_rastertogridmedian` | median pixel value per H3 cell |
-
-### Grid aggregation (quadbin)
-
-| Function | Purpose |
-|---|---|
-| `rst_quadbin_rastertogridavg` | mean pixel value per quadbin cell |
-| `rst_quadbin_rastertogridcount` | pixel count per quadbin cell |
-| `rst_quadbin_rastertogridmax` | max pixel value per quadbin cell |
-| `rst_quadbin_rastertogridmin` | min pixel value per quadbin cell |
-| `rst_quadbin_rastertogridmedian` | median pixel value per quadbin cell |
-
-### Aggregators
-
-| Function | Purpose |
-|---|---|
-| `rst_combineavg_agg` | average tiles per group |
-| `rst_derivedband_agg` | apply a Python UDF to tiles per group |
-| `rst_merge_agg` | merge tiles per group |
-| `rst_frombands_agg` | assemble ordered per-band rows per group |
-| `rst_rasterize_agg` | burn geom/value rows into one tile per group |
-| `rst_dtmfromgeoms_agg` | TIN DTM per group from one point per row |
-| `rst_gridfrompoints_agg` | IDW grid per group from one point per row |
-
-### Spectral indices
-
-| Function | Purpose |
-|---|---|
-| `rst_index` | generic index dispatcher by name |
-
-### Analysis
-
-| Function | Purpose |
-|---|---|
-| `rst_cog_convert` | re-layout as a Cloud Optimized GeoTIFF |
-| `rst_contour` | extract contour LineString features |
-| `rst_proximity` | distance-to-source surface |
-| `rst_viewshed` | binary viewshed from a DEM and observer |
-
-## VRT Python pixel functions (heavyweight tier)
-
-`gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, and `gbx_rst_derivedband_agg` evaluate a Python expression on each pixel via GDAL's [VRT Python pixel-function API](https://gdal.org/en/stable/drivers/raster/vrt.html#using-derived-bands-with-pixel-functions-in-python). That API is gated behind the GDAL config option `GDAL_VRT_ENABLE_PYTHON`, which **GeoBrix sets to `NO` at executor startup** (see [Security - Restrict GDAL drivers](../security#6-vrt-python-pixel-functions-off-by-default-by-design)). When you call one of the four functions above, GeoBrix flips the option to `YES` for the duration of that call only — via the internal `GDALManager.withVrtPython` bracket — and restores `NO` immediately on return. You don't need to set anything on the cluster or in your notebook to use the built-in functions.
-
-### When you need to enable it yourself
-
-If you're invoking the GDAL Python bindings (`from osgeo import gdal`) **directly** — outside the built-in RasterX functions — and you read a VRT that declares a `<PixelFunctionLanguage>Python</...>` band, you'll get an empty/null read unless you enable the option in the same process. Pick one of:
-
-**Python — programmatic, scoped to your read.** Recommended in all cases. Mirrors what GeoBrix does internally, works for both driver-side `pyspark.sql` calls and inside `mapPartitions` / `mapInPandas` UDFs that load VRT-with-pyfunc via `osgeo.gdal`, and survives interleaving with GeoBrix built-in calls (each GeoBrix call resets the option to `NO` on exit, so re-set it on every read):
-
-```python
-from osgeo import gdal
-
-gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
-try:
-    ds = gdal.Open("/path/to/your/vrt-with-pixel-function.vrt")
-    arr = ds.GetRasterBand(1).ReadAsArray()
-    ds = None
-finally:
-    gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
-```
-
-**Cluster env var — for Python-worker processes only.** Setting `spark.executorEnv.GDAL_VRT_ENABLE_PYTHON YES` on the cluster works for Python UDF workers (a separate process from the JVM, where GDAL initializes from env vars). It does **not** help JVM-side reads — GeoBrix calls `gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")` at executor JVM startup, and `SetConfigOption` takes precedence over the env var. Prefer the programmatic form above unless you have a strong reason to globally enable.
-
-**Scala / JVM code.** If you're writing custom Spark expressions that consume Python-pixel VRTs, wrap the read/translate in the same helper GeoBrix uses internally — it refcounts the option so concurrent tasks on the same executor JVM compose safely:
-
-```scala
-import com.databricks.labs.gbx.rasterx.gdal.GDALManager
-
-val result = GDALManager.withVrtPython {
-    val ds = org.gdal.gdal.gdal.Open(vrtPath)
-    // ... GDAL reads / translates here see the Python pixel function ...
-    ds
-}
-```
-
-### Trusted-modules variant
-
-GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTHON_TRUSTED_MODULES` allowlist if you want pixel-function code restricted to specific Python module prefixes. GeoBrix uses the plain `YES` form because the pixel-function source is constructed in-process from trusted (geobrix-generated) strings, never from user-supplied VRT XML on disk. If your custom code path reads VRTs whose `<PixelFunctionCode>` originates from less-trusted sources, switch to the `TRUSTED_MODULES` form and allowlist only what you intend to load.
+A number of RasterX functions are available only in the heavyweight (`rasterx`) tier. See **[Heavyweight-Only RasterX Functions](./raster-functions-heavyweight)** for the categorized list and for the VRT Python pixel-function configuration details. (The functions below are also listed in long-form on this page, badged <Tier heavy/>.)
 
 ## Accessor Functions
 
@@ -326,6 +183,10 @@ Functions to read raster properties and metadata (29 total).
 ### rst_boundingbox
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_boundingbox(tile: Column): Column` — Bounding box geometry.
 
@@ -370,6 +231,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns the dataset NoData value repeated once per band.
+:::
+
 **Signature:** `rst_getnodata(tile: Column): Column` — NoData values per band.
 
 **SQL:**
@@ -389,6 +254,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 ### rst_height
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_height(tile: Column): Column` — Height in pixels.
 
@@ -430,6 +299,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_metadata(tile: Column): Column` — Metadata map.
 
 **SQL:**
@@ -449,6 +322,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 ### rst_numbands
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_numbands(tile: Column): Column` — Number of bands.
 
@@ -470,6 +347,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_pixelheight(tile: Column): Column` — Pixel height in ground units.
 
 **SQL:**
@@ -479,6 +360,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 ### rst_pixelwidth
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_pixelwidth(tile: Column): Column` — Pixel width in ground units.
 
@@ -500,6 +385,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_scalex(tile: Column): Column`, `rst_scaley(tile: Column): Column` — Scale (pixel size) in X/Y.
 
 **SQL:**
@@ -519,6 +408,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 ### rst_srid
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_srid(tile: Column): Column` — Spatial reference ID (e.g. EPSG).
 
@@ -550,6 +443,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_type(tile: Column): Column` — Data type per band.
 
 **SQL:**
@@ -560,6 +457,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_upperleftx(tile: Column): Column`, `rst_upperlefty(tile: Column): Column` — Upper-left corner coordinates.
 
 **SQL:**
@@ -569,6 +470,10 @@ See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotra
 ### rst_width
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_width(tile: Column): Column` — Width in pixels.
 
@@ -696,6 +601,10 @@ Load a raster from a file path.
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. The driver defaults to GTiff when unspecified and outputs are re-encoded as GeoTIFF; readable input formats are limited to the GDAL build bundled with rasterio.
+:::
+
 Create a raster from binary content.
 
 **Signature:** `rst_fromcontent(content: Column, driver: Column): Column`
@@ -774,6 +683,10 @@ Produce multiple tiles or bands (5 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). It derives a square tile size from the MB budget and always partitions; it does not honor the heavyweight `size_in_mb = -1` (single tile) or `0` (64 MB) sentinels or the power-of-four split, so tile counts and dimensions differ.
+:::
+
 **Signature:** `rst_maketiles(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Subdivide into smaller tiles.
 
 **SQL:**
@@ -783,6 +696,10 @@ Produce multiple tiles or bands (5 total).
 ### rst_retile
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+:::
 
 **Signature:** `rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Retile to uniform dimensions.
 
@@ -794,6 +711,10 @@ Produce multiple tiles or bands (5 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns an `ARRAY` of single-band tiles in a single row — call `explode()` to get one row per band (the heavyweight tier emits the bands as separate rows).
+:::
+
 **Signature:** `rst_separatebands(tile: Column): Column` — Split multi-band into array of bands.
 
 **SQL:**
@@ -803,6 +724,10 @@ Produce multiple tiles or bands (5 total).
 ### rst_tooverlappingtiles
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+:::
 
 **Signature:** `rst_tooverlappingtiles(tile: Column, tileWidth: Column, tileHeight: Column, overlap: Column): Column` — Create overlapping tiles.
 
@@ -942,6 +867,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.mask`). The clip geometry is assumed to be in the raster's CRS; the heavyweight tier has additional SRID-inheritance fallbacks.
+:::
+
 **Signature:** `rst_clip(tile: Column, clip: Column, cutlineAllTouched: Column): Column` — Clip by geometry. The `clip` argument must be **WKT** (string), **EWKT** (SRID-prefixed string), **WKB** (binary), or **EWKB** (SRID-embedded binary); do not use `st_geomfromtext()` or other DBR native geometry.
 
 **CRS handling:**
@@ -966,6 +895,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **SciPy** (`scipy.ndimage`). Output is Float64 and border pixels are filled by edge-replication; the heavyweight tier preserves the input dtype and leaves border pixels unchanged.
+:::
+
 **Signature:** `rst_convolve(tile: Column, kernel: Column): Column` — Apply convolution kernel.
 
 **SQL:**
@@ -975,6 +908,10 @@ Transform and analyze rasters (20 total).
 ### rst_derivedband
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** with GDAL VRT Python pixel functions. A pixel function authored for one tier runs unchanged in the other.
+:::
 
 **Signature:** `rst_derivedband(tile: Column, pyfunc: String, funcName: String): Column` — Apply Python UDF to derive band.
 
@@ -986,6 +923,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **SciPy** (`scipy.ndimage`). The averaging filter is named `'mean'` (not `'avg'`) and `'mode'` is unavailable; the averaging output is Float32 and near-edge values may differ slightly from the heavyweight tier.
+:::
+
 **Signature:** `rst_filter(tile: Column, kernelSize: Column, operation: Column): Column` — Spatial filter (e.g. median, avg).
 
 **SQL:**
@@ -995,6 +936,10 @@ Transform and analyze rasters (20 total).
 ### rst_initnodata
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. When no NoData is set it assigns -9999.0; the heavyweight tier assigns a data-type-appropriate sentinel per band, so the NoData value can differ for integer or byte rasters.
+:::
 
 **Signature:** `rst_initnodata(tile: Column): Column` — Initialize NoData values.
 
@@ -1006,6 +951,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_isempty(tile: Column): Column` — Check if raster is empty.
 
 **SQL:**
@@ -1015,6 +964,10 @@ Transform and analyze rasters (20 total).
 ### rst_mapalgebra
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **NumExpr**. Bands map to `A`, `B`, `C`, … and the expression is evaluated with NumExpr (no `gdal_calc` NumPy builtins); single-band Float32 output.
+:::
 
 **Signature:** `rst_mapalgebra(tiles: Column, expression: Column): Column` — Map algebra expression (e.g. A-B).
 
@@ -1036,6 +989,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pixels with a zero denominator are set to NoData (-9999) rather than left as non-finite values.
+:::
+
 **Signature:** `rst_ndvi(tile: Column, redBand: Column, nirBand: Column): Column` — NDVI from band indices.
 
 **SQL:**
@@ -1056,6 +1013,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_rastertoworldcoordx(tile: Column, pixelX: Column, pixelY: Column): Column`, `rst_rastertoworldcoordy(tile: Column, pixelX: Column, pixelY: Column): Column` — World X / Y coordinate of a pixel.
 
 **SQL:**
@@ -1065,6 +1026,10 @@ Transform and analyze rasters (20 total).
 ### rst_transform
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.warp`). Reprojection uses the GDAL build bundled with rasterio, whose projection database and driver set may be narrower than the heavyweight tier.
+:::
 
 **Signature:** `rst_transform(tile: Column, targetSrid: Column): Column` — Reproject to target CRS. `targetSrid` must be a positive EPSG code; `0` or an unknown code is rejected with a clear error.
 
@@ -1086,6 +1051,10 @@ Transform and analyze rasters (20 total).
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Output is re-encoded as GeoTIFF; a NoData value that is not representable in the target type is dropped.
+:::
+
 **Signature:** `rst_updatetype(tile: Column, newType: Column): Column` — Convert raster data type.
 
 **SQL:**
@@ -1095,6 +1064,10 @@ Transform and analyze rasters (20 total).
 ### rst_resample
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.warp`).
+:::
 
 Resample a raster tile by a multiplicative factor via `gdal.Warp -r`, scaling pixel dimensions up or down relative to the source.
 
@@ -1110,6 +1083,10 @@ Resample a raster tile by a multiplicative factor via `gdal.Warp -r`, scaling pi
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.warp`).
+:::
+
 Resample a raster tile to an explicit ground resolution in CRS units via `gdal.Warp -tr`.
 
 **Signature:** `rst_resample_to_res(tile: Column, xRes: Column, yRes: Column, algorithm: Column): Column`
@@ -1123,6 +1100,10 @@ Resample a raster tile to an explicit ground resolution in CRS units via `gdal.W
 ### rst_resample_to_size
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.warp`).
+:::
 
 Resample a raster tile to an explicit pixel grid size via `gdal.Warp -ts`.
 
@@ -1152,6 +1133,10 @@ Resample a raster tile to an explicit pixel grid size via `gdal.Warp -ts`.
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
+
 **Signature:** `rst_worldtorastercoordx(tile: Column, worldX: Column, worldY: Column): Column`, `rst_worldtorastercoordy(tile: Column, worldX: Column, worldY: Column): Column` — Pixel column / row for a world coordinate.
 
 **rst_worldtorastercoordx** — pixel column only:
@@ -1172,6 +1157,10 @@ Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pai
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.warp`). Uses rasterio's bundled GDAL build, whose projection and driver coverage may be narrower than the heavyweight tier.
+:::
+
 **Signature:** `rst_to_webmercator(tile: Column): Column` — Reproject a raster to EPSG:3857 (Web Mercator) using bilinear resampling by default. The returned tile carries `srid = 3857`.
 
 **SQL:**
@@ -1182,6 +1171,10 @@ Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pai
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rio-tiler** + **morecantile**. Out-of-extent tiles return a transparent PNG (never null); available output formats depend on rasterio's bundled GDAL build.
+:::
+
 **Signature:** `rst_tilexyz(tile: Column, z: Column, x: Column, y: Column, format: Column, tileSize: Column, resampling: Column): Column` — Render a single web-mercator XYZ tile from a raster as encoded image bytes (e.g. PNG, JPEG, WebP) at the given tile coordinates and pixel size.
 
 **SQL:**
@@ -1191,6 +1184,10 @@ Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pai
 ### rst_xyzpyramid
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rio-tiler** + **morecantile**. Returns an `ARRAY<struct(z, x, y, bytes)>` in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). Bounded by `max_z <= 20` and at most 1,000,000 candidate tiles.
+:::
 
 **Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
 
@@ -1208,6 +1205,10 @@ Move data between the raster (`tile`) and vector (`geom`) worlds.
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.features`).
+:::
+
 **Signature:** `rst_rasterize(geom: Column, burnValue: Column, xMin: Column, yMin: Column, xMax: Column, yMax: Column, width: Column, height: Column, srid: Column): Column` — Burn a polygon (WKB) into a fresh GeoTIFF tile at the given extent and pixel dimensions. Pixels inside the polygon carry `burnValue`; pixels outside are NoData.
 
 **SQL:**
@@ -1217,6 +1218,10 @@ Move data between the raster (`tile`) and vector (`geom`) worlds.
 ### rst_polygonize
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.features`).
+:::
 
 **Signature:** `rst_polygonize(tile: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
 
@@ -1234,6 +1239,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`. Results are close but not bit-identical: edge pixels are filled by replicating the border (gdaldem leaves them NoData) and NoData cells are not excluded from the 3×3 window.
+:::
+
 **Signature:** `rst_slope(tile: Column, unit: Column, scale: Column): Column` — Compute slope per pixel. `unit` is `'degrees'` or `'percent'`; `scale` is the elevation/horizontal unit ratio (use `111120` for unprojected lon/lat in degrees).
 
 **SQL:**
@@ -1243,6 +1252,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 ### rst_aspect
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`; results are close but not bit-identical to the heavyweight tier (edge pixels are filled and NoData is not excluded from the 3×3 window).
+:::
 
 **Signature:** `rst_aspect(tile: Column, trigonometric: Column, zeroForFlat: Column): Column` — Compass direction of steepest descent in degrees (0=N, 90=E, 180=S, 270=W). Flat areas return `-9999` unless `zeroForFlat = true`. Set `trigonometric = true` for mathematical convention (0=E, counter-clockwise).
 
@@ -1254,6 +1267,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`; results are close but not bit-identical to the heavyweight tier (edge pixels are filled and NoData is not excluded from the 3×3 window).
+:::
+
 **Signature:** `rst_hillshade(tile: Column, azimuth: Column, altitude: Column, zFactor: Column): Column` — 8-bit (0..255) shaded relief image. Common values: NW sun azimuth `315.0`, altitude `45.0`, `zFactor = 1.0`.
 
 **SQL:**
@@ -1263,6 +1280,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 ### rst_tri
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`; results are close but not bit-identical to the heavyweight tier (edge pixels are filled and NoData is not excluded from the 3×3 window).
+:::
 
 **Signature:** `rst_tri(tile: Column): Column` — Terrain Ruggedness Index — mean absolute difference between a pixel and its 8 neighbours. Useful for landscape-ecology habitat scoring.
 
@@ -1274,6 +1295,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`; results are close but not bit-identical to the heavyweight tier (edge pixels are filled and NoData is not excluded from the 3×3 window).
+:::
+
 **Signature:** `rst_tpi(tile: Column): Column` — Topographic Position Index — pixel value minus the mean of its 8 neighbours. Positive values are ridges, negative values are valleys.
 
 **SQL:**
@@ -1284,6 +1309,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem`; results are close but not bit-identical to the heavyweight tier (edge pixels are filled and NoData is not excluded from the 3×3 window).
+:::
+
 **Signature:** `rst_roughness(tile: Column): Column` — Largest absolute difference between a pixel and any of its 8 neighbours in a 3×3 window.
 
 **SQL:**
@@ -1293,6 +1322,10 @@ Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) deri
 ### rst_color_relief
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **NumPy** — a reimplementation of GDAL `gdaldem` color-relief; the gdaldem `default` color keyword is not supported and boundary interpolation may differ slightly from the heavyweight tier.
+:::
 
 **Signature:** `rst_color_relief(tile: Column, colorTablePath: Column): Column` — Apply a `gdaldem` color table (`elevation R G B [A]` per line) to produce an RGBA visualization tile. Special values `nv`, `default`, `0%`, and `100%` are honored.
 
@@ -1310,6 +1343,10 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pixels with a zero denominator are set to NoData (-9999) rather than left as non-finite values.
+:::
+
 **Signature:** `rst_evi(tile: Column, redBand: Column, nirBand: Column, blueBand: Column): Column` — Enhanced Vegetation Index. Formula: `G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L)` with MODIS canonical coefficients `G=2.5, L=1.0, C1=6.0, C2=7.5`.
 
 **SQL:**
@@ -1319,6 +1356,10 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 ### rst_savi
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pixels with a zero denominator are set to NoData (-9999) rather than left as non-finite values.
+:::
 
 **Signature:** `rst_savi(tile: Column, redBand: Column, nirBand: Column, l: Column): Column` — Soil-Adjusted Vegetation Index. Formula: `(NIR - Red) / (NIR + Red + L) * (1 + L)`. `L = 0.5` (the canonical default) is a balanced soil/vegetation tradeoff; `L = 0` reduces SAVI to NDVI.
 
@@ -1330,6 +1371,10 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pixels with a zero denominator are set to NoData (-9999) rather than left as non-finite values.
+:::
+
 **Signature:** `rst_ndwi(tile: Column, greenBand: Column, nirBand: Column): Column` — Normalized Difference Water Index (McFeeters 1996). Formula: `(Green - NIR) / (Green + NIR)`. Positive values typically indicate open water.
 
 **SQL:**
@@ -1339,6 +1384,10 @@ Multi-band satellite math built on `gbx_rst_mapalgebra`. Band arguments are 1-ba
 ### rst_nbr
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pixels with a zero denominator are set to NoData (-9999) rather than left as non-finite values.
+:::
 
 **Signature:** `rst_nbr(tile: Column, nirBand: Column, swirBand: Column): Column` — Normalized Burn Ratio. Formula: `(NIR - SWIR) / (NIR + SWIR)`. The pre-/post-fire difference (`dNBR`) is the canonical burn-severity index.
 
@@ -1382,6 +1431,10 @@ Per-pixel transformations and band-level extraction.
 
 <Tier both/>
 
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.fill`).
+:::
+
 **Signature:** `rst_fillnodata(tile: Column, [maxSearchDist: Column = lit(100), smoothingIter: Column = lit(0)]): Column` — Fill NoData pixels via `gdal.FillNodata` using inverse-distance interpolation from neighbors within `maxSearchDist` pixels. `smoothingIter` applies an optional post-fill 3×3 smoothing pass.
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_fillnodata_sql_example" outputConstant="rst_fillnodata_sql_example_output" code={rasterxSqlCode} />
@@ -1413,6 +1466,10 @@ Per-pixel transformations and band-level extraction.
 ### rst_threshold
 
 <Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **NumPy**. This tier keeps each passing pixel's original value and sets failing pixels to NoData; the heavyweight tier instead returns a 0/1 binary mask (Float32). Choose the tier that matches the output you need.
+:::
 
 **Signature:** `rst_threshold(tile: Column, op: Column, value: Column): Column` — Binarize the raster: pixels matching `op value` get `1`, others get `0`. `op` is one of `>`, `>=`, `<`, `<=`, `==`, `!=`. Output is a `Byte` raster (0/1) sized to the input extent. Implemented as a `gbx_rst_mapalgebra` template.
 
