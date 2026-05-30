@@ -3,14 +3,45 @@ sidebar_position: 2
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import initScript from '!!raw-loader!../../scripts/geobrix-gdal-init.sh';
 import verifyInstallation from '!!raw-loader!../tests/python/installation/verify_installation.py';
 
 # Installation
 
-GeoBrix currently offers heavy-weight, distributed APIs, primarily written in Scala for Spark with additional language bindings for PySpark and Spark SQL.
+GeoBrix offers two execution tiers with different installation paths. See [Choosing an Execution Tier](./api/execution-tiers) for the tradeoffs.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier is a single Python wheel — **no init script, no JAR, no native GDAL bundle**. It runs on serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM.
+
+Install the GeoBrix wheel with the `pyrx` extra (as a cluster PyPI library, or in a notebook):
+
+```python
+%pip install 'geobrix[pyrx]'
+```
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+# optional — only needed to call the gbx_rst_* SQL functions:
+rx.register(spark)
+```
+
+That's the entire install. Skip the rest of this page (it covers the heavyweight tier).
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+The heavyweight tier needs the Scala JAR + a cluster init script that installs native GDAL. Follow the steps below.
+
+</TabItem>
+</Tabs>
 
 ## Prerequisites
+
+The following prerequisites apply to the **heavyweight (rasterx)** tier.
 
 - **Databricks Runtime 17.3 LTS.** The init script's pinned GDAL package
   targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS; other
