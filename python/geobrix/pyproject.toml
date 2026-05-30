@@ -57,6 +57,8 @@ pyrx = [
     "numpy>=1.24.0",
     "pandas>=2.0.0",
     "pyarrow>=11.0.0",
+    "scipy>=1.11.0",
+    "numexpr>=2.8.0",
 ]
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
 databricks = [

@@ -31,5 +31,12 @@ pyarrow==19.0.1
 rasterio==1.5.0
 shapely==2.1.2
 
+# --- band math: focal filters / convolution (scipy.ndimage) + map-algebra (numexpr) ---
+# scipy pinned to the DBR 17.3 LTS installed version. numexpr is NOT in DBR's
+# library set, so it is pinned independently (safe math-expression evaluator for
+# rst_mapalgebra — no arbitrary-code exec).
+scipy==1.15.1
+numexpr==2.11.0
+
 # --- test runner ---
 pytest==8.4.2
