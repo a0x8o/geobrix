@@ -29,7 +29,32 @@ from databricks.labs.gbx.pyrx import functions as rx
 rx.register(spark)
 ```
 
-That's the entire install. Skip the rest of this page (it covers the heavyweight tier).
+That's the entire install — no init script, no JAR, no native GDAL bundle.
+
+## Verify the lightweight install
+
+Confirm the wheel imports, rasterio's bundled GDAL is present, and a function runs end to end (no JAR, no init script):
+
+```python
+import rasterio
+from databricks.labs.gbx.pyrx import functions as rx
+
+print("rasterio", rasterio.__version__, "| bundled GDAL", rasterio.__gdal_version__)
+
+# Functional check: load a GeoTIFF and read its properties through pyrx.
+tiles = (
+    spark.read.format("binaryFile")
+    .load("/Volumes/<catalog>/<schema>/<volume>/path/to/*.tif")
+    .select(rx.rst_fromcontent("content", "GTiff").alias("tile"))
+)
+tiles.select(
+    rx.rst_width("tile").alias("width"),
+    rx.rst_height("tile").alias("height"),
+    rx.rst_srid("tile").alias("srid"),
+).show()
+```
+
+If the import succeeds and the query returns raster dimensions, the lightweight tier is ready. The rest of this page covers the heavyweight tier.
 
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
