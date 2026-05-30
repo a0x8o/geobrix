@@ -283,3 +283,34 @@ def test_rst_polygonize(spark):
     vals = [r["v"] for r in rows]
     assert 5.0 in vals
     assert all(r["g"] is not None for r in rows)
+
+
+def test_rst_tri_tpi_roughness(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.full((5, 5), 0.0, dtype="float32")
+    data[2, 2] = 7.0
+    profile = dict(
+        driver="GTiff",
+        width=5,
+        height=5,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 5, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    for col in (prx.rst_tri("tile"), prx.rst_tpi("tile"), prx.rst_roughness("tile")):
+        row = df.select(
+            prx.rst_numbands(col).alias("n"), prx.rst_type(col).alias("t")
+        ).first()
+        assert row["n"] == 1 and row["t"][0] == "Float32"

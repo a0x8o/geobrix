@@ -609,6 +609,78 @@ def rst_hillshade(
     return _hillshade_udf(_col(tile), az_col, alt_col, zf_col)
 
 
+# --- Tier 1g: terrain ruggedness UDFs (tri, tpi, roughness) -----------------
+@f.udf(_serde.TILE_SCHEMA)
+def _tri_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = terrain.tri(ds)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _tpi_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = terrain.tpi(ds)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _roughness_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = terrain.roughness(ds)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_tri(tile: ColLike) -> Column:
+    """Compute Terrain Ruggedness Index (TRI) from a single-band DEM tile.
+
+    TRI = mean of the absolute differences between the center cell and each of
+    its 8 neighbours (Wilson 2007).  Flat terrain yields 0.
+
+    Returns:
+        Single-band Float32 tile; nodata = -9999.
+    """
+    return _tri_udf(_col(tile))
+
+
+def rst_tpi(tile: ColLike) -> Column:
+    """Compute Topographic Position Index (TPI) from a single-band DEM tile.
+
+    TPI = center - mean(8 neighbours).  Positive = local high; negative = local
+    low; flat terrain yields 0.
+
+    Returns:
+        Single-band Float32 tile; nodata = -9999.
+    """
+    return _tpi_udf(_col(tile))
+
+
+def rst_roughness(tile: ColLike) -> Column:
+    """Compute terrain roughness from a single-band DEM tile.
+
+    Roughness = max(3x3 window) - min(3x3 window).  Flat terrain yields 0.
+
+    Returns:
+        Single-band Float32 tile; nodata = -9999.
+    """
+    return _roughness_udf(_col(tile))
+
+
 # --- Tier 0: accessors ------------------------------------------------------
 def rst_width(tile: ColLike) -> Column:
     return _u_width(_raster_field(_col(tile)))
@@ -761,6 +833,9 @@ _sql_tile_ops = {
     "gbx_rst_slope": _slope_udf,
     "gbx_rst_aspect": _aspect_udf,
     "gbx_rst_hillshade": _hillshade_udf,
+    "gbx_rst_tri": _tri_udf,
+    "gbx_rst_tpi": _tpi_udf,
+    "gbx_rst_roughness": _roughness_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
