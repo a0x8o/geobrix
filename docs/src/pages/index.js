@@ -47,17 +47,17 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Process satellite imagery, elevation models, and gridded spatial data with GDAL-powered functions."
+            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Runs lightweight (pure-Python) or heavyweight (Scala/GDAL)."
             link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
-            description="Spatial indexing with British National Grid (BNG) support for efficient location-based analysis."
+            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
             link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Migrate legacy Mosaic geometries and work seamlessly with Databricks spatial types."
+            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types."
             link="/docs/api/vectorx-functions"
           />
         </div>

@@ -31,7 +31,7 @@ Refactor and improvement of Mosaic raster functions. Product does not (yet) supp
 
 <img src="resources/images/GridX.png" width="25%" />
 
-Refactor of Mosaic discrete global grid indexing functions. Focus has been on porting BNG for Great Britain customers.
+Refactor of Mosaic discrete global grid indexing functions. Covers British National Grid (BNG) for Great Britain customers, CARTO **quadbin** (a web-mercator-aligned global grid), and user-defined **custom grids** — with cell math, tessellation, k-ring / polyfill, and grid-aware aggregation across all three grid systems.
 
 ### VectorX
 
