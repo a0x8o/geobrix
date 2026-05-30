@@ -16,7 +16,9 @@ def test_resample_by_factor_upsamples_preserves_crs_and_extent():
         assert (o.width, o.height) == (8, 6)
         assert o.crs.to_epsg() == 4326
         # extent preserved (origin + full coverage)
-        assert tuple(round(b, 6) for b in o.bounds) == tuple(round(b, 6) for b in src_bounds)
+        assert tuple(round(b, 6) for b in o.bounds) == tuple(
+            round(b, 6) for b in src_bounds
+        )
 
 
 def test_resample_by_factor_downsamples():

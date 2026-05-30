@@ -1,6 +1,7 @@
 """Spark-free resampling (decimated read + scaled transform). Tile-returning:
 returns new GTiff bytes. CRS and geographic extent are preserved; only the
 pixel grid (dimensions / resolution) changes."""
+
 from affine import Affine
 from rasterio.io import MemoryFile
 
