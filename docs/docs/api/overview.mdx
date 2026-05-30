@@ -54,10 +54,11 @@ Spatial indexing across multiple discrete-global-grid systems: **BNG** (British 
 
 ![VectorX](../../../resources/images/VectorX.png)
 
-Augments Databricks built-in `ST_*` functions with vector-tile encoding and legacy-Mosaic migration helpers.
+Augments Databricks built-in `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-Mosaic migration helpers.
 
 - Mapbox Vector Tile (MVT) encoding via `st_asmvt` aggregator
 - Vector tile pyramid via `st_asmvt_pyramid` generator — composes with `pmtiles_agg` for end-to-end publishing
+- TIN surface modeling — `st_triangulate` plus `st_interpolateelevationbbox` / `st_interpolateelevationgeom` (constrained-Delaunay triangulation and grid elevation interpolation from Z-valued points)
 - Legacy Mosaic geometry conversion (migrate without installing Mosaic)
 - OGR-based reader data sources (Shapefile, GeoJSON, GeoPackage, FileGDB)
 
@@ -84,7 +85,7 @@ Container format for serving raster (PNG / JPEG / WebP) or vector (MVT) tile pyr
 | **Product Gap** | Full gap-filling | Specialized grids (BNG, quadbin) | Vector-tile encoding, legacy migration | Net-new |
 | **GDAL Required** | Yes | No | Yes (readers + MVT) | No |
 | **Output Format** | Tile (struct) + arrays | Cell IDs (Long / String) + WKB | BINARY (MVT bytes), WKB | BINARY (PMTile blob) or file |
-| **Spark Surface** | 65+ SQL functions | 30+ SQL functions | 3+ SQL functions + DataSources | 1 UDAF + 1 DataSource |
+| **Spark Surface** | 65+ SQL functions | 30+ SQL functions | 6+ SQL functions + DataSources | 1 UDAF + 1 DataSource |
 
 ## Choosing the Right Package
 
@@ -92,7 +93,7 @@ Container format for serving raster (PNG / JPEG / WebP) or vector (MVT) tile pyr
 
 **Use GridX when:** working with British National Grid data; indexing global data into web-mercator-aligned quadbin cells; needing cell math (area, k-ring, polyfill, tessellation); building grid-aware aggregations or join keys.
 
-**Use VectorX when:** encoding features as Mapbox Vector Tiles; generating per-tile MVT layers; reading vector formats (Shapefile, GeoJSON, GeoPackage, FileGDB); migrating from DBLabs Mosaic.
+**Use VectorX when:** encoding features as Mapbox Vector Tiles; generating per-tile MVT layers; building TIN surfaces / interpolating elevation from Z-valued points; reading vector formats (Shapefile, GeoJSON, GeoPackage, FileGDB); migrating from DBLabs Mosaic.
 
 **Use PMTiles when:** publishing a tile pyramid (raster or vector) as a single static file; serving from S3/ABFS/GCS without a tile server; aggregating `(z, x, y, bytes)` rows into a deployable map.
 

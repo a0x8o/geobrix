@@ -37,7 +37,7 @@ Refactor of Mosaic discrete global grid indexing functions. Focus has been on po
 
 <img src="resources/images/VectorX.png" width="25%" />
 
-Refactor of select DBLabs Mosaic vector functions that augment existing product ST Geospatial Functions. Right now, this only includes a single function to handle updating existing Mosaic geometry data to those supported by product, so that users do not need to install (older) Mosaic in order to get to using the latest spatial features.
+Refactor of select DBLabs Mosaic vector functions that augment the product's built-in ST Geospatial Functions. As of v0.4.0, VectorX spans three areas: **vector-tile encoding** — `st_asmvt` (aggregator) and `st_asmvt_pyramid` (generator) for publishing Mapbox Vector Tile (MVT) layers; **TIN surface modeling** — `st_triangulate` plus `st_interpolateelevationbbox` / `st_interpolateelevationgeom` for constrained-Delaunay triangulation and grid elevation interpolation from Z-valued points; and **legacy-Mosaic migration** — `st_legacyaswkb`, which updates existing Mosaic geometry data to product-supported types so users don't need to install (older) Mosaic to get to the latest spatial features. OGR-based vector readers (Shapefile, GeoJSON, GeoPackage, FileGDB) round out the package.
 
 ## Readers
 
