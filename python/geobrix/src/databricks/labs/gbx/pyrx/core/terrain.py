@@ -139,6 +139,84 @@ def aspect(ds, trigonometric: bool = False, zero_for_flat: bool = False) -> byte
     return _emit_float32(ds, result)
 
 
+def _neighbors(band: np.ndarray) -> tuple:
+    """Return (center, [n0..n7]) for a 2-D array using edge-replication.
+
+    Neighbor order (matches Wilson 2007 / gdaldem convention):
+        n0=NW  n1=N   n2=NE
+        n3=W          n4=E
+        n5=SW  n6=S   n7=SE
+    """
+    p = np.pad(band, 1, mode="edge")
+    center = p[1:-1, 1:-1]
+    neighbors = [
+        p[0:-2, 0:-2],  # NW
+        p[0:-2, 1:-1],  # N
+        p[0:-2, 2:],  # NE
+        p[1:-1, 0:-2],  # W
+        p[1:-1, 2:],  # E
+        p[2:, 0:-2],  # SW
+        p[2:, 1:-1],  # S
+        p[2:, 2:],  # SE
+    ]
+    return center, neighbors
+
+
+def tri(ds) -> bytes:
+    """Compute Terrain Ruggedness Index (Wilson 2007).
+
+    TRI = mean of the absolute differences between the center cell and each of
+    its 8 neighbours (3x3 edge-replicated window).  Flat terrain yields 0.
+
+    Args:
+        ds: Open rasterio DatasetReader.  Band 1 is used as the DEM.
+
+    Returns:
+        Single-band Float32 GTiff bytes; nodata = -9999.
+    """
+    band = ds.read(1).astype("float64")
+    center, nbrs = _neighbors(band)
+    result = np.mean(np.stack([np.abs(center - n) for n in nbrs], axis=0), axis=0)
+    return _emit_float32(ds, result)
+
+
+def tpi(ds) -> bytes:
+    """Compute Topographic Position Index.
+
+    TPI = center - mean(8 neighbours).  Positive values are local highs;
+    negative values are local lows; flat terrain yields 0.
+
+    Args:
+        ds: Open rasterio DatasetReader.  Band 1 is used as the DEM.
+
+    Returns:
+        Single-band Float32 GTiff bytes; nodata = -9999.
+    """
+    band = ds.read(1).astype("float64")
+    center, nbrs = _neighbors(band)
+    result = center - np.mean(np.stack(nbrs, axis=0), axis=0)
+    return _emit_float32(ds, result)
+
+
+def roughness(ds) -> bytes:
+    """Compute terrain roughness (max - min over the 3x3 window).
+
+    Roughness = max(3x3 window including centre) - min(3x3 window including
+    centre).  Flat terrain yields 0.
+
+    Args:
+        ds: Open rasterio DatasetReader.  Band 1 is used as the DEM.
+
+    Returns:
+        Single-band Float32 GTiff bytes; nodata = -9999.
+    """
+    band = ds.read(1).astype("float64")
+    center, nbrs = _neighbors(band)
+    window = np.stack([center] + nbrs, axis=0)  # shape (9, H, W)
+    result = np.max(window, axis=0) - np.min(window, axis=0)
+    return _emit_float32(ds, result)
+
+
 def hillshade(
     ds,
     azimuth: float = 315.0,

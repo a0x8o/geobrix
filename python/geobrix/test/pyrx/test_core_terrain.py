@@ -121,3 +121,38 @@ def test_slope_percent():
     with _serde.open_tile(out) as o:
         interior = o.read(1)[1:-1, 1:-1]
         assert np.allclose(interior, 100.0, atol=2.0)
+
+
+def test_tri_tpi_roughness_flat_zero():
+    flat = np.full((5, 5), 50.0, dtype="float32")
+    with _serde.open_tile(_dem(flat)) as ds:
+        tri_b, tpi_b, rough_b = terrain.tri(ds), terrain.tpi(ds), terrain.roughness(ds)
+    for out in (tri_b, tpi_b, rough_b):
+        with _serde.open_tile(out) as o:
+            assert o.count == 1 and o.dtypes[0] == "float32"
+            assert np.allclose(o.read(1), 0.0, atol=1e-4)
+
+
+def test_roughness_known_step():
+    # a single high cell in a flat field -> roughness around it = the step height
+    data = np.full((5, 5), 0.0, dtype="float32")
+    data[2, 2] = 10.0
+    with _serde.open_tile(_dem(data)) as ds:
+        out = terrain.roughness(ds)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # the peak cell and its neighbors see a 10-unit max-min spread
+        assert abs(arr[2, 2] - 10.0) < 1e-4
+        assert (
+            abs(arr[1, 1] - 10.0) < 1e-4
+        )  # diagonal neighbor's window includes the peak
+
+
+def test_tpi_peak_positive():
+    data = np.full((5, 5), 0.0, dtype="float32")
+    data[2, 2] = 9.0
+    with _serde.open_tile(_dem(data)) as ds:
+        out = terrain.tpi(ds)
+    with _serde.open_tile(out) as o:
+        # center is higher than its (zero) neighbors -> positive TPI
+        assert o.read(1)[2, 2] > 0
