@@ -29,14 +29,9 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import (
-    accessors,
-    coords,
-    edit,
-    features,
-    focal,
-    indices,
-)
+from databricks.labs.gbx.pyrx.core import accessors, coords
+from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
+from databricks.labs.gbx.pyrx.core import edit, features, focal, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
 from databricks.labs.gbx.pyrx.core import resample, terrain, warp
 
@@ -926,6 +921,48 @@ def rst_worldtorastercoordy(
     return _u_w2r_y(_raster_field(_col(tile)), _col(world_x), _col(world_y))
 
 
+# --- Tier 1d5: derived-band UDF ---------------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _derivedband_udf(tile, pyfunc, func_name):
+    if tile is None or tile["raster"] is None or pyfunc is None or func_name is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = derivedband_core.derivedband(ds, str(pyfunc), str(func_name))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_derivedband(tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike) -> Column:
+    """Apply a user-provided Python function to the raster's bands.
+
+    pyfunc follows GDAL's VRT pixel-function signature::
+
+        func(in_ar, out_ar, xoff, yoff, xsize, ysize,
+             raster_xsize, raster_ysize, buf_radius, gt, **kwargs)
+
+    where ``in_ar`` is a list of 2-D NumPy arrays (one per input band) and
+    ``out_ar`` is a preallocated 2-D output array the function fills in-place
+    (``out_ar[:] = ...``). This matches GDAL's Python pixel-function contract,
+    so a pyfunc authored for the heavyweight ``rst_derivedband`` works here.
+
+    SECURITY: pyfunc is executed in-process without sandboxing — pass only
+    trusted (your own) code, the same trust model as any Spark UDF.
+
+    Args:
+        tile_expr: Tile struct column.
+        pyfunc:    Python source code (string) defining the function.
+        func_name: Name of the callable within ``pyfunc``.
+
+    Returns:
+        Single-band Float64 tile struct.
+    """
+    pf = f.lit(pyfunc) if isinstance(pyfunc, str) else _col(pyfunc)
+    fn = f.lit(func_name) if isinstance(func_name, str) else _col(func_name)
+    return _derivedband_udf(_col(tile_expr), pf, fn)
+
+
 # ---------------------------------------------------------------------------
 # SQL registration registry
 # ---------------------------------------------------------------------------
@@ -998,6 +1035,7 @@ _sql_tile_ops = {
     "gbx_rst_filter": _filter_udf,
     "gbx_rst_convolve": _convolve_udf,
     "gbx_rst_mapalgebra": _mapalgebra_udf,
+    "gbx_rst_derivedband": _derivedband_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}

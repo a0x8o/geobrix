@@ -427,3 +427,37 @@ def test_rst_mapalgebra(spark):
         prx.rst_numbands("t").alias("n"), prx.rst_type("t").alias("ty")
     ).first()
     assert row["n"] == 1 and row["ty"][0] == "Float32"
+
+
+def test_rst_derivedband(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    pyfunc = (
+        "def double(in_ar, out_ar, xoff, yoff, xsize, ysize, "
+        "raster_xsize, raster_ysize, buf_radius, gt, **kwargs):\n"
+        "    out_ar[:] = in_ar[0] * 2\n"
+    )
+    data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 2, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    out = df.select(
+        prx.rst_derivedband("tile", f.lit(pyfunc), f.lit("double")).alias("t")
+    )
+    assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1

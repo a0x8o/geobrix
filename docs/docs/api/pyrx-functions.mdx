@@ -51,6 +51,7 @@ This installs the same `gbx_rst_*` names the heavyweight package uses, powered b
 - **Execution model:** functions run as Python UDFs in Python worker processes (vectorized over Arrow batches where possible), rather than JVM-native code. Expect different performance characteristics than the Scala path; for the largest distributed workloads on dedicated clusters, RasterX may be faster.
 - **SQL default arguments:** Spark SQL UDFs do not carry Python default values, so when calling the `gbx_rst_*` SQL functions you must pass every argument explicitly (e.g. `gbx_rst_to_webmercator(tile, 'bilinear')`, `gbx_rst_polygonize(tile, 1, 4)`). The Python Column API keeps the defaults (`prx.rst_to_webmercator(tile)`).
 - **Function set is a growing subset** of RasterX; aggregators and some grid/terrain/vector functions are not yet available in pyrx.
+- **`rst_derivedband` runs your code:** it executes the supplied `pyfunc` in-process without sandboxing — pass only trusted (your own) code, the same trust model as any Spark UDF. Do not feed it `pyfunc` from untrusted sources.
 
 ## Examples
 
@@ -221,3 +222,4 @@ These terrain and index functions are NumPy reimplementations of the correspondi
 | `rst_filter` | `rst_filter(tile, kernel_size, operation)` | Focal-filtered tile (`min`/`max`/`mean`/`median`) |
 | `rst_convolve` | `rst_convolve(tile, kernel)` | Float64 tile; 2D kernel convolution |
 | `rst_mapalgebra` | `rst_mapalgebra(tiles, expression)` | Single-band Float32; `numexpr` math over band 1 of each input tile bound to `A, B, C, …` |
+| `rst_derivedband` | `rst_derivedband(tile_expr, pyfunc, func_name)` | Single-band tile; applies a user Python function (GDAL pixel-func signature) |
