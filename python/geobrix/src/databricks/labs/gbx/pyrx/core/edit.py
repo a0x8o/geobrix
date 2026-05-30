@@ -1,6 +1,7 @@
 """Spark-free tile-returning edit ops: clip to geometry, change data type,
-initialise NoData. Each returns new GTiff bytes."""
+initialise NoData, threshold. Each returns new GTiff bytes."""
 
+import numpy as np
 import shapely.wkb
 from rasterio.io import MemoryFile
 from rasterio.mask import mask as _rio_mask
@@ -71,3 +72,39 @@ def init_nodata(ds, default: float = _DEFAULT_NODATA) -> bytes:
     if profile.get("nodata") is None:
         profile["nodata"] = default
     return _write(profile, ds.read())
+
+
+_THRESHOLD_OPS = {
+    ">": np.greater,
+    "<": np.less,
+    ">=": np.greater_equal,
+    "<=": np.less_equal,
+    "==": np.equal,
+    "!=": np.not_equal,
+}
+
+
+def threshold(ds, op: str = ">", value: float = 0.0) -> bytes:
+    """Keep pixels satisfying ``op value``; set others to NoData.
+
+    Args:
+        ds:    Open rasterio DatasetReader.
+        op:    Comparison operator string: one of ">", "<", ">=",
+               "<=", "==", "!=".  Defaults to ">".
+        value: Threshold scalar.  Defaults to 0.0.
+
+    Returns:
+        GTiff bytes with the same dtype and band count; pixels that fail
+        the comparison are replaced with the raster's NoData value
+        (``-9999.0`` when not set).
+    """
+    op = ">" if op is None else str(op)
+    value = 0.0 if value is None else float(value)
+    fn = _THRESHOLD_OPS[op]
+    data = ds.read()
+    nd = ds.nodata if ds.nodata is not None else _DEFAULT_NODATA
+    keep = fn(data, value)
+    out = np.where(keep, data, nd).astype(data.dtype)
+    profile = ds.profile.copy()
+    profile.update(driver="GTiff", nodata=nd)
+    return _write(profile, out)
