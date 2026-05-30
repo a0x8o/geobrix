@@ -239,3 +239,133 @@ def test_register_enables_coord_structs_sql(spark):
         f"SELECT gbx_rst_worldtorastercoord(tile, {out['x']}, {out['y']}) AS rc FROM t"
     ).first()["rc"]
     assert (rc["x"], rc["y"]) == (2, 1)
+
+
+# --- Tier 2: grouped aggregators via SQL GROUP BY ---------------------------
+def _agg_ras_bytes(data, ulx=0.0, uly=10.0, px=1.0, epsg=32633, nodata=-9999.0):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.asarray(data, dtype="float32")
+    if data.ndim == 2:
+        data = data[None, :, :]
+    bands, h, w = data.shape
+    profile = dict(
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=bands,
+        dtype="float32",
+        crs=f"EPSG:{epsg}",
+        transform=from_origin(ulx, uly, px, px),
+        nodata=nodata,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data)
+        return mf.read()
+
+
+def test_register_enables_merge_agg_sql(spark):
+    import numpy as np
+
+    prx.register(spark)
+    left = _agg_ras_bytes(np.array([[1, 2], [3, 4]]), ulx=0.0, uly=2.0)
+    right = _agg_ras_bytes(np.array([[5, 6], [7, 8]]), ulx=2.0, uly=2.0)
+    df = spark.createDataFrame([("g", left), ("g", right)], ["k", "raster"]).select(
+        "k", prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView("v")
+    # Grouped-agg returns BINARY in SQL; accepts the tile STRUCT column directly.
+    raster = spark.sql("SELECT gbx_rst_merge_agg(tile) AS b FROM v GROUP BY k").first()[
+        "b"
+    ]
+    assert raster is not None and len(bytes(raster)) > 0
+    # Wrap with gbx_rst_fromcontent to recover a tile struct.
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_fromcontent(gbx_rst_merge_agg(tile), 'GTiff')) "
+        "AS w FROM v GROUP BY k"
+    ).first()["w"]
+    assert w == 4
+
+
+def test_register_enables_combineavg_agg_sql(spark):
+    import numpy as np
+
+    prx.register(spark)
+    a = _agg_ras_bytes(np.array([[2.0, 4.0], [6.0, 8.0]]))
+    b = _agg_ras_bytes(np.array([[4.0, 8.0], [10.0, 12.0]]))
+    df = spark.createDataFrame([("g", a), ("g", b)], ["k", "raster"]).select(
+        "k", prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView("v")
+    avg = spark.sql(
+        "SELECT gbx_rst_avg(gbx_rst_fromcontent(gbx_rst_combineavg_agg(tile), 'GTiff')) "
+        "AS a FROM v GROUP BY k"
+    ).first()["a"]
+    # mean of all pixels [[3,6],[8,10]] = 6.75
+    assert avg[0] == 6.75
+
+
+def test_register_enables_frombands_agg_sql(spark):
+    import numpy as np
+
+    prx.register(spark)
+    b0 = _agg_ras_bytes(np.full((2, 2), 10.0))
+    b1 = _agg_ras_bytes(np.full((2, 2), 20.0))
+    df = spark.createDataFrame(
+        [("g", b1, 1), ("g", b0, 0)], ["k", "raster", "band_index"]
+    ).select(
+        "k",
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"),
+        "band_index",
+    )
+    df.createOrReplaceTempView("v")
+    n = spark.sql(
+        "SELECT gbx_rst_numbands("
+        "gbx_rst_fromcontent(gbx_rst_frombands_agg(tile, band_index), 'GTiff')) "
+        "AS n FROM v GROUP BY k"
+    ).first()["n"]
+    assert n == 2
+
+
+def test_register_enables_rasterize_agg_sql(spark):
+    import shapely.wkb
+    from shapely.geometry import box
+
+    prx.register(spark)
+    g1 = shapely.wkb.dumps(box(0, 0, 2, 4))
+    g2 = shapely.wkb.dumps(box(1, 0, 4, 4))
+    spark.createDataFrame(
+        [("g", g1, 1.0), ("g", g2, 2.0)], ["k", "geom", "val"]
+    ).createOrReplaceTempView("v")
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_fromcontent("
+        "gbx_rst_rasterize_agg(geom, val, 0, 0, 4, 4, 4, 4, 32633), 'GTiff')) "
+        "AS w FROM v GROUP BY k"
+    ).first()["w"]
+    assert w == 4
+
+
+def test_register_enables_derivedband_agg_sql(spark):
+    import numpy as np
+
+    prx.register(spark)
+    pyfunc = (
+        "def addbands(in_ar, out_ar, *args, **kwargs):\n"
+        "    import numpy as np\n"
+        "    out_ar[:] = np.sum(in_ar, axis=0)\n"
+    )
+    a = _agg_ras_bytes(np.full((2, 2), 3.0))
+    b = _agg_ras_bytes(np.full((2, 2), 4.0))
+    df = spark.createDataFrame([("g", a), ("g", b)], ["k", "raster"]).select(
+        "k", prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView("v")
+    mx = spark.sql(
+        "SELECT gbx_rst_max(gbx_rst_fromcontent("
+        f"gbx_rst_derivedband_agg(tile, '{pyfunc}', 'addbands'), 'GTiff')) "
+        "AS m FROM v GROUP BY k"
+    ).first()["m"]
+    assert mx[0] == 7.0

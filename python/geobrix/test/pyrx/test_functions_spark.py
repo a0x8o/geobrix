@@ -810,3 +810,125 @@ def test_rst_rastertoworldcoord_struct_roundtrip(spark):
         prx.rst_worldtorastercoord("tile", f.lit(wc["x"]), f.lit(wc["y"])).alias("rc")
     ).first()["rc"]
     assert (rc["x"], rc["y"]) == (2, 1)
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: grouped aggregators (rst_*_agg) via .agg()
+# ---------------------------------------------------------------------------
+import numpy as np  # noqa: E402
+from rasterio.io import MemoryFile  # noqa: E402
+from rasterio.transform import from_origin  # noqa: E402
+
+from databricks.labs.gbx.pyrx import _serde  # noqa: E402
+
+
+def _ras_bytes(data, ulx=0.0, uly=10.0, px=1.0, epsg=32633, nodata=-9999.0):
+    data = np.asarray(data, dtype="float32")
+    if data.ndim == 2:
+        data = data[None, :, :]
+    bands, h, w = data.shape
+    profile = dict(
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=bands,
+        dtype="float32",
+        crs=f"EPSG:{epsg}",
+        transform=from_origin(ulx, uly, px, px),
+        nodata=nodata,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data)
+        return mf.read()
+
+
+def _tiles_df(spark, rows):
+    """rows: list of (key, raster_bytes). Builds a (k, tile struct) df."""
+    df = spark.createDataFrame(rows, ["k", "raster"])
+    return df.select("k", prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+
+
+def test_rst_merge_agg(spark):
+    left = _ras_bytes(np.array([[1, 2], [3, 4]]), ulx=0.0, uly=2.0)
+    right = _ras_bytes(np.array([[5, 6], [7, 8]]), ulx=2.0, uly=2.0)
+    df = _tiles_df(spark, [("g", left), ("g", right)])
+    tile = df.groupBy("k").agg(prx.rst_merge_agg("tile").alias("t")).first()["t"]
+    assert tile is not None
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.width == 4
+        assert ds.bounds.left == 0.0
+        assert ds.bounds.right == 4.0
+
+
+def test_rst_combineavg_agg_mean_and_cellid(spark):
+    a = _ras_bytes(np.array([[2.0, 4.0], [6.0, 8.0]]))
+    b = _ras_bytes(np.array([[4.0, 8.0], [10.0, 12.0]]))
+    df = _tiles_df(spark, [("g", a), ("g", b)])
+    tile = df.groupBy("k").agg(prx.rst_combineavg_agg("tile").alias("t")).first()["t"]
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert np.allclose(ds.read(1), [[3.0, 6.0], [8.0, 10.0]])
+    # cellid carried through from the group's first tile (fromcontent -> 0).
+    assert tile["cellid"] == 0
+
+
+def test_rst_frombands_agg_ascending_order(spark):
+    b0 = _ras_bytes(np.full((2, 2), 10.0))
+    b1 = _ras_bytes(np.full((2, 2), 20.0))
+    b2 = _ras_bytes(np.full((2, 2), 30.0))
+    rows = [("g", b2, 2), ("g", b0, 0), ("g", b1, 1)]
+    df = spark.createDataFrame(rows, ["k", "raster", "band_index"]).select(
+        "k",
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"),
+        "band_index",
+    )
+    tile = (
+        df.groupBy("k")
+        .agg(prx.rst_frombands_agg("tile", "band_index").alias("t"))
+        .first()["t"]
+    )
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.count == 3
+        assert np.allclose(ds.read(1), 10.0)
+        assert np.allclose(ds.read(2), 20.0)
+        assert np.allclose(ds.read(3), 30.0)
+
+
+def test_rst_rasterize_agg(spark):
+    import shapely.wkb
+    from shapely.geometry import box
+
+    g1 = shapely.wkb.dumps(box(0, 0, 2, 4))
+    g2 = shapely.wkb.dumps(box(1, 0, 4, 4))
+    df = spark.createDataFrame([("g", g1, 1.0), ("g", g2, 2.0)], ["k", "geom", "val"])
+    tile = (
+        df.groupBy("k")
+        .agg(prx.rst_rasterize_agg("geom", "val", 0, 0, 4, 4, 4, 4, 32633).alias("t"))
+        .first()["t"]
+    )
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        arr = ds.read(1)
+    assert np.all(arr[:, 0] == 1.0)
+    assert np.all(arr[:, 1] == 2.0)
+
+
+PYFUNC_SUM_AGG = """
+def addbands(in_ar, out_ar, *args, **kwargs):
+    import numpy as np
+    out_ar[:] = np.sum(in_ar, axis=0)
+"""
+
+
+def test_rst_derivedband_agg(spark):
+    a = _ras_bytes(np.full((2, 2), 3.0))
+    b = _ras_bytes(np.full((2, 2), 4.0))
+    c = _ras_bytes(np.full((2, 2), 5.0))
+    df = _tiles_df(spark, [("g", a), ("g", b), ("g", c)])
+    tile = (
+        df.groupBy("k")
+        .agg(prx.rst_derivedband_agg("tile", PYFUNC_SUM_AGG, "addbands").alias("t"))
+        .first()["t"]
+    )
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.count == 1
+        assert np.allclose(ds.read(1), 12.0)

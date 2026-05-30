@@ -5,8 +5,10 @@ Swap-compatible with ``databricks.labs.gbx.rasterx.functions``:
     df.select(prx.rst_width("tile"))
 """
 
+import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
+from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -30,7 +32,9 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import accessors, coords
+from databricks.labs.gbx.pyrx.core import accessors
+from databricks.labs.gbx.pyrx.core import agg as agg_core
+from databricks.labs.gbx.pyrx.core import coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
@@ -1819,6 +1823,272 @@ rst_quadbin_rastertogridmedian.__doc__ = _RASTERTOGRID_DOC.format(
 
 
 # ---------------------------------------------------------------------------
+# Tier 2: grouped aggregators (rst_*_agg)
+# ---------------------------------------------------------------------------
+# Spark 4.0 forbids a Python aggregate from returning a StructType, but allows
+# a grouped-agg pandas_udf to return BINARY and a scalar UDF to wrap that result
+# inside .agg(). So each public aggregator COMPOSES a BINARY grouped-agg UDF
+# with a scalar ``as_tile`` UDF, yielding a tile struct transparently while
+# preserving the heavyweight call pattern: df.groupBy(k).agg(rx.rst_*_agg(...)).
+#
+# The grouped-agg UDFs accept the tile STRUCT column directly (Arrow delivers a
+# struct column to the pandas_udf as a Series of dict-like rows; we extract each
+# member's ``raster`` bytes via row["raster"]). VERIFIED to work for both the
+# Python .agg() path and SQL GROUP BY — no raster-bytes fallback needed.
+
+
+def _tile_raster_bytes(row):
+    """Extract raster bytes from a tile-struct row delivered by Arrow.
+
+    Arrow hands a StructType column to a pandas_udf as a Series whose elements
+    are dict-like (mapping field name -> value). Returns None for null rows.
+    """
+    if row is None:
+        return None
+    raster = row["raster"]
+    return None if raster is None else bytes(raster)
+
+
+# --- scalar as_tile UDFs: wrap an aggregated BINARY result into a tile struct
+@f.udf(_serde.TILE_SCHEMA)
+def _as_tile_udf(raster_bytes):
+    if raster_bytes is None:
+        return None
+    rb = bytes(raster_bytes)
+    if len(rb) == 0:
+        return None
+    return _serde.build_tile(rb, "GTiff", 0)
+
+
+# combineavg must carry the group's first cellid through to the output tile.
+# Spark forbids mixing a grouped-agg pandas_udf with another aggregate (e.g.
+# f.first) in the same .agg(), so we cannot pass the cellid as a sibling
+# aggregate. Instead the grouped-agg UDF prepends an 8-byte big-endian cellid
+# envelope onto the raster bytes; this scalar UDF strips it back off.
+def _as_tile_cellid_envelope_udf_fn(raster_bytes):
+    if raster_bytes is None:
+        return None
+    rb = bytes(raster_bytes)
+    if len(rb) < 8:
+        return None
+    cellid = int.from_bytes(rb[:8], "big", signed=True)
+    return _serde.build_tile(rb[8:], "GTiff", cellid)
+
+
+_as_tile_cellid_envelope_udf = f.udf(_serde.TILE_SCHEMA)(
+    _as_tile_cellid_envelope_udf_fn
+)
+
+
+# --- grouped-agg pandas_udf(BinaryType()) reducers --------------------------
+@pandas_udf(BinaryType())
+def _merge_agg_udf(tile: pd.Series) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = [b for b in (_tile_raster_bytes(r) for r in tile) if b is not None]
+    return agg_core.merge_tiles(rasters)
+
+
+@pandas_udf(BinaryType())
+def _combineavg_agg_udf(tile: pd.Series) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = []
+    cellid = 0
+    first = True
+    for r in tile:
+        rb = _tile_raster_bytes(r)
+        if rb is None:
+            continue
+        if first:
+            cid = r["cellid"]
+            cellid = int(cid) if cid is not None else 0
+            first = False
+        rasters.append(rb)
+    out = agg_core.combineavg_tiles(rasters)
+    if out is None:
+        return None
+    # Prepend an 8-byte big-endian cellid envelope (stripped by the scalar UDF).
+    return cellid.to_bytes(8, "big", signed=True) + bytes(out)
+
+
+@pandas_udf(BinaryType())
+def _combineavg_agg_sql_udf(tile: pd.Series) -> bytes:
+    # SQL registration variant: returns raw GTiff bytes (no cellid envelope), so
+    # SQL callers can wrap it directly with gbx_rst_fromcontent(<agg>, 'GTiff').
+    # SQL has no tile cellid concept beyond the struct, and the envelope would
+    # corrupt fromcontent — so the SQL aggregate drops the cellid (always 0).
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = [b for b in (_tile_raster_bytes(r) for r in tile) if b is not None]
+    return agg_core.combineavg_tiles(rasters)
+
+
+@pandas_udf(BinaryType())
+def _frombands_agg_udf(tile: pd.Series, band_index: pd.Series) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    indexed = []
+    for r, idx in zip(tile, band_index):
+        rb = _tile_raster_bytes(r)
+        if rb is not None and idx is not None:
+            indexed.append((int(idx), rb))
+    return agg_core.frombands_tiles(indexed)
+
+
+@pandas_udf(BinaryType())
+def _rasterize_agg_udf(
+    geom_wkb: pd.Series,
+    value: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width_px: pd.Series,
+    height_px: pd.Series,
+    srid: pd.Series,
+) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    features_list = [
+        (bytes(g), float(v))
+        for g, v in zip(geom_wkb, value)
+        if g is not None and v is not None
+    ]
+    if not features_list:
+        return None
+    # Extent/size/srid are per-group constants; read them from the first row.
+    return agg_core.rasterize_features(
+        features_list,
+        xmin.iloc[0],
+        ymin.iloc[0],
+        xmax.iloc[0],
+        ymax.iloc[0],
+        width_px.iloc[0],
+        height_px.iloc[0],
+        srid.iloc[0],
+    )
+
+
+@pandas_udf(BinaryType())
+def _derivedband_agg_udf(
+    tile: pd.Series, python_func: pd.Series, func_name: pd.Series
+) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = [b for b in (_tile_raster_bytes(r) for r in tile) if b is not None]
+    if not rasters:
+        return None
+    # pyfunc/func_name are per-group constants; read them from the first row.
+    return agg_core.derivedband_tiles(
+        rasters, str(python_func.iloc[0]), str(func_name.iloc[0])
+    )
+
+
+# --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
+def rst_merge_agg(tile: ColLike) -> Column:
+    """Merge a group's tile rasters into one spatial mosaic tile.
+
+    Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_merge_agg("tile").alias("merged"))
+
+    Each tile carries its own georef/CRS, so the merge is spatial and the output
+    spans the union extent. Returns a tile struct (cellid 0).
+    """
+    return _as_tile_udf(_merge_agg_udf(_col(tile)))
+
+
+def rst_combineavg_agg(tile: ColLike) -> Column:
+    """Per-pixel mean across a group's aligned tiles, ignoring NoData.
+
+    Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_combineavg_agg("tile").alias("avg"))
+
+    Assumes the group's tiles are aligned (same shape/extent/CRS); raises if
+    shapes differ. The output cellid is the group's first tile cellid. Returns a
+    tile struct.
+    """
+    return _as_tile_cellid_envelope_udf(_combineavg_agg_udf(_col(tile)))
+
+
+def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
+    """Stack a group's single-band tiles into one multi-band tile.
+
+    Bands are ordered by ``band_index`` ASCENDING (the ordering guarantee).
+    Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_frombands_agg("tile", "band_index").alias("stacked"))
+
+    Returns a tile struct (cellid 0).
+    """
+    return _as_tile_udf(_frombands_agg_udf(_col(tile), _col(band_index)))
+
+
+def rst_rasterize_agg(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Burn a group's ``(geom_wkb, value)`` features into ONE tile.
+
+    The extent/size/srid args are per-group constants. Overlap is last-wins.
+    Use inside ``.agg()``::
+
+        df.groupBy(k).agg(
+            prx.rst_rasterize_agg("g", "v", 0, 0, 4, 4, 256, 256, 4326).alias("burned")
+        )
+
+    Returns a tile struct (cellid 0).
+    """
+    return _as_tile_udf(
+        _rasterize_agg_udf(
+            _col(geom_wkb),
+            _col(value),
+            _col(xmin),
+            _col(ymin),
+            _col(xmax),
+            _col(ymax),
+            _col(width_px),
+            _col(height_px),
+            _col(srid),
+        )
+    )
+
+
+def rst_derivedband_agg(
+    tile: ColLike, python_func: ColLike, func_name: ColLike
+) -> Column:
+    """Apply a user GDAL VRT pixel function across a group's tiles.
+
+    Each tile contributes one input band; the pyfunc (``func_name`` entry point)
+    runs across the N bands to produce a single-band output tile.
+    ``python_func``/``func_name`` are per-group constants. Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_derivedband_agg("tile", code, "fn").alias("out"))
+
+    SECURITY: ``python_func`` is exec'd in-process without sandboxing — pass only
+    trusted code. Returns a tile struct (cellid 0).
+    """
+    pf = f.lit(python_func) if isinstance(python_func, str) else _col(python_func)
+    fn = f.lit(func_name) if isinstance(func_name, str) else _col(func_name)
+    return _as_tile_udf(_derivedband_agg_udf(_col(tile), pf, fn))
+
+
+# ---------------------------------------------------------------------------
 # SQL registration registry
 # ---------------------------------------------------------------------------
 # Struct-accepting scalar UDFs for SQL registration.  The Python Column API
@@ -1935,4 +2205,16 @@ _sql_tile_ops = {
     "gbx_rst_quadbin_rastertogridmedian": _u_quadbin_rastertogridmedian,
 }
 
-SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
+# Grouped aggregators register the BINARY grouped-agg pandas_udf directly; SQL
+# callers use them in GROUP BY and wrap the BINARY result with
+# gbx_rst_fromcontent(<agg>, 'GTiff') to recover a tile struct. The grouped-agg
+# UDFs accept the tile STRUCT column directly in SQL as well (verified).
+_sql_aggregators = {
+    "gbx_rst_merge_agg": _merge_agg_udf,
+    "gbx_rst_combineavg_agg": _combineavg_agg_sql_udf,
+    "gbx_rst_frombands_agg": _frombands_agg_udf,
+    "gbx_rst_rasterize_agg": _rasterize_agg_udf,
+    "gbx_rst_derivedband_agg": _derivedband_agg_udf,
+}
+
+SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}

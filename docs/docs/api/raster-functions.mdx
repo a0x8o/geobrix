@@ -545,7 +545,11 @@ Combine or merge rasters in group-by (6 total).
 
 ### rst_combineavg_agg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_combineavg_agg("tile"))` returns the NoData-aware per-pixel mean as one tile per group; input tiles must share the same grid (shape/extent/CRS). In SQL `gbx_rst_combineavg_agg` returns the raster BINARY (cellid dropped); wrap with `gbx_rst_fromcontent(...)` for a tile.
+:::
 
 **Signature:** `rst_combineavg_agg(tile: Column): Column` — Average tiles per group.
 
@@ -555,7 +559,11 @@ Combine or merge rasters in group-by (6 total).
 
 ### rst_derivedband_agg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `groupBy(...).agg(rx.rst_derivedband_agg("tile", pyfunc, funcName))` stacks the group's tiles as bands and applies your pixel function, returning one tile per group. In SQL `gbx_rst_derivedband_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+:::
 
 **Signature:** `rst_derivedband_agg(tile: Column, pyfunc: String, funcName: String): Column` — Apply Python UDF to tiles per group.
 
@@ -579,7 +587,11 @@ Streaming aggregator that accepts one Z-valued point WKB per row and produces a 
 
 ### rst_frombands_agg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Aggregate — `groupBy(...).agg(rx.rst_frombands_agg("tile", "band_index"))` stacks the group's tiles into one multi-band tile ordered by ascending `band_index`. In SQL `gbx_rst_frombands_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+:::
 
 Streaming aggregator that collects ordered per-band tiles (one row per band) into a single multi-band raster tile per group; use when bands arrive as separate rows rather than a pre-built array.
 
@@ -593,7 +605,11 @@ Streaming aggregator that collects ordered per-band tiles (one row per band) int
 
 ### rst_merge_agg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.rst_merge_agg("tile"))` merges the group's tiles into one mosaic tile (output spans the union extent). In SQL `gbx_rst_merge_agg` returns the merged raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+:::
 
 **Signature:** `rst_merge_agg(tile: Column): Column` — Merge tiles per group.
 
@@ -603,7 +619,11 @@ Streaming aggregator that collects ordered per-band tiles (one row per band) int
 
 ### rst_rasterize_agg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** (`rasterio.features`). Aggregate — burns the group's `(geom, value)` rows into one tile over the given extent/size/SRID (last-wins on overlap). In SQL `gbx_rst_rasterize_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+:::
 
 Streaming aggregator that burns geometry/value pairs (one row per feature) into a single rasterized tile per group; use when features arrive as individual rows rather than as a pre-built collection.
 
