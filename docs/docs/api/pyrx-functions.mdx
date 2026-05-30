@@ -188,3 +188,36 @@ Extract vector polygons from contiguous equal-value regions:
 | `rst_rasterize` | `rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` | New raster tile with geometry burned in |
 | `rst_fillnodata` | `rst_fillnodata(tile, max_search_dist=None, smoothing_iter=None)` | Tile with NoData gaps interpolated |
 | `rst_polygonize` | `rst_polygonize(tile, band=1, connectedness=4)` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` |
+
+### Spectral indices
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_ndvi` | `rst_ndvi(tile, red_band, nir_band)` | Single-band Float32 NDVI |
+| `rst_evi` | `rst_evi(tile, red_idx, nir_idx, blue_idx, l=1.0, c1=6.0, c2=7.5, g=2.5)` | Single-band Float32 EVI |
+| `rst_savi` | `rst_savi(tile, red_idx, nir_idx, l=0.5)` | Single-band Float32 SAVI |
+| `rst_ndwi` | `rst_ndwi(tile, green_idx, nir_idx)` | Single-band Float32 NDWI |
+| `rst_nbr` | `rst_nbr(tile, nir_idx, swir_idx)` | Single-band Float32 NBR |
+
+### Terrain
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_slope` | `rst_slope(tile, unit="degrees", scale=1.0)` | Single-band Float32 slope |
+| `rst_aspect` | `rst_aspect(tile, trigonometric=False, zero_for_flat=False)` | Single-band Float32 aspect |
+| `rst_hillshade` | `rst_hillshade(tile, azimuth=315.0, altitude=45.0, z_factor=1.0)` | Single-band Byte hillshade (0–255) |
+| `rst_tri` | `rst_tri(tile)` | Single-band Float32 terrain ruggedness index |
+| `rst_tpi` | `rst_tpi(tile)` | Single-band Float32 topographic position index |
+| `rst_roughness` | `rst_roughness(tile)` | Single-band Float32 roughness |
+| `rst_color_relief` | `rst_color_relief(tile, color_table_path)` | RGB(A) Byte tile from a gdaldem color table |
+
+These terrain and index functions are NumPy reimplementations of the corresponding RasterX operations; results match the heavyweight outputs closely but are not guaranteed bit-identical.
+
+### Band math
+
+| Function | Signature | Returns |
+|---|---|---|
+| `rst_threshold` | `rst_threshold(tile, op=None, value=None)` | Tile; pixels failing `op value` set to NoData (default `>` 0.0) |
+| `rst_filter` | `rst_filter(tile, kernel_size, operation)` | Focal-filtered tile (`min`/`max`/`mean`/`median`) |
+| `rst_convolve` | `rst_convolve(tile, kernel)` | Float64 tile; 2D kernel convolution |
+| `rst_mapalgebra` | `rst_mapalgebra(tiles, expression)` | Single-band Float32; `numexpr` math over band 1 of each input tile bound to `A, B, C, …` |
