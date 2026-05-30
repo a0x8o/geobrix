@@ -50,3 +50,39 @@ def test_overlapping_tiles():
     assert len(parts) >= 4
     # at least one full 2x2 tile exists
     assert (2, 2) in set(_dims(parts))
+
+
+def test_make_tiles_splits_by_size():
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    # 100x100 single-band float32 = 40000 bytes (~0.038 MB)
+    data = np.arange(100 * 100, dtype="float32").reshape(100, 100)
+    profile = dict(
+        driver="GTiff",
+        width=100,
+        height=100,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(0, 100, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        parts = tiling.make_tiles(ds, 0.01)  # ~10 KB budget -> side ~51 -> 4 tiles
+    assert len(parts) > 1
+    for b in parts:
+        with _serde.open_tile(b) as o:
+            assert o.width <= 100 and o.height <= 100
+            assert o.crs.to_epsg() == 4326
+
+
+def test_make_tiles_single_when_budget_large():
+    with _serde.open_tile(make_geotiff_bytes(width=4, height=4)) as ds:
+        parts = tiling.make_tiles(ds, 100.0)  # huge budget -> one tile
+    assert len(parts) == 1

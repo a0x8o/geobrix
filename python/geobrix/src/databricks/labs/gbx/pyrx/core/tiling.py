@@ -1,6 +1,8 @@
 """Spark-free tiling ops. Each returns a list of GTiff byte strings (one per
 output tile); the Spark layer wraps each into a tile struct."""
 
+import math
+
 import numpy as np
 from rasterio.io import MemoryFile
 from rasterio.windows import Window
@@ -55,3 +57,17 @@ def retile(ds, tile_width, tile_height) -> list:
 def to_overlapping_tiles(ds, tile_width, tile_height, overlap) -> list:
     tw, th, ov = int(tile_width), int(tile_height), int(overlap)
     return _window_tiles(ds, tw, th, max(1, tw - ov), max(1, th - ov))
+
+
+def make_tiles(ds, size_in_mb) -> list:
+    """Split a raster into tiles sized to fit approximately size_in_mb each.
+
+    Derives a square tile side from the target MB budget and the raster's
+    bytes-per-pixel, then delegates to retile.  Returns one tile when the
+    budget exceeds the full raster extent.
+    """
+    bytes_per_pixel = max(1, np.dtype(ds.dtypes[0]).itemsize * ds.count)
+    budget = max(1.0, float(size_in_mb) * 1024 * 1024)
+    pixels = budget / bytes_per_pixel
+    side = max(1, int(math.sqrt(pixels)))
+    return retile(ds, side, side)
