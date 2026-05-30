@@ -7,6 +7,7 @@ import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import Tier from '@site/src/components/Tier';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
+import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
 import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
 import rasterxScalaCode from '!!raw-loader!../../tests/scala/packages/RasterxPackageExamples.scala';
@@ -61,28 +62,56 @@ Every RasterX function returns a tile whose `raster` field is a **self-contained
 
 Functions that internally build via an intermediate VRT — `gbx_rst_merge`, `gbx_rst_merge_agg`, `gbx_rst_frombands`, `gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, `gbx_rst_derivedband_agg` — materialize the result to GTiff before returning, so downstream stages on different executors see real raster bytes. Inspect a tile's payload format from `tile.metadata.driver`; for any of the functions above, it will read `GTiff` (not `VRT`). See [Beta Release Notes](../beta-release-notes#whats-new-in-v030) for the v0.3.0 correctness fix that introduced this invariant. See [Tile structure](./tile-structure) for the full tile-struct schema.
 
-## Usage Examples
+## Setup
 
-### Python/PySpark
-
-Both execution tiers alias the module as `rx`, so the example is identical — only the import line differs:
+Pick your execution tier and run this once. Both tiers alias the module as `rx`, so every example below is identical regardless of tier — only this setup differs. (See [Choosing an Execution Tier](./execution-tiers) for the comparison.)
 
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
-```python
-from databricks.labs.gbx.pyrx import functions as rx
-```
+<CodeFromTest
+  language="python"
+  title="Lightweight setup (pyrx)"
+  source="docs/tests/python/api/pyrx_functions.py"
+  testFile="python/geobrix/test/pyrx/test_docs_examples.py"
+  functionName="pyrx_setup_example"
+  outputConstant="pyrx_setup_example_output"
+  code={pyrxCode}
+/>
 
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
-```python
-from databricks.labs.gbx.rasterx import functions as rx
-```
+<CodeFromTest
+  language="python"
+  title="Heavyweight setup (rasterx)"
+  source="docs/tests/python/api/rasterx_functions.py"
+  testFile="docs/tests/python/api/test_rasterx_functions.py"
+  functionName="rasterx_setup_example"
+  outputConstant="rasterx_setup_example_output"
+  code={rasterxCode}
+/>
+
+After registering RasterX, create the SQL view so the SQL examples below can use `FROM rasters`:
+
+<CodeFromTest
+  language="sql"
+  title="SQL view setup"
+  source="docs/tests/python/api/rasterx_functions_sql.py"
+  testFile="docs/tests/python/api/test_rasterx_functions_sql.py"
+  functionName="RASTERX_SQL_SETUP"
+  outputConstant="RASTERX_SQL_SETUP_output"
+  code={rasterxSqlCode}
+/>
 
 </TabItem>
 </Tabs>
+
+## Usage Examples
+
+### Python/PySpark
+
+These examples assume your tier is set up as above (imported as `rx`, and `register(spark)` called for the SQL examples).
 
 <CodeFromTest
   code={packagesExamples}
@@ -120,36 +149,6 @@ from databricks.labs.gbx.rasterx import functions as rx
 :::note SQL examples
 Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
 :::
-
-## Common setup
-
-Run this once before the examples below. It registers RasterX and loads sample rasters into a temp view `rasters`.
-
-**Python:**
-
-<CodeFromTest
-  language="python"
-  title="RasterX setup"
-  source="docs/tests/python/api/rasterx_functions.py"
-  testFile="docs/tests/python/api/test_rasterx_functions.py"
-  functionName="rasterx_setup_example"
-  outputConstant="rasterx_setup_example_output"
-  code={rasterxCode}
-/>
-
-**SQL:** After registering RasterX (e.g. from Python above), create the view so SQL examples can use `FROM rasters`:
-
-<CodeFromTest
-  language="sql"
-  title="SQL view setup"
-  source="docs/tests/python/api/rasterx_functions_sql.py"
-  testFile="docs/tests/python/api/test_rasterx_functions_sql.py"
-  functionName="RASTERX_SQL_SETUP"
-  outputConstant="RASTERX_SQL_SETUP_output"
-  code={rasterxSqlCode}
-/>
-
----
 
 ## Heavyweight-only functions
 
