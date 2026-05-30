@@ -7,7 +7,14 @@ Swap-compatible with ``databricks.labs.gbx.rasterx.functions``:
 
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
-from pyspark.sql.types import BinaryType, DoubleType, IntegerType, MapType, StringType
+from pyspark.sql.types import (
+    BinaryType,
+    BooleanType,
+    DoubleType,
+    IntegerType,
+    MapType,
+    StringType,
+)
 
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx._udf import (
@@ -39,6 +46,9 @@ _u_pixelheight = tile_scalar_udf(accessors.pixelheight, DoubleType())
 _u_upperleftx = tile_scalar_udf(accessors.upperleftx, DoubleType())
 _u_upperlefty = tile_scalar_udf(accessors.upperlefty, DoubleType())
 _u_boundingbox = tile_scalar_udf(accessors.boundingbox, BinaryType())
+_u_scalex = tile_scalar_udf(accessors.scalex, DoubleType())
+_u_scaley = tile_scalar_udf(accessors.scaley, DoubleType())
+_u_isempty = tile_scalar_udf(accessors.isempty, BooleanType())
 
 
 # metadata: pandas_udf rejects MapType in some Arrow builds; fall back to
@@ -61,16 +71,16 @@ _u_w2r_y = tile_scalar_udf2(coords.world_to_raster_y, IntegerType())
 
 
 # --- Constructor ------------------------------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _fromcontent_udf(raster, drv):
+    if raster is None:
+        return None
+    return _serde.build_tile(bytes(raster), drv or "GTiff")
+
+
 def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
     """Build a tile struct from raster BINARY content and GDAL driver name."""
-
-    @f.udf(_serde.TILE_SCHEMA)
-    def _build(raster, drv):
-        if raster is None:
-            return None
-        return _serde.build_tile(bytes(raster), drv or "GTiff")
-
-    return _build(_col(content), _col(driver))
+    return _fromcontent_udf(_col(content), _col(driver))
 
 
 # --- Tier 0: accessors ------------------------------------------------------
@@ -112,6 +122,18 @@ def rst_boundingbox(tile: ColLike) -> Column:
 
 def rst_metadata(tile: ColLike) -> Column:
     return _metadata_udf(_raster_field(_col(tile)))
+
+
+def rst_scalex(tile: ColLike) -> Column:
+    return _u_scalex(_raster_field(_col(tile)))
+
+
+def rst_scaley(tile: ColLike) -> Column:
+    return _u_scaley(_raster_field(_col(tile)))
+
+
+def rst_isempty(tile: ColLike) -> Column:
+    return _u_isempty(_raster_field(_col(tile)))
 
 
 # --- Tier 1: coordinate transforms -----------------------------------------

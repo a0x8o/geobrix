@@ -39,6 +39,8 @@ def tile_scalar_udf(core_fn: Callable, return_type: DataType):
     def _udf(raster: pd.Series) -> pd.Series:
         _env.configure_gdal_env()  # runs on the worker process
         out = []
+        # Per-row loop: rasterio MemoryFile open is inherently per-raster; the
+        # Arrow batch still crosses the JVM<->Python boundary once per batch.
         for b in raster:
             if b is None:
                 out.append(None)
@@ -57,6 +59,8 @@ def tile_scalar_udf2(core_fn: Callable, return_type: DataType):
     def _udf(raster: pd.Series, a: pd.Series, b: pd.Series) -> pd.Series:
         _env.configure_gdal_env()
         out = []
+        # Per-row loop: rasterio MemoryFile open is inherently per-raster; the
+        # Arrow batch still crosses the JVM<->Python boundary once per batch.
         for rb, av, bv in zip(raster, a, b):
             if rb is None:
                 out.append(None)

@@ -59,3 +59,15 @@ def metadata(ds) -> Dict[str, str]:
     }
     meta.update({f"tag.{k}": str(v) for k, v in ds.tags().items()})
     return meta
+
+
+def scalex(ds) -> float:
+    return float(ds.transform.a)
+
+
+def scaley(ds) -> float:
+    return float(ds.transform.e)
+
+
+def isempty(ds) -> bool:
+    return int(ds.width) == 0 or int(ds.height) == 0 or int(ds.count) == 0
