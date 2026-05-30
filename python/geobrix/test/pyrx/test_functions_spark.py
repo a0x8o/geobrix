@@ -393,3 +393,37 @@ def test_rst_color_relief(spark):
     )
     out = df.select(prx.rst_color_relief("tile", f.lit(color_table_path)).alias("t"))
     assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 3
+
+
+def test_rst_mapalgebra(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    def _ras(v):
+        data = np.full((2, 2), float(v), dtype="float32")
+        profile = dict(
+            driver="GTiff",
+            width=2,
+            height=2,
+            count=1,
+            dtype="float32",
+            crs="EPSG:32633",
+            transform=from_origin(0, 2, 1, 1),
+            nodata=-9999.0,
+        )
+        with MemoryFile() as mf:
+            with mf.open(**profile) as dst:
+                dst.write(data, 1)
+            return mf.read()
+
+    df = spark.createDataFrame([(_ras(1.0), _ras(2.0))], ["a", "b"])
+    df = df.select(
+        prx.rst_fromcontent("a", f.lit("GTiff")).alias("ta"),
+        prx.rst_fromcontent("b", f.lit("GTiff")).alias("tb"),
+    )
+    out = df.select(prx.rst_mapalgebra(f.array("ta", "tb"), f.lit("A + B")).alias("t"))
+    row = out.select(
+        prx.rst_numbands("t").alias("n"), prx.rst_type("t").alias("ty")
+    ).first()
+    assert row["n"] == 1 and row["ty"][0] == "Float32"

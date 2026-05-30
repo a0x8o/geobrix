@@ -36,10 +36,9 @@ from databricks.labs.gbx.pyrx.core import (
     features,
     focal,
     indices,
-    resample,
-    terrain,
-    warp,
 )
+from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
+from databricks.labs.gbx.pyrx.core import resample, terrain, warp
 
 
 def register(spark: SparkSession = None) -> None:
@@ -371,6 +370,41 @@ def rst_convolve(tile: ColLike, kernel: ColLike) -> Column:
         Convolved tile with dtype Float64.
     """
     return _convolve_udf(_col(tile), _col(kernel))
+
+
+# --- Tier 1d4: map algebra UDF ----------------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _mapalgebra_udf(tiles, expression):
+    if tiles is None or expression is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    rasters = [
+        bytes(t["raster"]) for t in tiles if t is not None and t["raster"] is not None
+    ]
+    if not rasters:
+        return None
+    new_bytes = mapalgebra_core.mapalgebra(rasters, str(expression))
+    return _serde.build_tile(new_bytes, "GTiff", tiles[0]["cellid"])
+
+
+def rst_mapalgebra(tiles: ColLike, expression: ColLike) -> Column:
+    """Apply a map-algebra expression across an array of tiles.
+
+    Band 1 of each tile (in array order) binds to A, B, C, …; the expression is
+    evaluated with numexpr (safe math only — no arbitrary code execution).
+    Output is a single-band Float32 tile on the first input's georeference.
+
+    Args:
+        tiles:      Column of ARRAY<tile struct> (e.g. ``f.array("ta", "tb")``).
+        expression: Math expression string, e.g. ``"(A - B) / (A + B)"``.
+
+    Returns:
+        Single-band Float32 tile struct.
+    """
+    expr_col = f.lit(expression) if isinstance(expression, str) else _col(expression)
+    return _mapalgebra_udf(_col(tiles), expr_col)
 
 
 # --- Tier 1d2: spectral index UDFs -----------------------------------------
@@ -963,6 +997,7 @@ _sql_tile_ops = {
     "gbx_rst_threshold": _threshold_udf,
     "gbx_rst_filter": _filter_udf,
     "gbx_rst_convolve": _convolve_udf,
+    "gbx_rst_mapalgebra": _mapalgebra_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
