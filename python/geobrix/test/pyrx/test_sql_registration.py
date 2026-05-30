@@ -56,3 +56,48 @@ def test_register_enables_polygonize_sql(spark):
         "n"
     ]
     assert n >= 1
+
+
+def _rgb_tile_view(spark, name="t"):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    profile = dict(
+        driver="GTiff",
+        width=64,
+        height=64,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 50.0, 0.03125, 0.03125),
+    )
+    data = (np.arange(64 * 64) % 256).astype("uint8").reshape(64, 64)
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            for b in range(1, 4):
+                dst.write(data, b)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView(name)
+
+
+def test_register_enables_tilexyz_sql(spark):
+    prx.register(spark)
+    _rgb_tile_view(spark)
+    # SQL callers must pass all args (no Python defaults in SQL UDFs).
+    png = spark.sql(
+        "SELECT gbx_rst_tilexyz(tile, 5, 16, 10, 'PNG', 256, 'bilinear') AS b FROM t"
+    ).first()["b"]
+    assert bytes(png)[:4] == b"\x89PNG"
+
+
+def test_register_enables_xyzpyramid_sql(spark):
+    prx.register(spark)
+    _rgb_tile_view(spark)
+    n = spark.sql(
+        "SELECT size(gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear')) AS n FROM t"
+    ).first()["n"]
+    assert n >= 1

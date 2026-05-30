@@ -212,13 +212,6 @@ These functions are available only in the heavyweight tier (not yet in the light
 |---|---|
 | `rst_h3_tessellate` | tessellate a raster to H3 cells |
 
-### Web-mercator tile output
-
-| Function | Purpose |
-|---|---|
-| `rst_tilexyz` | render one web-mercator XYZ tile |
-| `rst_xyzpyramid` | explode into one row per XYZ tile across zooms |
-
 ### Grid aggregation (H3)
 
 | Function | Purpose |
@@ -1187,7 +1180,7 @@ Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pai
 
 ### rst_tilexyz
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_tilexyz(tile: Column, z: Column, x: Column, y: Column, format: Column, tileSize: Column, resampling: Column): Column` — Render a single web-mercator XYZ tile from a raster as encoded image bytes (e.g. PNG, JPEG, WebP) at the given tile coordinates and pixel size.
 
@@ -1197,7 +1190,7 @@ Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pai
 
 ### rst_xyzpyramid
 
-<Tier heavy/>
+<Tier both/>
 
 **Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
 

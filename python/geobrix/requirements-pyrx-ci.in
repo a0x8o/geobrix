@@ -38,5 +38,8 @@ shapely==2.1.2
 scipy==1.15.1
 numexpr==2.11.0
 
+# --- web-mercator XYZ tiling (rio-tiler bundles morecantile + color-operations) ---
+rio-tiler==9.0.6
+
 # --- test runner ---
 pytest==8.4.2

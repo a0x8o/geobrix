@@ -33,7 +33,7 @@ from databricks.labs.gbx.pyrx.core import accessors, coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
-from databricks.labs.gbx.pyrx.core import resample, terrain, tiling, warp
+from databricks.labs.gbx.pyrx.core import resample, terrain, tiling, warp, xyz
 
 
 def register(spark: SparkSession = None) -> None:
@@ -1063,6 +1063,115 @@ def rst_derivedband(tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike) -> 
     return _derivedband_udf(_col(tile_expr), pf, fn)
 
 
+# --- Tier 1h: web-mercator XYZ tiling UDFs ---------------------------------
+@f.udf(BinaryType())
+def _tilexyz_udf(tile, z, x, y, format, size, resampling):
+    # Mirror heavyweight: rst_tilexyz NEVER returns null — a null/empty tile or
+    # any hard failure yields a transparent PNG (slippy-map servers need a 200).
+    sz = int(size) if size is not None else 256
+    if tile is None or tile["raster"] is None:
+        return xyz.transparent_png(sz)
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    fmt = str(format) if format is not None else "PNG"
+    resamp = str(resampling) if resampling is not None else "bilinear"
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return xyz.render_tile(ds, int(z), int(x), int(y), fmt, sz, resamp)
+
+
+_XYZPYRAMID_SCHEMA = ArrayType(
+    StructType(
+        [
+            StructField("z", IntegerType(), False),
+            StructField("x", IntegerType(), False),
+            StructField("y", IntegerType(), False),
+            StructField("bytes", BinaryType(), True),
+        ]
+    )
+)
+
+
+@f.udf(_XYZPYRAMID_SCHEMA)
+def _xyzpyramid_udf(tile, min_z, max_z, format, size, resampling):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    fmt = str(format) if format is not None else "PNG"
+    sz = int(size) if size is not None else 256
+    resamp = str(resampling) if resampling is not None else "bilinear"
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return xyz.pyramid(ds, int(min_z), int(max_z), fmt, sz, resamp)
+
+
+def rst_tilexyz(
+    tile: ColLike,
+    z: ColLike,
+    x: ColLike,
+    y: ColLike,
+    format: ColLike = "PNG",
+    size: ColLike = 256,
+    resampling: ColLike = "bilinear",
+) -> Column:
+    """Render a single web-mercator XYZ slippy-map tile from the raster.
+
+    Warps the source into a ``size`` x ``size`` raster covering exactly the
+    EPSG:3857 bbox of (z, x, y) and encodes it to the requested image format.
+
+    Args:
+        tile:       Tile struct column.
+        z, x, y:    Web-mercator tile coordinates (Y north-down slippy-map).
+        format:     "PNG" (default), "JPEG", or "WEBP" (case-insensitive).
+        size:       Output tile side in pixels, in (0, 4096]. Default 256.
+        resampling: GDAL warp resampling name (near, bilinear (default), cubic,
+                    cubicspline, lanczos, average, mode, max, min, med, q1, q3).
+
+    Returns:
+        BINARY image bytes. Out-of-extent / empty tiles (and any hard failure)
+        return a transparent RGBA PNG of ``size`` x ``size`` — NEVER null — so
+        slippy-map servers always get a 200-status body.
+    """
+    fmt = f.lit(format) if isinstance(format, str) else _col(format)
+    sz = f.lit(size) if isinstance(size, int) else _col(size)
+    resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    return _tilexyz_udf(_col(tile), _col(z), _col(x), _col(y), fmt, sz, resamp)
+
+
+def rst_xyzpyramid(
+    tile: ColLike,
+    min_z: ColLike,
+    max_z: ColLike,
+    format: ColLike = "PNG",
+    size: ColLike = 256,
+    resampling: ColLike = "bilinear",
+) -> Column:
+    """Render every web-mercator XYZ tile intersecting the raster across a zoom range.
+
+    Computes the source extent in WGS84, enumerates intersecting (z, x, y) tiles
+    for each zoom in [min_z, max_z] (WebMercatorQuad TMS, Y north-down), and
+    renders each via the same path as :func:`rst_tilexyz`.
+
+    Args:
+        tile:       Tile struct column.
+        min_z:      Minimum zoom (>= 0).
+        max_z:      Maximum zoom (>= min_z, <= 20).
+        format:     "PNG" (default), "JPEG", or "WEBP".
+        size:       Output tile side in pixels, in (0, 4096]. Default 256.
+        resampling: GDAL warp resampling name (default "bilinear").
+
+    Returns:
+        ARRAY<struct(z INT, x INT, y INT, bytes BINARY)>, one element per
+        intersecting tile. Explode the array to get one row per tile. Raises if
+        the candidate tile-count across the range exceeds 1,000,000.
+    """
+    fmt = f.lit(format) if isinstance(format, str) else _col(format)
+    sz = f.lit(size) if isinstance(size, int) else _col(size)
+    resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    return _xyzpyramid_udf(_col(tile), _col(min_z), _col(max_z), fmt, sz, resamp)
+
+
 # ---------------------------------------------------------------------------
 # SQL registration registry
 # ---------------------------------------------------------------------------
@@ -1140,6 +1249,8 @@ _sql_tile_ops = {
     "gbx_rst_retile": _retile_udf,
     "gbx_rst_tooverlappingtiles": _tooverlappingtiles_udf,
     "gbx_rst_maketiles": _maketiles_udf,
+    "gbx_rst_tilexyz": _tilexyz_udf,
+    "gbx_rst_xyzpyramid": _xyzpyramid_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}

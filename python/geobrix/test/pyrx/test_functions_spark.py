@@ -512,3 +512,76 @@ def test_rst_maketiles(spark):
     parts = df.select(f.explode(prx.rst_maketiles("tile", 0.01)).alias("t"))
     assert parts.count() > 1
     assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+
+
+# --- web-mercator XYZ tiling (rst_tilexyz / rst_xyzpyramid) -----------------
+def _rgb_tile_df(spark):
+    """One-row DataFrame with a small RGB GTiff tile over a European extent."""
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    profile = dict(
+        driver="GTiff",
+        width=64,
+        height=64,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 50.0, 0.03125, 0.03125),
+    )
+    data = (np.arange(64 * 64) % 256).astype("uint8").reshape(64, 64)
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            for b in range(1, 4):
+                dst.write(data, b)
+        src = mf.read()
+    return spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+
+
+def test_rst_tilexyz_in_extent_png(spark):
+    df = _rgb_tile_df(spark)
+    png = df.select(
+        prx.rst_tilexyz("tile", f.lit(5), f.lit(16), f.lit(10)).alias("b")
+    ).first()["b"]
+    assert bytes(png)[:4] == b"\x89PNG"
+
+
+def test_rst_tilexyz_out_of_extent_transparent(spark):
+    df = _rgb_tile_df(spark)
+    png = df.select(
+        prx.rst_tilexyz("tile", f.lit(2), f.lit(0), f.lit(0), "PNG", 64).alias("b")
+    ).first()["b"]
+    assert bytes(png)[:4] == b"\x89PNG"
+
+
+def test_rst_tilexyz_null_tile_transparent(spark):
+    # Even a null tile must return a transparent PNG (never null) — mirror heavyweight.
+    df = spark.createDataFrame(
+        [(None,)],
+        "tile struct<cellid:bigint,raster:binary,metadata:map<string,string>>",
+    )
+    png = df.select(
+        prx.rst_tilexyz("tile", f.lit(2), f.lit(0), f.lit(0), "PNG", 32).alias("b")
+    ).first()["b"]
+    assert png is not None
+    assert bytes(png)[:4] == b"\x89PNG"
+
+
+def test_rst_xyzpyramid_array(spark):
+    df = _rgb_tile_df(spark)
+    rows = (
+        df.select(
+            f.explode(prx.rst_xyzpyramid("tile", f.lit(1), f.lit(3), "PNG", 64)).alias(
+                "t"
+            )
+        )
+        .select("t.z", "t.x", "t.y", "t.bytes")
+        .collect()
+    )
+    assert len(rows) > 0
+    for r in rows:
+        assert r["z"] in (1, 2, 3)
+        assert bytes(r["bytes"])[:4] == b"\x89PNG"
