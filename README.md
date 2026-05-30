@@ -7,7 +7,7 @@
 [![python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE)
 
-GeoBrix is a high-performance spatial processing library. Its heavy-weight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run exclusively on the Databricks Runtime (DBR), see [docs](https://databrickslabs.github.io/geobrix/) for more.
+GeoBrix is a high-performance spatial processing library. Its raster functions come in two execution tiers: a lightweight pure-Python tier (pyrx) that additionally runs on serverless, shared, and ARM compute, and a heavyweight Scala/GDAL tier (rasterx) for distributed processing on classic clusters (natives for x86 arch only). See [Choosing an Execution Tier](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers). The heavyweight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run on the Databricks Runtime (DBR), see [docs](https://databrickslabs.github.io/geobrix/) for more.
 
 ## Background
 
@@ -184,40 +184,58 @@ Any issues discovered through the use of this project should be filed as GitHub 
 
 ## Installing & Using GeoBrix
 
-GeoBrix currently offers heavy-weight, distributed APIs, primarily written in Scala for Spark with additional language bindings for PySpark and Spark SQL. See docs for more information on installing and using available readers and functions.
+GeoBrix raster functions come in two execution tiers: a **lightweight** pure-Python tier (`pyrx`) and a **heavyweight** Scala/Spark tier (`rasterx`, with PySpark and SQL bindings). GridX, VectorX, and the GDAL/OGR readers/writers are heavyweight. See [docs](https://databrickslabs.github.io/geobrix/) for full installation and usage.
 
 ### Quick Start
 
-Cluster Config
+GeoBrix raster functions share the **same names** across both execution tiers, so switching tiers is a one-line import change (both alias `rx`). Pick the tier that matches your compute — see [Choosing an Execution Tier](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers) for the full comparison.
 
-GeoBrix requires GDAL natives, which are best installed via an init script on a classic cluster
+#### Lightweight (pyrx)
 
-1. Add the GeoBrix JAR and Shared Object ('*.so') to the Volume - currently these are delivered via [Releases](https://github.com/databrickslabs/geobrix/releases) artifacts.
-3. Add [geobrix-gdal-init.sh](./scripts/geobrix-gdal-init.sh) to a chosen Databricks Volume; note: prior to copying, modify 'VOL_DIR' to the location of the artifacts in (1).
+Pure Python on [rasterio](https://rasterio.readthedocs.io/) — **no JAR, no init script, no native GDAL bundle**. Runs on serverless, standard (shared) clusters, Lakeflow declarative pipelines, and ARM. Stage the GeoBrix wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install it with the `pyrx` extra — `%pip` (cluster-wide) or as a cluster-scoped library:
+
+```python
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[pyrx]'
+```
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+rx.register(spark)  # optional — only needed to call the gbx_rst_* SQL functions
+
+tiles = (
+    spark.read.format("binaryFile").load("/Volumes/<catalog>/<schema>/<volume>/*.tif")
+    .select(rx.rst_fromcontent("content", "GTiff").alias("tile"))
+)
+tiles.select(rx.rst_width("tile"), rx.rst_srid("tile")).show()
+```
+
+#### Heavyweight (rasterx)
+
+Scala + native GDAL for distributed processing on classic (x86) clusters. Requires the JAR plus a cluster init script that installs GDAL natives:
+
+1. Add the GeoBrix JAR and Shared Object (`*.so`) to a Volume — delivered via [Releases](https://github.com/databrickslabs/geobrix/releases) artifacts.
+2. Add [geobrix-gdal-init.sh](./scripts/geobrix-gdal-init.sh) to a Databricks Volume (modify `VOL_DIR` to the artifacts' location) and attach it as the cluster init script.
 3. Add the WHL as a cluster library.
 
-To get up and running with PySpark bindings and SQL function registration in a cluster, execute the following (note: you do not need to do this if you are just using the included readers):
-
-```
+```python
 from databricks.labs.gbx.rasterx import functions as rx
+rx.register(spark)  # registers the gbx_rst_* SQL functions
 
-rx.register(spark)
+rasters = spark.read.format("gdal").load("/Volumes/<catalog>/<schema>/<volume>/*.tif")
+rasters.select(rx.rst_width("tile"), rx.rst_srid("tile")).show()
 ```
 
-You can quickly list the registered functions with a SQL command.
+#### Inspect the registered SQL functions (either tier, after `register`)
 
-```
-%sql
+```sql
 -- hint: you can sort the return column
 show functions like 'gbx_rst_*'
 ```
 
 <img src="resources/images/quickstart/show_funcs.png" width="25%" />
 
-Describe any registered function for more details.
-
-```
-%sql describe function extended gbx_rst_boundingbox
+```sql
+describe function extended gbx_rst_boundingbox
 ```
 
 <img src="resources/images/quickstart/func_descrip.png" width="50%" />
