@@ -34,6 +34,7 @@ from databricks.labs.gbx.pyrx.core import (
     coords,
     edit,
     features,
+    focal,
     indices,
     resample,
     terrain,
@@ -282,6 +283,94 @@ def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
 def rst_initnodata(tile: ColLike) -> Column:
     """Ensure a NoData value is set on the raster tile; uses -9999.0 if not already set."""
     return _init_nodata_udf(_col(tile))
+
+
+# --- Tier 1d3: band-math / focal UDFs --------------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _threshold_udf(tile, op, value):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.threshold(ds, op, value)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _filter_udf(tile, kernel_size, operation):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = focal.filt(ds, int(kernel_size), str(operation))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _convolve_udf(tile, kernel):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = focal.convolve(ds, kernel)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_threshold(tile: ColLike, op: ColLike = None, value: ColLike = None) -> Column:
+    """Keep pixels satisfying the comparison; others become NoData.
+
+    Args:
+        tile:  Tile struct column.
+        op:    Comparison operator: ">", "<", ">=", "<=", "==", "!=".
+               Defaults to ">".
+        value: Threshold scalar.  Defaults to 0.0.
+
+    Returns:
+        Tile with the same dtype and band count; failing pixels set to NoData.
+    """
+    op_col = (
+        f.lit(">") if op is None else (f.lit(op) if isinstance(op, str) else _col(op))
+    )
+    val_col = (
+        f.lit(0.0)
+        if value is None
+        else (f.lit(value) if isinstance(value, (int, float)) else _col(value))
+    )
+    return _threshold_udf(_col(tile), op_col, val_col)
+
+
+def rst_filter(tile: ColLike, kernel_size: ColLike, operation: ColLike) -> Column:
+    """Apply a focal filter over a square window per band.
+
+    Args:
+        tile:        Tile struct column.
+        kernel_size: Side length of the square neighbourhood (odd integer).
+        operation:   One of "min", "max", "mean", "median".
+
+    Returns:
+        Filtered tile; same band count.  "mean" returns Float32; others
+        preserve the input dtype.
+    """
+    return _filter_udf(_col(tile), _col(kernel_size), _col(operation))
+
+
+def rst_convolve(tile: ColLike, kernel: ColLike) -> Column:
+    """Convolve each band with a 2-D kernel (ARRAY<ARRAY<DOUBLE>>).
+
+    Args:
+        tile:   Tile struct column.
+        kernel: 2-D array column of floats (e.g. built with ``f.array``).
+
+    Returns:
+        Convolved tile with dtype Float64.
+    """
+    return _convolve_udf(_col(tile), _col(kernel))
 
 
 # --- Tier 1d2: spectral index UDFs -----------------------------------------
@@ -871,6 +960,9 @@ _sql_tile_ops = {
     "gbx_rst_tpi": _tpi_udf,
     "gbx_rst_roughness": _roughness_udf,
     "gbx_rst_color_relief": _color_relief_udf,
+    "gbx_rst_threshold": _threshold_udf,
+    "gbx_rst_filter": _filter_udf,
+    "gbx_rst_convolve": _convolve_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}

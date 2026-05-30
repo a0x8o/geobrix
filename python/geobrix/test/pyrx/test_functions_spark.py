@@ -316,6 +316,50 @@ def test_rst_tri_tpi_roughness(spark):
         assert row["n"] == 1 and row["t"][0] == "Float32"
 
 
+def test_rst_threshold(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.array([[1.0, 5.0], [10.0, 20.0]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 2, 1, 1),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    out = df.select(prx.rst_threshold("tile", f.lit(">"), 5.0).alias("t"))
+    assert out.select(prx.rst_getnodata("t").alias("nd")).first()["nd"][0] == -9999.0
+
+
+def test_rst_filter_and_convolve(spark):
+    df = _tile_df(spark, width=5, height=5, count=1)
+    fout = df.select(prx.rst_filter("tile", 3, f.lit("mean")).alias("t"))
+    assert fout.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+    cout = df.select(
+        prx.rst_convolve(
+            "tile",
+            f.array(
+                f.array(f.lit(0.0), f.lit(0.0), f.lit(0.0)),
+                f.array(f.lit(0.0), f.lit(1.0), f.lit(0.0)),
+                f.array(f.lit(0.0), f.lit(0.0), f.lit(0.0)),
+            ),
+        ).alias("t")
+    )
+    assert cout.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+
+
 def test_rst_color_relief(spark):
     import tempfile
 
