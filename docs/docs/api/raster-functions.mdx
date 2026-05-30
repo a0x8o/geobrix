@@ -7,10 +7,16 @@ import TabItem from '@theme/TabItem';
 import Tier from '@site/src/components/Tier';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
+import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
+import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
 
 # Raster Functions
 
-These functions are available in **both** execution tiers. The function call is identical across tiers — pick a tier for setup and your choice persists across the docs. See [Choosing an Execution Tier](./execution-tiers) for the tradeoffs. Functions available **only** in the heavyweight tier (aggregators, grid, tiling, and more) are documented separately in [Raster Functions — Heavyweight only](./raster-functions-heavyweight).
+GeoBrix raster functions run across two execution tiers. The function call is identical across tiers — pick a tier for setup and your choice persists across the docs. See [Choosing an Execution Tier](./execution-tiers) for the tradeoffs.
+
+:::note Lightweight vs heavyweight coverage
+Most raster functions run in **both** execution tiers (badged <Tier both/> below). A set of functions are **heavyweight-only** (badged <Tier heavy/>) — aggregators (`*_agg`), grid aggregations (H3 / quadbin), tiling & generators, additional accessors/statistics, format/overview/COG operations, web-mercator tile output, and the analytical transforms (`contour`, `proximity`, `viewshed`, `dtmfromgeoms`, `gridfrompoints`) — because they are not yet implemented in the lightweight tier. A function graduates from lightweight-only to both by flipping its badge; there is no separate page to keep in sync. See [Choosing an Execution Tier](./execution-tiers).
+:::
 
 ## Setup
 
@@ -41,108 +47,649 @@ rx.register(spark)
 </TabItem>
 </Tabs>
 
-## Availability
+## Tier caveats
 
-Every function in the reference below is available in both tiers <Tier both/>. Two caveats apply: (a) lightweight terrain and spectral-index functions are NumPy reimplementations — results match the heavyweight outputs closely but are not guaranteed bit-identical with the gdaldem-backed heavyweight results; (b) when calling the `gbx_rst_*` SQL functions in the lightweight tier you must pass all arguments explicitly (e.g. `gbx_rst_to_webmercator(tile, 'bilinear')`, `gbx_rst_polygonize(tile, 1, 4)`) — Python default values are not available in Spark SQL UDFs.
+- **Both-tier coverage.** Functions badged <Tier both/> are callable identically in either tier; only the setup import differs.
+- **NumPy reimplementations.** In the lightweight tier, terrain and spectral-index functions are NumPy reimplementations — results match the heavyweight `gdaldem`-backed outputs closely but are not guaranteed bit-identical.
+- **Explicit SQL arguments.** When calling the `gbx_rst_*` SQL functions in the lightweight tier you must pass all arguments explicitly (e.g. `gbx_rst_to_webmercator(tile, 'bilinear')`, `gbx_rst_polygonize(tile, 1, 4)`) — Python default values are not available in Spark SQL UDFs.
 
 ## Function reference
 
-### Accessors <Tier both/>
+Each function lists its tier in the **Tier** column: <Tier both/> = available in both tiers, <Tier heavy/> = heavyweight-only.
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_width` | `rst_width(tile)` | `INT` — width in pixels |
-| `rst_height` | `rst_height(tile)` | `INT` — height in pixels |
-| `rst_numbands` | `rst_numbands(tile)` | `INT` — number of bands |
-| `rst_srid` | `rst_srid(tile)` | `INT` — EPSG code |
-| `rst_pixelwidth` | `rst_pixelwidth(tile)` | `DOUBLE` — pixel width in CRS units |
-| `rst_pixelheight` | `rst_pixelheight(tile)` | `DOUBLE` — pixel height in CRS units |
-| `rst_upperleftx` | `rst_upperleftx(tile)` | `DOUBLE` — X of upper-left corner |
-| `rst_upperlefty` | `rst_upperlefty(tile)` | `DOUBLE` — Y of upper-left corner |
-| `rst_scalex` | `rst_scalex(tile)` | `DOUBLE` — scale in X (pixel width) |
-| `rst_scaley` | `rst_scaley(tile)` | `DOUBLE` — scale in Y (negative for north-up) |
-| `rst_isempty` | `rst_isempty(tile)` | `BOOLEAN` |
-| `rst_boundingbox` | `rst_boundingbox(tile)` | `BINARY` — bounding box WKB |
-| `rst_metadata` | `rst_metadata(tile)` | `MAP<STRING,STRING>` |
-| `rst_type` | `rst_type(tile)` | `ARRAY<STRING>` — GDAL type name per band |
-| `rst_getnodata` | `rst_getnodata(tile)` | `ARRAY<DOUBLE>` — NoData value per band |
+### Accessors
 
-### Coordinates <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_width` | <Tier both/> | `rst_width(tile)` | `INT` — width in pixels |
+| `rst_height` | <Tier both/> | `rst_height(tile)` | `INT` — height in pixels |
+| `rst_numbands` | <Tier both/> | `rst_numbands(tile)` | `INT` — number of bands |
+| `rst_srid` | <Tier both/> | `rst_srid(tile)` | `INT` — EPSG code |
+| `rst_pixelwidth` | <Tier both/> | `rst_pixelwidth(tile)` | `DOUBLE` — pixel width in CRS units |
+| `rst_pixelheight` | <Tier both/> | `rst_pixelheight(tile)` | `DOUBLE` — pixel height in CRS units |
+| `rst_upperleftx` | <Tier both/> | `rst_upperleftx(tile)` | `DOUBLE` — X of upper-left corner |
+| `rst_upperlefty` | <Tier both/> | `rst_upperlefty(tile)` | `DOUBLE` — Y of upper-left corner |
+| `rst_scalex` | <Tier both/> | `rst_scalex(tile)` | `DOUBLE` — scale in X (pixel width) |
+| `rst_scaley` | <Tier both/> | `rst_scaley(tile)` | `DOUBLE` — scale in Y (negative for north-up) |
+| `rst_isempty` | <Tier both/> | `rst_isempty(tile)` | `BOOLEAN` |
+| `rst_boundingbox` | <Tier both/> | `rst_boundingbox(tile)` | `BINARY` — bounding box WKB |
+| `rst_metadata` | <Tier both/> | `rst_metadata(tile)` | `MAP<STRING,STRING>` |
+| `rst_type` | <Tier both/> | `rst_type(tile)` | `ARRAY<STRING>` — GDAL type name per band |
+| `rst_getnodata` | <Tier both/> | `rst_getnodata(tile)` | `ARRAY<DOUBLE>` — NoData value per band |
+| `rst_avg` | <Tier heavy/> | `rst_avg(tile)` | `ARRAY<DOUBLE>` — per-band average pixel value |
+| `rst_bandmetadata` | <Tier heavy/> | `rst_bandmetadata(tile, band)` | `MAP<STRING,STRING>` — band metadata map |
+| `rst_format` | <Tier heavy/> | `rst_format(tile)` | `STRING` — GDAL format name |
+| `rst_georeference` | <Tier heavy/> | `rst_georeference(tile)` | `MAP<STRING,DOUBLE>` — geotransform parameters |
+| `rst_getsubdataset` | <Tier heavy/> | `rst_getsubdataset(tile, subset_name)` | Tile — extracted subdataset |
+| `rst_max` | <Tier heavy/> | `rst_max(tile)` | `ARRAY<DOUBLE>` — max pixel value per band |
+| `rst_median` | <Tier heavy/> | `rst_median(tile)` | `ARRAY<DOUBLE>` — median pixel value per band |
+| `rst_memsize` | <Tier heavy/> | `rst_memsize(tile)` | `LONG` — in-memory size in bytes |
+| `rst_min` | <Tier heavy/> | `rst_min(tile)` | `ARRAY<DOUBLE>` — min pixel value per band |
+| `rst_pixelcount` | <Tier heavy/> | `rst_pixelcount(tile)` | `LONG` — total pixel count |
+| `rst_rotation` | <Tier heavy/> | `rst_rotation(tile)` | `DOUBLE` — rotation in radians |
+| `rst_skewx` | <Tier heavy/> | `rst_skewx(tile)` | `DOUBLE` — skew in X |
+| `rst_skewy` | <Tier heavy/> | `rst_skewy(tile)` | `DOUBLE` — skew in Y |
+| `rst_subdatasets` | <Tier heavy/> | `rst_subdatasets(tile)` | `MAP<STRING,STRING>` — subdataset names |
+| `rst_summary` | <Tier heavy/> | `rst_summary(tile)` | `STRING` — statistical summary |
+| `rst_tryopen` | <Tier heavy/> | `rst_tryopen(tile)` | `BOOLEAN` — whether the raster opens |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_rastertoworldcoordx` | `rst_rastertoworldcoordx(tile, pixel_x, pixel_y)` | `DOUBLE` — world X of pixel centre |
-| `rst_rastertoworldcoordy` | `rst_rastertoworldcoordy(tile, pixel_x, pixel_y)` | `DOUBLE` — world Y of pixel centre |
-| `rst_worldtorastercoordx` | `rst_worldtorastercoordx(tile, world_x, world_y)` | `INT` — pixel column |
-| `rst_worldtorastercoordy` | `rst_worldtorastercoordy(tile, world_x, world_y)` | `INT` — pixel row |
+### Coordinates
 
-### Constructor <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_rastertoworldcoordx` | <Tier both/> | `rst_rastertoworldcoordx(tile, pixel_x, pixel_y)` | `DOUBLE` — world X of pixel centre |
+| `rst_rastertoworldcoordy` | <Tier both/> | `rst_rastertoworldcoordy(tile, pixel_x, pixel_y)` | `DOUBLE` — world Y of pixel centre |
+| `rst_worldtorastercoordx` | <Tier both/> | `rst_worldtorastercoordx(tile, world_x, world_y)` | `INT` — pixel column |
+| `rst_worldtorastercoordy` | <Tier both/> | `rst_worldtorastercoordy(tile, world_x, world_y)` | `INT` — pixel row |
+| `rst_rastertoworldcoord` | <Tier heavy/> | `rst_rastertoworldcoord(tile, pixel_x, pixel_y)` | `struct<x, y>` — pixel to world coordinates |
+| `rst_worldtorastercoord` | <Tier heavy/> | `rst_worldtorastercoord(tile, world_x, world_y)` | `struct<x, y>` — world to pixel coordinates |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_fromcontent` | `rst_fromcontent(content, driver)` | Tile struct from raw raster bytes |
+### Constructors
 
-### Reproject and resample <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_fromcontent` | <Tier both/> | `rst_fromcontent(content, driver)` | Tile struct from raw raster bytes |
+| `rst_fromfile` | <Tier heavy/> | `rst_fromfile(path, driver)` | Tile loaded from a file path |
+| `rst_frombands` | <Tier heavy/> | `rst_frombands(bands)` | Tile assembled from an array of band tiles |
+| `rst_dtmfromgeoms` | <Tier heavy/> | `rst_dtmfromgeoms(points, breaklines, …)` | TIN/Delaunay DTM tile from Z-valued points |
+| `rst_gridfrompoints` | <Tier heavy/> | `rst_gridfrompoints(points, values, …)` | IDW-interpolated Float64 tile |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_transform` | `rst_transform(tile, target_srid)` | Reprojected tile |
-| `rst_to_webmercator` | `rst_to_webmercator(tile, resampling="bilinear")` | Tile in EPSG:3857 |
-| `rst_resample` | `rst_resample(tile, factor, algorithm="bilinear")` | Resampled tile (factor >1 upsamples) |
-| `rst_resample_to_size` | `rst_resample_to_size(tile, width_px, height_px, algorithm="bilinear")` | Resampled tile at exact pixel dimensions |
-| `rst_resample_to_res` | `rst_resample_to_res(tile, x_res, y_res, algorithm="bilinear")` | Resampled tile at target ground resolution |
+### Reproject and resample
 
-### Edit <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_transform` | <Tier both/> | `rst_transform(tile, target_srid)` | Reprojected tile |
+| `rst_to_webmercator` | <Tier both/> | `rst_to_webmercator(tile, resampling="bilinear")` | Tile in EPSG:3857 |
+| `rst_resample` | <Tier both/> | `rst_resample(tile, factor, algorithm="bilinear")` | Resampled tile (factor >1 upsamples) |
+| `rst_resample_to_size` | <Tier both/> | `rst_resample_to_size(tile, width_px, height_px, algorithm="bilinear")` | Resampled tile at exact pixel dimensions |
+| `rst_resample_to_res` | <Tier both/> | `rst_resample_to_res(tile, x_res, y_res, algorithm="bilinear")` | Resampled tile at target ground resolution |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_clip` | `rst_clip(tile, clip, cutline_all_touched)` | Clipped tile; `clip` is WKB |
-| `rst_updatetype` | `rst_updatetype(tile, new_type)` | Tile with new GDAL data type (e.g. `'Int32'`) |
-| `rst_initnodata` | `rst_initnodata(tile)` | Tile with NoData set to -9999.0 if unset |
+### Edit
 
-### Vector bridge <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_clip` | <Tier both/> | `rst_clip(tile, clip, cutline_all_touched)` | Clipped tile; `clip` is WKB |
+| `rst_updatetype` | <Tier both/> | `rst_updatetype(tile, new_type)` | Tile with new GDAL data type (e.g. `'Int32'`) |
+| `rst_initnodata` | <Tier both/> | `rst_initnodata(tile)` | Tile with NoData set to -9999.0 if unset |
+| `rst_setsrid` | <Tier heavy/> | `rst_setsrid(tile, srid)` | Tile with an EPSG code stamped (no reprojection) |
+| `rst_asformat` | <Tier heavy/> | `rst_asformat(tile, new_format)` | Tile converted to another GDAL format |
+| `rst_buildoverviews` | <Tier heavy/> | `rst_buildoverviews(tile, levels, [resampling])` | Tile with pyramid overview levels added |
+| `rst_cog_convert` | <Tier heavy/> | `rst_cog_convert(tile, [compression, blocksize, overview_resampling])` | Cloud Optimized GeoTIFF tile |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_rasterize` | `rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` | New raster tile with geometry burned in |
-| `rst_fillnodata` | `rst_fillnodata(tile, max_search_dist=None, smoothing_iter=None)` | Tile with NoData gaps interpolated |
-| `rst_polygonize` | `rst_polygonize(tile, band=1, connectedness=4)` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` |
+### Vector bridge
 
-### Spectral indices <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_rasterize` | <Tier both/> | `rst_rasterize(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid)` | New raster tile with geometry burned in |
+| `rst_fillnodata` | <Tier both/> | `rst_fillnodata(tile, max_search_dist=None, smoothing_iter=None)` | Tile with NoData gaps interpolated |
+| `rst_polygonize` | <Tier both/> | `rst_polygonize(tile, band=1, connectedness=4)` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` |
+| `rst_sample` | <Tier heavy/> | `rst_sample(tile, geom)` | `ARRAY<DOUBLE>` — per-band pixel value at the geometry |
+| `rst_contour` | <Tier heavy/> | `rst_contour(tile, levels, [interval, base, attr_field])` | `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` — contour lines |
+| `rst_proximity` | <Tier heavy/> | `rst_proximity(tile, [target_values, dist_units, max_distance])` | Float32 distance-to-source raster |
+| `rst_viewshed` | <Tier heavy/> | `rst_viewshed(tile, observer_geom, observer_height, [target_height, max_distance])` | Byte visibility raster (255 visible / 0 not) |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_ndvi` | `rst_ndvi(tile, red_band, nir_band)` | Single-band Float32 NDVI |
-| `rst_evi` | `rst_evi(tile, red_idx, nir_idx, blue_idx, l=1.0, c1=6.0, c2=7.5, g=2.5)` | Single-band Float32 EVI |
-| `rst_savi` | `rst_savi(tile, red_idx, nir_idx, l=0.5)` | Single-band Float32 SAVI |
-| `rst_ndwi` | `rst_ndwi(tile, green_idx, nir_idx)` | Single-band Float32 NDWI |
-| `rst_nbr` | `rst_nbr(tile, nir_idx, swir_idx)` | Single-band Float32 NBR |
+### Spectral indices
 
-### Terrain <Tier both/>
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_ndvi` | <Tier both/> | `rst_ndvi(tile, red_band, nir_band)` | Single-band Float32 NDVI |
+| `rst_evi` | <Tier both/> | `rst_evi(tile, red_idx, nir_idx, blue_idx, l=1.0, c1=6.0, c2=7.5, g=2.5)` | Single-band Float32 EVI |
+| `rst_savi` | <Tier both/> | `rst_savi(tile, red_idx, nir_idx, l=0.5)` | Single-band Float32 SAVI |
+| `rst_ndwi` | <Tier both/> | `rst_ndwi(tile, green_idx, nir_idx)` | Single-band Float32 NDWI |
+| `rst_nbr` | <Tier both/> | `rst_nbr(tile, nir_idx, swir_idx)` | Single-band Float32 NBR |
+| `rst_index` | <Tier heavy/> | `rst_index(tile, index_name, band_map)` | Single-band index by name (`ndvi`, `gndvi`, `msavi`, …) |
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_slope` | `rst_slope(tile, unit="degrees", scale=1.0)` | Single-band Float32 slope |
-| `rst_aspect` | `rst_aspect(tile, trigonometric=False, zero_for_flat=False)` | Single-band Float32 aspect |
-| `rst_hillshade` | `rst_hillshade(tile, azimuth=315.0, altitude=45.0, z_factor=1.0)` | Single-band Byte hillshade (0–255) |
-| `rst_tri` | `rst_tri(tile)` | Single-band Float32 terrain ruggedness index |
-| `rst_tpi` | `rst_tpi(tile)` | Single-band Float32 topographic position index |
-| `rst_roughness` | `rst_roughness(tile)` | Single-band Float32 roughness |
-| `rst_color_relief` | `rst_color_relief(tile, color_table_path)` | RGB(A) Byte tile from a gdaldem color table |
+### Terrain
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_slope` | <Tier both/> | `rst_slope(tile, unit="degrees", scale=1.0)` | Single-band Float32 slope |
+| `rst_aspect` | <Tier both/> | `rst_aspect(tile, trigonometric=False, zero_for_flat=False)` | Single-band Float32 aspect |
+| `rst_hillshade` | <Tier both/> | `rst_hillshade(tile, azimuth=315.0, altitude=45.0, z_factor=1.0)` | Single-band Byte hillshade (0–255) |
+| `rst_tri` | <Tier both/> | `rst_tri(tile)` | Single-band Float32 terrain ruggedness index |
+| `rst_tpi` | <Tier both/> | `rst_tpi(tile)` | Single-band Float32 topographic position index |
+| `rst_roughness` | <Tier both/> | `rst_roughness(tile)` | Single-band Float32 roughness |
+| `rst_color_relief` | <Tier both/> | `rst_color_relief(tile, color_table_path)` | RGB(A) Byte tile from a gdaldem color table |
 
 Terrain and spectral-index functions in the lightweight tier are NumPy reimplementations; results are close to but not guaranteed bit-identical with the heavyweight gdaldem-backed outputs.
 
-### Band math <Tier both/>
+### Band math
 
-| Function | Signature | Returns |
-|---|---|---|
-| `rst_threshold` | `rst_threshold(tile, op=None, value=None)` | Tile; pixels failing `op value` set to NoData (default `>` 0.0) |
-| `rst_filter` | `rst_filter(tile, kernel_size, operation)` | Focal-filtered tile (`min`/`max`/`mean`/`median`) |
-| `rst_convolve` | `rst_convolve(tile, kernel)` | Float64 tile; 2D kernel convolution |
-| `rst_mapalgebra` | `rst_mapalgebra(tiles, expression)` | Single-band Float32; `numexpr` math over band 1 of each input tile bound to `A, B, C, …` |
-| `rst_derivedband` | `rst_derivedband(tile_expr, pyfunc, func_name)` | Single-band tile; applies a user Python function (GDAL pixel-func signature) |
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_threshold` | <Tier both/> | `rst_threshold(tile, op=None, value=None)` | Tile; pixels failing `op value` set to NoData (default `>` 0.0) |
+| `rst_filter` | <Tier both/> | `rst_filter(tile, kernel_size, operation)` | Focal-filtered tile (`min`/`max`/`mean`/`median`) |
+| `rst_convolve` | <Tier both/> | `rst_convolve(tile, kernel)` | Float64 tile; 2D kernel convolution |
+| `rst_mapalgebra` | <Tier both/> | `rst_mapalgebra(tiles, expression)` | Single-band Float32; `numexpr` math over band 1 of each input tile bound to `A, B, C, …` |
+| `rst_derivedband` | <Tier both/> | `rst_derivedband(tile_expr, pyfunc, func_name)` | Single-band tile; applies a user Python function (GDAL pixel-func signature) |
+| `rst_band` | <Tier heavy/> | `rst_band(tile, band_index)` | Single-band tile extracted from a multi-band raster |
+| `rst_histogram` | <Tier heavy/> | `rst_histogram(tile, [bands, n_buckets, min, max, include_nodata])` | `MAP<STRING, ARRAY<LONG>>` — per-band bucket counts |
+| `rst_combineavg` | <Tier heavy/> | `rst_combineavg(tiles)` | Average of multiple tiles (e.g. temporal composite) |
+| `rst_merge` | <Tier heavy/> | `rst_merge(tiles)` | Tiles merged into a mosaic |
 
-## Examples
+### Tiling and generators
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_maketiles` | <Tier heavy/> | `rst_maketiles(tile, tile_width, tile_height)` | Subdivide into smaller tiles |
+| `rst_retile` | <Tier heavy/> | `rst_retile(tile, tile_width, tile_height)` | Retile to uniform dimensions |
+| `rst_tooverlappingtiles` | <Tier heavy/> | `rst_tooverlappingtiles(tile, tile_width, tile_height, overlap)` | Create overlapping tiles |
+| `rst_separatebands` | <Tier heavy/> | `rst_separatebands(tile)` | Split multi-band into an array of bands |
+| `rst_h3_tessellate` | <Tier heavy/> | `rst_h3_tessellate(tile, resolution)` | Tessellate raster to H3 cells |
+
+### Web-mercator tile output
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_tilexyz` | <Tier heavy/> | `rst_tilexyz(tile, z, x, y, format, tile_size, resampling)` | Encoded image bytes for one XYZ tile |
+| `rst_xyzpyramid` | <Tier heavy/> | `rst_xyzpyramid(tile, min_zoom, max_zoom)` | Generator: one `(z, x, y)` PNG-tile row per intersecting tile |
+
+### Grid aggregation (H3)
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_h3_rastertogridavg` | <Tier heavy/> | `rst_h3_rastertogridavg(tile, resolution)` | Mean pixel value per H3 cell |
+| `rst_h3_rastertogridcount` | <Tier heavy/> | `rst_h3_rastertogridcount(tile, resolution)` | Pixel count per H3 cell |
+| `rst_h3_rastertogridmax` | <Tier heavy/> | `rst_h3_rastertogridmax(tile, resolution)` | Max pixel value per H3 cell |
+| `rst_h3_rastertogridmin` | <Tier heavy/> | `rst_h3_rastertogridmin(tile, resolution)` | Min pixel value per H3 cell |
+| `rst_h3_rastertogridmedian` | <Tier heavy/> | `rst_h3_rastertogridmedian(tile, resolution)` | Median pixel value per H3 cell |
+
+### Grid aggregation (quadbin)
+
+Each function returns an array (one entry per band) of `struct<cellID: BIGINT, measure: DOUBLE>` rows; explode the array element you want to drive per-cell rows. Resolution is the quadbin zoom (0..26).
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_quadbin_rastertogridavg` | <Tier heavy/> | `rst_quadbin_rastertogridavg(tile, resolution)` | Mean pixel value per quadbin cell |
+| `rst_quadbin_rastertogridcount` | <Tier heavy/> | `rst_quadbin_rastertogridcount(tile, resolution)` | Pixel count per quadbin cell |
+| `rst_quadbin_rastertogridmax` | <Tier heavy/> | `rst_quadbin_rastertogridmax(tile, resolution)` | Max pixel value per quadbin cell |
+| `rst_quadbin_rastertogridmin` | <Tier heavy/> | `rst_quadbin_rastertogridmin(tile, resolution)` | Min pixel value per quadbin cell |
+| `rst_quadbin_rastertogridmedian` | <Tier heavy/> | `rst_quadbin_rastertogridmedian(tile, resolution)` | Median pixel value per quadbin cell |
+
+### Aggregators
+
+Group-by / UDAF forms that stream rows instead of requiring a pre-collected array.
+
+| Function | Tier | Signature | Returns |
+|---|---|---|---|
+| `rst_merge_agg` | <Tier heavy/> | `rst_merge_agg(tile)` | Merge tiles per group |
+| `rst_combineavg_agg` | <Tier heavy/> | `rst_combineavg_agg(tile)` | Average tiles per group |
+| `rst_derivedband_agg` | <Tier heavy/> | `rst_derivedband_agg(tile, pyfunc, func_name)` | Apply a Python UDF to tiles per group |
+| `rst_frombands_agg` | <Tier heavy/> | `rst_frombands_agg(tile, band_index)` | Assemble ordered per-band rows into one multi-band tile per group |
+| `rst_rasterize_agg` | <Tier heavy/> | `rst_rasterize_agg(geom, value, xmin, ymin, xmax, ymax, width, height, srid)` | Burn geom/value rows into one tile per group |
+| `rst_dtmfromgeoms_agg` | <Tier heavy/> | `rst_dtmfromgeoms_agg(point, breaklines, …)` | TIN DTM tile per group from one point per row |
+| `rst_gridfrompoints_agg` | <Tier heavy/> | `rst_gridfrompoints_agg(point, value, …)` | IDW-interpolated Float64 tile per group from one point per row |
+
+## Heavyweight-only details
+
+The detailed signatures and SQL examples below cover the heavyweight-only functions <Tier heavy/>. They use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_merge`, `gbx_rst_maketiles`). For Python and Scala usage, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+
+### Common setup
+
+Run this once before the SQL examples below. It registers RasterX and loads sample rasters into a temp view `rasters`.
+
+**Python:**
+
+<CodeFromTest
+  language="python"
+  title="RasterX setup"
+  source="docs/tests/python/api/rasterx_functions.py"
+  testFile="docs/tests/python/api/test_rasterx_functions.py"
+  functionName="rasterx_setup_example"
+  outputConstant="rasterx_setup_example_output"
+  code={rasterxCode}
+/>
+
+**SQL:** After registering RasterX (e.g. from Python above), create the view so SQL examples can use `FROM rasters`:
+
+<CodeFromTest
+  language="sql"
+  title="SQL view setup"
+  source="docs/tests/python/api/rasterx_functions_sql.py"
+  testFile="docs/tests/python/api/test_rasterx_functions_sql.py"
+  functionName="RASTERX_SQL_SETUP"
+  outputConstant="RASTERX_SQL_SETUP_output"
+  code={rasterxSqlCode}
+/>
+
+---
+
+#### rst_avg
+
+**Signature:** `rst_avg(tile: Column): Column` — Per-band average pixel values.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_avg_sql_example" outputConstant="rst_avg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_bandmetadata
+
+**Signature:** `rst_bandmetadata(tile: Column, band: Column): Column` — Band metadata map.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_bandmetadata_sql_example" outputConstant="rst_bandmetadata_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_format
+
+**Signature:** `rst_format(tile: Column): Column` — GDAL format name.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_format_sql_example" outputConstant="rst_format_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_georeference
+
+**Signature:** `rst_georeference(tile: Column): Column` — Georeference parameters as a map.
+
+The result is a **MapType** with the following keys, corresponding to [GDAL's 6-element geotransform](https://gdal.org/en/stable/tutorials/geotransforms_tut.html):
+
+| Key | Geotransform index | Meaning |
+|-----|--------------------|---------|
+| `upperLeftX` | GT(0) | X of the upper-left corner of the upper-left pixel |
+| `upperLeftY` | GT(3) | Y of the upper-left corner of the upper-left pixel |
+| `scaleX` | GT(1) | Pixel width (west–east resolution) |
+| `scaleY` | GT(5) | Pixel height (north–south resolution; often negative for north-up) |
+| `skewX` | GT(2) | Row rotation (typically 0) |
+| `skewY` | GT(4) | Column rotation (typically 0) |
+
+See the [GDAL geotransform tutorial](https://gdal.org/en/stable/tutorials/geotransforms_tut.html) and [raster data model](https://gdal.org/en/stable/user/raster_data_model.html) for details.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_georeference_sql_example" outputConstant="rst_georeference_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_getsubdataset
+
+**Signature:** `rst_getsubdataset(tile: Column, subsetName: Column): Column` — Extract subdataset.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_getsubdataset_sql_example" outputConstant="rst_getsubdataset_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_max
+
+**Signature:** `rst_max(tile: Column): Column` — Maximum pixel values per band.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_max_sql_example" outputConstant="rst_max_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_median
+
+**Signature:** `rst_median(tile: Column): Column` — Median pixel values per band.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_median_sql_example" outputConstant="rst_median_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_memsize
+
+**Signature:** `rst_memsize(tile: Column): Column` — In-memory size in bytes.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_memsize_sql_example" outputConstant="rst_memsize_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_min
+
+**Signature:** `rst_min(tile: Column): Column` — Minimum pixel values per band.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_min_sql_example" outputConstant="rst_min_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_pixelcount
+
+**Signature:** `rst_pixelcount(tile: Column): Column` — Total pixel count.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_pixelcount_sql_example" outputConstant="rst_pixelcount_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_rotation
+
+**Signature:** `rst_rotation(tile: Column): Column` — Rotation in radians.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_rotation_sql_example" outputConstant="rst_rotation_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_skewx / rst_skewy
+
+**Signature:** `rst_skewx(tile: Column): Column`, `rst_skewy(tile: Column): Column` — Skew in X/Y.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_skewx_skewy_sql_example" outputConstant="rst_skewx_skewy_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_subdatasets
+
+**Signature:** `rst_subdatasets(tile: Column): Column` — List of subdataset names.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_subdatasets_sql_example" outputConstant="rst_subdatasets_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_summary
+
+**Signature:** `rst_summary(tile: Column): Column` — Statistical summary of values.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_summary_sql_example" outputConstant="rst_summary_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_tryopen
+
+**Signature:** `rst_tryopen(tile: Column): Column` — Validate raster can be opened.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tryopen_sql_example" outputConstant="rst_tryopen_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_fromfile
+
+Load a raster from a file path.
+
+**Signature:** `rst_fromfile(path: Column, driver: Column): Column`
+
+**Parameters:** `path` — File path; `driver` — GDAL driver name (e.g. `GTiff`)
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_fromfile_sql_example" outputConstant="rst_fromfile_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_dtmfromgeoms
+
+Create a DTM raster tile via TIN/Delaunay interpolation from an array of Z-valued point WKB geometries, with an optional array of breakline WKB geometries to preserve sharp terrain transitions.
+
+**Signature:** `rst_dtmfromgeoms(points: Column, breaklines: Column, mergeTolerance: Column, snapTolerance: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `points` — Array of WKB point geometries with Z coordinates; `breaklines` — Array of WKB line/polygon geometries enforcing hard edges (pass `null` or empty array if unused); `mergeTolerance/snapTolerance` — Delaunay triangulation tolerances (vertex-merge distance and snapping distance; small values such as `0.0` and `0.01` are typical); `xmin/ymin/xmax/ymax` — output extent in CRS units; `width/height` — output raster dimensions in pixels (for N-metre cells set `width = round((xmax-xmin)/N)`); `srid` — EPSG code for the output CRS. An optional trailing `noData` argument overrides the default fill for cells outside the triangulated hull.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_dtmfromgeoms_sql_example" outputConstant="rst_dtmfromgeoms_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_frombands
+
+Create a raster from an array of band tiles.
+
+**Signature:** `rst_frombands(bands: Column): Column`
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_frombands_sql_example" outputConstant="rst_frombands_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_gridfrompoints
+
+IDW-interpolate an array of Z-valued point geometries to a Float64 GeoTIFF tile covering an explicit bounding box and pixel grid. Supply the points and their scalar values as arrays in a single row; use `rst_gridfrompoints_agg` when points arrive one per row.
+
+**Signature:** `rst_gridfrompoints(points: Column, values: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, widthPx: Column, heightPx: Column, srid: Column, power: Column, maxPts: Column): Column`
+
+**Parameters:** `points` — `ARRAY<BINARY>` of WKB point geometries; `values` — `ARRAY<DOUBLE>` of scalar observations, one per point; `xmin/ymin/xmax/ymax` — output extent in CRS units; `widthPx/heightPx` — output dimensions in pixels; `srid` — EPSG code; `power` — IDW distance-decay exponent (2.0 is the standard); `maxPts` — maximum nearest neighbours considered per output pixel
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_gridfrompoints_sql_example" outputConstant="rst_gridfrompoints_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_band
+
+**Signature:** `rst_band(tile: Column, bandIndex: Column): Column` — Extract a single band from a multi-band raster as a new single-band tile (`gdal.Translate -b N`). 1-based band index.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_band_sql_example" outputConstant="rst_band_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_buildoverviews
+
+**Signature:** `rst_buildoverviews(tile: Column, levels: Column, [resampling: Column = lit("average")]): Column` — Add pyramid overview levels to a tile via `ds.BuildOverviews`. `levels` is an `ARRAY<INT>` (e.g. `array(2, 4, 8, 16)`); `resampling` is one of `nearest`, `average`, `gauss`, `cubic`, `cubicspline`, `lanczos`, `bilinear`, `mode`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_buildoverviews_sql_example" outputConstant="rst_buildoverviews_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_histogram
+
+**Signature:** `rst_histogram(tile: Column, [bands: Column = null, nBuckets: Column = lit(256), min: Column = null, max: Column = null, includeNodata: Column = lit(false)]): Column` — Compute per-band histograms via `band.GetHistogram`. Returns `MAP<STRING, ARRAY<LONG>>` keyed by `"band_<n>"` with bucket counts. If `bands` is null, all bands are processed; if `min` / `max` are null, GDAL auto-detects the range.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_histogram_sql_example" outputConstant="rst_histogram_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_index
+
+**Signature:** `rst_index(tile: Column, indexName: Column, bandMap: Column): Column` — Generic dispatcher that picks a built-in formula by name and wires bands via a `MAP<STRING, INT>` (e.g. `map('red', 1, 'nir', 2)`). Built-in names: `ndvi`, `gndvi`, `msavi`, `ndvi_re`, `ndmi`, `ndsi`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_index_sql_example" outputConstant="rst_index_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_sample
+
+**Signature:** `rst_sample(tile: Column, geom: Column): Column` — Sample the raster at the geometry's location(s). For a `POINT`, returns `ARRAY<DOUBLE>` of one value per band at the nearest pixel. Geometry is interpreted in EPSG:4326 lon/lat unless its EWKB carries a different SRID.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_sample_sql_example" outputConstant="rst_sample_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_setsrid
+
+**Signature:** `rst_setsrid(tile: Column, srid: Column): Column` — Stamp an EPSG code onto a raster that lacks (or has a wrong) spatial reference. Does NOT reproject — only sets `ds.SetProjection(...)`. Use `rst_transform` when you need an actual reprojection.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_setsrid_sql_example" outputConstant="rst_setsrid_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_asformat
+
+**Signature:** `rst_asformat(tile: Column, newFormat: Column): Column` — Convert to another format.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_asformat_sql_example" outputConstant="rst_asformat_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_combineavg
+
+**Signature:** `rst_combineavg(tiles: Column): Column` — Average multiple tiles (e.g. temporal composite).
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_combineavg_sql_example" outputConstant="rst_combineavg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_merge
+
+**Signature:** `rst_merge(tiles: Column): Column` — Merge tiles into mosaic.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_merge_sql_example" outputConstant="rst_merge_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_cog_convert
+
+**Signature:** `rst_cog_convert(tile: Column, [compression: Column = lit("DEFLATE"), blocksize: Column = lit(512), overviewResampling: Column = lit("AVERAGE")]): Column` — Re-layout a raster tile as a Cloud Optimized GeoTIFF via `gdal.Translate -of COG`. `compression` is one of `NONE`, `DEFLATE`, `LZW`, `ZSTD`, `LERC`, `JPEG`, `WEBP`. `blocksize` is the internal tile size in pixels (square). `overviewResampling` is the algorithm for the auto-generated overview pyramid. Output is a GTiff-on-disk variant suitable for HTTP range serving.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_cog_convert_sql_example" outputConstant="rst_cog_convert_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_proximity
+
+**Signature:** `rst_proximity(tile: Column, [targetValues: Column = null, distUnits: Column = lit("GEO"), maxDistance: Column = null]): Column` — Compute a Float32 raster where each pixel holds the distance to the nearest source pixel via `gdal.ComputeProximity`. `targetValues` is a comma-separated list of source-pixel values (e.g. `"1,2,3"`); `null` means any non-NoData pixel is a target. `distUnits` is `"GEO"` (CRS ground units, default) or `"PIXEL"`. `maxDistance` caps the output; pixels beyond it get the NoData sentinel `-1.0`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_proximity_sql_example" outputConstant="rst_proximity_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_contour
+
+**Signature:** `rst_contour(tile: Column, levels: Column, [interval: Column = lit(0.0), base: Column = lit(0.0), attrField: Column = lit("elev")]): Column` — Generate contour LineString features via `gdal.ContourGenerateEx`. Pass a non-empty `levels` `ARRAY<DOUBLE>` for fixed contour values, or pass `array()` and set `interval` (>0) for equal-step contours at `base + n*interval`. Returns `ARRAY<struct(geom_wkb BINARY, value DOUBLE)>` — one entry per contour line in the source raster's CRS.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_contour_sql_example" outputConstant="rst_contour_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_viewshed
+
+**Signature:** `rst_viewshed(tile: Column, observerGeom: Column, observerHeight: Column, [targetHeight: Column = lit(1.6), maxDistance: Column = null]): Column` — Compute a binary viewshed Byte raster (`255` = visible, `0` = invisible / out-of-range) from a DEM tile and an observer POINT via `gdal.ViewshedGenerate`. `observerGeom` is WKB / WKT POINT in the raster's CRS; non-POINT geometries raise an error at execution time. Heights are above the DEM at each pixel. `maxDistance` clips the search radius; `null` = unlimited.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_viewshed_sql_example" outputConstant="rst_viewshed_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_maketiles
+
+**Signature:** `rst_maketiles(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Subdivide into smaller tiles.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_maketiles_sql_example" outputConstant="rst_maketiles_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_retile
+
+**Signature:** `rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Retile to uniform dimensions.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_retile_sql_example" outputConstant="rst_retile_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_tooverlappingtiles
+
+**Signature:** `rst_tooverlappingtiles(tile: Column, tileWidth: Column, tileHeight: Column, overlap: Column): Column` — Create overlapping tiles.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tooverlappingtiles_sql_example" outputConstant="rst_tooverlappingtiles_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_separatebands
+
+**Signature:** `rst_separatebands(tile: Column): Column` — Split multi-band into array of bands.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_separatebands_sql_example" outputConstant="rst_separatebands_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_h3_tessellate
+
+**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column): Column` — Tessellate raster to H3 cells.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_tessellate_sql_example" outputConstant="rst_h3_tessellate_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_tilexyz
+
+**Signature:** `rst_tilexyz(tile: Column, z: Column, x: Column, y: Column, format: Column, tileSize: Column, resampling: Column): Column` — Render a single web-mercator XYZ tile from a raster as encoded image bytes (e.g. PNG, JPEG, WebP) at the given tile coordinates and pixel size.
+
+Pair web-mercator tile output with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a raster pyramid as a single `.pmtiles` archive.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_tilexyz_sql_example" outputConstant="rst_tilexyz_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_xyzpyramid
+
+**Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_xyzpyramid_sql_example" outputConstant="rst_xyzpyramid_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_rastertoworldcoord
+
+**Signature:** `rst_rastertoworldcoord(tile: Column, pixelX: Column, pixelY: Column): Column` — Pixel to world coordinates (full struct with `.x` and `.y` fields).
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_rastertoworldcoord_sql_example" outputConstant="rst_rastertoworldcoord_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_worldtorastercoord
+
+**Signature:** `rst_worldtorastercoord(tile: Column, worldX: Column, worldY: Column): Column` — World to pixel coordinates (full struct with `.x` and `.y` fields).
+
+**rst_worldtorastercoord** — full struct (pixel with `.x` and `.y`):
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_worldtorastercoord_sql_example" outputConstant="rst_worldtorastercoord_sql_example_output" code={rasterxSqlCode} />
+
+**rst_worldtorastercoord** — multiple points (e.g. from a locations table):
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_worldtorastercoord_multi_sql_example" outputConstant="rst_worldtorastercoord_multi_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_h3_rastertogridavg
+
+**Signature:** `rst_h3_rastertogridavg(tile: Column, resolution: Column): Column`
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridavg_sql_example" outputConstant="rst_h3_rastertogridavg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_h3_rastertogridcount
+
+**Signature:** `rst_h3_rastertogridcount(tile: Column, resolution: Column): Column` — Pixel count per H3 cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridcount_sql_example" outputConstant="rst_h3_rastertogridcount_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_h3_rastertogridmax
+
+**Signature:** `rst_h3_rastertogridmax(tile: Column, resolution: Column): Column` — Max value per H3 cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridmax_sql_example" outputConstant="rst_h3_rastertogridmax_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_h3_rastertogridmin
+
+**Signature:** `rst_h3_rastertogridmin(tile: Column, resolution: Column): Column` — Min value per H3 cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridmin_sql_example" outputConstant="rst_h3_rastertogridmin_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_h3_rastertogridmedian
+
+**Signature:** `rst_h3_rastertogridmedian(tile: Column, resolution: Column): Column` — Median value per H3 cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridmedian_sql_example" outputConstant="rst_h3_rastertogridmedian_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_quadbin_rastertogridavg
+
+**Signature:** `rst_quadbin_rastertogridavg(tile: Column, resolution: Column): Column` — Mean pixel value per quadbin cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridavg_sql_example" outputConstant="rst_quadbin_rastertogridavg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_quadbin_rastertogridcount
+
+**Signature:** `rst_quadbin_rastertogridcount(tile: Column, resolution: Column): Column` — Pixel count per quadbin cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridcount_sql_example" outputConstant="rst_quadbin_rastertogridcount_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_quadbin_rastertogridmax
+
+**Signature:** `rst_quadbin_rastertogridmax(tile: Column, resolution: Column): Column` — Max pixel value per quadbin cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmax_sql_example" outputConstant="rst_quadbin_rastertogridmax_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_quadbin_rastertogridmin
+
+**Signature:** `rst_quadbin_rastertogridmin(tile: Column, resolution: Column): Column` — Min pixel value per quadbin cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmin_sql_example" outputConstant="rst_quadbin_rastertogridmin_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_quadbin_rastertogridmedian
+
+**Signature:** `rst_quadbin_rastertogridmedian(tile: Column, resolution: Column): Column` — Median pixel value per quadbin cell.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_quadbin_rastertogridmedian_sql_example" outputConstant="rst_quadbin_rastertogridmedian_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+#### rst_combineavg_agg
+
+**Signature:** `rst_combineavg_agg(tile: Column): Column` — Average tiles per group.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_combineavg_agg_sql_example" outputConstant="rst_combineavg_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_derivedband_agg
+
+**Signature:** `rst_derivedband_agg(tile: Column, pyfunc: String, funcName: String): Column` — Apply Python UDF to tiles per group.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_derivedband_agg_sql_example" outputConstant="rst_derivedband_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_dtmfromgeoms_agg
+
+Streaming aggregator that accepts one Z-valued point WKB per row and produces a TIN/Delaunay DTM raster tile per group; breaklines are supplied as a per-group constant array to enforce hard terrain edges.
+
+**Signature:** `rst_dtmfromgeoms_agg(point: Column, breaklines: Column, mergeTolerance: Column, snapTolerance: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `point` — WKB point geometry with Z coordinate (one per row); `breaklines` — constant WKB array of breakline geometries per group (pass `null` or empty array if unused); remaining parameters match `rst_dtmfromgeoms`
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_dtmfromgeoms_agg_sql_example" outputConstant="rst_dtmfromgeoms_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_frombands_agg
+
+Streaming aggregator that collects ordered per-band tiles (one row per band) into a single multi-band raster tile per group; use when bands arrive as separate rows rather than a pre-built array.
+
+**Signature:** `rst_frombands_agg(tile: Column, bandIndex: Column): Column`
+
+**Parameters:** `tile` — Single-band raster tile; `bandIndex` — 1-based band position within the output raster
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_frombands_agg_sql_example" outputConstant="rst_frombands_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_gridfrompoints_agg
+
+Streaming IDW-interpolation aggregator that accepts one point geometry and one scalar value per row and produces a Float64 GeoTIFF tile per group; use when observations arrive one per row rather than as pre-built arrays.
+
+**Signature:** `rst_gridfrompoints_agg(point: Column, value: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, widthPx: Column, heightPx: Column, srid: Column, power: Column, maxPts: Column): Column`
+
+**Parameters:** `point` — WKB point geometry (one per row); `value` — scalar observation for the point; `xmin/ymin/xmax/ymax` — output extent in CRS units (constant per group); `widthPx/heightPx` — output dimensions in pixels; `srid` — EPSG code; `power` — IDW distance-decay exponent (2.0 is standard); `maxPts` — maximum nearest neighbours considered per output pixel
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_gridfrompoints_agg_sql_example" outputConstant="rst_gridfrompoints_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_merge_agg
+
+**Signature:** `rst_merge_agg(tile: Column): Column` — Merge tiles per group.
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_merge_agg_sql_example" outputConstant="rst_merge_agg_sql_example_output" code={rasterxSqlCode} />
+
+#### rst_rasterize_agg
+
+Streaming aggregator that burns geometry/value pairs (one row per feature) into a single rasterized tile per group; use when features arrive as individual rows rather than as a pre-built collection.
+
+**Signature:** `rst_rasterize_agg(geom: Column, value: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, srid: Column): Column`
+
+**Parameters:** `geom` — WKB geometry to burn; `value` — numeric burn value; `xmin/ymin/xmax/ymax` — output extent (in the target CRS); `width/height` — output raster dimensions in pixels; `srid` — EPSG code for the output CRS
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_rasterize_agg_sql_example" outputConstant="rst_rasterize_agg_sql_example_output" code={rasterxSqlCode} />
+
+## Examples (both tiers)
 
 These examples use the lightweight tier; the same calls work unchanged in the heavyweight tier (only the setup import differs).
 
@@ -215,3 +762,58 @@ Extract vector polygons from contiguous equal-value regions:
   outputConstant="pyrx_polygonize_example_output"
   code={pyrxCode}
 />
+
+## Tile payload (heavyweight tier)
+
+Every heavyweight RasterX function returns a tile whose `raster` field is a **self-contained, in-memory raster** (GTiff by default) — safe to serialize between Spark stages and executors, persist to Delta, hand off to `rasterio` / `gdal`, or write back out via the `gdal` writer. The bytes are never an XML reference to a per-executor `/vsimem/` tempfile or to a path that only exists on the producing node.
+
+Functions that internally build via an intermediate VRT — `gbx_rst_merge`, `gbx_rst_merge_agg`, `gbx_rst_frombands`, `gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, `gbx_rst_derivedband_agg` — materialize the result to GTiff before returning, so downstream stages on different executors see real raster bytes. Inspect a tile's payload format from `tile.metadata.driver`; for any of the functions above, it will read `GTiff` (not `VRT`). See [Beta Release Notes](../beta-release-notes#whats-new-in-v030) for the v0.3.0 correctness fix that introduced this invariant.
+
+## VRT Python pixel functions (heavyweight tier)
+
+`gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, and `gbx_rst_derivedband_agg` evaluate a Python expression on each pixel via GDAL's [VRT Python pixel-function API](https://gdal.org/en/stable/drivers/raster/vrt.html#using-derived-bands-with-pixel-functions-in-python). That API is gated behind the GDAL config option `GDAL_VRT_ENABLE_PYTHON`, which **GeoBrix sets to `NO` at executor startup** (see [Security - Restrict GDAL drivers](../security#6-vrt-python-pixel-functions-off-by-default-by-design)). When you call one of the four functions above, GeoBrix flips the option to `YES` for the duration of that call only — via the internal `GDALManager.withVrtPython` bracket — and restores `NO` immediately on return. You don't need to set anything on the cluster or in your notebook to use the built-in functions.
+
+### When you need to enable it yourself
+
+If you're invoking the GDAL Python bindings (`from osgeo import gdal`) **directly** — outside the built-in RasterX functions — and you read a VRT that declares a `<PixelFunctionLanguage>Python</...>` band, you'll get an empty/null read unless you enable the option in the same process. Pick one of:
+
+**Python — programmatic, scoped to your read.** Recommended in all cases. Mirrors what GeoBrix does internally, works for both driver-side `pyspark.sql` calls and inside `mapPartitions` / `mapInPandas` UDFs that load VRT-with-pyfunc via `osgeo.gdal`, and survives interleaving with GeoBrix built-in calls (each GeoBrix call resets the option to `NO` on exit, so re-set it on every read):
+
+```python
+from osgeo import gdal
+
+gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
+try:
+    ds = gdal.Open("/path/to/your/vrt-with-pixel-function.vrt")
+    arr = ds.GetRasterBand(1).ReadAsArray()
+    ds = None
+finally:
+    gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
+```
+
+**Cluster env var — for Python-worker processes only.** Setting `spark.executorEnv.GDAL_VRT_ENABLE_PYTHON YES` on the cluster works for Python UDF workers (a separate process from the JVM, where GDAL initializes from env vars). It does **not** help JVM-side reads — GeoBrix calls `gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")` at executor JVM startup, and `SetConfigOption` takes precedence over the env var. Prefer the programmatic form above unless you have a strong reason to globally enable.
+
+**Scala / JVM code.** If you're writing custom Spark expressions that consume Python-pixel VRTs, wrap the read/translate in the same helper GeoBrix uses internally — it refcounts the option so concurrent tasks on the same executor JVM compose safely:
+
+```scala
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+
+val result = GDALManager.withVrtPython {
+    val ds = org.gdal.gdal.gdal.Open(vrtPath)
+    // ... GDAL reads / translates here see the Python pixel function ...
+    ds
+}
+```
+
+### Trusted-modules variant
+
+GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTHON_TRUSTED_MODULES` allowlist if you want pixel-function code restricted to specific Python module prefixes. GeoBrix uses the plain `YES` form because the pixel-function source is constructed in-process from trusted (geobrix-generated) strings, never from user-supplied VRT XML on disk. If your custom code path reads VRTs whose `<PixelFunctionCode>` originates from less-trusted sources, switch to the `TRUSTED_MODULES` form and allowlist only what you intend to load.
+
+## Next Steps
+
+- [Choosing an Execution Tier](./execution-tiers)
+- [GridX Function Reference](./gridx-functions)
+- [VectorX Function Reference](./vectorx-functions)
+- [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
+- [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
+- [RasterX Readers](../readers/gdal)
