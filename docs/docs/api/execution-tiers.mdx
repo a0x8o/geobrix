@@ -1,0 +1,45 @@
+---
+sidebar_position: 1
+---
+
+# Choosing an Execution Tier
+
+GeoBrix raster functions come in two interchangeable **Execution Tiers** — **Lightweight (pyrx)** and **Heavyweight (rasterx)**. Both tiers use the same `rst_*` Python function names and `gbx_rst_*` SQL names, so switching between them is a one-line import change.
+
+Choose the tier that fits your environment and requirements; the rest of your code stays the same.
+
+## The one-line swap
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx   # Heavyweight tier
+from databricks.labs.gbx.pyrx    import functions as rx   # Lightweight tier — same alias
+
+# everything below is identical across tiers:
+df.select(rx.rst_slope("tile", unit="degrees"))
+```
+
+After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rst_*`), so SQL is portable across tiers.
+
+## Tradeoffs
+
+| Aspect | Heavyweight (rasterx) | Lightweight (pyrx) |
+|---|---|---|
+| Install | Init script + JAR | `pip install 'geobrix[pyrx]'` |
+| Native GDAL | System/PPA install | Bundled with rasterio (nothing to install) |
+| ARM support | x86 only | x86 and ARM |
+| Serverless / shared clusters / Lakeflow SDP | Not supported | Supported |
+| Execution model | JVM-native (Scala + GDAL JNI) | Python-worker UDFs (rasterio + NumPy) |
+| Driver coverage | Full custom GDAL build | rasterio's bundled build (narrower) |
+| SQL default arguments | Supported | Pass all arguments explicitly |
+| Function coverage | Full raster set | Growing subset |
+| Readers / Writers | `gtiff_gdal`, `gdal`, OGR readers | `binaryFile` + `rst_fromcontent` today; `*_pyrx` Python Data Source readers planned |
+
+## How to choose
+
+Choose **Lightweight (pyrx)** for a fast, dependency-light start, or when your compute cannot load the JAR or init script — serverless clusters, standard/shared clusters, ARM instances, and Lakeflow declarative pipelines all fall into this category.
+
+Choose **Heavyweight (rasterx)** when you need the full raster function set or JVM-side performance on a dedicated cluster with the init script already configured.
+
+## Function availability
+
+See the Raster Functions availability matrix (coming in this section) for which functions each tier provides.

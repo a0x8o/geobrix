@@ -85,6 +85,7 @@ const sidebars = {
           label: 'Function Reference',
           collapsed: false,
           items: [
+            'api/execution-tiers',
             'api/rasterx-functions',
             'api/pyrx-functions',
             'api/gridx-functions',
