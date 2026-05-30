@@ -85,3 +85,30 @@ def test_rst_to_webmercator(spark):
     df = _tile_df(spark, epsg=4326)
     out = df.select(prx.rst_to_webmercator("tile").alias("t"))
     assert out.select(prx.rst_srid("t").alias("s")).first()["s"] == 3857
+
+
+def test_rst_resample_factor(spark):
+    df = _tile_df(spark, width=4, height=3)
+    out = df.select(prx.rst_resample("tile", 2.0).alias("t"))
+    row = out.select(
+        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+    ).first()
+    assert (row["w"], row["h"]) == (8, 6)
+
+
+def test_rst_resample_to_size(spark):
+    df = _tile_df(spark, width=4, height=3)
+    out = df.select(prx.rst_resample_to_size("tile", 10, 7).alias("t"))
+    row = out.select(
+        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+    ).first()
+    assert (row["w"], row["h"]) == (10, 7)
+
+
+def test_rst_resample_to_res(spark):
+    df = _tile_df(spark, width=4, height=3, epsg=4326)
+    out = df.select(prx.rst_resample_to_res("tile", 0.25, 0.25).alias("t"))
+    row = out.select(
+        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+    ).first()
+    assert (row["w"], row["h"]) == (8, 6)

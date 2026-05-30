@@ -24,7 +24,7 @@ from databricks.labs.gbx.pyrx._udf import (
     tile_scalar_udf,
     tile_scalar_udf2,
 )
-from databricks.labs.gbx.pyrx.core import accessors, coords, warp
+from databricks.labs.gbx.pyrx.core import accessors, coords, resample, warp
 
 
 def register(_spark: SparkSession = None) -> None:
@@ -119,6 +119,86 @@ def rst_to_webmercator(tile: ColLike, resampling: ColLike = "bilinear") -> Colum
         f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
     )
     return _to_webmercator_udf(_col(tile), resampling_col)
+
+
+# --- Tier 1c: tile-returning resample UDFs ----------------------------------
+@f.udf(_serde.TILE_SCHEMA)
+def _resample_udf(tile, factor, algorithm):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = resample.resample_by_factor(ds, float(factor), str(algorithm))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _resample_to_size_udf(tile, width_px, height_px, algorithm):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = resample.resample_to_size(
+            ds, int(width_px), int(height_px), str(algorithm)
+        )
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _resample_to_res_udf(tile, x_res, y_res, algorithm):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = resample.resample_to_res(
+            ds, float(x_res), float(y_res), str(algorithm)
+        )
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+def rst_resample(
+    tile: ColLike, factor: ColLike, algorithm: ColLike = "bilinear"
+) -> Column:
+    """Resample a raster tile by a multiplicative factor (>1 upsamples, 0<factor<1 downsamples).
+
+    CRS and geographic extent are preserved; only the pixel grid changes.
+    """
+    alg = f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm)
+    return _resample_udf(_col(tile), _col(factor), alg)
+
+
+def rst_resample_to_size(
+    tile: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    algorithm: ColLike = "bilinear",
+) -> Column:
+    """Resample a raster tile to exact pixel dimensions (width_px x height_px).
+
+    CRS and geographic extent are preserved; only the pixel grid changes.
+    """
+    alg = f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm)
+    return _resample_to_size_udf(_col(tile), _col(width_px), _col(height_px), alg)
+
+
+def rst_resample_to_res(
+    tile: ColLike,
+    x_res: ColLike,
+    y_res: ColLike,
+    algorithm: ColLike = "bilinear",
+) -> Column:
+    """Resample a raster tile to a target ground resolution in CRS units.
+
+    CRS and geographic extent are preserved; pixel count is derived from extent / resolution.
+    """
+    alg = f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm)
+    return _resample_to_res_udf(_col(tile), _col(x_res), _col(y_res), alg)
 
 
 # --- Tier 0: accessors ------------------------------------------------------
