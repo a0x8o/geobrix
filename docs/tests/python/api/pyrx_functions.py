@@ -8,9 +8,9 @@ No path_config import is needed.
 """
 
 try:
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 except ImportError:
-    prx = None
+    rx = None
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ def _tile_df(spark, **kw):
 
     raster = _make_geotiff_bytes(**kw)
     df = spark.createDataFrame([(raster,)], ["raster"])
-    return df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    return df.select(rx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
 
 
 # ---------------------------------------------------------------------------
@@ -59,13 +59,13 @@ def pyrx_setup_example(spark):
     """Import pyrx, build an in-memory GeoTIFF, wrap it into a tile DataFrame."""
     from pyspark.sql import functions as f
 
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
     # Build a 4 x 3, 2-band float32 GTiff in memory (origin 10.0, 50.0; 0.5 px; EPSG:4326).
     raster_bytes = _make_geotiff_bytes(width=4, height=3, count=2, epsg=4326)
 
     df = spark.createDataFrame([(raster_bytes,)], ["raster"])
-    tile_df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    tile_df = df.select(rx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
     tile_df.createOrReplaceTempView("rasters")
     return tile_df
 
@@ -82,14 +82,14 @@ Temp view `rasters` available for SQL examples.
 
 def pyrx_accessors_example(spark):
     """Read basic raster properties from the tile struct."""
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
     tile_df = _tile_df(spark, width=4, height=3, count=2, epsg=4326)
     row = tile_df.select(
-        prx.rst_width("tile").alias("width"),
-        prx.rst_height("tile").alias("height"),
-        prx.rst_srid("tile").alias("srid"),
-        prx.rst_numbands("tile").alias("bands"),
+        rx.rst_width("tile").alias("width"),
+        rx.rst_height("tile").alias("height"),
+        rx.rst_srid("tile").alias("srid"),
+        rx.rst_numbands("tile").alias("bands"),
     ).first()
     return row
 
@@ -105,11 +105,11 @@ Row(width=4, height=3, srid=4326, bands=2)
 
 def pyrx_transform_example(spark):
     """Reproject the raster tile to a target CRS (EPSG:3857)."""
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
     tile_df = _tile_df(spark, epsg=4326)
-    out = tile_df.select(prx.rst_transform("tile", 3857).alias("t"))
-    srid = out.select(prx.rst_srid("t").alias("s")).first()["s"]
+    out = tile_df.select(rx.rst_transform("tile", 3857).alias("t"))
+    srid = out.select(rx.rst_srid("t").alias("s")).first()["s"]
     return srid
 
 
@@ -128,16 +128,16 @@ def pyrx_clip_example(spark):
     from pyspark.sql import functions as f
     from shapely.geometry import box
 
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
     tile_df = _tile_df(spark, width=4, height=3, epsg=4326)
     # Clip to a 1 x 0.5 degree box — smaller than the full 2 x 1.5 degree extent.
     clip_geom = shapely.wkb.dumps(box(10.5, 49.0, 11.5, 49.5))
     df = tile_df.withColumn("clip_geom", f.lit(clip_geom))
-    out = df.select(prx.rst_clip("tile", "clip_geom", False).alias("t"))
+    out = df.select(rx.rst_clip("tile", "clip_geom", False).alias("t"))
     row = out.select(
-        prx.rst_width("t").alias("w"),
-        prx.rst_height("t").alias("h"),
+        rx.rst_width("t").alias("w"),
+        rx.rst_height("t").alias("h"),
     ).first()
     return row
 
@@ -158,7 +158,7 @@ def pyrx_polygonize_example(spark):
     from rasterio.io import MemoryFile
     from rasterio.transform import from_origin
 
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
     # Build a 4 x 4 raster with a 2 x 2 block of value 5.0 in the centre;
     # all other pixels are NoData so polygonize traces only the filled region.
@@ -180,10 +180,10 @@ def pyrx_polygonize_example(spark):
         raster_bytes = mf.read()
 
     df = spark.createDataFrame([(raster_bytes,)], ["raster"])
-    tile_df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    tile_df = df.select(rx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
 
     rows = (
-        tile_df.select(f.explode(prx.rst_polygonize("tile")).alias("p"))
+        tile_df.select(f.explode(rx.rst_polygonize("tile")).alias("p"))
         .select(f.col("p.value").alias("value"))
         .collect()
     )
@@ -203,13 +203,13 @@ def pyrx_sql_example(spark):
     """Register pyrx SQL functions and query them from Spark SQL."""
     from pyspark.sql import functions as f
 
-    from databricks.labs.gbx.pyrx import functions as prx
+    from databricks.labs.gbx.pyrx import functions as rx
 
-    prx.register(spark)
+    rx.register(spark)
 
     raster_bytes = _make_geotiff_bytes(width=4, height=3, count=2, epsg=4326)
     df = spark.createDataFrame([(raster_bytes,)], ["raster"])
-    tile_df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
+    tile_df = df.select(rx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
     tile_df.createOrReplaceTempView("rasters_sql")
 
     result = spark.sql(
