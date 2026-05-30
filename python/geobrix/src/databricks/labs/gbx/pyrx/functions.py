@@ -34,6 +34,7 @@ from databricks.labs.gbx.pyrx.core import accessors, coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
+from databricks.labs.gbx.pyrx.core import ops as ops_core
 from databricks.labs.gbx.pyrx.core import resample, terrain, tiling, warp, xyz
 
 
@@ -95,6 +96,146 @@ _u_r2w_x = tile_scalar_udf2(coords.raster_to_world_x, DoubleType())
 _u_r2w_y = tile_scalar_udf2(coords.raster_to_world_y, DoubleType())
 _u_w2r_x = tile_scalar_udf2(coords.world_to_raster_x, IntegerType())
 _u_w2r_y = tile_scalar_udf2(coords.world_to_raster_y, IntegerType())
+
+
+# --- Group 1: per-band statistics & accessor UDFs ---------------------------
+_u_avg = tile_scalar_udf(accessors.avg, ArrayType(DoubleType()))
+_u_min = tile_scalar_udf(accessors.minimum, ArrayType(DoubleType()))
+_u_max = tile_scalar_udf(accessors.maximum, ArrayType(DoubleType()))
+_u_median = tile_scalar_udf(accessors.median, ArrayType(DoubleType()))
+_u_pixelcount = tile_scalar_udf(accessors.pixelcount, ArrayType(LongType()))
+_u_rotation = tile_scalar_udf(accessors.rotation, DoubleType())
+_u_skewx = tile_scalar_udf(accessors.skewx, DoubleType())
+_u_skewy = tile_scalar_udf(accessors.skewy, DoubleType())
+_u_format = tile_scalar_udf(accessors.format, StringType())
+
+
+# memsize: works off the raw raster bytes (no rasterio open needed) — mirror
+# heavyweight which returns the in-memory buffer length.
+@f.udf(LongType())
+def _memsize_udf(raster):
+    if raster is None:
+        return None
+    return int(len(bytes(raster)))
+
+
+# Struct-accepting memsize for SQL registration: reads the raster byte length
+# from the tile struct directly (no rasterio open).
+@f.udf(LongType())
+def _memsize_struct_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    return int(len(bytes(tile["raster"])))
+
+
+# MapType return paths use plain @f.udf (pandas_udf rejects MapType on some
+# Arrow builds), matching the existing _metadata_udf fallback.
+@f.udf(MapType(StringType(), DoubleType()))
+def _georeference_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return accessors.georeference(ds)
+
+
+@f.udf(MapType(StringType(), StringType()))
+def _bandmetadata_udf(tile, band):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return accessors.bandmetadata(ds, int(band))
+
+
+@f.udf(MapType(StringType(), StringType()))
+def _subdatasets_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return accessors.subdatasets(ds)
+
+
+@f.udf(StringType())
+def _summary_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return accessors.summary(ds)
+
+
+@f.udf(MapType(StringType(), ArrayType(LongType())))
+def _histogram_udf(tile, n_buckets, min_val, max_val, include_nodata):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    nb = 256 if n_buckets is None else int(n_buckets)
+    lo = None if min_val is None else float(min_val)
+    hi = None if max_val is None else float(max_val)
+    inc = bool(include_nodata) if include_nodata is not None else False
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return accessors.histogram(ds, nb, lo, hi, inc)
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _getsubdataset_udf(tile, name):
+    if tile is None or tile["raster"] is None or name is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = accessors.getsubdataset(ds, str(name))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+# --- Group 2: struct coordinate UDFs ----------------------------------------
+_R2W_COORD_SCHEMA = StructType(
+    [
+        StructField("x", DoubleType(), True),
+        StructField("y", DoubleType(), True),
+    ]
+)
+_W2R_COORD_SCHEMA = StructType(
+    [
+        StructField("x", IntegerType(), True),
+        StructField("y", IntegerType(), True),
+    ]
+)
+
+
+@f.udf(_R2W_COORD_SCHEMA)
+def _rastertoworldcoord_udf(tile, x, y):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return coords.raster_to_world_coord(ds, int(x), int(y))
+
+
+@f.udf(_W2R_COORD_SCHEMA)
+def _worldtorastercoord_udf(tile, x, y):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return coords.world_to_raster_coord(ds, float(x), float(y))
 
 
 # --- Constructor ------------------------------------------------------------
@@ -278,6 +419,182 @@ def rst_updatetype(tile: ColLike, new_type: ColLike) -> Column:
 def rst_initnodata(tile: ColLike) -> Column:
     """Ensure a NoData value is set on the raster tile; uses -9999.0 if not already set."""
     return _init_nodata_udf(_col(tile))
+
+
+# --- Tier 1d6: operations UDFs (tryopen, setsrid, band, asformat, ----------
+# buildoverviews, sample) ----------------------------------------------------
+@f.udf(BooleanType())
+def _tryopen_udf(tile):
+    if tile is None or tile["raster"] is None:
+        return False
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    return ops_core.try_open(bytes(tile["raster"]))
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _setsrid_udf(tile, srid):
+    if tile is None or tile["raster"] is None or srid is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.set_srid(ds, int(srid))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _band_udf(tile, band_index):
+    if tile is None or tile["raster"] is None or band_index is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = edit.band(ds, int(band_index))
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _asformat_udf(tile, new_format):
+    if tile is None or tile["raster"] is None or new_format is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = ops_core.as_format(ds, str(new_format))
+    # metadata.driver must reflect the requested output format.
+    return _serde.build_tile(new_bytes, str(new_format), tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _buildoverviews_udf(tile, levels, resampling):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    resamp = "average" if resampling is None else str(resampling)
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = ops_core.build_overviews(ds, list(levels), resamp)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(ArrayType(DoubleType()))
+def _sample_udf(tile, geom_wkb):
+    if tile is None or tile["raster"] is None or geom_wkb is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        return ops_core.sample(ds, bytes(geom_wkb))
+
+
+def rst_tryopen(tile: ColLike) -> Column:
+    """Return BOOLEAN: True if the raster bytes open as a valid dataset.
+
+    Mirrors the heavyweight ``gbx_rst_tryopen`` — any failure to open (corrupt
+    bytes, unknown format) yields False rather than raising.
+    """
+    return _tryopen_udf(_col(tile))
+
+
+def rst_setsrid(tile: ColLike, srid: ColLike) -> Column:
+    """Stamp the CRS as ``EPSG:<srid>`` WITHOUT reprojecting the pixels.
+
+    Equivalent to ``gdal_edit.py -a_srs``: pixel values and the GeoTransform
+    are unchanged; only the CRS metadata is rewritten. Use ``rst_transform``
+    for an actual reprojecting warp.
+
+    Args:
+        tile: Tile struct column.
+        srid: Positive EPSG code to stamp.
+
+    Returns:
+        Tile with the same pixels/transform but CRS = EPSG:srid.
+    """
+    return _setsrid_udf(_col(tile), _col(srid))
+
+
+def rst_band(tile: ColLike, band_index: ColLike) -> Column:
+    """Extract a single 1-based band as a new single-band tile.
+
+    Equivalent to ``gdal_translate -b <band_index>``: the extracted tile
+    preserves the source CRS, GeoTransform, nodata, and dtype; only the band
+    count is reduced to 1. ``band_index`` is 1-based and must be in range.
+
+    Args:
+        tile:       Tile struct column.
+        band_index: 1-based band index in ``[1 .. numbands]``.
+
+    Returns:
+        Single-band tile struct.
+    """
+    return _band_udf(_col(tile), _col(band_index))
+
+
+def rst_asformat(tile: ColLike, new_format: ColLike) -> Column:
+    """Re-encode the raster to another GDAL driver (e.g. 'PNG', 'GTiff').
+
+    Mirrors the heavyweight ``gbx_rst_asformat``: the output tile's raster
+    bytes are encoded in ``new_format`` and the tile metadata ``driver``
+    reflects it. Raises if the requested driver is unavailable in this GDAL
+    build.
+
+    Args:
+        tile:       Tile struct column.
+        new_format: GDAL driver short name (e.g. 'GTiff', 'PNG').
+
+    Returns:
+        Tile struct whose raster bytes are encoded in ``new_format``.
+    """
+    fmt = f.lit(new_format) if isinstance(new_format, str) else _col(new_format)
+    return _asformat_udf(_col(tile), fmt)
+
+
+def rst_buildoverviews(
+    tile: ColLike, levels: ColLike, resampling: ColLike = "average"
+) -> Column:
+    """Build internal pyramid overviews at the given decimation ``levels``.
+
+    Mirrors the heavyweight ``gbx_rst_buildoverviews``: ``levels`` is a
+    non-empty array of integer decimation factors, each >= 2; ``resampling``
+    defaults to "average" (one of near, average, rms, gauss, cubic,
+    cubicspline, lanczos, bilinear, mode). Overviews are embedded internally
+    in the output GTiff (no .ovr sidecar).
+
+    Args:
+        tile:       Tile struct column.
+        levels:     ARRAY<INT> of decimation factors (e.g. ``f.array(...)``).
+        resampling: Overview resampling algorithm. Defaults to "average".
+
+    Returns:
+        Tile struct with internal overviews embedded.
+    """
+    resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
+    return _buildoverviews_udf(_col(tile), _col(levels), resamp)
+
+
+def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
+    """Sample per-band raster values at a POINT geometry (WKB).
+
+    Mirrors the heavyweight ``gbx_rst_sample``: requires a POINT geometry
+    (raises otherwise), uses (geom.x, geom.y) as a world coordinate already
+    aligned to the raster CRS, and returns ARRAY<DOUBLE> with one value per
+    band in band order. Points outside the raster extent return null.
+
+    Args:
+        tile:     Tile struct column.
+        geom_wkb: POINT geometry as WKB bytes.
+
+    Returns:
+        ARRAY<DOUBLE>: one value per band, or null if the point is out of extent.
+    """
+    return _sample_udf(_col(tile), _col(geom_wkb))
 
 
 # --- Tier 1d3: band-math / focal UDFs --------------------------------------
@@ -1022,6 +1339,147 @@ def rst_worldtorastercoordy(
     return _u_w2r_y(_raster_field(_col(tile)), _col(world_x), _col(world_y))
 
 
+def rst_rastertoworldcoord(tile: ColLike, x: ColLike, y: ColLike) -> Column:
+    """World coordinate of pixel (x=col, y=row) as STRUCT<x: DOUBLE, y: DOUBLE>."""
+    return _rastertoworldcoord_udf(_col(tile), _col(x), _col(y))
+
+
+def rst_worldtorastercoord(tile: ColLike, x: ColLike, y: ColLike) -> Column:
+    """Pixel (col, row) containing world (x, y) as STRUCT<x: INT, y: INT>."""
+    return _worldtorastercoord_udf(_col(tile), _col(x), _col(y))
+
+
+# --- Group 1: per-band statistics & accessors -------------------------------
+def rst_avg(tile: ColLike) -> Column:
+    """Per-band mean of valid (non-NoData) pixels; ARRAY<DOUBLE>.
+
+    Empty / all-invalid bands return NaN.
+    """
+    return _u_avg(_raster_field(_col(tile)))
+
+
+def rst_min(tile: ColLike) -> Column:
+    """Per-band minimum of valid (non-NoData) pixels; ARRAY<DOUBLE>.
+
+    Empty / all-invalid bands return NaN.
+    """
+    return _u_min(_raster_field(_col(tile)))
+
+
+def rst_max(tile: ColLike) -> Column:
+    """Per-band maximum of valid (non-NoData) pixels; ARRAY<DOUBLE>.
+
+    Empty / all-invalid bands return NaN.
+    """
+    return _u_max(_raster_field(_col(tile)))
+
+
+def rst_median(tile: ColLike) -> Column:
+    """Per-band median of valid (non-NoData) pixels; ARRAY<DOUBLE>.
+
+    Empty / all-invalid bands return NaN.
+    """
+    return _u_median(_raster_field(_col(tile)))
+
+
+def rst_pixelcount(tile: ColLike) -> Column:
+    """Per-band count of valid (non-NoData) pixels; ARRAY<LONG>.
+
+    Empty / all-invalid bands return 0.
+    """
+    return _u_pixelcount(_raster_field(_col(tile)))
+
+
+def rst_memsize(tile: ColLike) -> Column:
+    """Serialized size of the raster in bytes (length of the raster buffer); LONG."""
+    return _memsize_udf(_raster_field(_col(tile)))
+
+
+def rst_rotation(tile: ColLike) -> Column:
+    """Rotation angle = atan(skewY / scaleX) in radians; DOUBLE."""
+    return _u_rotation(_raster_field(_col(tile)))
+
+
+def rst_skewx(tile: ColLike) -> Column:
+    """X skew of the geotransform (gt2); DOUBLE."""
+    return _u_skewx(_raster_field(_col(tile)))
+
+
+def rst_skewy(tile: ColLike) -> Column:
+    """Y skew of the geotransform (gt4); DOUBLE."""
+    return _u_skewy(_raster_field(_col(tile)))
+
+
+def rst_format(tile: ColLike) -> Column:
+    """GDAL driver short name of the raster (e.g. 'GTiff'); STRING."""
+    return _u_format(_raster_field(_col(tile)))
+
+
+def rst_georeference(tile: ColLike) -> Column:
+    """Geotransform as MAP<STRING,DOUBLE>.
+
+    Keys: upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY.
+    """
+    return _georeference_udf(_col(tile))
+
+
+def rst_bandmetadata(tile: ColLike, band: ColLike) -> Column:
+    """Metadata tags of the given 1-based band as MAP<STRING,STRING>."""
+    return _bandmetadata_udf(_col(tile), _col(band))
+
+
+def rst_subdatasets(tile: ColLike) -> Column:
+    """Subdataset map as MAP<STRING,STRING>; empty for plain single-dataset rasters."""
+    return _subdatasets_udf(_col(tile))
+
+
+def rst_getsubdataset(tile: ColLike, name: ColLike) -> Column:
+    """Extract the named subdataset as a new raster tile struct.
+
+    Raises if no subdataset matches ``name`` (mirrors heavyweight).
+    """
+    nm = f.lit(name) if isinstance(name, str) else _col(name)
+    return _getsubdataset_udf(_col(tile), nm)
+
+
+def rst_summary(tile: ColLike) -> Column:
+    """gdalinfo-style JSON summary string with per-band statistics; STRING.
+
+    The JSON shape is GeoBrix-specific (driver, size, crs, geoTransform, bands
+    with min/max/mean/stdDev), not a byte-for-byte ``gdalinfo -json`` match.
+    """
+    return _summary_udf(_col(tile))
+
+
+def rst_histogram(
+    tile: ColLike,
+    n_buckets: ColLike = 256,
+    min: ColLike = None,  # noqa: A002 - mirrors heavyweight arg name
+    max: ColLike = None,  # noqa: A002
+    include_nodata: ColLike = False,
+) -> Column:
+    """Per-band histogram as MAP<STRING, ARRAY<LONG>> keyed by ``band_<i>``.
+
+    Args:
+        tile:           Tile struct column.
+        n_buckets:      Number of equal-width buckets across [min, max] (default 256).
+        min:            Lower bound; defaults to the band's valid-pixel minimum.
+        max:            Upper bound; defaults to the band's valid-pixel maximum.
+        include_nodata: Include masked pixels in the binning (default False).
+
+    Values outside [min, max] are dropped (no out-of-range bucket).
+    """
+    nb = f.lit(n_buckets) if isinstance(n_buckets, int) else _col(n_buckets)
+    lo = f.lit(None) if min is None else _col(min)
+    hi = f.lit(None) if max is None else _col(max)
+    inc = (
+        f.lit(include_nodata)
+        if isinstance(include_nodata, bool)
+        else _col(include_nodata)
+    )
+    return _histogram_udf(_col(tile), nb, lo, hi, inc)
+
+
 # --- Tier 1d5: derived-band UDF ---------------------------------------------
 @f.udf(_serde.TILE_SCHEMA)
 def _derivedband_udf(tile, pyfunc, func_name):
@@ -1398,6 +1856,26 @@ _sql_accessors = {
     "gbx_rst_worldtorastercoordy": sql_scalar_udf2(
         coords.world_to_raster_y, IntegerType()
     ),
+    # Group 1 per-band statistics & scalar accessors (struct-accepting).
+    "gbx_rst_avg": sql_scalar_udf(accessors.avg, ArrayType(DoubleType())),
+    "gbx_rst_min": sql_scalar_udf(accessors.minimum, ArrayType(DoubleType())),
+    "gbx_rst_max": sql_scalar_udf(accessors.maximum, ArrayType(DoubleType())),
+    "gbx_rst_median": sql_scalar_udf(accessors.median, ArrayType(DoubleType())),
+    "gbx_rst_pixelcount": sql_scalar_udf(accessors.pixelcount, ArrayType(LongType())),
+    "gbx_rst_rotation": sql_scalar_udf(accessors.rotation, DoubleType()),
+    "gbx_rst_skewx": sql_scalar_udf(accessors.skewx, DoubleType()),
+    "gbx_rst_skewy": sql_scalar_udf(accessors.skewy, DoubleType()),
+    "gbx_rst_format": sql_scalar_udf(accessors.format, StringType()),
+    # memsize reads the raster byte length straight off the tile struct.
+    "gbx_rst_memsize": _memsize_struct_udf,
+    "gbx_rst_georeference": _georeference_udf,
+    "gbx_rst_bandmetadata": _bandmetadata_udf,
+    "gbx_rst_subdatasets": _subdatasets_udf,
+    "gbx_rst_getsubdataset": _getsubdataset_udf,
+    "gbx_rst_summary": _summary_udf,
+    "gbx_rst_histogram": _histogram_udf,
+    "gbx_rst_rastertoworldcoord": _rastertoworldcoord_udf,
+    "gbx_rst_worldtorastercoord": _worldtorastercoord_udf,
 }
 
 # Tile-returning / constructor / array UDFs already accept the tile struct
@@ -1413,6 +1891,12 @@ _sql_tile_ops = {
     "gbx_rst_clip": _clip_udf,
     "gbx_rst_updatetype": _update_type_udf,
     "gbx_rst_initnodata": _init_nodata_udf,
+    "gbx_rst_tryopen": _tryopen_udf,
+    "gbx_rst_setsrid": _setsrid_udf,
+    "gbx_rst_band": _band_udf,
+    "gbx_rst_asformat": _asformat_udf,
+    "gbx_rst_buildoverviews": _buildoverviews_udf,
+    "gbx_rst_sample": _sample_udf,
     "gbx_rst_fillnodata": _fillnodata_udf,
     "gbx_rst_rasterize": _rasterize_udf,
     "gbx_rst_polygonize": _polygonize_udf,

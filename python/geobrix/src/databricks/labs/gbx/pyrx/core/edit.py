@@ -1,7 +1,9 @@
 """Spark-free tile-returning edit ops: clip to geometry, change data type,
-initialise NoData, threshold. Each returns new GTiff bytes."""
+initialise NoData, threshold, stamp SRID, extract band. Each returns new
+GTiff bytes."""
 
 import numpy as np
+import rasterio
 import shapely.wkb
 from rasterio.io import MemoryFile
 from rasterio.mask import mask as _rio_mask
@@ -108,3 +110,56 @@ def threshold(ds, op: str = ">", value: float = 0.0) -> bytes:
     profile = ds.profile.copy()
     profile.update(driver="GTiff", nodata=nd)
     return _write(profile, out)
+
+
+def set_srid(ds, srid: int) -> bytes:
+    """Stamp the CRS as ``EPSG:<srid>`` WITHOUT reprojecting.
+
+    Mirrors the heavyweight ``gbx_rst_setsrid`` (``gdal_edit.py -a_srs``):
+    pixel values and the GeoTransform are unchanged; only the CRS metadata is
+    rewritten. Use ``rst_transform`` for an actual reprojecting warp.
+
+    Args:
+        ds:   Open rasterio DatasetReader.
+        srid: Positive EPSG code to stamp.
+
+    Returns:
+        GTiff bytes with the same pixels/transform but CRS = EPSG:srid.
+    """
+    srid = int(srid)
+    if srid <= 0:
+        raise ValueError(f"rst_setsrid requires a positive EPSG code; got {srid}")
+    try:
+        crs = rasterio.crs.CRS.from_epsg(srid)
+    except Exception as exc:  # invalid / unknown EPSG
+        raise ValueError(f"rst_setsrid: unknown EPSG code {srid}") from exc
+    profile = ds.profile.copy()
+    profile.update(driver="GTiff", crs=crs)
+    return _write(profile, ds.read())
+
+
+def band(ds, band_index: int) -> bytes:
+    """Extract a single 1-based band as a new single-band GTiff tile.
+
+    Mirrors the heavyweight ``gbx_rst_band`` (``gdal_translate -b``): the
+    extracted tile preserves the source CRS, GeoTransform, nodata, and dtype;
+    only the band count is reduced to 1.
+
+    Args:
+        ds:         Open rasterio DatasetReader.
+        band_index: 1-based band index in ``[1 .. ds.count]``.
+
+    Returns:
+        Single-band GTiff bytes.
+    """
+    band_index = int(band_index)
+    n_bands = ds.count
+    if not (1 <= band_index <= n_bands):
+        raise ValueError(
+            f"rst_band: band_index {band_index} out of range [1..{n_bands}]"
+        )
+    data = ds.read(band_index)
+    profile = ds.profile.copy()
+    profile.update(driver="GTiff", count=1)
+    # nodata in the multi-band profile already applies per-band; keep as-is.
+    return _write(profile, data[np.newaxis, :, :])

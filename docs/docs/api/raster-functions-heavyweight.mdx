@@ -8,27 +8,6 @@ These RasterX functions are available only in the **heavyweight (`rasterx`)** ti
 
 ## Function list
 
-### Accessors & statistics
-
-| Function | Purpose |
-|---|---|
-| `rst_avg` | per-band average pixel value |
-| `rst_bandmetadata` | band metadata map |
-| `rst_format` | GDAL format name |
-| `rst_georeference` | geotransform parameters as a map |
-| `rst_getsubdataset` | extract a named subdataset |
-| `rst_max` | per-band maximum pixel value |
-| `rst_median` | per-band median pixel value |
-| `rst_memsize` | in-memory size in bytes |
-| `rst_min` | per-band minimum pixel value |
-| `rst_pixelcount` | total pixel count |
-| `rst_rotation` | rotation in radians |
-| `rst_skewx` | geotransform row rotation (X skew) |
-| `rst_skewy` | geotransform column rotation (Y skew) |
-| `rst_subdatasets` | list of subdataset names |
-| `rst_summary` | statistical summary of values |
-| `rst_histogram` | per-band bucket counts |
-
 ### Constructors
 
 | Function | Purpose |
@@ -38,25 +17,12 @@ These RasterX functions are available only in the **heavyweight (`rasterx`)** ti
 | `rst_dtmfromgeoms` | TIN/Delaunay DTM from Z-valued points |
 | `rst_gridfrompoints` | IDW-interpolated Float64 grid from points |
 
-### Coordinates
-
-| Function | Purpose |
-|---|---|
-| `rst_rastertoworldcoord` | pixel-to-world as a struct |
-| `rst_worldtorastercoord` | world-to-pixel as a struct |
-
 ### Operations
 
 | Function | Purpose |
 |---|---|
-| `rst_asformat` | convert to another GDAL format |
 | `rst_combineavg` | average multiple tiles |
 | `rst_merge` | merge tiles into a mosaic |
-| `rst_tryopen` | validate that a raster opens |
-| `rst_setsrid` | stamp an EPSG code (no reprojection) |
-| `rst_band` | extract a single band as a new tile |
-| `rst_buildoverviews` | add pyramid overview levels |
-| `rst_sample` | sample pixel values at a geometry |
 
 ### Generators & tiling
 

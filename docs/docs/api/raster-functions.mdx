@@ -162,7 +162,11 @@ Functions to read raster properties and metadata (29 total).
 
 ### rst_avg
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band mean over valid (non-NoData) pixels.
+:::
 
 **Signature:** `rst_avg(tile: Column): Column` — Per-band average pixel values.
 
@@ -172,7 +176,11 @@ Functions to read raster properties and metadata (29 total).
 
 ### rst_bandmetadata
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_bandmetadata(tile: Column, band: Column): Column` — Band metadata map.
 
@@ -196,7 +204,11 @@ Powered by **rasterio**.
 
 ### rst_format
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_format(tile: Column): Column` — GDAL format name.
 
@@ -206,7 +218,11 @@ Powered by **rasterio**.
 
 ### rst_georeference
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_georeference(tile: Column): Column` — Georeference parameters as a map.
 
@@ -243,7 +259,11 @@ Powered by **rasterio**. Returns the dataset NoData value repeated once per band
 
 ### rst_getsubdataset
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Subdataset availability depends on rasterio's bundled GDAL driver set.
+:::
 
 **Signature:** `rst_getsubdataset(tile: Column, subsetName: Column): Column` — Extract subdataset.
 
@@ -267,7 +287,11 @@ Powered by **rasterio**.
 
 ### rst_max
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band maximum over valid (non-NoData) pixels.
+:::
 
 **Signature:** `rst_max(tile: Column): Column` — Maximum pixel values per band.
 
@@ -277,7 +301,11 @@ Powered by **rasterio**.
 
 ### rst_median
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band median over valid (non-NoData) pixels.
+:::
 
 **Signature:** `rst_median(tile: Column): Column` — Median pixel values per band.
 
@@ -287,7 +315,11 @@ Powered by **rasterio**.
 
 ### rst_memsize
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Returns the serialized raster size in bytes.
+:::
 
 **Signature:** `rst_memsize(tile: Column): Column` — In-memory size in bytes.
 
@@ -311,7 +343,11 @@ Powered by **rasterio**.
 
 ### rst_min
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band minimum over valid (non-NoData) pixels.
+:::
 
 **Signature:** `rst_min(tile: Column): Column` — Minimum pixel values per band.
 
@@ -335,7 +371,11 @@ Powered by **rasterio**.
 
 ### rst_pixelcount
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band count of valid (non-NoData) pixels.
+:::
 
 **Signature:** `rst_pixelcount(tile: Column): Column` — Total pixel count.
 
@@ -373,7 +413,11 @@ Powered by **rasterio**.
 
 ### rst_rotation
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_rotation(tile: Column): Column` — Rotation in radians.
 
@@ -397,7 +441,11 @@ Powered by **rasterio**.
 
 ### rst_skewx / rst_skewy
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_skewx(tile: Column): Column`, `rst_skewy(tile: Column): Column` — Skew in X/Y.
 
@@ -421,7 +469,11 @@ Powered by **rasterio**.
 
 ### rst_subdatasets
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Empty for single-dataset rasters (e.g. a plain GeoTIFF).
+:::
 
 **Signature:** `rst_subdatasets(tile: Column): Column` — List of subdataset names.
 
@@ -431,7 +483,11 @@ Powered by **rasterio**.
 
 ### rst_summary
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Returns a JSON summary (driver, size, CRS, geotransform, per-band statistics); the lightweight JSON shape differs from the heavyweight `gdalinfo -json` output.
+:::
 
 **Signature:** `rst_summary(tile: Column): Column` — Statistical summary of values.
 
@@ -895,7 +951,11 @@ Transform and analyze rasters (20 total).
 
 ### rst_asformat
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Output formats are limited to rasterio's bundled-GDAL writable driver set; the tile is re-encoded in the requested format.
+:::
 
 **Signature:** `rst_asformat(tile: Column, newFormat: Column): Column` — Convert to another format.
 
@@ -1041,7 +1101,11 @@ Powered by **rasterio** + **NumPy**. Valid pixels match the heavyweight tier; pi
 
 ### rst_rastertoworldcoord
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_rastertoworldcoord(tile: Column, pixelX: Column, pixelY: Column): Column` — Pixel to world coordinates as a struct with `.x` and `.y` fields.
 
@@ -1079,7 +1143,11 @@ Powered by **rasterio** (`rasterio.warp`). Reprojection uses the GDAL build bund
 
 ### rst_tryopen
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_tryopen(tile: Column): Column` — Validate raster can be opened.
 
@@ -1157,7 +1225,11 @@ Resample a raster tile to an explicit pixel grid size via `gdal.Warp -ts`.
 
 ### rst_worldtorastercoord
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_worldtorastercoord(tile: Column, worldX: Column, worldY: Column): Column` — World to pixel coordinates as a struct with `.x` and `.y` fields.
 
@@ -1453,7 +1525,11 @@ Per-pixel transformations and band-level extraction.
 
 ### rst_band
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**.
+:::
 
 **Signature:** `rst_band(tile: Column, bandIndex: Column): Column` — Extract a single band from a multi-band raster as a new single-band tile (`gdal.Translate -b N`). 1-based band index.
 
@@ -1461,7 +1537,11 @@ Per-pixel transformations and band-level extraction.
 
 ### rst_buildoverviews
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Builds internal GeoTIFF overviews.
+:::
 
 **Signature:** `rst_buildoverviews(tile: Column, levels: Column, [resampling: Column = lit("average")]): Column` — Add pyramid overview levels to a tile via `ds.BuildOverviews`. `levels` is an `ARRAY<INT>` (e.g. `array(2, 4, 8, 16)`); `resampling` is one of `nearest`, `average`, `gauss`, `cubic`, `cubicspline`, `lanczos`, `bilinear`, `mode`.
 
@@ -1481,7 +1561,11 @@ Powered by **rasterio** (`rasterio.fill`).
 
 ### rst_histogram
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **NumPy**. Per-band bucket counts via `numpy.histogram`; map keys are `band_<i>` (1-based).
+:::
 
 **Signature:** `rst_histogram(tile: Column, [bands: Column = null, nBuckets: Column = lit(256), min: Column = null, max: Column = null, includeNodata: Column = lit(false)]): Column` — Compute per-band histograms via `band.GetHistogram`. Returns `MAP<STRING, ARRAY<LONG>>` keyed by `"band_<n>"` with bucket counts. If `bands` is null, all bands are processed; if `min` / `max` are null, GDAL auto-detects the range.
 
@@ -1489,7 +1573,11 @@ Powered by **rasterio** (`rasterio.fill`).
 
 ### rst_sample
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Point geometries only; the point is assumed to be in the raster's CRS.
+:::
 
 **Signature:** `rst_sample(tile: Column, geom: Column): Column` — Sample the raster at the geometry's location(s). For a `POINT`, returns `ARRAY<DOUBLE>` of one value per band at the nearest pixel. Geometry is interpreted in EPSG:4326 lon/lat unless its EWKB carries a different SRID.
 
@@ -1497,7 +1585,11 @@ Powered by **rasterio** (`rasterio.fill`).
 
 ### rst_setsrid
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio**. Stamps the CRS without reprojecting.
+:::
 
 **Signature:** `rst_setsrid(tile: Column, srid: Column): Column` — Stamp an EPSG code onto a raster that lacks (or has a wrong) spatial reference. Does NOT reproject — only sets `ds.SetProjection(...)`. Use `rst_transform` when you need an actual reprojection.
 
