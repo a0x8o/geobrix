@@ -39,7 +39,9 @@ from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
 from databricks.labs.gbx.pyrx.core import mapalgebra as mapalgebra_core
 from databricks.labs.gbx.pyrx.core import ops as ops_core
-from databricks.labs.gbx.pyrx.core import resample, terrain, tiling, warp, xyz
+from databricks.labs.gbx.pyrx.core import resample, terrain, tiling
+from databricks.labs.gbx.pyrx.core import tin as tin_core
+from databricks.labs.gbx.pyrx.core import warp, xyz
 
 
 def register(spark: SparkSession = None) -> None:
@@ -904,6 +906,203 @@ def rst_fillnodata(
     msd = f.lit(None) if max_search_dist is None else _col(max_search_dist)
     smi = f.lit(None) if smoothing_iter is None else _col(smoothing_iter)
     return _fillnodata_udf(_col(tile), msd, smi)
+
+
+# --- Tier 1e3: TIN / IDW constructors (point-array -> tile) -----------------
+@f.udf(_serde.TILE_SCHEMA)
+def _gridfrompoints_udf(
+    points,
+    values,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    power=None,
+    max_pts=None,
+):
+    if points is None or values is None:
+        return None
+    import shapely.wkb as _swkb
+
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    # Decode points and values together so a null/empty point drops its paired
+    # value too, keeping the two arrays parallel for the IDW solver.
+    xy = []
+    vals = []
+    for wkb, v in zip(points, values):
+        if wkb is None or len(bytes(wkb)) == 0 or v is None:
+            continue
+        g = _swkb.loads(bytes(wkb))
+        if g.is_empty:
+            continue
+        xy.append((g.x, g.y))
+        vals.append(float(v))
+    new_bytes = tin_core.idw_grid(
+        xy,
+        vals,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        int(width_px),
+        int(height_px),
+        int(srid),
+        power=2.0 if power is None else float(power),
+        max_pts=12 if max_pts is None else int(max_pts),
+    )
+    return _serde.build_tile(new_bytes, "GTiff", 0)
+
+
+def rst_gridfrompoints(
+    points: ColLike,
+    values: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = 2.0,
+    max_pts: ColLike = 12,
+) -> Column:
+    """Inverse-distance-weighted (IDW) grid from an ARRAY of POINT WKB + values.
+
+    ``points`` is ARRAY<BINARY> (WKB points), ``values`` is the parallel
+    ARRAY<DOUBLE>. For each output cell center the value is the inverse-distance
+    weighted mean of the nearest ``max_pts`` points (weight = 1/distance**power);
+    a point coincident with a cell center returns that value. Output is a
+    single-band Float64 tile over ``[xmin,ymin,xmax,ymax]`` at
+    ``width_px x height_px`` in EPSG:``srid``; NoData = -9999.0.
+
+    Args:
+        points:    ARRAY<BINARY> of WKB POINT geometries.
+        values:    ARRAY<DOUBLE> parallel to ``points``.
+        xmin..ymax: Output extent in CRS units.
+        width_px, height_px: Output raster size in pixels.
+        srid:      EPSG code for the output CRS.
+        power:     IDW exponent (default 2.0).
+        max_pts:   Max neighbours per cell (default 12).
+
+    Returns:
+        Single-band Float64 tile struct.
+    """
+    p = f.lit(power) if isinstance(power, (int, float)) else _col(power)
+    m = f.lit(max_pts) if isinstance(max_pts, (int, float)) else _col(max_pts)
+    return _gridfrompoints_udf(
+        _col(points),
+        _col(values),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        p,
+        m,
+    )
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _dtmfromgeoms_udf(
+    points,
+    breaklines,
+    merge_tolerance,
+    snap_tolerance,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    no_data=None,
+):
+    if points is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    pts_xyz = tin_core.points_xyz_from_wkb(points)
+    bl = [bytes(b) for b in breaklines if b is not None] if breaklines else None
+    new_bytes = tin_core.delaunay_dtm(
+        pts_xyz,
+        bl,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        int(width_px),
+        int(height_px),
+        int(srid),
+        no_data=-9999.0 if no_data is None else float(no_data),
+    )
+    return _serde.build_tile(new_bytes, "GTiff", 0)
+
+
+def rst_dtmfromgeoms(
+    points: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = -9999.0,
+) -> Column:
+    """Delaunay-TIN DTM from Z-valued POINT WKB (+ optional breaklines).
+
+    ``points`` is ARRAY<BINARY> of WKB POINTs WITH Z; ``breaklines`` is
+    ARRAY<BINARY> of WKB linestrings (may be null/empty). A Delaunay
+    triangulation of the points' (x, y) is built and Z is barycentrically
+    interpolated at each output cell center. Cells outside the convex hull
+    become ``no_data``. Output is a single-band Float64 tile over the extent at
+    ``width_px x height_px`` in EPSG:``srid``.
+
+    PARITY DIVERGENCE: the lightweight tier performs an UNCONSTRAINED Delaunay
+    interpolation. ``breaklines`` are accepted but NOT enforced as hard edges
+    (their vertices are folded in as extra triangulation points only), and
+    ``merge_tolerance`` / ``snap_tolerance`` are accepted for signature parity
+    but have no effect.
+
+    Args:
+        points:          ARRAY<BINARY> of WKB POINT-with-Z geometries.
+        breaklines:      ARRAY<BINARY> of WKB linestrings (accepted, not enforced).
+        merge_tolerance: Accepted for parity; not applied.
+        snap_tolerance:  Accepted for parity; not applied.
+        xmin..ymax:      Output extent in CRS units.
+        width_px, height_px: Output raster size in pixels.
+        srid:            EPSG code for the output CRS.
+        no_data:         NoData sentinel (default -9999.0).
+
+    Returns:
+        Single-band Float64 tile struct.
+    """
+    nd = f.lit(no_data) if isinstance(no_data, (int, float)) else _col(no_data)
+    return _dtmfromgeoms_udf(
+        _col(points),
+        _col(breaklines),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        nd,
+    )
 
 
 _POLYGONIZE_SCHEMA = ArrayType(
@@ -1991,6 +2190,106 @@ def _derivedband_agg_udf(
     )
 
 
+@pandas_udf(BinaryType())
+def _gridfrompoints_agg_udf(
+    point: pd.Series,
+    value: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width_px: pd.Series,
+    height_px: pd.Series,
+    srid: pd.Series,
+    power: pd.Series = None,
+    max_pts: pd.Series = None,
+) -> bytes:
+    import shapely.wkb as _swkb
+
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    xy = []
+    vals = []
+    for g, v in zip(point, value):
+        if g is None or v is None:
+            continue
+        geom = _swkb.loads(bytes(g))
+        if geom.is_empty:
+            continue
+        xy.append((geom.x, geom.y))
+        vals.append(float(v))
+    if not xy:
+        return None
+    # Extent/size/srid/power/max_pts are per-group constants; read from row 0.
+    return tin_core.idw_grid(
+        xy,
+        vals,
+        xmin.iloc[0],
+        ymin.iloc[0],
+        xmax.iloc[0],
+        ymax.iloc[0],
+        int(width_px.iloc[0]),
+        int(height_px.iloc[0]),
+        int(srid.iloc[0]),
+        power=2.0 if power is None else float(power.iloc[0]),
+        max_pts=12 if max_pts is None else int(max_pts.iloc[0]),
+    )
+
+
+@pandas_udf(BinaryType())
+def _dtmfromgeoms_agg_udf(
+    point: pd.Series,
+    breaklines: pd.Series,
+    merge_tolerance: pd.Series,
+    snap_tolerance: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width_px: pd.Series,
+    height_px: pd.Series,
+    srid: pd.Series,
+    no_data: pd.Series = None,
+) -> bytes:
+    import shapely.wkb as _swkb
+
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    pts = []
+    for g in point:
+        if g is None:
+            continue
+        geom = _swkb.loads(bytes(g))
+        if geom.is_empty:
+            continue
+        if not geom.has_z:
+            raise ValueError(
+                "rst_dtmfromgeoms_agg: point has no Z coordinate — supply 3D WKB "
+                "(e.g. 'POINT Z (x y z)')"
+            )
+        c = geom.coords[0]
+        pts.append((c[0], c[1], c[2]))
+    if not pts:
+        return None
+    # breaklines is a per-group constant ARRAY<BINARY>; read from row 0.
+    bl_arr = breaklines.iloc[0]
+    bl = [bytes(b) for b in bl_arr if b is not None] if bl_arr is not None else None
+    return tin_core.delaunay_dtm(
+        pts,
+        bl,
+        xmin.iloc[0],
+        ymin.iloc[0],
+        xmax.iloc[0],
+        ymax.iloc[0],
+        int(width_px.iloc[0]),
+        int(height_px.iloc[0]),
+        int(srid.iloc[0]),
+        no_data=-9999.0 if no_data is None else float(no_data.iloc[0]),
+    )
+
+
 # --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
 def rst_merge_agg(tile: ColLike) -> Column:
     """Merge a group's tile rasters into one spatial mosaic tile.
@@ -2088,6 +2387,98 @@ def rst_derivedband_agg(
     return _as_tile_udf(_derivedband_agg_udf(_col(tile), pf, fn))
 
 
+def rst_gridfrompoints_agg(
+    point: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = 2.0,
+    max_pts: ColLike = 12,
+) -> Column:
+    """Streaming IDW grid per group: one ``(point, value)`` per row -> one tile.
+
+    The extent/size/srid/power/max_pts args are per-group constants. Equal to
+    ``rst_gridfrompoints`` over the same points. Use inside ``.agg()``::
+
+        df.groupBy(k).agg(
+            prx.rst_gridfrompoints_agg("pt", "v", 0, 0, 10, 10, 8, 8, 32633).alias("t")
+        )
+
+    Returns a tile struct (cellid 0).
+    """
+    p = f.lit(power) if isinstance(power, (int, float)) else _col(power)
+    m = f.lit(max_pts) if isinstance(max_pts, (int, float)) else _col(max_pts)
+    return _as_tile_udf(
+        _gridfrompoints_agg_udf(
+            _col(point),
+            _col(value),
+            _col(xmin),
+            _col(ymin),
+            _col(xmax),
+            _col(ymax),
+            _col(width_px),
+            _col(height_px),
+            _col(srid),
+            p,
+            m,
+        )
+    )
+
+
+def rst_dtmfromgeoms_agg(
+    point: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = -9999.0,
+) -> Column:
+    """Streaming Delaunay-TIN DTM per group: one Z-point per row -> one tile.
+
+    ``breaklines`` is a per-group constant ARRAY<BINARY>; every other non-point
+    arg is a per-group constant. Equal to ``rst_dtmfromgeoms`` over the same
+    points. Use inside ``.agg()``::
+
+        df.groupBy(k).agg(
+            prx.rst_dtmfromgeoms_agg(
+                "pt", f.lit(None), 0.0, 0.0, 0, 0, 10, 10, 10, 10, 32633
+            ).alias("t")
+        )
+
+    PARITY DIVERGENCE: unconstrained Delaunay — ``breaklines`` accepted but not
+    enforced; ``merge_tolerance`` / ``snap_tolerance`` accepted but not applied.
+    Returns a tile struct (cellid 0).
+    """
+    nd = f.lit(no_data) if isinstance(no_data, (int, float)) else _col(no_data)
+    return _as_tile_udf(
+        _dtmfromgeoms_agg_udf(
+            _col(point),
+            _col(breaklines),
+            _col(merge_tolerance),
+            _col(snap_tolerance),
+            _col(xmin),
+            _col(ymin),
+            _col(xmax),
+            _col(ymax),
+            _col(width_px),
+            _col(height_px),
+            _col(srid),
+            nd,
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # SQL registration registry
 # ---------------------------------------------------------------------------
@@ -2169,6 +2560,8 @@ _sql_tile_ops = {
     "gbx_rst_sample": _sample_udf,
     "gbx_rst_fillnodata": _fillnodata_udf,
     "gbx_rst_rasterize": _rasterize_udf,
+    "gbx_rst_gridfrompoints": _gridfrompoints_udf,
+    "gbx_rst_dtmfromgeoms": _dtmfromgeoms_udf,
     "gbx_rst_polygonize": _polygonize_udf,
     "gbx_rst_ndvi": _ndvi_udf,
     "gbx_rst_ndwi": _ndwi_udf,
@@ -2215,6 +2608,8 @@ _sql_aggregators = {
     "gbx_rst_frombands_agg": _frombands_agg_udf,
     "gbx_rst_rasterize_agg": _rasterize_agg_udf,
     "gbx_rst_derivedband_agg": _derivedband_agg_udf,
+    "gbx_rst_gridfrompoints_agg": _gridfrompoints_agg_udf,
+    "gbx_rst_dtmfromgeoms_agg": _dtmfromgeoms_agg_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}

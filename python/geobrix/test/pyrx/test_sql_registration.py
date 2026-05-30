@@ -369,3 +369,76 @@ def test_register_enables_derivedband_agg_sql(spark):
         "AS m FROM v GROUP BY k"
     ).first()["m"]
     assert mx[0] == 7.0
+
+
+# --- TIN / IDW constructors + aggregators via SQL ---------------------------
+def test_register_enables_gridfrompoints_sql(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    prx.register(spark)
+    p0 = shapely.wkb.dumps(Point(0.0, 0.0))
+    p1 = shapely.wkb.dumps(Point(2.0, 2.0))
+    spark.createDataFrame(
+        [([p0, p1], [10.0, 30.0])], ["pts", "vals"]
+    ).createOrReplaceTempView("g")
+    val = spark.sql(
+        "SELECT gbx_rst_avg(gbx_rst_gridfrompoints("
+        "pts, vals, 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2)) AS a FROM g"
+    ).first()["a"]
+    assert val[0] == 20.0
+
+
+def test_register_enables_dtmfromgeoms_sql(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    prx.register(spark)
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    pts = [
+        shapely.wkb.dumps(Point(x, y, 2 * x + 3 * y + 1), output_dimension=3)
+        for x, y in corners
+    ]
+    spark.createDataFrame([(pts,)], ["pts"]).createOrReplaceTempView("g")
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_dtmfromgeoms("
+        "pts, NULL, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633)) AS w FROM g"
+    ).first()["w"]
+    assert w == 10
+
+
+def test_register_enables_gridfrompoints_agg_sql(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    prx.register(spark)
+    p0 = shapely.wkb.dumps(Point(0.0, 0.0))
+    p1 = shapely.wkb.dumps(Point(2.0, 2.0))
+    spark.createDataFrame(
+        [("g", p0, 10.0), ("g", p1, 30.0)], ["k", "pt", "v"]
+    ).createOrReplaceTempView("v")
+    val = spark.sql(
+        "SELECT gbx_rst_avg(gbx_rst_fromcontent("
+        "gbx_rst_gridfrompoints_agg(pt, v, 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2), "
+        "'GTiff')) AS a FROM v GROUP BY k"
+    ).first()["a"]
+    assert val[0] == 20.0
+
+
+def test_register_enables_dtmfromgeoms_agg_sql(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    prx.register(spark)
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    rows = [
+        ("g", shapely.wkb.dumps(Point(x, y, 2 * x + 3 * y + 1), output_dimension=3))
+        for x, y in corners
+    ]
+    spark.createDataFrame(rows, ["k", "pt"]).createOrReplaceTempView("v")
+    w = spark.sql(
+        "SELECT gbx_rst_width(gbx_rst_fromcontent("
+        "gbx_rst_dtmfromgeoms_agg(pt, NULL, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, "
+        "32633), 'GTiff')) AS w FROM v GROUP BY k"
+    ).first()["w"]
+    assert w == 10

@@ -932,3 +932,97 @@ def test_rst_derivedband_agg(spark):
     with _serde.open_tile(bytes(tile["raster"])) as ds:
         assert ds.count == 1
         assert np.allclose(ds.read(1), 12.0)
+
+
+# ---------------------------------------------------------------------------
+# TIN / IDW constructors + aggregators
+# ---------------------------------------------------------------------------
+def test_rst_gridfrompoints_constructor(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    # 1x1 grid center (1,1); p0=(0,0) v=10, p1=(2,2) v=30 -> IDW (power 2) = 20.
+    p0 = shapely.wkb.dumps(Point(0.0, 0.0))
+    p1 = shapely.wkb.dumps(Point(2.0, 2.0))
+    df = spark.createDataFrame([([p0, p1], [10.0, 30.0])], ["pts", "vals"])
+    tile = df.select(
+        prx.rst_gridfrompoints(
+            "pts", "vals", 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2
+        ).alias("t")
+    ).first()["t"]
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.dtypes[0] == "float64"
+        assert ds.nodata == -9999.0
+        assert np.isclose(ds.read(1)[0, 0], 20.0)
+
+
+def test_rst_dtmfromgeoms_constructor(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    # z = 2x + 3y + 1 plane; barycentric interpolation is exact in-hull.
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    pts = [
+        shapely.wkb.dumps(Point(x, y, 2 * x + 3 * y + 1), output_dimension=3)
+        for x, y in corners
+    ]
+    df = spark.createDataFrame([(pts,)], ["pts"])
+    tile = df.select(
+        prx.rst_dtmfromgeoms(
+            "pts", f.lit(None), 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633
+        ).alias("t")
+    ).first()["t"]
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        arr = ds.read(1)
+        transform = ds.transform
+        assert ds.nodata == -9999.0
+    # interior cell matches the plane
+    wx, wy = transform * (5 + 0.5, 5 + 0.5)
+    assert np.isclose(arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6)
+
+
+def test_rst_gridfrompoints_agg_equals_constructor(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    p0 = shapely.wkb.dumps(Point(0.0, 0.0))
+    p1 = shapely.wkb.dumps(Point(2.0, 2.0))
+    # aggregator: one (point, value) per row, grouped by k.
+    df = spark.createDataFrame([("g", p0, 10.0), ("g", p1, 30.0)], ["k", "pt", "v"])
+    tile = (
+        df.groupBy("k")
+        .agg(
+            prx.rst_gridfrompoints_agg(
+                "pt", "v", 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2
+            ).alias("t")
+        )
+        .first()["t"]
+    )
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert np.isclose(ds.read(1)[0, 0], 20.0)
+
+
+def test_rst_dtmfromgeoms_agg_equals_constructor(spark):
+    import shapely.wkb
+    from shapely.geometry import Point
+
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    rows = [
+        ("g", shapely.wkb.dumps(Point(x, y, 2 * x + 3 * y + 1), output_dimension=3))
+        for x, y in corners
+    ]
+    df = spark.createDataFrame(rows, ["k", "pt"])
+    tile = (
+        df.groupBy("k")
+        .agg(
+            prx.rst_dtmfromgeoms_agg(
+                "pt", f.lit(None), 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633
+            ).alias("t")
+        )
+        .first()["t"]
+    )
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        arr = ds.read(1)
+        transform = ds.transform
+    wx, wy = transform * (5 + 0.5, 5 + 0.5)
+    assert np.isclose(arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6)
