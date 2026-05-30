@@ -589,3 +589,45 @@ def test_register_enables_h3_tessellate_sql(spark):
         "LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 4)) AS cell"
     ).first()["n"]
     assert n > 0
+
+
+def test_register_enables_proximity_sql(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    prx.register(spark)
+    data = np.zeros((5, 5), dtype="float32")
+    data[0, 0] = 1.0
+    profile = dict(
+        driver="GTiff",
+        width=5,
+        height=5,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 5, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        raster = mf.read()
+    df = spark.createDataFrame([(raster,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df.createOrReplaceTempView("p")
+    # Compose: proximity then read its type in SQL.
+    ty = spark.sql(
+        "SELECT gbx_rst_type(gbx_rst_proximity(tile, NULL, 'PIXEL', NULL))[0] AS t FROM p"
+    ).first()["t"]
+    assert ty == "Float32"
+
+
+def test_register_enables_cog_convert_sql(spark):
+    prx.register(spark)
+    _tile_view(spark, width=64, height=64, epsg=4326)
+    n = spark.sql(
+        "SELECT gbx_rst_numbands(gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE')) AS n FROM t"
+    ).first()["n"]
+    assert n == 1

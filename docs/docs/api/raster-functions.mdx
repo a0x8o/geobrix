@@ -1673,7 +1673,11 @@ Higher-level analytical transforms wrapping single GDAL primitives — COG layou
 
 ### rst_cog_convert
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rio-cogeo**. Re-encodes the tile as a Cloud Optimized GeoTIFF (validated with `cog_validate`); `compression` maps to a rio-cogeo profile (`deflate`, `lzw`, `zstd`, `lerc`, `jpeg`, `webp`, `none`). The tile's `metadata.driver` is `GTiff` (a COG is a valid GeoTIFF).
+:::
 
 **Signature:** `rst_cog_convert(tile: Column, [compression: Column = lit("DEFLATE"), blocksize: Column = lit(512), overviewResampling: Column = lit("AVERAGE")]): Column` — Re-layout a raster tile as a Cloud Optimized GeoTIFF via `gdal.Translate -of COG`. `compression` is one of `NONE`, `DEFLATE`, `LZW`, `ZSTD`, `LERC`, `JPEG`, `WEBP`. `blocksize` is the internal tile size in pixels (square). `overviewResampling` is the algorithm for the auto-generated overview pyramid. Output is a GTiff-on-disk variant suitable for HTTP range serving.
 
@@ -1681,7 +1685,11 @@ Higher-level analytical transforms wrapping single GDAL primitives — COG layou
 
 ### rst_proximity
 
-<Tier heavy/>
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **SciPy** (`scipy.ndimage.distance_transform_edt`). Distance to the nearest source pixel (`target_values`, or any non-zero pixel by default), in `GEO` (CRS units) or `PIXEL` units; pixels beyond `max_distance` → NoData −1.0. Single-band Float32.
+:::
 
 **Signature:** `rst_proximity(tile: Column, [targetValues: Column = null, distUnits: Column = lit("GEO"), maxDistance: Column = null]): Column` — Compute a Float32 raster where each pixel holds the distance to the nearest source pixel via `gdal.ComputeProximity`. `targetValues` is a comma-separated list of source-pixel values (e.g. `"1,2,3"`); `null` means any non-NoData pixel is a target. `distUnits` is `"GEO"` (CRS ground units, default) or `"PIXEL"`. `maxDistance` caps the output; pixels beyond it get the NoData sentinel `-1.0`.
 

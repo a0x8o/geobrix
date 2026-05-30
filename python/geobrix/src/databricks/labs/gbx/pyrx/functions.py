@@ -34,6 +34,7 @@ from databricks.labs.gbx.pyrx._udf import (
 )
 from databricks.labs.gbx.pyrx.core import accessors
 from databricks.labs.gbx.pyrx.core import agg as agg_core
+from databricks.labs.gbx.pyrx.core import analysis as analysis_core
 from databricks.labs.gbx.pyrx.core import coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
@@ -673,6 +674,37 @@ def _sample_udf(tile, geom_wkb):
         return ops_core.sample(ds, bytes(geom_wkb))
 
 
+@f.udf(_serde.TILE_SCHEMA)
+def _proximity_udf(tile, target_values, distunits, max_distance):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    units = "GEO" if distunits is None else str(distunits)
+    tv = None if target_values is None else str(target_values)
+    md = None if max_distance is None else float(max_distance)
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = analysis_core.proximity(ds, tv, units, md)
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
+@f.udf(_serde.TILE_SCHEMA)
+def _cog_convert_udf(tile, compression, blocksize, overview_resampling):
+    if tile is None or tile["raster"] is None:
+        return None
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    comp = "DEFLATE" if compression is None else str(compression)
+    bs = 512 if blocksize is None else int(blocksize)
+    resamp = "AVERAGE" if overview_resampling is None else str(overview_resampling)
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        new_bytes = analysis_core.cog_convert(ds, comp, bs, resamp)
+    # COG is a GTiff variant on disk; downstream readers see driver "GTiff".
+    return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
+
+
 def rst_tryopen(tile: ColLike) -> Column:
     """Return BOOLEAN: True if the raster bytes open as a valid dataset.
 
@@ -756,6 +788,102 @@ def rst_buildoverviews(
     """
     resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
     return _buildoverviews_udf(_col(tile), _col(levels), resamp)
+
+
+def rst_proximity(
+    tile: ColLike,
+    target_values: ColLike = None,
+    distunits: ColLike = "GEO",
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a proximity raster: each pixel's distance to the nearest source.
+
+    Mirrors the heavyweight ``gbx_rst_proximity`` (GDAL ComputeProximity),
+    implemented with ``scipy.ndimage.distance_transform_edt``.
+
+    Args:
+        tile:          Tile struct column.
+        target_values: Optional comma-separated string of source pixel values.
+                       When given, source pixels are those whose value is in the
+                       set. When None, the GDAL default applies: source = pixels
+                       with value != 0.
+        distunits:     ``"GEO"`` (default; CRS ground units, scaled by pixel
+                       size) or ``"PIXEL"`` (pixel counts).
+        max_distance:  Optional positive distance cap; pixels beyond it become
+                       NoData.
+
+    Returns:
+        Single-band Float32 tile (nodata = -1.0); source pixels get distance 0.
+    """
+    tv_col = (
+        f.lit(None).cast(StringType())
+        if target_values is None
+        else (
+            f.lit(target_values)
+            if isinstance(target_values, str)
+            else _col(target_values)
+        )
+    )
+    units_col = (
+        f.lit("GEO")
+        if distunits is None
+        else (f.lit(distunits) if isinstance(distunits, str) else _col(distunits))
+    )
+    md_col = (
+        f.lit(None).cast(DoubleType())
+        if max_distance is None
+        else (
+            f.lit(float(max_distance))
+            if isinstance(max_distance, (int, float))
+            else _col(max_distance)
+        )
+    )
+    return _proximity_udf(_col(tile), tv_col, units_col, md_col)
+
+
+def rst_cog_convert(
+    tile: ColLike,
+    compression: ColLike = "DEFLATE",
+    blocksize: ColLike = 512,
+    overview_resampling: ColLike = "AVERAGE",
+) -> Column:
+    """Convert a raster tile to a Cloud Optimized GeoTIFF (COG) layout.
+
+    Mirrors the heavyweight ``gbx_rst_cog_convert`` (``gdal.Translate -of COG``),
+    implemented with rio-cogeo's ``cog_translate``. The output tile's raster
+    bytes are COG-layout GTiff; downstream readers see ``metadata.driver =
+    "GTiff"`` (COG is a GTiff variant).
+
+    Args:
+        tile:                Tile struct column.
+        compression:         COG compression / rio-cogeo profile (default
+                             "DEFLATE"; e.g. NONE, LZW, ZSTD, WEBP, JPEG, LERC).
+        blocksize:           Internal tile size in pixels, square (default 512).
+        overview_resampling: Overview-pyramid resampling (default "AVERAGE").
+
+    Returns:
+        Tile struct whose raster bytes are a COG.
+    """
+    comp_col = (
+        f.lit("DEFLATE")
+        if compression is None
+        else (f.lit(compression) if isinstance(compression, str) else _col(compression))
+    )
+    bs_col = (
+        f.lit(512)
+        if blocksize is None
+        else (f.lit(int(blocksize)) if isinstance(blocksize, int) else _col(blocksize))
+    )
+    resamp_col = (
+        f.lit("AVERAGE")
+        if overview_resampling is None
+        else (
+            f.lit(overview_resampling)
+            if isinstance(overview_resampling, str)
+            else _col(overview_resampling)
+        )
+    )
+    return _cog_convert_udf(_col(tile), comp_col, bs_col, resamp_col)
 
 
 def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
@@ -2802,6 +2930,8 @@ _sql_tile_ops = {
     "gbx_rst_asformat": _asformat_udf,
     "gbx_rst_buildoverviews": _buildoverviews_udf,
     "gbx_rst_sample": _sample_udf,
+    "gbx_rst_proximity": _proximity_udf,
+    "gbx_rst_cog_convert": _cog_convert_udf,
     "gbx_rst_fillnodata": _fillnodata_udf,
     "gbx_rst_rasterize": _rasterize_udf,
     "gbx_rst_gridfrompoints": _gridfrompoints_udf,

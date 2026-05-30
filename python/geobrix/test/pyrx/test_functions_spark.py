@@ -1147,3 +1147,41 @@ def test_rst_h3_tessellate(spark):
     for r in rows:
         assert r["n"] == 1
         assert h3.is_valid_cell(h3.int_to_str(r["cid"]))
+
+
+def test_rst_proximity_column_api(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    data = np.zeros((5, 5), dtype="float32")
+    data[0, 0] = 1.0
+    profile = dict(
+        driver="GTiff",
+        width=5,
+        height=5,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, 5, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    df = spark.createDataFrame([(src,)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    out = df.select(prx.rst_proximity("tile", None, "PIXEL", None).alias("t"))
+    # Float32 output, nodata -1.
+    assert out.select(prx.rst_type("t").alias("ty")).first()["ty"][0] == "Float32"
+    assert out.select(prx.rst_getnodata("t").alias("nd")).first()["nd"][0] == -1.0
+
+
+def test_rst_cog_convert_column_api(spark):
+    df = _tile_df(spark, width=64, height=64)
+    out = df.select(prx.rst_cog_convert("tile", "DEFLATE", 512, "AVERAGE").alias("t"))
+    # Round-trips: still openable, same band count.
+    assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+    assert out.select(prx.rst_width("t").alias("w")).first()["w"] == 64

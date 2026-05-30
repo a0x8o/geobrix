@@ -42,6 +42,7 @@ click==8.4.1 \
     #   cligj
     #   morecantile
     #   rasterio
+    #   rio-cogeo
 cligj==0.7.2 \
     --hash=sha256:a4bc13d623356b373c2c27c53dbd9c68cae5d526270bfa71f6c6fa69669c6b27 \
     --hash=sha256:c1ca117dbce1fe20a5809dc96f01e1c2840f6dcc939b3ddbb1111bf330ba82df
@@ -149,7 +150,9 @@ iniconfig==2.3.0 \
 morecantile==7.0.3 \
     --hash=sha256:747c6b8f3a8029ddaadb04d96c834f10d2796d1898ad893bed47c896a058ddc7 \
     --hash=sha256:b44419c83f310b411b1f547df2d07c115dc6d194ab7c8a4c318a154490e938c1
-    # via rio-tiler
+    # via
+    #   rio-cogeo
+    #   rio-tiler
 numexpr==2.11.0 \
     --hash=sha256:096ec768bee2ef14ac757b4178e3c5f05e5f1cb6cae83b2eea9b4ba3ec1a86dd \
     --hash=sha256:097aa8835d32d6ac52f2be543384019b4b134d1fb67998cbfc4271155edfe54a \
@@ -357,6 +360,7 @@ pydantic==2.13.4 \
     --hash=sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6
     # via
     #   morecantile
+    #   rio-cogeo
     #   rio-tiler
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
@@ -608,7 +612,12 @@ rasterio==1.5.0 \
     --hash=sha256:ff677c0a9d3ba667c067227ef2b76872488b37ff29b061bc3e576fad9baa3286
     # via
     #   -r requirements-pyrx-ci.in
+    #   rio-cogeo
     #   rio-tiler
+rio-cogeo==7.0.2 \
+    --hash=sha256:1426faea08ae0970707d3534119164d99969ee15181b06d94c5f84645f82537f \
+    --hash=sha256:1454ff94dca8652db68862d667bf47e54ecabfe8872c939f2c16ebb62d432f69
+    # via -r requirements-pyrx-ci.in
 rio-tiler==9.0.6 \
     --hash=sha256:20aa64760a2dd8ee40fb3b925d62fc0a87b9e01f352456fa96d4fd5e41b19c78 \
     --hash=sha256:6c86d6e98692d0e851bd29cc47e237aedd82450b019192f791d5a77a7b5043be
