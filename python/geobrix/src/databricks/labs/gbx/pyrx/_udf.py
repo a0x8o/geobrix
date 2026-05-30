@@ -70,3 +70,40 @@ def tile_scalar_udf2(core_fn: Callable, return_type: DataType):
         return pd.Series(out, dtype="object")
 
     return _udf
+
+
+def sql_scalar_udf(core_fn: Callable, return_type: DataType):
+    """Regular @f.udf taking a tile struct -> scalar via core_fn(ds). For SQL registration.
+
+    Unlike the pandas_udf path (which takes the raw raster bytes subfield), this
+    UDF accepts the full tile struct Row, extracts the ``raster`` bytes, and calls
+    core_fn on the opened DatasetReader. Used only for spark.udf.register()
+    entries; the Python Column API still goes through the pandas_udf path.
+    """
+
+    @f.udf(return_type)
+    def _udf(tile):
+        if tile is None or tile["raster"] is None:
+            return None
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            return core_fn(ds)
+
+    return _udf
+
+
+def sql_scalar_udf2(core_fn: Callable, return_type: DataType):
+    """Regular @f.udf taking (tile struct, a, b) -> scalar via core_fn(ds, a, b).
+
+    Struct-accepting counterpart to tile_scalar_udf2, for SQL registration.
+    """
+
+    @f.udf(return_type)
+    def _udf(tile, a, b):
+        if tile is None or tile["raster"] is None:
+            return None
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            return core_fn(ds, a, b)
+
+    return _udf

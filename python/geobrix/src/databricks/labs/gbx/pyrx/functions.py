@@ -24,6 +24,8 @@ from databricks.labs.gbx.pyrx._udf import (
     ColLike,
     _col,
     _raster_field,
+    sql_scalar_udf,
+    sql_scalar_udf2,
     tile_scalar_udf,
     tile_scalar_udf2,
 )
@@ -37,13 +39,28 @@ from databricks.labs.gbx.pyrx.core import (
 )
 
 
-def register(_spark: SparkSession = None) -> None:
-    """No-op compatibility shim. pyrx needs no SQL registration (Arrow UDFs are
-    self-contained), but accepting register(spark) keeps notebooks swap-compatible
-    with rasterx, which DOES require registration."""
+def register(spark: SparkSession = None) -> None:
+    """Explicitly register the pyrx functions as Spark SQL functions.
+
+    Installs the same ``gbx_rst_*`` SQL names the heavyweight rasterx package
+    uses, but powered by the pyspark/rasterio implementation (no JAR). Call
+    this once, consciously, when you want to use the functions from SQL —
+    exactly like heavyweight ``rasterx.functions.register``. The Python Column
+    API (``prx.rst_width(col)``) works WITHOUT this call.
+
+    You register the lightweight OR the heavyweight package in a given session;
+    they share the ``gbx_rst_*`` names, so the last registration wins.
+
+    Args:
+        spark: Spark session (uses the active session if not provided).
+    """
     from databricks.labs.gbx.pyrx import _env
 
     _env.assert_rasterio_available()
+    if spark is None:
+        spark = SparkSession.builder.getOrCreate()
+    for name, udf_obj in SQL_REGISTRY.items():
+        spark.udf.register(name, udf_obj)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------
@@ -445,3 +462,64 @@ def rst_worldtorastercoordy(
     tile: ColLike, world_x: ColLike, world_y: ColLike
 ) -> Column:
     return _u_w2r_y(_raster_field(_col(tile)), _col(world_x), _col(world_y))
+
+
+# ---------------------------------------------------------------------------
+# SQL registration registry
+# ---------------------------------------------------------------------------
+# Struct-accepting scalar UDFs for SQL registration.  The Python Column API
+# still goes through the pandas_udf path above (tile_scalar_udf/2); these are
+# separate objects that accept the full tile struct (so SQL can pass the struct
+# column directly without callers needing to extract the raster subfield).
+
+_sql_accessors = {
+    "gbx_rst_width": sql_scalar_udf(accessors.width, IntegerType()),
+    "gbx_rst_height": sql_scalar_udf(accessors.height, IntegerType()),
+    "gbx_rst_numbands": sql_scalar_udf(accessors.numbands, IntegerType()),
+    "gbx_rst_srid": sql_scalar_udf(accessors.srid, IntegerType()),
+    "gbx_rst_pixelwidth": sql_scalar_udf(accessors.pixelwidth, DoubleType()),
+    "gbx_rst_pixelheight": sql_scalar_udf(accessors.pixelheight, DoubleType()),
+    "gbx_rst_upperleftx": sql_scalar_udf(accessors.upperleftx, DoubleType()),
+    "gbx_rst_upperlefty": sql_scalar_udf(accessors.upperlefty, DoubleType()),
+    "gbx_rst_scalex": sql_scalar_udf(accessors.scalex, DoubleType()),
+    "gbx_rst_scaley": sql_scalar_udf(accessors.scaley, DoubleType()),
+    "gbx_rst_isempty": sql_scalar_udf(accessors.isempty, BooleanType()),
+    "gbx_rst_boundingbox": sql_scalar_udf(accessors.boundingbox, BinaryType()),
+    "gbx_rst_metadata": sql_scalar_udf(
+        accessors.metadata, MapType(StringType(), StringType())
+    ),
+    "gbx_rst_type": sql_scalar_udf(accessors.type, ArrayType(StringType())),
+    "gbx_rst_getnodata": sql_scalar_udf(accessors.getnodata, ArrayType(DoubleType())),
+    "gbx_rst_rastertoworldcoordx": sql_scalar_udf2(
+        coords.raster_to_world_x, DoubleType()
+    ),
+    "gbx_rst_rastertoworldcoordy": sql_scalar_udf2(
+        coords.raster_to_world_y, DoubleType()
+    ),
+    "gbx_rst_worldtorastercoordx": sql_scalar_udf2(
+        coords.world_to_raster_x, IntegerType()
+    ),
+    "gbx_rst_worldtorastercoordy": sql_scalar_udf2(
+        coords.world_to_raster_y, IntegerType()
+    ),
+}
+
+# Tile-returning / constructor / array UDFs already accept the tile struct
+# (or raw constructor inputs for fromcontent/rasterize); register the existing
+# objects directly — no wrapper needed.
+_sql_tile_ops = {
+    "gbx_rst_fromcontent": _fromcontent_udf,
+    "gbx_rst_transform": _transform_udf,
+    "gbx_rst_to_webmercator": _to_webmercator_udf,
+    "gbx_rst_resample": _resample_udf,
+    "gbx_rst_resample_to_size": _resample_to_size_udf,
+    "gbx_rst_resample_to_res": _resample_to_res_udf,
+    "gbx_rst_clip": _clip_udf,
+    "gbx_rst_updatetype": _update_type_udf,
+    "gbx_rst_initnodata": _init_nodata_udf,
+    "gbx_rst_fillnodata": _fillnodata_udf,
+    "gbx_rst_rasterize": _rasterize_udf,
+    "gbx_rst_polygonize": _polygonize_udf,
+}
+
+SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops}
