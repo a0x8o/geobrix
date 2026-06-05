@@ -15,7 +15,11 @@ _CRS_GEO = {
 }
 
 _NODATA = {"uint8": 255, "int16": -9999, "float32": -9999.0}
-_DTYPE_RANGE = {"uint8": (0, 254), "int16": (-1000, 1000), "float32": (0.0, 1.0)}
+# Values represent non-negative reflectance/elevation-like magnitudes; keeping
+# them >= 0 guarantees spectral-index validity across all dtypes (e.g. NDVI =
+# (nir-red)/(nir+red) stays in [-1, 1] because the denominator never crosses
+# zero). Terrain ops are unaffected -- they use gradients.
+_DTYPE_RANGE = {"uint8": (0, 254), "int16": (0, 1000), "float32": (0.0, 1.0)}
 
 
 def _base_field(tile_px: int, rng: np.random.Generator) -> np.ndarray:
@@ -39,7 +43,13 @@ def _to_dtype(f01: np.ndarray, dtype: str) -> np.ndarray:
 def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
                     nodata_frac: float, seed: int,
                     nodata_mode: str = "sparse") -> bytes:
-    """Generate one valid GeoTIFF tile as in-memory bytes (deterministic per seed)."""
+    """Generate one valid GeoTIFF tile as in-memory bytes (deterministic per seed).
+
+    With ``nodata_mode="sparse"`` (default), the requested ``nodata_frac`` is hit
+    exactly via an exact-count random pixel mask. With ``nodata_mode="border"``,
+    the nodata region is an approximate frame whose actual fraction can diverge
+    from ``nodata_frac`` (especially for small tiles or extreme fractions).
+    """
     rng = np.random.default_rng(seed)
     ox, oy, px = _CRS_GEO[srid]
     transform = from_origin(ox, oy, px, px)
@@ -59,7 +69,7 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
             mask = np.zeros((tile_px, tile_px), dtype=bool)
             w = max(1, int(round(nodata_frac * tile_px / 4)))
             mask[:w, :] = mask[-w:, :] = mask[:, :w] = mask[:, -w:] = True
-        else:  # "sparse" or "clustered" both seeded; sparse default
+        else:  # "sparse" (default): exact-count random pixel mask
             flat = rng.choice(tile_px * tile_px, size=min(n, tile_px * tile_px),
                               replace=False)
             mask = np.zeros(tile_px * tile_px, dtype=bool)

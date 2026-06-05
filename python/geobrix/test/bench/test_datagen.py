@@ -46,3 +46,15 @@ def test_band_correlation_yields_valid_ndvi_range():
     denom = nir + red
     ndvi = np.where(denom != 0, (nir - red) / denom, 0.0)
     assert ndvi.min() >= -1.0 and ndvi.max() <= 1.0
+
+
+def test_int16_band_correlation_yields_valid_ndvi_range():
+    # int16 tiles must also keep NDVI within [-1, 1] (non-negative reflectance).
+    b = dg.make_tile_bytes(tile_px=32, bands=2, dtype="int16", srid=4326,
+                           nodata_frac=0.0, seed=3)
+    with _serde.open_tile(b) as ds:
+        red = ds.read(1).astype("float64")
+        nir = ds.read(2).astype("float64")
+    denom = nir + red
+    ndvi = np.where(denom != 0, (nir - red) / denom, 0.0)
+    assert ndvi.min() >= -1.0 and ndvi.max() <= 1.0
