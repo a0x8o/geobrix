@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do case $1 in
     --recreate) RECREATE=1; shift ;;
     --log) LOG_PATH=$(resolve_log_path "$2"); shift 2 ;;
     --help|-h) show_help; exit 0 ;;
-    *) echo "Unknown option: $1"; show_help; exit 1 ;;
+    *) echo "Unknown option: $1" >&2; show_help; exit 1 ;;
 esac; done
 
 cd "$PROJECT_ROOT"
@@ -47,13 +47,13 @@ if [[ $RECREATE -eq 1 && -d "$VENV_DIR" ]]; then
 fi
 
 # uv venvs are no-system-site-packages by default.
-uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
-uv pip install --python "$VENV_DIR/bin/python" -e "./python/geobrix[pyrx,test]"
+uv venv "$VENV_DIR" --python "$PYTHON_VERSION" || { echo "❌ uv venv failed" >&2; exit 1; }
+uv pip install --python "$VENV_DIR/bin/python" -e "./python/geobrix[pyrx,test]" \
+    || { echo "❌ uv pip install failed" >&2; exit 1; }
 
 # Assert isolation: the venv must not see host site-packages.
 "$VENV_DIR/bin/python" - <<'PY'
-import site, sys
-assert not site.ENABLE_USER_SITE or True  # user-site is irrelevant to a uv venv
+import sys
 # Confirm rasterio resolves from the venv, not host.
 import rasterio, pathlib
 p = pathlib.Path(rasterio.__file__).resolve()
