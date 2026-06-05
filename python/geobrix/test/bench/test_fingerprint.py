@@ -33,3 +33,13 @@ def test_raster_fingerprint_is_deterministic():
     raster = dg.make_tile_bytes(tile_px=16, bands=1, dtype="float32", srid=4326,
                                 nodata_frac=0.0, seed=2)
     assert fp.fingerprint_output(raster) == fp.fingerprint_output(raster)
+
+
+def test_numpy_scalar_fingerprint_serializes():
+    # numpy scalars (e.g. from a core reduction) must serialize, not crash json.dumps.
+    s_int = fp.fingerprint_output(np.int32(5))
+    assert json.loads(s_int)["value"] == 5
+    s_float = fp.fingerprint_output(np.float32(2.5))
+    assert json.loads(s_float)["value"] == 2.5
+    s_list = fp.fingerprint_output([np.float64(1.0), np.int64(2)])
+    assert json.loads(s_list)["values"] == [1.0, 2]

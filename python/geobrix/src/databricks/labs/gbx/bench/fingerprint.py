@@ -13,6 +13,17 @@ import numpy as np
 from databricks.labs.gbx.pyrx import _serde
 
 
+def _py(x):
+    """Coerce numpy scalars to native Python types so json.dumps can serialize them."""
+    if isinstance(x, np.floating):
+        return float(x)
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, np.bool_):
+        return bool(x)
+    return x
+
+
 def _stat(arr_valid: np.ndarray) -> dict:
     if arr_valid.size == 0:
         return {"min": None, "max": None, "mean": None, "std": None}
@@ -44,8 +55,7 @@ def fingerprint_output(out: Any) -> str:
         return json.dumps({"kind": "raster", "bands": bands}, sort_keys=True)
     # Scalar list (e.g. per-band avg/min/max).
     if isinstance(out, (list, tuple)):
-        return json.dumps({"kind": "scalar_list", "values": [
-            (float(x) if isinstance(x, float) else x) for x in out]}, sort_keys=True)
+        return json.dumps({"kind": "scalar_list",
+                           "values": [_py(x) for x in out]}, sort_keys=True)
     # Plain scalar.
-    val = float(out) if isinstance(out, float) else out
-    return json.dumps({"kind": "scalar", "value": val}, sort_keys=True)
+    return json.dumps({"kind": "scalar", "value": _py(out)}, sort_keys=True)
