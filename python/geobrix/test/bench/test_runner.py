@@ -77,3 +77,20 @@ def test_run_spark_path_produces_ok_rows(tmp_path, spark):
     assert rows and all(r.status == "ok" for r in rows)
     assert all(r.mode == "spark-path" and r.fn == "rst_width" for r in rows)
     assert sorted({r.rows for r in rows}) == [2, 4]
+
+
+def test_runner_main_writes_shard(tmp_path):
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path, seed=2, tile_px=[32], bands=[1], dtypes=["float32"],
+        srids=[4326], nodata_fracs=[0.0], row_rows=4, row_tile_px=32,
+        row_bands=1, row_dtype="float32",
+    )
+    out = tmp_path / "lw.jsonl"
+    rn.main([
+        "--corpus", str(tmp_path), "--out", str(out), "--functions", "rst_width",
+        "--mode", "pure-core", "--row-counts", "2,4", "--warmup", "1",
+        "--measured", "2", "--run-id", "cli",
+    ])
+    from databricks.labs.gbx.bench import results as r
+    rows = r.read_jsonl(out)
+    assert rows and all(x.fn == "rst_width" for x in rows)

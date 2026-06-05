@@ -174,3 +174,48 @@ def run_spark_path(spark, corpus_root, corpus: m.Corpus, fnspecs: List[FnSpec],
                 ))
     df_all.unpersist()
     return out
+
+
+def main(argv=None):
+    import argparse
+    from databricks.labs.gbx.bench import manifest as _m, spec as _s, results as _r
+    ap = argparse.ArgumentParser(prog="bench.runner")
+    ap.add_argument("--corpus", required=True, help="corpus root dir (has corpus.json)")
+    ap.add_argument("--out", required=True, help="output JSONL shard")
+    ap.add_argument("--functions", default="")
+    ap.add_argument("--categories", default="")
+    ap.add_argument("--mode", default="both", choices=["pure-core", "spark-path", "both"])
+    ap.add_argument("--row-counts", default="10,100,1000,10000")
+    ap.add_argument("--warmup", type=int, default=2)
+    ap.add_argument("--measured", type=int, default=5)
+    ap.add_argument("--run-id", default="local")
+    ap.add_argument("--where", default="venv")
+    a = ap.parse_args(argv)
+
+    corpus = _m.Corpus.read(Path(a.corpus) / "corpus.json")
+    fnspecs = _s.select(
+        functions=[x for x in a.functions.split(",") if x] or None,
+        categories=[x for x in a.categories.split(",") if x] or None,
+    )
+    row_counts = [int(x) for x in a.row_counts.split(",") if x]
+    rows: List[ResultRow] = []
+    if a.mode in ("pure-core", "both"):
+        rows += run_pure_core(a.corpus, corpus, fnspecs, a.run_id, a.warmup, a.measured, a.where)
+    if a.mode in ("spark-path", "both"):
+        import os
+        import sys
+        from pyspark.sql import SparkSession
+        # Pin Spark workers to this interpreter (avoids PYTHON_VERSION_MISMATCH when
+        # local executors would otherwise pick up a different system python).
+        os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+        os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+        spark = (SparkSession.builder.master("local[2]").appName("bench-runner")
+                 .config("spark.sql.execution.arrow.pyspark.enabled", "true").getOrCreate())
+        rows += run_spark_path(spark, a.corpus, corpus, fnspecs, a.run_id,
+                               row_counts, a.warmup, a.measured, a.where)
+    _r.write_jsonl(rows, a.out)
+    print(f"wrote {len(rows)} rows -> {a.out}")
+
+
+if __name__ == "__main__":
+    main()
