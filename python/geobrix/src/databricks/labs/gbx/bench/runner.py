@@ -115,3 +115,62 @@ def run_pure_core(corpus_root, corpus: m.Corpus, fnspecs: List[FnSpec],
                     output_fingerprint="", **env,
                 ))
     return out
+
+
+def run_spark_path(spark, corpus_root, corpus: m.Corpus, fnspecs: List[FnSpec],
+                   run_id: str, row_counts: List[int], warmup: int, measured: int,
+                   where: str) -> List[ResultRow]:
+    """Time each fn as a Spark Column over N tile rows (serialization + UDF overhead)."""
+    from pyspark.sql import functions as F
+
+    root = Path(corpus_root)
+    env = capture_env(where)
+    pool = corpus.row_pool
+
+    # Build the tile DataFrame once at the max row count; subselect with limit(n).
+    max_rows = max(row_counts)
+    tiles = pool.tiles[:max_rows]
+    payload = []
+    for te in tiles:
+        d = _serde.build_tile((root / te.path).read_bytes(), "GTiff", te.cellid)
+        payload.append((d["cellid"], d["raster"], d["metadata"]))
+    base = spark.createDataFrame(payload, schema=_serde.TILE_SCHEMA)
+    # Wrap the 3 columns into the tile struct the prx.rst_* wrappers expect.
+    df_all = base.select(F.struct("cellid", "raster", "metadata").alias("tile")).cache()
+    df_all.count()  # materialize the cache so it isn't part of timing
+
+    out: List[ResultRow] = []
+    for fs in fnspecs:
+        if "spark-path" not in fs.modes:
+            continue
+        for n in sorted(row_counts):
+            df = df_all.limit(n)
+            try:
+                def job(_df=df, _fs=fs):
+                    c = _fs.col_fn(_df["tile"], _fs.args)
+                    _df.select(c.alias("out")).write.format("noop").mode("overwrite").save()
+                stats = time_iters(job, warmup, measured)
+                ms = stats["median_ms"]
+                out.append(ResultRow(
+                    run_id=run_id, api="lightweight", fn=fs.name, category=fs.category,
+                    mode="spark-path", tile_px=pool.tile_px, bands=pool.bands,
+                    dtype=pool.dtype, srid=0, rows=n, nodata_frac=0.0,
+                    warmup_iters=stats["warmup_iters"], measured_iters=stats["measured_iters"],
+                    median_ms=ms, min_ms=stats["min_ms"], p90_ms=stats["p90_ms"],
+                    throughput_mpix_s=(_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0)) if ms else 0.0,
+                    throughput_rows_s=(n / (ms / 1000.0)) if ms else 0.0,
+                    peak_rss_mb=peak_rss_mb(), status="ok", note="",
+                    output_fingerprint="", **env,
+                ))
+            except Exception as e:  # noqa: BLE001
+                out.append(ResultRow(
+                    run_id=run_id, api="lightweight", fn=fs.name, category=fs.category,
+                    mode="spark-path", tile_px=pool.tile_px, bands=pool.bands,
+                    dtype=pool.dtype, srid=0, rows=n, nodata_frac=0.0,
+                    warmup_iters=warmup, measured_iters=0, median_ms=0.0, min_ms=0.0,
+                    p90_ms=0.0, throughput_mpix_s=0.0, throughput_rows_s=0.0,
+                    peak_rss_mb=0.0, status="error", note=str(e)[:300],
+                    output_fingerprint="", **env,
+                ))
+    df_all.unpersist()
+    return out
