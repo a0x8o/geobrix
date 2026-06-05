@@ -1,10 +1,15 @@
 """Seeded, valid-at-scale raster tile generator for benchmarking."""
 from __future__ import annotations
 
+import itertools
+from pathlib import Path
+
 import numpy as np
 import rasterio
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
+
+from databricks.labs.gbx.bench import manifest as m
 
 # CRS -> (origin_x, origin_y, pixel_size in CRS units) for a consistent affine.
 _CRS_GEO = {
@@ -89,12 +94,6 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
         return bytes(mf.read())
 
 
-import itertools  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-from databricks.labs.gbx.bench import manifest as m  # noqa: E402
-
-
 def generate_corpus(out_dir, seed, tile_px, bands, dtypes, srids, nodata_fracs,
                     row_rows, row_tile_px, row_bands, row_dtype) -> m.Corpus:
     out_dir = Path(out_dir)
@@ -122,7 +121,7 @@ def generate_corpus(out_dir, seed, tile_px, bands, dtypes, srids, nodata_fracs,
         b = make_tile_bytes(row_tile_px, row_bands, row_dtype, srid, 0.0, tile_seed)
         rel = f"rows/r{j}.tif"
         (out_dir / rel).write_bytes(b)
-        row_tiles.append(m.TileEntry(rel, j, srid, row_dtype, row_bands, row_tile_px, 0.0))
+        row_tiles.append(m.TileEntry(rel, len(size_sweep) + j, srid, row_dtype, row_bands, row_tile_px, 0.0))
 
     corpus = m.Corpus(
         seed=seed, size_sweep=size_sweep,
