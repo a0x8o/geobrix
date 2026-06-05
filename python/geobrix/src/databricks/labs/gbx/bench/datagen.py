@@ -87,3 +87,123 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
         with mf.open(**profile) as ds:
             ds.write(data)
         return bytes(mf.read())
+
+
+import itertools  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from databricks.labs.gbx.bench import manifest as m  # noqa: E402
+
+
+def generate_corpus(out_dir, seed, tile_px, bands, dtypes, srids, nodata_fracs,
+                    row_rows, row_tile_px, row_bands, row_dtype) -> m.Corpus:
+    out_dir = Path(out_dir)
+    (out_dir / "size").mkdir(parents=True, exist_ok=True)
+    (out_dir / "rows").mkdir(parents=True, exist_ok=True)
+
+    size_sweep = []
+    cellid = 0
+    # one tile per (tile_px, bands, dtype) cycling srid + nodata_frac for variety
+    combos = list(itertools.product(tile_px, bands, dtypes))
+    for i, (tp, bd, dt) in enumerate(combos):
+        srid = srids[i % len(srids)]
+        ndf = nodata_fracs[i % len(nodata_fracs)]
+        tile_seed = seed + cellid
+        b = make_tile_bytes(tp, bd, dt, srid, ndf, tile_seed)
+        rel = f"size/t{cellid}_{tp}px_{bd}b_{dt}_{srid}.tif"
+        (out_dir / rel).write_bytes(b)
+        size_sweep.append(m.TileEntry(rel, cellid, srid, dt, bd, tp, ndf))
+        cellid += 1
+
+    row_tiles = []
+    for j in range(row_rows):
+        srid = srids[j % len(srids)]
+        tile_seed = seed + 100000 + j
+        b = make_tile_bytes(row_tile_px, row_bands, row_dtype, srid, 0.0, tile_seed)
+        rel = f"rows/r{j}.tif"
+        (out_dir / rel).write_bytes(b)
+        row_tiles.append(m.TileEntry(rel, j, srid, row_dtype, row_bands, row_tile_px, 0.0))
+
+    corpus = m.Corpus(
+        seed=seed, size_sweep=size_sweep,
+        row_pool=m.RowPool(row_tile_px, row_bands, row_dtype, row_tiles),
+    )
+    corpus.write(out_dir / "corpus.json")
+    return corpus
+
+
+def validity_gate(root, corpus: m.Corpus, nodata_warn_threshold: float = 0.9):
+    """Return a list of problem strings; empty means the corpus is valid."""
+    root = Path(root)
+    problems = []
+    all_tiles = list(corpus.size_sweep) + list(corpus.row_pool.tiles)
+    for te in all_tiles:
+        p = root / te.path
+        if not p.exists():
+            problems.append(f"missing: {te.path}")
+            continue
+        try:
+            with rasterio.open(p) as ds:
+                if ds.width != te.tile_px or ds.height != te.tile_px:
+                    problems.append(f"{te.path}: size {ds.width}x{ds.height} != {te.tile_px}")
+                if ds.count != te.bands:
+                    problems.append(f"{te.path}: bands {ds.count} != {te.bands}")
+                if ds.crs is None or ds.crs.to_epsg() != te.srid:
+                    problems.append(f"{te.path}: crs {ds.crs} != {te.srid}")
+                arr = ds.read(1)
+                if ds.nodata is not None:
+                    frac = float((arr == ds.nodata).mean())
+                    if frac > nodata_warn_threshold:
+                        problems.append(f"{te.path}: nodata frac {frac:.2f} > {nodata_warn_threshold}")
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{te.path}: open failed: {e}")
+    return problems
+
+
+def _parse_int_list(s: str):
+    return [int(x) for x in s.split(",") if x.strip()]
+
+
+def _parse_float_list(s: str):
+    return [float(x) for x in s.split(",") if x.strip()]
+
+
+def main(argv=None):
+    import argparse
+    import json
+    ap = argparse.ArgumentParser(prog="bench.datagen")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--tile-px", default="256,512,1024,2048,4096")
+    ap.add_argument("--bands", default="1,4,13")
+    ap.add_argument("--dtypes", default="uint8,int16,float32")
+    ap.add_argument("--srids", default="4326,3857,32618,27700")
+    ap.add_argument("--nodata-frac", default="0.02")
+    ap.add_argument("--row-rows", type=int, default=10000)
+    ap.add_argument("--row-tile-px", type=int, default=1024)
+    ap.add_argument("--row-bands", type=int, default=4)
+    ap.add_argument("--row-dtype", default="float32")
+    ap.add_argument("--nodata-warn-threshold", type=float, default=0.9)
+    a = ap.parse_args(argv)
+
+    corpus = generate_corpus(
+        out_dir=a.out, seed=a.seed,
+        tile_px=_parse_int_list(a.tile_px), bands=_parse_int_list(a.bands),
+        dtypes=a.dtypes.split(","), srids=_parse_int_list(a.srids),
+        nodata_fracs=_parse_float_list(a.nodata_frac),
+        row_rows=a.row_rows, row_tile_px=a.row_tile_px,
+        row_bands=a.row_bands, row_dtype=a.row_dtype,
+    )
+    problems = validity_gate(a.out, corpus, a.nodata_warn_threshold)
+    if problems:
+        print("VALIDITY GATE FAILED:")
+        for p in problems:
+            print("  -", p)
+        raise SystemExit(1)
+    print(json.dumps({"tiles_size_sweep": len(corpus.size_sweep),
+                      "tiles_row_pool": len(corpus.row_pool.tiles),
+                      "out": a.out}, indent=2))
+
+
+if __name__ == "__main__":
+    main()
