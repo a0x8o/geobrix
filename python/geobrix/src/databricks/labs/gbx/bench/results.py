@@ -38,6 +38,7 @@ class ResultRow:
     env_gdal_version: str
     env_runtime_version: str
     env_where: str      # "docker" | "venv" | "cluster"
+    output_fingerprint: str = ""  # JSON summary of the output (pure-core only); "" when not captured
 
 
 def write_jsonl(rows: List[ResultRow], path) -> None:
