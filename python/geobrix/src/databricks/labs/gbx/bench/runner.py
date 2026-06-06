@@ -297,13 +297,6 @@ def main(argv=None):
     ap.add_argument("--measured", type=int, default=5)
     ap.add_argument("--run-id", default="local")
     ap.add_argument("--where", default="venv")
-    ap.add_argument(
-        "--no-pretty",
-        dest="pretty",
-        action="store_false",
-        help="skip writing the pretty-printed .json sibling",
-    )
-    ap.set_defaults(pretty=True)
     a = ap.parse_args(argv)
 
     corpus = _m.Corpus.read(Path(a.corpus) / "corpus.json")
@@ -346,12 +339,6 @@ def main(argv=None):
         )
     _r.write_jsonl(rows, a.out)
     print(f"wrote {len(rows)} rows -> {a.out}")
-    if a.pretty:
-        pretty_path = (
-            a.out[:-6] + ".json" if a.out.endswith(".jsonl") else a.out + ".json"
-        )
-        _r.write_pretty_json(rows, pretty_path)
-        print(f"pretty -> {pretty_path}")
     summary_path = (
         a.out[:-6] + ".summary.md"
         if a.out.endswith(".jsonl")

@@ -1,5 +1,3 @@
-import json
-
 from databricks.labs.gbx.bench import results as r
 
 
@@ -53,29 +51,6 @@ def test_summary_lists_slowest(tmp_path):
     assert "rst_slow" in md
     # slowest should appear before fast in the slowest-functions section
     assert md.index("rst_slow") < md.index("rst_fast")
-
-
-def test_write_pretty_json_expands_fingerprint(tmp_path):
-    rows = [
-        _row(
-            fn="rst_slope",
-            output_fingerprint='{"kind": "raster", "bands": [{"min": 0.0}]}',
-        ),
-        _row(fn="rst_width", output_fingerprint='{"kind": "scalar", "value": 64}'),
-        _row(fn="rst_merge_agg", output_fingerprint=""),  # empty stays empty
-    ]
-    p = tmp_path / "pretty.json"
-    r.write_pretty_json(rows, p)
-    text = p.read_text()
-    # Indented (pretty) — contains newlines + 2-space indentation
-    assert "\n  " in text
-    data = json.loads(text)
-    assert isinstance(data, list) and len(data) == 3
-    # output_fingerprint expanded from a string into a nested object
-    assert data[0]["output_fingerprint"] == {"kind": "raster", "bands": [{"min": 0.0}]}
-    assert data[1]["output_fingerprint"] == {"kind": "scalar", "value": 64}
-    # empty fingerprint left as-is (empty string)
-    assert data[2]["output_fingerprint"] == ""
 
 
 def test_summarize_has_insights_status_and_flags(tmp_path):

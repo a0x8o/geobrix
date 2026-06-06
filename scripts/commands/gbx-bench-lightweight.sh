@@ -75,8 +75,6 @@ run_in_pyrx_venv "python -m databricks.labs.gbx.bench.runner \
 EXIT_CODE=$?
 if [[ $EXIT_CODE -eq 0 ]]; then
     echo "✅ results: $OUT"
-    PRETTY="${OUT%.jsonl}.json"
-    [[ -f "$PRETTY" ]] && echo "   pretty:  $PRETTY"
     SUMMARY="${OUT%.jsonl}.summary.md"
     [[ -f "$SUMMARY" ]] && echo "   summary: $SUMMARY"
 fi

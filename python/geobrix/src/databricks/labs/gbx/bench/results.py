@@ -51,25 +51,6 @@ def write_jsonl(rows: List[ResultRow], path) -> None:
             fh.write(json.dumps(asdict(row)) + "\n")
 
 
-def write_pretty_json(rows: List[ResultRow], path) -> None:
-    """Write an indented JSON array (human-readable) alongside the canonical JSONL.
-
-    The output_fingerprint field is stored as a JSON string; expand it into a
-    nested object so the pretty view is readable rather than an escaped blob.
-    """
-    expanded = []
-    for row in rows:
-        d = asdict(row)
-        fp = d.get("output_fingerprint")
-        if fp:
-            try:
-                d["output_fingerprint"] = json.loads(fp)
-            except (ValueError, TypeError):
-                pass  # leave as the original string if it isn't valid JSON
-        expanded.append(d)
-    Path(path).write_text(json.dumps(expanded, indent=2))
-
-
 def read_jsonl(path) -> List[ResultRow]:
     out = []
     with Path(path).open() as fh:
