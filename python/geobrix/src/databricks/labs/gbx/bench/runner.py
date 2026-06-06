@@ -227,6 +227,24 @@ def run_spark_path(
     df_all = base.select(F.struct("cellid", "raster", "metadata").alias("tile")).cache()
     df_all.count()  # materialize the cache so it isn't part of timing
 
+    # Spark warm-up: one throwaway job so JVM/Spark spin-up isn't charged to the first
+    # timed cell. Band-aware (mirrors the Scala HeavyRunner warm-up) + guarded so a
+    # warm-up failure can never abort timing.
+    _spark_fns = [f for f in fnspecs if "spark-path" in f.modes]
+    _warm = next(
+        (f for f in _spark_fns if getattr(f, "min_bands", 1) <= pool.bands), None
+    )
+    if _warm is None and _spark_fns:
+        _warm = _spark_fns[0]
+    if _warm is not None:
+        try:
+            _wc = _warm.col_fn(df_all["tile"], _warm.args)
+            df_all.limit(1).select(_wc.alias("warmup")).write.format("noop").mode(
+                "overwrite"
+            ).save()
+        except Exception:  # noqa: BLE001 — warm-up failures must never abort timing
+            pass
+
     out: List[ResultRow] = []
     for fs in fnspecs:
         if "spark-path" not in fs.modes:
