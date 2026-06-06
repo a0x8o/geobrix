@@ -64,3 +64,18 @@ def test_scalar_list_tolerance():
         )[0]
         == "divergent"
     )
+
+
+def test_near_zero_stats_within_abs_tol_not_divergent():
+    # min ~0 on both sides, tiny absolute diff -> within_tol via abs_tol, NOT divergent
+    hw = '{"kind":"raster","bands":[{"shape":[4,4],"dtype":"Float32","nodata_count":0,"min":1e-9,"max":1.0,"mean":0.5,"std":0.25}]}'
+    lw = '{"kind":"raster","bands":[{"shape":[4,4],"dtype":"float32","nodata_count":0,"min":2e-9,"max":1.0,"mean":0.5,"std":0.25}]}'
+    cls, _, _, _ = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol"
+
+
+def test_abs_tol_does_not_mask_real_divergence():
+    # large diff still divergent
+    hw = '{"kind":"scalar","value":1.0}'
+    lw = '{"kind":"scalar","value":5.0}'
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"

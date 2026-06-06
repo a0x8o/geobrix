@@ -34,6 +34,14 @@ def _rel_delta(a, b) -> float:
     return 0.0 if denom == 0 else abs(a - b) / denom
 
 
+def _close(a, b, rel_tol: float, abs_tol: float) -> bool:
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= max(abs_tol, rel_tol * max(abs(a), abs(b)))
+
+
 def compare_fingerprints(
     hw_fp: str, lw_fp: str, rel_tol: float = REL_TOL, abs_tol: float = ABS_TOL
 ) -> Tuple[str, float, int, str]:
@@ -62,11 +70,15 @@ def compare_fingerprints(
     deltas = []
     ndc_delta = 0
     exact = True
+    all_close = True
 
     if kind == "scalar":
         a, b = _num(hw.get("value")), _num(lw.get("value"))
-        deltas.append(_rel_delta(a, b))
         exact = exact and (a == b)
+        all_close = all_close and _close(a, b, rel_tol, abs_tol)
+        d = _rel_delta(a, b)
+        if d != math.inf:
+            deltas.append(d)
     elif kind == "scalar_list":
         av, bv = hw.get("values") or [], lw.get("values") or []
         if len(av) != len(bv):
@@ -78,8 +90,11 @@ def compare_fingerprints(
             )
         for a, b in zip(av, bv):
             a, b = _num(a), _num(b)
-            deltas.append(_rel_delta(a, b))
             exact = exact and (a == b)
+            all_close = all_close and _close(a, b, rel_tol, abs_tol)
+            d = _rel_delta(a, b)
+            if d != math.inf:
+                deltas.append(d)
     elif kind == "raster":
         hb, lb = hw.get("bands") or [], lw.get("bands") or []
         if len(hb) != len(lb):
@@ -90,19 +105,22 @@ def compare_fingerprints(
             )
             for k in _STATS:
                 ha, la = _num(h.get(k)), _num(l.get(k))
-                deltas.append(_rel_delta(ha, la))
                 exact = exact and (ha == la)
+                all_close = all_close and _close(ha, la, rel_tol, abs_tol)
+                d = _rel_delta(ha, la)
+                if d != math.inf:
+                    deltas.append(d)
     else:
         return ("divergent", math.inf, 0, f"unknown kind {kind}")
 
     max_delta = max(deltas) if deltas else 0.0
     if exact:
         cls = "exact"
-    elif max_delta == math.inf:
-        cls = "divergent"
+    elif all_close:
+        cls = "within_tol"
     else:
-        cls = "within_tol" if max_delta <= rel_tol else "divergent"
+        cls = "divergent"
     note = ""
     if ndc_delta != 0 and cls in ("exact", "within_tol"):
         note = f"nodata_count differs by {ndc_delta} (informational; neighborhood-op border)"
-    return (cls, (0.0 if max_delta == math.inf else max_delta), ndc_delta, note)
+    return (cls, max_delta, ndc_delta, note)
