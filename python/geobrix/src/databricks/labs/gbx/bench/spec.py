@@ -28,6 +28,7 @@ class FnSpec:
     category: str
     modes: tuple
     args: dict = field(default_factory=dict)
+    min_bands: int = 1
     core_fn: Callable = None  # (ds, args) -> Any
     col_fn: Callable = None  # (tile_col, args) -> Column
 
@@ -68,6 +69,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "band-math",
         _BOTH,
         {"red_band": 1, "nir_band": 2},
+        min_bands=2,
         core_fn=lambda ds, a: indices.ndvi(ds, a["red_band"], a["nir_band"]),
         col_fn=lambda t, a: prx.rst_ndvi(t, a["red_band"], a["nir_band"]),
     ),
@@ -194,6 +196,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "band-math",
         _BOTH,
         {"green_idx": 1, "nir_idx": 2},
+        min_bands=2,
         core_fn=lambda ds, a: indices.ndwi(ds, a["green_idx"], a["nir_idx"]),
         col_fn=lambda t, a: prx.rst_ndwi(t, a["green_idx"], a["nir_idx"]),
     ),
@@ -203,6 +206,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "band-math",
         _BOTH,
         {"nir_idx": 1, "swir_idx": 2},
+        min_bands=2,
         core_fn=lambda ds, a: indices.nbr(ds, a["nir_idx"], a["swir_idx"]),
         col_fn=lambda t, a: prx.rst_nbr(t, a["nir_idx"], a["swir_idx"]),
     ),

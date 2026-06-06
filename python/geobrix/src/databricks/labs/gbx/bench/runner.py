@@ -93,6 +93,35 @@ def run_pure_core(
         if "pure-core" not in fs.modes:
             continue
         for te in corpus.size_sweep:
+            if te.bands < getattr(fs, "min_bands", 1):
+                out.append(
+                    ResultRow(
+                        run_id=run_id,
+                        api="lightweight",
+                        fn=fs.name,
+                        category=fs.category,
+                        mode="pure-core",
+                        tile_px=te.tile_px,
+                        bands=te.bands,
+                        dtype=te.dtype,
+                        srid=te.srid,
+                        rows=1,
+                        nodata_frac=te.nodata_frac,
+                        warmup_iters=warmup,
+                        measured_iters=0,
+                        median_ms=0.0,
+                        min_ms=0.0,
+                        p90_ms=0.0,
+                        throughput_mpix_s=0.0,
+                        throughput_rows_s=0.0,
+                        peak_rss_mb=0.0,
+                        status="na_by_design",
+                        note=f"requires >= {getattr(fs, 'min_bands', 1)} bands",
+                        output_fingerprint="",
+                        **env,
+                    )
+                )
+                continue
             raster = (root / te.path).read_bytes()
             try:
                 # Untimed: capture the actual output once for consistency fingerprinting.

@@ -159,3 +159,31 @@ def test_runner_main_writes_shard(tmp_path):
 
     rows = r.read_jsonl(out)
     assert rows and all(x.fn == "rst_width" for x in rows)
+
+
+def test_pure_core_emits_na_by_design_for_low_band_count(tmp_path):
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=3,
+        tile_px=[32],
+        bands=[1],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=1,
+        row_tile_px=32,
+        row_bands=1,
+        row_dtype="float32",
+    )
+    fns = s.select(functions=["rst_ndvi"])  # band-math needs 2 bands
+    rows = rn.run_pure_core(
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows and all(r.status == "na_by_design" for r in rows)
+    assert all("band" in r.note.lower() for r in rows)
