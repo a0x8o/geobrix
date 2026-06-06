@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Tuple
+from dataclasses import dataclass
+from typing import List, Tuple
+
+from databricks.labs.gbx.bench.results import ResultRow
 
 REL_TOL = 1e-3
 ABS_TOL = 1e-6
@@ -124,3 +127,73 @@ def compare_fingerprints(
     if ndc_delta != 0 and cls in ("exact", "within_tol"):
         note = f"nodata_count differs by {ndc_delta} (informational; neighborhood-op border)"
     return (cls, max_delta, ndc_delta, note)
+
+
+@dataclass(frozen=True)
+class CellCompare:
+    fn: str
+    mode: str
+    tile_px: int
+    bands: int
+    dtype: str
+    srid: int
+    nodata_frac: float
+    rows: int
+    hw_median_ms: float
+    lw_median_ms: float
+    speedup: float  # hw/lw; >1 => lightweight faster
+    consistency: str  # exact | within_tol | divergent | na
+    max_rel_delta: float
+    nodata_count_delta: int
+    note: str
+
+
+def _key(r: ResultRow):
+    return (r.fn, r.mode, r.tile_px, r.bands, r.dtype, r.srid, r.nodata_frac, r.rows)
+
+
+def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
+    """Return (cells, unmatched). cells: matched CellCompare list. unmatched: (fn, side, key)."""
+    hw_by = {_key(r): r for r in hw_rows}
+    lw_by = {_key(r): r for r in lw_rows}
+    cells: List[CellCompare] = []
+    for k in sorted(set(hw_by) & set(lw_by)):
+        h, lo = hw_by[k], lw_by[k]
+        speedup = (h.median_ms / lo.median_ms) if lo.median_ms > 0 else 0.0
+        if h.status == "ok" and lo.status == "ok":
+            cls, delta, ndc, note = compare_fingerprints(
+                h.output_fingerprint, lo.output_fingerprint
+            )
+        else:
+            cls, delta, ndc, note = (
+                "na",
+                0.0,
+                0,
+                f"status hw={h.status} lw={lo.status}",
+            )
+        cells.append(
+            CellCompare(
+                fn=h.fn,
+                mode=h.mode,
+                tile_px=h.tile_px,
+                bands=h.bands,
+                dtype=h.dtype,
+                srid=h.srid,
+                nodata_frac=h.nodata_frac,
+                rows=h.rows,
+                hw_median_ms=h.median_ms,
+                lw_median_ms=lo.median_ms,
+                speedup=speedup,
+                consistency=cls,
+                max_rel_delta=delta,
+                nodata_count_delta=ndc,
+                note=note,
+            )
+        )
+    unmatched = [
+        (hw_by[k].fn, "heavyweight", k) for k in sorted(set(hw_by) - set(lw_by))
+    ]
+    unmatched += [
+        (lw_by[k].fn, "lightweight", k) for k in sorted(set(lw_by) - set(hw_by))
+    ]
+    return cells, unmatched

@@ -1,4 +1,84 @@
 from databricks.labs.gbx.bench import compare as c
+from databricks.labs.gbx.bench import results as R
+
+
+def _rr(api, fn, mode, median, fp="", **kw):
+    base = dict(
+        run_id="r",
+        api=api,
+        fn=fn,
+        category="terrain",
+        mode=mode,
+        tile_px=256,
+        bands=2,
+        dtype="float32",
+        srid=4326,
+        rows=1,
+        nodata_frac=0.0,
+        warmup_iters=1,
+        measured_iters=2,
+        median_ms=median,
+        min_ms=median,
+        p90_ms=median,
+        throughput_mpix_s=1.0,
+        throughput_rows_s=1.0,
+        peak_rss_mb=0.0,
+        status="ok",
+        note="",
+        env_arch="x",
+        env_cpu_model="x",
+        env_cpu_count=1,
+        env_os="x",
+        env_gbx_version="0.4.0",
+        env_gdal_version="3.12.1",
+        env_runtime_version="x",
+        env_where="x",
+        output_fingerprint=fp,
+    )
+    base.update(kw)
+    return R.ResultRow(**base)
+
+
+def test_join_and_speedup_and_consistency():
+    hw = [
+        _rr(
+            "heavyweight", "rst_slope", "pure-core", 20.0, '{"kind":"scalar","value":5}'
+        ),
+        _rr(
+            "heavyweight",
+            "rst_only_hw",
+            "pure-core",
+            5.0,
+            '{"kind":"scalar","value":1}',
+        ),
+    ]
+    lw = [
+        _rr(
+            "lightweight", "rst_slope", "pure-core", 4.0, '{"kind":"scalar","value":5}'
+        ),
+        _rr(
+            "lightweight",
+            "rst_only_lw",
+            "pure-core",
+            3.0,
+            '{"kind":"scalar","value":1}',
+        ),
+    ]
+    cells, unmatched = c.compare_cells(hw, lw)
+    assert len(cells) == 1
+    cell = cells[0]
+    assert cell.fn == "rst_slope"
+    assert abs(cell.speedup - 5.0) < 1e-9
+    assert cell.consistency == "exact"
+    assert {u[0] for u in unmatched} == {"rst_only_hw", "rst_only_lw"}
+
+
+def test_spark_path_consistency_is_na():
+    hw = [_rr("heavyweight", "rst_width", "spark-path", 100.0, "", srid=0)]
+    lw = [_rr("lightweight", "rst_width", "spark-path", 50.0, "", srid=0)]
+    cells, _ = c.compare_cells(hw, lw)
+    assert cells[0].consistency == "na"
+    assert abs(cells[0].speedup - 2.0) < 1e-9
 
 
 def test_scalar_exact_and_tol_and_divergent():
