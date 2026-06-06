@@ -1,4 +1,5 @@
 import json
+
 from databricks.labs.gbx.bench import spec as s
 
 
@@ -35,10 +36,25 @@ def test_dump_functions_json(tmp_path):
 def test_registry_covers_core_accessor_and_terrain_families():
     names = set(s.REGISTRY)
     expected_subset = {
-        "rst_width", "rst_height", "rst_numbands", "rst_avg", "rst_min", "rst_max",
-        "rst_median", "rst_pixelcount", "rst_slope", "rst_aspect", "rst_hillshade",
-        "rst_tri", "rst_tpi", "rst_roughness", "rst_ndvi", "rst_ndwi", "rst_nbr",
-        "rst_transform", "rst_to_webmercator",
+        "rst_width",
+        "rst_height",
+        "rst_numbands",
+        "rst_avg",
+        "rst_min",
+        "rst_max",
+        "rst_median",
+        "rst_pixelcount",
+        "rst_slope",
+        "rst_aspect",
+        "rst_hillshade",
+        "rst_tri",
+        "rst_tpi",
+        "rst_roughness",
+        "rst_ndvi",
+        "rst_ndwi",
+        "rst_nbr",
+        "rst_transform",
+        "rst_to_webmercator",
     }
     missing = expected_subset - names
     assert not missing, f"registry missing: {sorted(missing)}"

@@ -1,4 +1,5 @@
 """Corpus manifest model: tiles + scale metadata, JSON (de)serialized."""
+
 from __future__ import annotations
 
 import json
@@ -9,12 +10,12 @@ from typing import List
 
 @dataclass(frozen=True)
 class TileEntry:
-    path: str          # path relative to the corpus root
+    path: str  # path relative to the corpus root
     cellid: int
     srid: int
-    dtype: str         # "uint8" | "int16" | "float32"
+    dtype: str  # "uint8" | "int16" | "float32"
     bands: int
-    tile_px: int       # square tile edge in pixels
+    tile_px: int  # square tile edge in pixels
     nodata_frac: float
 
 
@@ -29,8 +30,10 @@ class RowPool:
 @dataclass(frozen=True)
 class Corpus:
     seed: int
-    size_sweep: List[TileEntry]   # one tile per (tile_px, bands, dtype, srid, nodata_frac) point
-    row_pool: RowPool             # tiles for the spark-path row-count sweep
+    size_sweep: List[
+        TileEntry
+    ]  # one tile per (tile_px, bands, dtype, srid, nodata_frac) point
+    row_pool: RowPool  # tiles for the spark-path row-count sweep
 
     def write(self, path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2))

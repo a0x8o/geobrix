@@ -1,4 +1,5 @@
 """Seeded, valid-at-scale raster tile generator for benchmarking."""
+
 from __future__ import annotations
 
 import itertools
@@ -13,10 +14,10 @@ from databricks.labs.gbx.bench import manifest as m
 
 # CRS -> (origin_x, origin_y, pixel_size in CRS units) for a consistent affine.
 _CRS_GEO = {
-    4326:  (-73.99, 40.75, 0.0001),     # WGS84 degrees (NYC-ish)
-    3857:  (-8237000.0, 4970000.0, 10.0),  # WebMercator metres
-    32618: (583000.0, 4507000.0, 10.0),    # UTM 18N metres
-    27700: (530000.0, 180000.0, 10.0),     # BNG metres (London)
+    4326: (-73.99, 40.75, 0.0001),  # WGS84 degrees (NYC-ish)
+    3857: (-8237000.0, 4970000.0, 10.0),  # WebMercator metres
+    32618: (583000.0, 4507000.0, 10.0),  # UTM 18N metres
+    27700: (530000.0, 180000.0, 10.0),  # BNG metres (London)
 }
 
 _NODATA = {"uint8": 255, "int16": -9999, "float32": -9999.0}
@@ -45,9 +46,15 @@ def _to_dtype(f01: np.ndarray, dtype: str) -> np.ndarray:
     return arr.astype(dtype)
 
 
-def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
-                    nodata_frac: float, seed: int,
-                    nodata_mode: str = "sparse") -> bytes:
+def make_tile_bytes(
+    tile_px: int,
+    bands: int,
+    dtype: str,
+    srid: int,
+    nodata_frac: float,
+    seed: int,
+    nodata_mode: str = "sparse",
+) -> bytes:
     """Generate one valid GeoTIFF tile as in-memory bytes (deterministic per seed).
 
     With ``nodata_mode="sparse"`` (default), the requested ``nodata_frac`` is hit
@@ -75,8 +82,9 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
             w = max(1, int(round(nodata_frac * tile_px / 4)))
             mask[:w, :] = mask[-w:, :] = mask[:, :w] = mask[:, -w:] = True
         else:  # "sparse" (default): exact-count random pixel mask
-            flat = rng.choice(tile_px * tile_px, size=min(n, tile_px * tile_px),
-                              replace=False)
+            flat = rng.choice(
+                tile_px * tile_px, size=min(n, tile_px * tile_px), replace=False
+            )
             mask = np.zeros(tile_px * tile_px, dtype=bool)
             mask[flat] = True
             mask = mask.reshape(tile_px, tile_px)
@@ -84,9 +92,14 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
             data[bi][mask] = nodata
 
     profile = {
-        "driver": "GTiff", "width": tile_px, "height": tile_px, "count": bands,
-        "dtype": dtype, "crs": rasterio.crs.CRS.from_epsg(srid),
-        "transform": transform, "nodata": nodata,
+        "driver": "GTiff",
+        "width": tile_px,
+        "height": tile_px,
+        "count": bands,
+        "dtype": dtype,
+        "crs": rasterio.crs.CRS.from_epsg(srid),
+        "transform": transform,
+        "nodata": nodata,
     }
     with MemoryFile() as mf:
         with mf.open(**profile) as ds:
@@ -94,8 +107,19 @@ def make_tile_bytes(tile_px: int, bands: int, dtype: str, srid: int,
         return bytes(mf.read())
 
 
-def generate_corpus(out_dir, seed, tile_px, bands, dtypes, srids, nodata_fracs,
-                    row_rows, row_tile_px, row_bands, row_dtype) -> m.Corpus:
+def generate_corpus(
+    out_dir,
+    seed,
+    tile_px,
+    bands,
+    dtypes,
+    srids,
+    nodata_fracs,
+    row_rows,
+    row_tile_px,
+    row_bands,
+    row_dtype,
+) -> m.Corpus:
     out_dir = Path(out_dir)
     (out_dir / "size").mkdir(parents=True, exist_ok=True)
     (out_dir / "rows").mkdir(parents=True, exist_ok=True)
@@ -121,10 +145,15 @@ def generate_corpus(out_dir, seed, tile_px, bands, dtypes, srids, nodata_fracs,
         b = make_tile_bytes(row_tile_px, row_bands, row_dtype, srid, 0.0, tile_seed)
         rel = f"rows/r{j}.tif"
         (out_dir / rel).write_bytes(b)
-        row_tiles.append(m.TileEntry(rel, len(size_sweep) + j, srid, row_dtype, row_bands, row_tile_px, 0.0))
+        row_tiles.append(
+            m.TileEntry(
+                rel, len(size_sweep) + j, srid, row_dtype, row_bands, row_tile_px, 0.0
+            )
+        )
 
     corpus = m.Corpus(
-        seed=seed, size_sweep=size_sweep,
+        seed=seed,
+        size_sweep=size_sweep,
         row_pool=m.RowPool(row_tile_px, row_bands, row_dtype, row_tiles),
     )
     corpus.write(out_dir / "corpus.json")
@@ -144,7 +173,9 @@ def validity_gate(root, corpus: m.Corpus, nodata_warn_threshold: float = 0.9):
         try:
             with rasterio.open(p) as ds:
                 if ds.width != te.tile_px or ds.height != te.tile_px:
-                    problems.append(f"{te.path}: size {ds.width}x{ds.height} != {te.tile_px}")
+                    problems.append(
+                        f"{te.path}: size {ds.width}x{ds.height} != {te.tile_px}"
+                    )
                 if ds.count != te.bands:
                     problems.append(f"{te.path}: bands {ds.count} != {te.bands}")
                 if ds.crs is None or ds.crs.to_epsg() != te.srid:
@@ -153,7 +184,9 @@ def validity_gate(root, corpus: m.Corpus, nodata_warn_threshold: float = 0.9):
                 if ds.nodata is not None:
                     frac = float((arr == ds.nodata).mean())
                     if frac > nodata_warn_threshold:
-                        problems.append(f"{te.path}: nodata frac {frac:.2f} > {nodata_warn_threshold}")
+                        problems.append(
+                            f"{te.path}: nodata frac {frac:.2f} > {nodata_warn_threshold}"
+                        )
         except Exception as e:  # noqa: BLE001
             problems.append(f"{te.path}: open failed: {e}")
     return problems
@@ -170,6 +203,7 @@ def _parse_float_list(s: str):
 def main(argv=None):
     import argparse
     import json
+
     ap = argparse.ArgumentParser(prog="bench.datagen")
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=1234)
@@ -186,12 +220,17 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     corpus = generate_corpus(
-        out_dir=a.out, seed=a.seed,
-        tile_px=_parse_int_list(a.tile_px), bands=_parse_int_list(a.bands),
-        dtypes=a.dtypes.split(","), srids=_parse_int_list(a.srids),
+        out_dir=a.out,
+        seed=a.seed,
+        tile_px=_parse_int_list(a.tile_px),
+        bands=_parse_int_list(a.bands),
+        dtypes=a.dtypes.split(","),
+        srids=_parse_int_list(a.srids),
         nodata_fracs=_parse_float_list(a.nodata_frac),
-        row_rows=a.row_rows, row_tile_px=a.row_tile_px,
-        row_bands=a.row_bands, row_dtype=a.row_dtype,
+        row_rows=a.row_rows,
+        row_tile_px=a.row_tile_px,
+        row_bands=a.row_bands,
+        row_dtype=a.row_dtype,
     )
     problems = validity_gate(a.out, corpus, a.nodata_warn_threshold)
     if problems:
@@ -199,9 +238,16 @@ def main(argv=None):
         for p in problems:
             print("  -", p)
         raise SystemExit(1)
-    print(json.dumps({"tiles_size_sweep": len(corpus.size_sweep),
-                      "tiles_row_pool": len(corpus.row_pool.tiles),
-                      "out": a.out}, indent=2))
+    print(
+        json.dumps(
+            {
+                "tiles_size_sweep": len(corpus.size_sweep),
+                "tiles_row_pool": len(corpus.row_pool.tiles),
+                "out": a.out,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

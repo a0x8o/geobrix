@@ -1,7 +1,9 @@
 import json
+
 import numpy as np
-from databricks.labs.gbx.bench import fingerprint as fp
+
 from databricks.labs.gbx.bench import datagen as dg
+from databricks.labs.gbx.bench import fingerprint as fp
 
 
 def test_scalar_fingerprint():
@@ -17,8 +19,9 @@ def test_scalar_list_fingerprint():
 
 
 def test_raster_fingerprint_per_band_stats():
-    raster = dg.make_tile_bytes(tile_px=16, bands=2, dtype="float32", srid=4326,
-                                nodata_frac=0.1, seed=1)
+    raster = dg.make_tile_bytes(
+        tile_px=16, bands=2, dtype="float32", srid=4326, nodata_frac=0.1, seed=1
+    )
     s = fp.fingerprint_output(raster)
     d = json.loads(s)
     assert d["kind"] == "raster"
@@ -30,8 +33,9 @@ def test_raster_fingerprint_per_band_stats():
 
 
 def test_raster_fingerprint_is_deterministic():
-    raster = dg.make_tile_bytes(tile_px=16, bands=1, dtype="float32", srid=4326,
-                                nodata_frac=0.0, seed=2)
+    raster = dg.make_tile_bytes(
+        tile_px=16, bands=1, dtype="float32", srid=4326, nodata_frac=0.0, seed=2
+    )
     assert fp.fingerprint_output(raster) == fp.fingerprint_output(raster)
 
 
