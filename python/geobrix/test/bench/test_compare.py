@@ -272,3 +272,22 @@ def test_compare_main_writes_outputs(tmp_path):
     assert (outdir / "comparison.csv").exists()
     assert (outdir / "summary.md").exists()
     assert "Insights" in (outdir / "summary.md").read_text()
+
+
+def test_divergent_with_nodata_delta_gets_border_note():
+    # value stats differ past tol AND nodata_count differs -> note explains likely border cause
+    hw = '{"kind":"raster","bands":[{"shape":[256,256],"dtype":"Float32","nodata_count":1020,"min":0.0,"max":90.0,"mean":45.0,"std":10.0}]}'
+    lw = '{"kind":"raster","bands":[{"shape":[256,256],"dtype":"float32","nodata_count":0,"min":0.0,"max":90.5,"mean":47.0,"std":10.4}]}'
+    cls, _, ndc, note = c.compare_fingerprints(hw, lw)
+    assert cls == "divergent"
+    assert ndc == 1020
+    assert "nodata" in note.lower() and "border" in note.lower()
+
+
+def test_divergent_without_nodata_delta_has_no_border_note():
+    hw = '{"kind":"scalar","value":1.0}'
+    lw = '{"kind":"scalar","value":5.0}'
+    cls, _, ndc, note = c.compare_fingerprints(hw, lw)
+    assert cls == "divergent"
+    assert ndc == 0
+    assert note == ""  # pure value divergence, no nodata delta -> no border note

@@ -126,8 +126,14 @@ def compare_fingerprints(
     else:
         cls = "divergent"
     note = ""
-    if ndc_delta != 0 and cls in ("exact", "within_tol"):
-        note = f"nodata_count differs by {ndc_delta} (informational; neighborhood-op border)"
+    if ndc_delta != 0:
+        if cls == "divergent":
+            note = (
+                f"divergence likely nodata/border-handling "
+                f"(nodata_count differs by {ndc_delta})"
+            )
+        else:
+            note = f"nodata_count differs by {ndc_delta} (informational; neighborhood-op border)"
     return (cls, max_delta, ndc_delta, note)
 
 
