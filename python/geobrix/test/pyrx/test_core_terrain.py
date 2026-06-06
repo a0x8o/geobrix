@@ -227,3 +227,38 @@ def test_hillshade_dark_pixels_floor_to_1_not_0():
         interior = r[1:-1, 1:-1]
         assert interior.min() >= 1  # valid floor is 1, never 0
         assert interior.max() <= 255
+
+
+def test_hillshade_flat_matches_gdal_rational_form():
+    # Flat DEM, default sun (az=315, alt=45, z=1): GDAL rational form -> 1+254*sin(45deg)=180.62 -> 181.
+    # The OLD arctan form gave 255*cos(45)=180.3 -> 180; assert the GDAL value 181.
+    flat = np.full((6, 6), 100.0, dtype="float32")
+    with _serde.open_tile(_dem(flat)) as ds:
+        out = terrain.hillshade(ds)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        interior = r[1:-1, 1:-1]
+        assert (interior == 181).all()  # 1+254*sin(45deg) rounded
+
+
+def test_hillshade_matches_gdal_rational_form_on_slope():
+    # On a non-trivial gradient the output must equal GDAL's rational form evaluated
+    # directly on pyrx's own Horn gradients (this pins the formula, incl. sign/azimuth convention).
+    dem = (
+        np.tile(np.arange(8, dtype="float32"), (8, 1))
+        + np.arange(8, dtype="float32")[:, None]
+    ) * 7.0
+    az, alt, z = 315.0, 45.0, 1.0
+    with _serde.open_tile(_dem(dem)) as ds:
+        dzdx, dzdy, _ = terrain._horn_gradients(ds)
+        out = terrain.hillshade(ds, azimuth=az, altitude=alt, z_factor=z)
+    alt_r, az_r = np.radians(alt), np.radians(az)
+    cang = (
+        np.sin(alt_r) + np.cos(alt_r) * z * (dzdy * np.cos(az_r) - dzdx * np.sin(az_r))
+    ) / np.sqrt(1.0 + z * z * (dzdx * dzdx + dzdy * dzdy))
+    expected = np.where(cang <= 0.0, 1.0, 1.0 + 254.0 * cang)
+    expected = np.clip(np.rint(expected), 0, 255).astype("uint8")
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+    # compare interior (border is NoData=0 by propagate_invalid)
+    assert np.array_equal(r[1:-1, 1:-1], expected[1:-1, 1:-1])

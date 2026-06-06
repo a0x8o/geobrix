@@ -350,13 +350,20 @@ def hillshade(
     altitude: float = 45.0,
     z_factor: float = 1.0,
 ) -> bytes:
-    """Compute hillshade (Horn's method, gdaldem convention).
+    """Compute hillshade matching ``gdaldem hillshade`` (Horn).
+
+    Uses GDAL's exact gradient-magnitude rational form (the cosine-of-the-
+    incidence-angle ``cang`` expression from ``GDALHillshadeAlg``), expressed
+    in terms of pyrx's Horn gradients (``dzdx``, ``dzdy``).  Azimuth and
+    altitude follow GDAL's convention: azimuth is degrees clockwise from north
+    (default 315 = NW); altitude is the sun's angle above the horizon in
+    degrees (default 45).  ``z_factor`` is vertical exaggeration.
 
     Args:
         ds:        Open rasterio DatasetReader.  Band 1 used as DEM.
-        azimuth:   Sun azimuth in degrees (default 315 = NW).
-        altitude:  Sun elevation angle above horizon in degrees (default 45).
-        z_factor:  Vertical exaggeration applied to gradients (default 1.0).
+        azimuth:   Sun azimuth in degrees clockwise from north (default 315).
+        altitude:  Sun altitude above horizon in degrees (default 45).
+        z_factor:  Vertical exaggeration (default 1.0).
 
     Returns:
         Single-band Byte (uint8) GTiff bytes; valid values [1..255],
@@ -364,23 +371,18 @@ def hillshade(
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
 
-    # Apply z_factor to gradients before angle computations.
-    dzdx_z = dzdx * float(z_factor)
-    dzdy_z = dzdy * float(z_factor)
+    z = float(z_factor)
+    alt_rad = float(altitude) * np.pi / 180.0
+    az_rad = float(azimuth) * np.pi / 180.0
+    sin_alt = np.sin(alt_rad)
+    cos_alt = np.cos(alt_rad)
+    sin_az = np.sin(az_rad)
+    cos_az = np.cos(az_rad)
 
-    # Zenith angle in radians (complement of altitude).
-    zenith = (90.0 - float(altitude)) * np.pi / 180.0
-
-    # gdaldem azimuth convention: rotate from math CCW-east to CW-from-north,
-    # then apply (360 - az + 90) % 360 to get the illumination direction.
-    az_rad = ((360.0 - float(azimuth) + 90.0) % 360.0) * np.pi / 180.0
-
-    slope_rad = np.arctan(np.sqrt(dzdx_z**2 + dzdy_z**2))
-    aspect_rad = np.arctan2(dzdy_z, -dzdx_z)
-
-    cang = np.cos(zenith) * np.cos(slope_rad) + np.sin(zenith) * np.sin(
-        slope_rad
-    ) * np.cos(az_rad - aspect_rad)
+    # GDAL gdaldem hillshade (Horn) rational form, in pyrx gradient terms.
+    cang = (sin_alt + cos_alt * z * (dzdy * cos_az - dzdx * sin_az)) / np.sqrt(
+        1.0 + z * z * (dzdx * dzdx + dzdy * dzdy)
+    )
     # gdaldem scaling: valid pixels map to [1, 255]; cang<=0 floors to 1.
     # 0 is reserved exclusively for NoData.
     hs = np.where(cang <= 0.0, 1.0, 1.0 + 254.0 * cang)
