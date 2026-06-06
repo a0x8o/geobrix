@@ -3,7 +3,8 @@ Float32 GTiff (NoData -9999.0); invalid/divide-by-zero results become NoData."""
 
 import numexpr as ne
 import numpy as np
-from rasterio.io import MemoryFile
+
+from databricks.labs.gbx.pyrx.core._nodata import emit, read_masked
 
 _NODATA = -9999.0
 
@@ -23,56 +24,48 @@ _INDEX_REGISTRY = {
 }
 
 
-def _band(ds, idx) -> np.ndarray:
-    return ds.read(int(idx)).astype("float64")
-
-
-def _emit(ds, arr: np.ndarray) -> bytes:
-    out = np.where(np.isfinite(arr), arr, _NODATA).astype("float32")
-    profile = ds.profile.copy()
-    profile.update(driver="GTiff", count=1, dtype="float32", nodata=_NODATA)
-    with MemoryFile() as mf:
-        with mf.open(**profile) as dst:
-            dst.write(out, 1)
-        return mf.read()
-
-
 def _normalized_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     with np.errstate(divide="ignore", invalid="ignore"):
         return (a - b) / (a + b)
 
 
 def ndvi(ds, red_band, nir_band) -> bytes:
-    r, n = _band(ds, red_band), _band(ds, nir_band)
-    return _emit(ds, _normalized_diff(n, r))
+    r, vr = read_masked(ds, red_band)
+    n, vn = read_masked(ds, nir_band)
+    return emit(ds, _normalized_diff(n, r), _NODATA, ~vr | ~vn, "float32")
 
 
 def ndwi(ds, green_idx, nir_idx) -> bytes:
-    g, n = _band(ds, green_idx), _band(ds, nir_idx)
-    return _emit(ds, _normalized_diff(g, n))
+    g, vg = read_masked(ds, green_idx)
+    n, vn = read_masked(ds, nir_idx)
+    return emit(ds, _normalized_diff(g, n), _NODATA, ~vg | ~vn, "float32")
 
 
 def nbr(ds, nir_idx, swir_idx) -> bytes:
-    n, s = _band(ds, nir_idx), _band(ds, swir_idx)
-    return _emit(ds, _normalized_diff(n, s))
+    n, vn = read_masked(ds, nir_idx)
+    s, vs = read_masked(ds, swir_idx)
+    return emit(ds, _normalized_diff(n, s), _NODATA, ~vn | ~vs, "float32")
 
 
 def savi(ds, red_idx, nir_idx, l=0.5) -> bytes:  # noqa: E741
-    r, n = _band(ds, red_idx), _band(ds, nir_idx)
+    r, vr = read_masked(ds, red_idx)
+    n, vn = read_masked(ds, nir_idx)
     l_ = float(l)
     with np.errstate(divide="ignore", invalid="ignore"):
         arr = (n - r) / (n + r + l_) * (1.0 + l_)
-    return _emit(ds, arr)
+    return emit(ds, arr, _NODATA, ~vr | ~vn, "float32")
 
 
 def evi(
     ds, red_idx, nir_idx, blue_idx, l=1.0, c1=6.0, c2=7.5, g=2.5  # noqa: E741
 ) -> bytes:  # noqa: E741
-    r, n, b = _band(ds, red_idx), _band(ds, nir_idx), _band(ds, blue_idx)
+    r, vr = read_masked(ds, red_idx)
+    n, vn = read_masked(ds, nir_idx)
+    b, vb = read_masked(ds, blue_idx)
     l_, c1, c2, g = float(l), float(c1), float(c2), float(g)
     with np.errstate(divide="ignore", invalid="ignore"):
         arr = g * (n - r) / (n + c1 * r - c2 * b + l_)
-    return _emit(ds, arr)
+    return emit(ds, arr, _NODATA, ~vr | ~vn | ~vb, "float32")
 
 
 def builtin_formulae() -> list:
@@ -116,11 +109,14 @@ def index(ds, formula_name: str, band_map) -> bytes:
     # Assign A, B, C... aliases to the formula's bands in declared order, then
     # substitute placeholders and bind each alias to its 1-based pixel array.
     local_dict = {}
+    invalid = None
     expr = calc
     for i, b in enumerate(bands):
         alias = chr(ord("A") + i)
         expr = expr.replace("{" + b + "}", alias)
-        local_dict[alias] = _band(ds, band_map_lc[b])
+        data, valid = read_masked(ds, band_map_lc[b])
+        local_dict[alias] = data
+        invalid = (~valid) if invalid is None else (invalid | ~valid)
     with np.errstate(divide="ignore", invalid="ignore"):
         arr = ne.evaluate(expr, local_dict=local_dict)
-    return _emit(ds, np.asarray(arr, dtype="float64"))
+    return emit(ds, np.asarray(arr, dtype="float64"), _NODATA, invalid, "float32")

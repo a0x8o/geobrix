@@ -1,9 +1,55 @@
 import numpy as np
+import rasterio
+from rasterio.io import MemoryFile
 
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx.core import indices
 
 from .conftest import make_geotiff_bytes
+
+
+def _two_band(red, nir, nodata=-9999.0):
+    arr = np.stack([red, nir]).astype("float32")
+    profile = dict(
+        driver="GTiff",
+        width=arr.shape[2],
+        height=arr.shape[1],
+        count=2,
+        dtype="float32",
+        crs=rasterio.crs.CRS.from_epsg(4326),
+        transform=rasterio.transform.from_origin(0, 0, 1, 1),
+        nodata=nodata,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(arr)
+        return mf.read()
+
+
+def test_ndvi_masks_input_nodata_no_spread():
+    red = np.full((4, 4), 10.0, dtype="float32")
+    nir = np.full((4, 4), 30.0, dtype="float32")
+    red[1, 1] = -9999.0
+    with _serde.open_tile(_two_band(red, nir)) as ds:
+        out = indices.ndvi(ds, 1, 2)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        assert o.nodata == -9999.0
+        assert r[1, 1] == -9999.0  # masked at the sentinel
+        assert r[0, 0] != -9999.0  # no neighborhood spread (per-pixel)
+        assert r[2, 2] != -9999.0
+
+
+def test_ndvi_no_declared_nodata_no_masking():
+    red = np.full((3, 3), 10.0, dtype="float32")
+    red[1, 1] = -9999.0
+    nir = np.full((3, 3), 30.0, dtype="float32")
+    with _serde.open_tile(_two_band(red, nir, nodata=None)) as ds:
+        out = indices.ndvi(ds, 1, 2)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        # no declared nodata -> our logic masks nothing at [1,1]
+        assert r[1, 1] != -9999.0
 
 
 def test_ndvi_values():
