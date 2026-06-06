@@ -96,9 +96,13 @@ object HeavyRunner {
       .cache()
     dfAll.count()
     // throwaway materialized job so JVM/Spark spin-up isn't timed.
-    if (fns.nonEmpty) {
-      dfAll.limit(1).select(BenchDispatch.column(fns.head, col("raster"), Map.empty).alias("o"))
-        .write.format("noop").mode("overwrite").save()
+    // Wrapped + band-aware so a band-math head fn on a low-band pool can't abort the run.
+    val warmFn = fns.find(f => BenchDispatch.minBands(f) <= pool.bands).orElse(fns.headOption)
+    warmFn.foreach { wf =>
+      try {
+        dfAll.limit(1).select(BenchDispatch.column(wf, col("raster"), Map.empty).alias("o"))
+          .write.format("noop").mode("overwrite").save()
+      } catch { case _: Throwable => () }  // warm-up failures must never abort timing
     }
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
     for (fn <- fns; n <- rowCounts.sorted) {
