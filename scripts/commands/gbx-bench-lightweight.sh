@@ -73,5 +73,9 @@ run_in_pyrx_venv "python -m databricks.labs.gbx.bench.runner \
     --functions '$FUNCTIONS' --categories '$CATEGORIES' \
     --row-counts '$ROW_COUNTS' --warmup '$WARMUP' --measured '$MEASURED'"
 EXIT_CODE=$?
-[[ $EXIT_CODE -eq 0 ]] && echo "✅ results: $OUT"
+if [[ $EXIT_CODE -eq 0 ]]; then
+    echo "✅ results: $OUT"
+    PRETTY="${OUT%.jsonl}.json"
+    [[ -f "$PRETTY" ]] && echo "   pretty:  $PRETTY"
+fi
 exit $EXIT_CODE
