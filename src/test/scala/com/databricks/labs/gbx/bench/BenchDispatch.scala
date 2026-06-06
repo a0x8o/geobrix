@@ -8,8 +8,11 @@ import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.util.NodeFilePathUtil
 import org.apache.spark.sql.Column
 import org.gdal.gdal.Dataset
+
+import java.nio.file.Files
 
 /** Maps a bench fn name to its pure-core call (-> fingerprint) and its Spark Column. */
 object BenchDispatch {
@@ -34,7 +37,13 @@ object BenchDispatch {
   def category(fn: String): String = cats(fn)
   def minBands(fn: String): Int = if (cats(fn) == BM) 2 else 1
 
-  def pureCore(fn: String, ds: Dataset, a: Map[String, String]): String = fn match {
+  def pureCore(fn: String, ds: Dataset, a: Map[String, String]): String = {
+    // gdal_calc/warp-backed functions write to NodeFilePathUtil.rootPath, a per-JVM scratch dir
+    // that the Spark file-lock copy path normally mkdirs. Pure-core opens tiles directly via
+    // gdal.Open and bypasses that path, so ensure the dir exists or gdal_calc fails with
+    // "No such file or directory" and returns a null dataset.
+    Files.createDirectories(NodeFilePathUtil.rootPath)
+    fn match {
     case "rst_width"      => BenchFingerprint.ofScalar(RST_Width.execute(ds))
     case "rst_height"     => BenchFingerprint.ofScalar(RST_Height.execute(ds))
     case "rst_numbands"   => BenchFingerprint.ofScalar(RST_NumBands.execute(ds))
@@ -55,6 +64,7 @@ object BenchDispatch {
     case "rst_transform"  => fpDerived(RST_Transform.execute(ds, Map.empty, argI(a, "target_srid", 3857)))
     case "rst_to_webmercator" => fpDerived(RST_ToWebMercator.execute(ds, Map.empty, argS(a, "resampling", "bilinear")))
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
+    }
   }
 
   private def fpDerived(res: (Dataset, Map[String, String])): String = {
