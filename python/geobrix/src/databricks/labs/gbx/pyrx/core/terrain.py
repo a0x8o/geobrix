@@ -19,7 +19,10 @@ Single-band output in every case:
     hillshade -> uint8   valid [1..255], 0=nodata  nodata 0
 """
 
+import math
+
 import numpy as np
+import pyproj
 from rasterio.io import MemoryFile
 
 from databricks.labs.gbx.pyrx.core._nodata import emit, propagate_invalid, read_masked
@@ -56,6 +59,49 @@ def _horn_gradients(ds) -> tuple:
     dzdy = ((g + 2.0 * h + i) - (a + 2.0 * b + c)) / (8.0 * yres)
 
     return dzdx, dzdy, valid
+
+
+def _gdaldem_scale(ds) -> tuple:
+    """Replicate GDAL 3.11 gdaldem auto-scale (xscale, yscale) from the CRS.
+
+    Mirrors apps/gdaldem_lib.cpp GDALDEMProcessing defaulting (triggered when no
+    explicit scale): geographic CRS -> anisotropic latitude-based degree->metre;
+    projected CRS -> linear units; unknown/no CRS -> (1.0, 1.0).
+    """
+    crs = ds.crs
+    if crs is None:
+        return 1.0, 1.0
+    try:
+        pcrs = pyproj.CRS.from_user_input(crs)
+    except Exception:
+        return 1.0, 1.0
+    zunit = 1.0  # vertical unit; GDAL assumes metre when band UnitType is unset
+    units = getattr(ds, "units", None)
+    if units and units[0]:
+        u = units[0].lower()
+        if u in ("ft", "foot", "feet", "foot (international)"):
+            zunit = 0.3048
+        elif u in ("us-ft", "foot_us", "us survey foot"):
+            zunit = 1200.0 / 3937.0
+    if pcrs.is_geographic:
+        ang = math.pi / 180.0  # GetAngularUnits for degree-based geographic CRS
+        a = pcrs.ellipsoid.semi_major_metre
+        yscale = ang * a / zunit
+        mean_lat = (ds.transform.f + ds.height * ds.transform.e / 2.0) * ang
+        xscale = yscale * math.cos(mean_lat)
+        return xscale, yscale
+    if pcrs.is_projected:
+        lin = pcrs.axis_info[0].unit_conversion_factor  # metres per linear unit
+        s = lin / zunit
+        return s, s
+    return 1.0, 1.0
+
+
+def _resolve_scale(ds, xscale, yscale) -> tuple:
+    """Explicit (xscale, yscale) when BOTH given, else GDAL-normal auto-scale."""
+    if xscale is not None and yscale is not None:
+        return float(xscale), float(yscale)
+    return _gdaldem_scale(ds)
 
 
 def slope(ds, unit: str = "degrees", scale: float = 1.0) -> bytes:

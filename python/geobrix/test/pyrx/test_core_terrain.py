@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
@@ -262,3 +264,49 @@ def test_hillshade_matches_gdal_rational_form_on_slope():
         r = o.read(1)
     # compare interior (border is NoData=0 by propagate_invalid)
     assert np.array_equal(r[1:-1, 1:-1], expected[1:-1, 1:-1])
+
+
+def _tile_with_crs(arr, crs, transform):
+    profile = dict(
+        driver="GTiff",
+        height=arr.shape[0],
+        width=arr.shape[1],
+        count=1,
+        dtype="float32",
+        crs=crs,
+        transform=transform,
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(arr.astype("float32"), 1)
+        return mf.read()
+
+
+def test_gdaldem_scale_geographic_4326():
+    arr = np.zeros((10, 8), dtype="float32")
+    tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)  # lon, lat, xsize, ysize (deg)
+    with _serde.open_tile(_tile_with_crs(arr, "EPSG:4326", tr)) as ds:
+        xs, ys = terrain._gdaldem_scale(ds)
+    ang = math.pi / 180.0
+    yscale = ang * 6378137.0
+    mean_lat = (tr.f + 10 * tr.e / 2.0) * ang
+    assert abs(ys - yscale) < 1e-3
+    assert abs(xs - yscale * math.cos(mean_lat)) < 1e-3
+    assert xs < ys
+
+
+def test_gdaldem_scale_projected_metre():
+    arr = np.zeros((10, 8), dtype="float32")
+    tr = from_origin(500000.0, 4500000.0, 30.0, 30.0)
+    with _serde.open_tile(_tile_with_crs(arr, "EPSG:32618", tr)) as ds:
+        xs, ys = terrain._gdaldem_scale(ds)
+    assert abs(xs - 1.0) < 1e-9 and abs(ys - 1.0) < 1e-9
+
+
+def test_gdaldem_scale_no_crs_is_unit():
+    arr = np.zeros((6, 6), dtype="float32")
+    tr = from_origin(0.0, 0.0, 1.0, 1.0)
+    with _serde.open_tile(_tile_with_crs(arr, None, tr)) as ds:
+        xs, ys = terrain._gdaldem_scale(ds)
+    assert (xs, ys) == (1.0, 1.0)
