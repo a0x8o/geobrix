@@ -238,8 +238,23 @@ def test_rst_slope_aspect_hillshade(spark):
     df = spark.createDataFrame([(src,)], ["raster"]).select(
         prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
+    # Auto-scale path (no scale args): must run and produce Float32.
     assert (
         df.select(prx.rst_type(prx.rst_slope("tile")).alias("t")).first()["t"][0]
+        == "Float32"
+    )
+    # Explicit xscale/yscale override path: also runs, Float32, and differs from auto.
+    auto_min = df.select(prx.rst_min(prx.rst_slope("tile"))[0].alias("v")).first()["v"]
+    over_min = df.select(
+        prx.rst_min(prx.rst_slope("tile", xscale=111120.0, yscale=111120.0))[0].alias(
+            "v"
+        )
+    ).first()["v"]
+    assert over_min != auto_min
+    assert (
+        df.select(
+            prx.rst_type(prx.rst_slope("tile", xscale=2.0, yscale=2.0)).alias("t")
+        ).first()["t"][0]
         == "Float32"
     )
     assert (

@@ -1749,79 +1749,109 @@ def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
 
 # --- Tier 1f: terrain UDFs (slope, aspect, hillshade) ----------------------
 @f.udf(_serde.TILE_SCHEMA)
-def _slope_udf(tile, unit, scale):
+def _slope_udf(tile, unit, xscale, yscale):
     if tile is None or tile["raster"] is None:
         return None
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    xs = None if xscale is None else float(xscale)
+    ys = None if yscale is None else float(yscale)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = terrain.slope(ds, unit=str(unit), scale=float(scale))
+        new_bytes = terrain.slope(ds, unit=str(unit), xscale=xs, yscale=ys)
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
 @f.udf(_serde.TILE_SCHEMA)
-def _aspect_udf(tile, trigonometric, zero_for_flat):
+def _aspect_udf(tile, trigonometric, zero_for_flat, xscale, yscale):
     if tile is None or tile["raster"] is None:
         return None
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    xs = None if xscale is None else float(xscale)
+    ys = None if yscale is None else float(yscale)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
         new_bytes = terrain.aspect(
-            ds, trigonometric=bool(trigonometric), zero_for_flat=bool(zero_for_flat)
+            ds,
+            trigonometric=bool(trigonometric),
+            zero_for_flat=bool(zero_for_flat),
+            xscale=xs,
+            yscale=ys,
         )
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
 @f.udf(_serde.TILE_SCHEMA)
-def _hillshade_udf(tile, azimuth, altitude, z_factor):
+def _hillshade_udf(tile, azimuth, altitude, z_factor, xscale, yscale):
     if tile is None or tile["raster"] is None:
         return None
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    xs = None if xscale is None else float(xscale)
+    ys = None if yscale is None else float(yscale)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
         new_bytes = terrain.hillshade(
             ds,
             azimuth=float(azimuth),
             altitude=float(altitude),
             z_factor=float(z_factor),
+            xscale=xs,
+            yscale=ys,
         )
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
-def rst_slope(tile: ColLike, unit: ColLike = "degrees", scale: ColLike = 1.0) -> Column:
+def rst_slope(
+    tile: ColLike,
+    unit: ColLike = "degrees",
+    xscale: ColLike = None,
+    yscale: ColLike = None,
+) -> Column:
     """Compute terrain slope from a single-band DEM tile (Horn's 3x3 method).
 
+    By default the horizontal scale is auto-derived from the raster CRS
+    (geographic grids use a latitude-based degree->metre ratio, projected
+    grids use linear units). Pass both ``xscale`` and ``yscale`` (vertical
+    units per horizontal unit) to override the auto scale.
+
     Args:
-        tile:  Tile struct column containing a single-band DEM raster.
-        unit:  ``"degrees"`` (default) or ``"percent"``.
-        scale: Ratio of vertical to horizontal units (default 1.0).
-               Use ~111120 for geographic-degree grids.
+        tile:    Tile struct column containing a single-band DEM raster.
+        unit:    ``"degrees"`` (default) or ``"percent"``.
+        xscale:  Optional explicit horizontal scale override (with ``yscale``).
+        yscale:  Optional explicit vertical scale override (with ``xscale``).
 
     Returns:
         Single-band Float32 tile; nodata = -9999.
     """
     unit_col = f.lit(unit) if isinstance(unit, str) else _col(unit)
-    scale_col = f.lit(scale) if isinstance(scale, (int, float)) else _col(scale)
-    return _slope_udf(_col(tile), unit_col, scale_col)
+    xs_col = f.lit(None) if xscale is None else _col(xscale)
+    ys_col = f.lit(None) if yscale is None else _col(yscale)
+    return _slope_udf(_col(tile), unit_col, xs_col, ys_col)
 
 
 def rst_aspect(
     tile: ColLike,
     trigonometric: ColLike = False,
     zero_for_flat: ColLike = False,
+    xscale: ColLike = None,
+    yscale: ColLike = None,
 ) -> Column:
     """Compute terrain aspect from a single-band DEM tile (Horn's 3x3 method).
 
     Default output is compass degrees: 0 = North, increasing clockwise.
     Flat cells are -9999 unless zero_for_flat is True.
 
+    Horizontal scale is auto-derived from the CRS by default; pass both
+    ``xscale`` and ``yscale`` to override.
+
     Args:
         tile:           Tile struct column containing a single-band DEM raster.
         trigonometric:  Return math-convention (CCW from east) instead of compass.
         zero_for_flat:  Return 0 for flat cells instead of -9999.
+        xscale:         Optional explicit horizontal scale override (with ``yscale``).
+        yscale:         Optional explicit vertical scale override (with ``xscale``).
 
     Returns:
         Single-band Float32 tile; nodata = -9999.
@@ -1832,7 +1862,9 @@ def rst_aspect(
     zff_col = (
         f.lit(zero_for_flat) if isinstance(zero_for_flat, bool) else _col(zero_for_flat)
     )
-    return _aspect_udf(_col(tile), trig_col, zff_col)
+    xs_col = f.lit(None) if xscale is None else _col(xscale)
+    ys_col = f.lit(None) if yscale is None else _col(yscale)
+    return _aspect_udf(_col(tile), trig_col, zff_col, xs_col, ys_col)
 
 
 def rst_hillshade(
@@ -1840,14 +1872,21 @@ def rst_hillshade(
     azimuth: ColLike = 315.0,
     altitude: ColLike = 45.0,
     z_factor: ColLike = 1.0,
+    xscale: ColLike = None,
+    yscale: ColLike = None,
 ) -> Column:
     """Compute hillshade from a single-band DEM tile (Horn's 3x3 method).
+
+    Horizontal scale is auto-derived from the CRS by default; pass both
+    ``xscale`` and ``yscale`` to override.
 
     Args:
         tile:      Tile struct column containing a single-band DEM raster.
         azimuth:   Sun azimuth in degrees (default 315 = NW).
         altitude:  Sun elevation above horizon in degrees (default 45).
         z_factor:  Vertical exaggeration applied to gradients (default 1.0).
+        xscale:    Optional explicit horizontal scale override (with ``yscale``).
+        yscale:    Optional explicit vertical scale override (with ``xscale``).
 
     Returns:
         Single-band Byte (uint8) tile; values 0..255.
@@ -1855,7 +1894,9 @@ def rst_hillshade(
     az_col = f.lit(azimuth) if isinstance(azimuth, (int, float)) else _col(azimuth)
     alt_col = f.lit(altitude) if isinstance(altitude, (int, float)) else _col(altitude)
     zf_col = f.lit(z_factor) if isinstance(z_factor, (int, float)) else _col(z_factor)
-    return _hillshade_udf(_col(tile), az_col, alt_col, zf_col)
+    xs_col = f.lit(None) if xscale is None else _col(xscale)
+    ys_col = f.lit(None) if yscale is None else _col(yscale)
+    return _hillshade_udf(_col(tile), az_col, alt_col, zf_col, xs_col, ys_col)
 
 
 # --- Tier 1g: terrain ruggedness UDFs (tri, tpi, roughness) -----------------
