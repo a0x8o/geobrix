@@ -13,6 +13,11 @@ Horn's method:
     dzdx = ((c + 2f + i) - (a + 2d + g)) / (8 * xres)
     dzdy = ((g + 2h + i) - (a + 2b + c)) / (8 * yres)
 
+For slope/aspect/hillshade the horizontal scale is auto-derived from the CRS
+(GDAL 3.11 behavior): geographic grids use a latitude-based degree->metre ratio,
+projected grids use linear units, and CRS-less grids use unit scale. Override
+via the ``xscale``/``yscale`` parameters (both or neither).
+
 Single-band output in every case:
     slope     -> Float32 (degrees or percent)   nodata -9999
     aspect    -> Float32 (compass or trig deg)  nodata -9999
@@ -104,65 +109,68 @@ def _resolve_scale(ds, xscale, yscale) -> tuple:
     return _gdaldem_scale(ds)
 
 
-def slope(ds, unit: str = "degrees", scale: float = 1.0) -> bytes:
-    """Compute terrain slope (Horn's method).
+def slope(ds, unit: str = "degrees", xscale=None, yscale=None) -> bytes:
+    """Compute terrain slope (Horn's method), matching gdaldem.
+
+    By default the horizontal scale is auto-derived from the CRS (GDAL 3.11
+    behavior): geographic grids use a latitude-based degree->metre ratio,
+    projected grids use linear units. Pass explicit ``xscale``/``yscale``
+    (both, vertical-units-per-horizontal-unit, e.g. ~111120 for degrees) to
+    override.
 
     Args:
-        ds:    Open rasterio DatasetReader.  Band 1 is used as the DEM.
+        ds:    Open rasterio DatasetReader. Band 1 is the DEM.
         unit:  ``"degrees"`` (default) or ``"percent"``.
-        scale: Ratio of vertical units to horizontal units (default 1.0).
-               For geographic-degree grids use ~111120 to match gdaldem.
+        xscale, yscale: optional explicit scale overrides (both or neither).
 
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
-
-    # Apply scale to the combined gradient magnitude.
-    magnitude = (1.0 / float(scale)) * np.sqrt(dzdx**2 + dzdy**2)
+    xs, ys = _resolve_scale(ds, xscale, yscale)
+    magnitude = np.sqrt((dzdx / xs) ** 2 + (dzdy / ys) ** 2)
     slope_rad = np.arctan(magnitude)
-
     if unit == "percent":
-        result = np.tan(slope_rad) * 100.0  # == magnitude * 100
+        result = np.tan(slope_rad) * 100.0
     else:
         result = np.degrees(slope_rad)
-
     return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
-def aspect(ds, trigonometric: bool = False, zero_for_flat: bool = False) -> bytes:
-    """Compute terrain aspect (Horn's method).
+def aspect(
+    ds,
+    trigonometric: bool = False,
+    zero_for_flat: bool = False,
+    xscale=None,
+    yscale=None,
+) -> bytes:
+    """Compute terrain aspect (Horn's method), matching gdaldem.
 
-    Default output is compass degrees: 0 = North, increasing clockwise.
-    Flat cells (dzdx == dzdy == 0) are set to -9999 (or 0 if zero_for_flat).
+    Horizontal scale is auto-derived from the CRS by default (see ``slope``);
+    on geographic grids the scale is anisotropic, which shifts the aspect angle
+    exactly as gdaldem does. Pass ``xscale``/``yscale`` to override.
 
     Args:
-        ds:              Open rasterio DatasetReader.  Band 1 used as DEM.
-        trigonometric:   If True, return math-convention degrees (CCW from
-                         east) instead of compass degrees (CW from north).
+        ds:              Open rasterio DatasetReader. Band 1 used as DEM.
+        trigonometric:   If True, math-convention degrees (CCW from east).
         zero_for_flat:   If True, flat cells get 0 instead of -9999.
+        xscale, yscale:  optional explicit scale overrides (both or neither).
 
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
-
-    # Math convention: arctan2(dzdy, -dzdx) — angle CCW from east in [-180,180].
-    aspect_rad = np.arctan2(dzdy, -dzdx)
+    xs, ys = _resolve_scale(ds, xscale, yscale)
+    dx, dy = dzdx / xs, dzdy / ys
+    aspect_rad = np.arctan2(dy, -dx)
     aspect_deg = np.degrees(aspect_rad)
-
     if trigonometric:
         result = aspect_deg
     else:
-        # Convert to compass bearing: 0 = N, clockwise.
-        # compass = (90 - math_degrees) % 360
         result = (90.0 - aspect_deg) % 360.0
-
-    # Mark flat cells.
-    flat_mask = (dzdx == 0.0) & (dzdy == 0.0)
+    flat_mask = (dx == 0.0) & (dy == 0.0)
     flat_value = 0.0 if zero_for_flat else _NODATA
     result = np.where(flat_mask, flat_value, result)
-
     return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
@@ -395,6 +403,8 @@ def hillshade(
     azimuth: float = 315.0,
     altitude: float = 45.0,
     z_factor: float = 1.0,
+    xscale=None,
+    yscale=None,
 ) -> bytes:
     """Compute hillshade matching ``gdaldem hillshade`` (Horn).
 
@@ -403,19 +413,25 @@ def hillshade(
     in terms of pyrx's Horn gradients (``dzdx``, ``dzdy``).  Azimuth and
     altitude follow GDAL's convention: azimuth is degrees clockwise from north
     (default 315 = NW); altitude is the sun's angle above the horizon in
-    degrees (default 45).  ``z_factor`` is vertical exaggeration.
+    degrees (default 45).  ``z_factor`` is vertical exaggeration.  The
+    horizontal scale is auto-derived from the CRS by default (GDAL 3.11),
+    overridable via ``xscale``/``yscale``.
 
     Args:
         ds:        Open rasterio DatasetReader.  Band 1 used as DEM.
         azimuth:   Sun azimuth in degrees clockwise from north (default 315).
         altitude:  Sun altitude above horizon in degrees (default 45).
         z_factor:  Vertical exaggeration (default 1.0).
+        xscale, yscale: optional explicit scale overrides (both or neither).
 
     Returns:
         Single-band Byte (uint8) GTiff bytes; valid values [1..255],
         0 reserved for NoData (gdaldem convention).
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
+    xs, ys = _resolve_scale(ds, xscale, yscale)
+    dzdx = dzdx / xs
+    dzdy = dzdy / ys
 
     z = float(z_factor)
     alt_rad = float(altitude) * np.pi / 180.0

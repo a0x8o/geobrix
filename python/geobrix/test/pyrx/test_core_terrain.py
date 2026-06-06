@@ -41,7 +41,7 @@ def test_slope_45deg_ramp():
     # ramp rising 1 unit per 1 unit in +x (projected, 1m px) -> 45 degrees slope interior
     ramp = np.tile(np.arange(5, dtype="float32"), (5, 1))  # value == column index
     with _serde.open_tile(_dem(ramp)) as ds:
-        out = terrain.slope(ds, unit="degrees", scale=1.0)
+        out = terrain.slope(ds, unit="degrees")
     with _serde.open_tile(out) as o:
         interior = o.read(1)[1:-1, 1:-1]
         assert np.allclose(interior, 45.0, atol=1.0)
@@ -166,7 +166,7 @@ def test_tpi_peak_positive():
 def test_slope_border_is_nodata():
     ramp = np.tile(np.arange(6, dtype="float32"), (6, 1))
     with _serde.open_tile(_dem(ramp)) as ds:
-        out = terrain.slope(ds, unit="degrees", scale=1.0)
+        out = terrain.slope(ds, unit="degrees")
     with _serde.open_tile(out) as o:
         r = o.read(1)
         assert o.nodata == -9999.0
@@ -310,3 +310,64 @@ def test_gdaldem_scale_no_crs_is_unit():
     with _serde.open_tile(_tile_with_crs(arr, None, tr)) as ds:
         xs, ys = terrain._gdaldem_scale(ds)
     assert (xs, ys) == (1.0, 1.0)
+
+
+def test_slope_auto_scales_geographic_not_saturated():
+    dem = (np.tile(np.arange(12, dtype="float32"), (12, 1))) * 5.0
+    tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)
+    with _serde.open_tile(_tile_with_crs(dem, "EPSG:4326", tr)) as ds:
+        out = terrain.slope(ds)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        interior = r[1:-1, 1:-1]
+        assert interior.max() < 80.0
+        assert interior.max() > 0.0
+
+
+def test_slope_explicit_xyscale_overrides_auto():
+    dem = (np.tile(np.arange(12, dtype="float32"), (12, 1))) * 5.0
+    tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)
+    with _serde.open_tile(_tile_with_crs(dem, "EPSG:4326", tr)) as ds:
+        dzdx, dzdy, _ = terrain._horn_gradients(ds)
+        out = terrain.slope(ds, xscale=111120.0, yscale=111120.0)
+    mag = np.sqrt((dzdx / 111120.0) ** 2 + (dzdy / 111120.0) ** 2)
+    expected = np.degrees(np.arctan(mag)).astype("float32")
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+    assert np.allclose(r[1:-1, 1:-1], expected[1:-1, 1:-1], atol=1e-3)
+
+
+def test_aspect_anisotropic_scale_shifts_angle():
+    dem = (
+        np.tile(np.arange(12, dtype="float32"), (12, 1))
+        + np.arange(12, dtype="float32")[:, None]
+    ) * 5.0
+    tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)
+    with _serde.open_tile(_tile_with_crs(dem, "EPSG:4326", tr)) as ds:
+        dzdx, dzdy, _ = terrain._horn_gradients(ds)
+        xs, ys = terrain._gdaldem_scale(ds)
+        out = terrain.aspect(ds)
+    arad = np.arctan2(dzdy / ys, -(dzdx / xs))
+    expected = (90.0 - np.degrees(arad)) % 360.0
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+    assert np.allclose(r[1:-1, 1:-1], expected[1:-1, 1:-1].astype("float32"), atol=1e-3)
+
+
+def test_hillshade_auto_scale_geographic_realistic():
+    dem = (np.tile(np.arange(12, dtype="float32"), (12, 1))) * 2.0
+    tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)
+    with _serde.open_tile(_tile_with_crs(dem, "EPSG:4326", tr)) as ds:
+        dzdx, dzdy, _ = terrain._horn_gradients(ds)
+        xs, ys = terrain._gdaldem_scale(ds)
+        out = terrain.hillshade(ds)
+    gx, gy = dzdx / xs, dzdy / ys
+    alt_r, az_r = np.radians(45.0), np.radians(315.0)
+    cang = (
+        np.sin(alt_r) + np.cos(alt_r) * (gy * np.cos(az_r) - gx * np.sin(az_r))
+    ) / np.sqrt(1.0 + gx * gx + gy * gy)
+    expected = np.where(cang <= 0.0, 1.0, 1.0 + 254.0 * cang)
+    expected = np.clip(np.rint(expected), 0, 255).astype("uint8")
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+    assert np.array_equal(r[1:-1, 1:-1], expected[1:-1, 1:-1])
