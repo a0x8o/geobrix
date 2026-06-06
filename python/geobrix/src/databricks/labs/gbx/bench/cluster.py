@@ -23,3 +23,94 @@ def to_delta(rows: List[ResultRow], spark, table: str, where: str = "cluster") -
     df = rows_to_dataframe(rows, spark, where=where)
     df.write.format("delta").mode("append").saveAsTable(table)
     return len(rows)
+
+
+def _cell(source: str, kind: str = "code") -> dict:
+    return {
+        "cell_type": kind,
+        "metadata": {},
+        "outputs": [],
+        "execution_count": None,
+        "source": source.splitlines(keepends=True),
+    }
+
+
+_PREAMBLE = """import json
+import os
+
+from databricks.labs.gbx.bench import compare, results, runner
+from databricks.labs.gbx.bench import cluster as _cl
+from databricks.labs.gbx.bench import manifest as _m
+from databricks.labs.gbx.bench import spec as _s
+
+CORPUS = {corpus!r}
+OUT = {out_dir!r}
+TABLE = {table!r}
+RUN_ID = {run_id!r}
+FUNCTIONS = {functions!r}
+MODES = {modes!r}
+ROW_COUNTS = [int(x) for x in {row_counts!r}.split(",") if x]
+WARMUP, MEASURED = {warmup}, {measured}
+
+os.makedirs(OUT, exist_ok=True)
+corpus = _m.Corpus.read(f"{{CORPUS}}/corpus.json")
+fnspecs = _s.select(functions=[x for x in FUNCTIONS.split(",") if x] or None)
+lw, hw, all_rows = [], [], []
+"""
+
+_LIGHT = """
+if MODES in ("pure-core", "both"):
+    lw += runner.run_pure_core(CORPUS, corpus, fnspecs, RUN_ID, WARMUP, MEASURED, "cluster")
+if MODES in ("spark-path", "both"):
+    lw += runner.run_spark_path(spark, CORPUS, corpus, fnspecs, RUN_ID, ROW_COUNTS, WARMUP, MEASURED, "cluster")
+results.write_jsonl(lw, f"{OUT}/lightweight.jsonl")
+all_rows += lw
+"""
+
+_HEAVY = """
+hw_out = f"{OUT}/heavyweight.jsonl"
+spark._jvm.com.databricks.labs.gbx.bench.HeavyBenchMain.run(
+    spark._jsparkSession, CORPUS, hw_out, FUNCTIONS, MODES,
+    ",".join(str(x) for x in ROW_COUNTS), WARMUP, MEASURED, RUN_ID)
+hw = results.read_jsonl(hw_out)
+all_rows += hw
+"""
+
+_EPILOGUE = """
+delta_rows = _cl.to_delta(all_rows, spark, TABLE, where="cluster")
+compared = 0
+if hw and lw:
+    cells, unmatched = compare.compare_cells(hw, lw)
+    compare.write_csv(cells, f"{OUT}/comparison.csv")
+    with open(f"{OUT}/summary.md", "w") as fh:
+        fh.write(compare.summarize_compare(cells, unmatched, hw, lw))
+    compared = len(cells)
+
+dbutils.notebook.exit(json.dumps(dict(
+    rows=len(all_rows), delta_rows=delta_rows, compared=compared, out=OUT, table=TABLE)))
+"""
+
+
+def build_bench_notebook(cfg: dict) -> dict:
+    body = _PREAMBLE.format(
+        corpus=cfg["corpus"],
+        out_dir=cfg["out_dir"],
+        table=cfg["table"],
+        run_id=cfg["run_id"],
+        functions=cfg["functions"],
+        modes=cfg["modes"],
+        row_counts=cfg["row_counts"],
+        warmup=cfg["warmup"],
+        measured=cfg["measured"],
+    )
+    if cfg.get("lightweight"):
+        body += _LIGHT
+    if cfg.get("heavyweight"):
+        body += _HEAVY
+    body += _EPILOGUE
+    cells = [
+        _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]'"),
+        _cell("dbutils.library.restartPython()"),
+        _cell(body),
+    ]
+    return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}

@@ -60,3 +60,73 @@ def test_rows_to_dataframe_schema_and_where(spark):
     assert "output_fingerprint" in df.columns
     vals = {r["fn"]: r["env_where"] for r in df.collect()}
     assert vals == {"rst_width": "cluster", "rst_avg": "cluster"}
+
+
+def test_build_bench_notebook_cells():
+    cfg = dict(
+        wheel="/Volumes/c/s/v/geobrix-0.4.0-py3-none-any.whl",
+        corpus="/Volumes/c/s/v/bench-corpus",
+        out_dir="/Volumes/c/s/v/bench-out/run1",
+        table="main.default.bench_results",
+        run_id="run1",
+        functions="rst_width,rst_slope",
+        modes="both",
+        row_counts="10,100",
+        warmup=2,
+        measured=5,
+        heavyweight=True,
+        lightweight=True,
+    )
+    nb = cl.build_bench_notebook(cfg)
+    src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
+    assert "geobrix-0.4.0-py3-none-any.whl[pyrx]" in src
+    assert "restartPython" in src
+    assert "HeavyBenchMain" in src and "_jvm" in src
+    assert "run_spark_path" in src or "run_pure_core" in src
+    assert "bench_results" in src
+    assert "dbutils.notebook.exit" in src
+    assert nb["nbformat"] == 4
+
+
+def test_build_bench_notebook_lightweight_only_omits_heavyweight():
+    cfg = dict(
+        wheel="w.whl",
+        corpus="c",
+        out_dir="o",
+        table="t",
+        run_id="r",
+        functions="",
+        modes="both",
+        row_counts="10",
+        warmup=1,
+        measured=1,
+        heavyweight=False,
+        lightweight=True,
+    )
+    nb = cl.build_bench_notebook(cfg)
+    src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
+    assert "HeavyBenchMain" not in src  # heavyweight leg genuinely absent
+    assert (
+        "run_pure_core" in src or "run_spark_path" in src
+    )  # lightweight still present
+
+
+def test_build_bench_notebook_heavyweight_only_omits_lightweight():
+    cfg = dict(
+        wheel="w.whl",
+        corpus="c",
+        out_dir="o",
+        table="t",
+        run_id="r",
+        functions="",
+        modes="pure-core",
+        row_counts="10",
+        warmup=1,
+        measured=1,
+        heavyweight=True,
+        lightweight=False,
+    )
+    nb = cl.build_bench_notebook(cfg)
+    src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
+    assert "HeavyBenchMain" in src
+    assert "run_pure_core" not in src and "run_spark_path" not in src
