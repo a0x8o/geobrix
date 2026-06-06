@@ -86,6 +86,10 @@ def main() -> int:
     do_wait = "--no-wait" not in sys.argv
     heavyweight = "--lightweight-only" not in sys.argv
     lightweight = "--heavyweight-only" not in sys.argv
+    if not heavyweight and not lightweight:
+        print("ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
+              "(nothing to run). Pass at most one.", file=sys.stderr)
+        return 2
 
     run_id = _arg("--run-id", "cluster")
     functions = _arg("--functions", "")
