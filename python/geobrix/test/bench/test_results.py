@@ -76,3 +76,39 @@ def test_write_pretty_json_expands_fingerprint(tmp_path):
     assert data[1]["output_fingerprint"] == {"kind": "scalar", "value": 64}
     # empty fingerprint left as-is (empty string)
     assert data[2]["output_fingerprint"] == ""
+
+
+def test_summarize_has_insights_status_and_flags(tmp_path):
+    rows = [
+        _row(fn="rst_width", mode="pure-core", tile_px=256, median_ms=1.0, status="ok"),
+        _row(
+            fn="rst_slope",
+            mode="pure-core",
+            tile_px=4096,
+            median_ms=50.0,
+            status="ok",
+            category="terrain",
+            nodata_frac=0.1,
+            output_fingerprint='{"kind": "raster", "bands": [{"nodata_count": 0, "min": 0.0}]}',
+        ),
+        _row(
+            fn="rst_ndvi",
+            mode="pure-core",
+            tile_px=256,
+            bands=1,
+            status="error",
+            note="band index 2 out of range",
+            median_ms=0.0,
+        ),
+    ]
+    md = r.summarize(rows)
+    assert "## Insights" in md
+    assert "## Status" in md
+    assert "rst_slope" in md  # slowest op named
+    assert "rst_ndvi" in md  # error fn surfaced
+    assert "error" in md.lower()
+    assert (
+        "nodata" in md.lower()
+    )  # consistency flag for sentinel-as-data on nodata tile
+    # env line present
+    assert "GDAL" in md

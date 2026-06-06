@@ -352,6 +352,13 @@ def main(argv=None):
         )
         _r.write_pretty_json(rows, pretty_path)
         print(f"pretty -> {pretty_path}")
+    summary_path = (
+        a.out[:-6] + ".summary.md"
+        if a.out.endswith(".jsonl")
+        else a.out + ".summary.md"
+    )
+    Path(summary_path).write_text(_r.summarize(rows))
+    print(f"summary -> {summary_path}")
 
 
 if __name__ == "__main__":

@@ -77,5 +77,7 @@ if [[ $EXIT_CODE -eq 0 ]]; then
     echo "✅ results: $OUT"
     PRETTY="${OUT%.jsonl}.json"
     [[ -f "$PRETTY" ]] && echo "   pretty:  $PRETTY"
+    SUMMARY="${OUT%.jsonl}.summary.md"
+    [[ -f "$SUMMARY" ]] && echo "   summary: $SUMMARY"
 fi
 exit $EXIT_CODE
