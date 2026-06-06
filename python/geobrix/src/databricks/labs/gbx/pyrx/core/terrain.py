@@ -16,27 +16,30 @@ Horn's method:
 Single-band output in every case:
     slope     -> Float32 (degrees or percent)   nodata -9999
     aspect    -> Float32 (compass or trig deg)  nodata -9999
-    hillshade -> uint8   [0..255]               nodata not set
+    hillshade -> uint8   [0..255]               nodata 0
 """
 
 import numpy as np
 from rasterio.io import MemoryFile
 
+from databricks.labs.gbx.pyrx.core._nodata import emit, propagate_invalid, read_masked
+
 _NODATA = -9999.0
 
 
 def _horn_gradients(ds) -> tuple:
-    """Return (dzdx, dzdy) for the first band of *ds* using Horn's 3x3 kernel.
+    """Return (dzdx, dzdy, valid) for the first band using Horn's 3x3 kernel.
 
     Edge pixels are computed using edge-replication (``np.pad(mode='edge')``),
     so the output arrays are the same shape as the source band.  Pixel
     ground sizes come from the absolute values of the affine transform's
-    scale components.
+    scale components.  ``valid`` is the input validity mask (False where the
+    source band is NoData) for downstream NoData propagation.
     """
     xres = abs(ds.transform.a)
     yres = abs(ds.transform.e)
 
-    band = ds.read(1).astype("float64")
+    band, valid = read_masked(ds)
     # Edge-replicate one pixel on each side.
     p = np.pad(band, 1, mode="edge")
 
@@ -52,29 +55,7 @@ def _horn_gradients(ds) -> tuple:
     dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * xres)
     dzdy = ((g + 2.0 * h + i) - (a + 2.0 * b + c)) / (8.0 * yres)
 
-    return dzdx, dzdy
-
-
-def _emit_float32(ds, arr: np.ndarray) -> bytes:
-    """Write *arr* as a single-band Float32 GTiff in memory, nodata=-9999."""
-    out = np.where(np.isfinite(arr), arr, _NODATA).astype("float32")
-    profile = ds.profile.copy()
-    profile.update(driver="GTiff", count=1, dtype="float32", nodata=_NODATA)
-    with MemoryFile() as mf:
-        with mf.open(**profile) as dst:
-            dst.write(out, 1)
-        return mf.read()
-
-
-def _emit_uint8(ds, arr: np.ndarray) -> bytes:
-    """Write *arr* (already [0..255]) as a single-band Byte GTiff in memory."""
-    out = np.clip(np.round(arr), 0, 255).astype("uint8")
-    profile = ds.profile.copy()
-    profile.update(driver="GTiff", count=1, dtype="uint8", nodata=None)
-    with MemoryFile() as mf:
-        with mf.open(**profile) as dst:
-            dst.write(out, 1)
-        return mf.read()
+    return dzdx, dzdy, valid
 
 
 def slope(ds, unit: str = "degrees", scale: float = 1.0) -> bytes:
@@ -89,7 +70,7 @@ def slope(ds, unit: str = "degrees", scale: float = 1.0) -> bytes:
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
-    dzdx, dzdy = _horn_gradients(ds)
+    dzdx, dzdy, valid = _horn_gradients(ds)
 
     # Apply scale to the combined gradient magnitude.
     magnitude = (1.0 / float(scale)) * np.sqrt(dzdx**2 + dzdy**2)
@@ -100,7 +81,7 @@ def slope(ds, unit: str = "degrees", scale: float = 1.0) -> bytes:
     else:
         result = np.degrees(slope_rad)
 
-    return _emit_float32(ds, result)
+    return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
 def aspect(ds, trigonometric: bool = False, zero_for_flat: bool = False) -> bytes:
@@ -118,7 +99,7 @@ def aspect(ds, trigonometric: bool = False, zero_for_flat: bool = False) -> byte
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
-    dzdx, dzdy = _horn_gradients(ds)
+    dzdx, dzdy, valid = _horn_gradients(ds)
 
     # Math convention: arctan2(dzdy, -dzdx) — angle CCW from east in [-180,180].
     aspect_rad = np.arctan2(dzdy, -dzdx)
@@ -136,7 +117,7 @@ def aspect(ds, trigonometric: bool = False, zero_for_flat: bool = False) -> byte
     flat_value = 0.0 if zero_for_flat else _NODATA
     result = np.where(flat_mask, flat_value, result)
 
-    return _emit_float32(ds, result)
+    return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
 def _neighbors(band: np.ndarray) -> tuple:
@@ -174,10 +155,10 @@ def tri(ds) -> bytes:
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
-    band = ds.read(1).astype("float64")
+    band, valid = read_masked(ds)
     center, nbrs = _neighbors(band)
     result = np.mean(np.stack([np.abs(center - n) for n in nbrs], axis=0), axis=0)
-    return _emit_float32(ds, result)
+    return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
 def tpi(ds) -> bytes:
@@ -192,10 +173,10 @@ def tpi(ds) -> bytes:
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
-    band = ds.read(1).astype("float64")
+    band, valid = read_masked(ds)
     center, nbrs = _neighbors(band)
     result = center - np.mean(np.stack(nbrs, axis=0), axis=0)
-    return _emit_float32(ds, result)
+    return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
 def roughness(ds) -> bytes:
@@ -210,11 +191,11 @@ def roughness(ds) -> bytes:
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
-    band = ds.read(1).astype("float64")
+    band, valid = read_masked(ds)
     center, nbrs = _neighbors(band)
     window = np.stack([center] + nbrs, axis=0)  # shape (9, H, W)
     result = np.max(window, axis=0) - np.min(window, axis=0)
-    return _emit_float32(ds, result)
+    return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
 def _parse_color_table(path: str, band_min: float, band_max: float) -> tuple:
@@ -374,9 +355,9 @@ def hillshade(
         z_factor:  Vertical exaggeration applied to gradients (default 1.0).
 
     Returns:
-        Single-band Byte (uint8) GTiff bytes, values [0..255].
+        Single-band Byte (uint8) GTiff bytes, values [0..255]; nodata = 0.
     """
-    dzdx, dzdy = _horn_gradients(ds)
+    dzdx, dzdy, valid = _horn_gradients(ds)
 
     # Apply z_factor to gradients before angle computations.
     dzdx_z = dzdx * float(z_factor)
@@ -397,4 +378,4 @@ def hillshade(
         + np.sin(zenith) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad)
     )
 
-    return _emit_uint8(ds, hs)
+    return emit(ds, hs, 0, propagate_invalid(valid), "uint8")

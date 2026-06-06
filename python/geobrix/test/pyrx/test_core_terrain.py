@@ -31,7 +31,8 @@ def test_slope_flat_is_zero():
         out = terrain.slope(ds)
     with _serde.open_tile(out) as o:
         assert o.count == 1 and o.dtypes[0] == "float32"
-        assert np.allclose(o.read(1), 0.0, atol=1e-4)
+        # Interior is flat (slope 0); the 1-px kernel border is NoData.
+        assert np.allclose(o.read(1)[1:-1, 1:-1], 0.0, atol=1e-4)
 
 
 def test_slope_45deg_ramp():
@@ -72,7 +73,8 @@ def test_aspect_flat_zero_for_flat():
         out = terrain.aspect(ds, zero_for_flat=True)
     with _serde.open_tile(out) as o:
         arr = o.read(1)
-        assert np.allclose(arr, 0.0, atol=1e-3)
+        # Interior flat cells -> 0; the 1-px kernel border is NoData.
+        assert np.allclose(arr[1:-1, 1:-1], 0.0, atol=1e-3)
 
 
 def test_aspect_trigonometric():
@@ -109,8 +111,8 @@ def test_hillshade_flat_uniform():
         out = terrain.hillshade(ds)
     with _serde.open_tile(out) as o:
         arr = o.read(1)
-        # All pixels should be the same value
-        assert np.all(arr == arr[0, 0])
+        # Interior is uniform; the 1-px kernel border is NoData (0).
+        assert np.all(arr[1:-1, 1:-1] == arr[1, 1])
 
 
 def test_slope_percent():
@@ -130,7 +132,8 @@ def test_tri_tpi_roughness_flat_zero():
     for out in (tri_b, tpi_b, rough_b):
         with _serde.open_tile(out) as o:
             assert o.count == 1 and o.dtypes[0] == "float32"
-            assert np.allclose(o.read(1), 0.0, atol=1e-4)
+            # Interior flat -> 0; the 1-px kernel border is NoData.
+            assert np.allclose(o.read(1)[1:-1, 1:-1], 0.0, atol=1e-4)
 
 
 def test_roughness_known_step():
@@ -156,3 +159,36 @@ def test_tpi_peak_positive():
     with _serde.open_tile(out) as o:
         # center is higher than its (zero) neighbors -> positive TPI
         assert o.read(1)[2, 2] > 0
+
+
+def test_slope_border_is_nodata():
+    ramp = np.tile(np.arange(6, dtype="float32"), (6, 1))
+    with _serde.open_tile(_dem(ramp)) as ds:
+        out = terrain.slope(ds, unit="degrees", scale=1.0)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        assert o.nodata == -9999.0
+        assert (r[0, :] == -9999.0).all() and (r[-1, :] == -9999.0).all()
+        assert (r[:, 0] == -9999.0).all() and (r[:, -1] == -9999.0).all()
+        assert r[2, 2] != -9999.0
+
+
+def test_slope_input_nodata_propagates_to_neighbors():
+    ramp = np.tile(np.arange(6, dtype="float32"), (6, 1))
+    ramp[3, 3] = -9999.0
+    with _serde.open_tile(_dem(ramp)) as ds:
+        out = terrain.slope(ds)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        assert (r[2:5, 2:5] == -9999.0).all()
+
+
+def test_hillshade_border_is_nodata_zero():
+    flat = np.full((6, 6), 100.0, dtype="float32")
+    with _serde.open_tile(_dem(flat)) as ds:
+        out = terrain.hillshade(ds)
+    with _serde.open_tile(out) as o:
+        assert o.nodata == 0.0
+        r = o.read(1)
+        assert (r[0, :] == 0).all()
+        assert r[2, 2] != 0
