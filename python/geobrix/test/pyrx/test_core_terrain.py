@@ -192,3 +192,38 @@ def test_hillshade_border_is_nodata_zero():
         r = o.read(1)
         assert (r[0, :] == 0).all()
         assert r[2, 2] != 0
+
+
+def test_tri_uses_riley_sqrt_sum_sq():
+    # 3x3 interior pixel: center=0, all 8 neighbors=1 -> Riley = sqrt(8*1^2)=sqrt(8);
+    # Wilson (old) would be mean(|0-1|)=1.0. Assert Riley.
+    dem = np.array(
+        [
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+            [1, 1, 0, 1, 1],  # center low point at [2,2]
+            [1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1],
+        ],
+        dtype="float32",
+    )
+    with _serde.open_tile(_dem(dem)) as ds:
+        out = terrain.tri(ds)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        assert abs(r[2, 2] - np.sqrt(8.0)) < 1e-4  # Riley, not 1.0 (Wilson)
+
+
+def test_hillshade_dark_pixels_floor_to_1_not_0():
+    # A steep DEM produces some self-shadowed (cang<=0) pixels; they must be 1, not 0
+    # (0 is reserved for nodata). Assert no INTERIOR pixel is 0 and the min interior is >=1.
+    steep = (
+        np.tile(np.arange(8, dtype="float32"), (8, 1)) ** 2
+    ) * 50.0  # strong relief
+    with _serde.open_tile(_dem(steep)) as ds:
+        out = terrain.hillshade(ds, azimuth=315.0, altitude=45.0)
+    with _serde.open_tile(out) as o:
+        r = o.read(1)
+        interior = r[1:-1, 1:-1]
+        assert interior.min() >= 1  # valid floor is 1, never 0
+        assert interior.max() <= 255

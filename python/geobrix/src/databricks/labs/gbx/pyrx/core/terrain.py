@@ -16,7 +16,7 @@ Horn's method:
 Single-band output in every case:
     slope     -> Float32 (degrees or percent)   nodata -9999
     aspect    -> Float32 (compass or trig deg)  nodata -9999
-    hillshade -> uint8   [0..255]               nodata 0
+    hillshade -> uint8   valid [1..255], 0=nodata  nodata 0
 """
 
 import numpy as np
@@ -144,10 +144,12 @@ def _neighbors(band: np.ndarray) -> tuple:
 
 
 def tri(ds) -> bytes:
-    """Compute Terrain Ruggedness Index (Wilson 2007).
+    """Compute Terrain Ruggedness Index (Riley 1999, ``gdaldem`` default).
 
-    TRI = mean of the absolute differences between the center cell and each of
-    its 8 neighbours (3x3 edge-replicated window).  Flat terrain yields 0.
+    TRI = sqrt of the sum of squared differences between the center cell and
+    each of its 8 neighbours (3x3 edge-replicated window).  This matches the
+    Riley algorithm that ``gdaldem TRI`` has used by default since GDAL 3.3.
+    Flat terrain yields 0.
 
     Args:
         ds: Open rasterio DatasetReader.  Band 1 is used as the DEM.
@@ -157,7 +159,9 @@ def tri(ds) -> bytes:
     """
     band, valid = read_masked(ds)
     center, nbrs = _neighbors(band)
-    result = np.mean(np.stack([np.abs(center - n) for n in nbrs], axis=0), axis=0)
+    result = np.sqrt(
+        np.sum(np.stack([(center - n) ** 2 for n in nbrs], axis=0), axis=0)
+    )
     return emit(ds, result, _NODATA, propagate_invalid(valid), "float32")
 
 
@@ -355,7 +359,8 @@ def hillshade(
         z_factor:  Vertical exaggeration applied to gradients (default 1.0).
 
     Returns:
-        Single-band Byte (uint8) GTiff bytes, values [0..255]; nodata = 0.
+        Single-band Byte (uint8) GTiff bytes; valid values [1..255],
+        0 reserved for NoData (gdaldem convention).
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
 
@@ -373,9 +378,11 @@ def hillshade(
     slope_rad = np.arctan(np.sqrt(dzdx_z**2 + dzdy_z**2))
     aspect_rad = np.arctan2(dzdy_z, -dzdx_z)
 
-    hs = 255.0 * (
-        np.cos(zenith) * np.cos(slope_rad)
-        + np.sin(zenith) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad)
-    )
+    cang = np.cos(zenith) * np.cos(slope_rad) + np.sin(zenith) * np.sin(
+        slope_rad
+    ) * np.cos(az_rad - aspect_rad)
+    # gdaldem scaling: valid pixels map to [1, 255]; cang<=0 floors to 1.
+    # 0 is reserved exclusively for NoData.
+    hs = np.where(cang <= 0.0, 1.0, 1.0 + 254.0 * cang)
 
     return emit(ds, hs, 0, propagate_invalid(valid), "uint8")
