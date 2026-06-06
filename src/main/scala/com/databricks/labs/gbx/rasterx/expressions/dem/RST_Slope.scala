@@ -14,9 +14,10 @@ import org.gdal.gdal.Dataset
   * Compute slope from a single-band DEM tile via `gdal.DEMProcessing("slope")`.
   *
   *   - `unit` (default "degrees"): "degrees" or "percent".
-  *   - `scale` (default 1.0): vertical exaggeration. Use 111120 for unprojected
-  *     geographic CRS (degrees), 370400 for ft-per-degree, 1.0 for projected CRS
-  *     in metres.
+  *   - `scale` (default: unset): ratio of vertical units to horizontal units.
+  *     When omitted, GDAL 3.11+ auto-derives the scale from the CRS (degree->metre
+  *     for geographic rasters), matching `gdaldem slope` with no `-s`. Supply an
+  *     explicit value (e.g. 1.0 for a projected CRS already in metres) to override.
   *
   * Output is a single-band Float32 GTiff with slope per pixel.
   */
@@ -66,7 +67,11 @@ object RST_Slope extends WithExpressionInfo {
     /** Pure compute path - extracted for direct unit-testing without Spark. */
     def execute(ds: Dataset, unit: String, scale: Double): (Dataset, Map[String, String]) = {
         val opts = scala.collection.mutable.Buffer.empty[String]
-        opts ++= Seq("-s", scale.toString)
+        // Double.NaN sentinel = "no explicit scale" (mirrors GDAL's own
+        // std::isnan(xscale) check): omit -s so GDAL 3.11+ auto-derives the
+        // xscale/yscale from the CRS (degree->metre for geographic rasters).
+        // Emit -s only when the caller explicitly supplies a scale.
+        if (!scale.isNaN) opts ++= Seq("-s", scale.toString)
         if (unit != null && unit.equalsIgnoreCase("percent")) opts += "-p"
         RST_DEMProcessingHelper.process(ds, "slope", opts.toSeq)
     }
@@ -74,8 +79,8 @@ object RST_Slope extends WithExpressionInfo {
     override def name: String = "gbx_rst_slope"
 
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
-        case 1 => RST_Slope(c(0), Literal("degrees"), Literal(1.0))
-        case 2 => RST_Slope(c(0), c(1), Literal(1.0))
+        case 1 => RST_Slope(c(0), Literal("degrees"), Literal(Double.NaN))
+        case 2 => RST_Slope(c(0), c(1), Literal(Double.NaN))
         case 3 => RST_Slope(c(0), c(1), c(2))
         case n => throw new IllegalArgumentException(
             s"gbx_rst_slope takes 1 to 3 arguments (tile, [unit, [scale]]); got $n"
