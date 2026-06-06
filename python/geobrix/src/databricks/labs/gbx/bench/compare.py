@@ -291,3 +291,35 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
             )
         lines += [""]
     return "\n".join(lines)
+
+
+def main(argv=None):
+    import argparse
+
+    from databricks.labs.gbx.bench import results as _r
+
+    ap = argparse.ArgumentParser(prog="bench.compare")
+    ap.add_argument("--heavyweight", required=True, help="heavyweight.jsonl shard")
+    ap.add_argument("--lightweight", required=True, help="lightweight.jsonl shard")
+    ap.add_argument(
+        "--out-dir", required=True, help="dir for comparison.csv + summary.md"
+    )
+    a = ap.parse_args(argv)
+
+    hw_rows = _r.read_jsonl(a.heavyweight)
+    lw_rows = _r.read_jsonl(a.lightweight)
+    cells, unmatched = compare_cells(hw_rows, lw_rows)
+    out = Path(a.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    write_csv(cells, out / "comparison.csv")
+    (out / "summary.md").write_text(
+        summarize_compare(cells, unmatched, hw_rows, lw_rows)
+    )
+    print(
+        f"compared {len(cells)} cells ({len(unmatched)} unmatched) -> "
+        f"{out}/comparison.csv, summary.md"
+    )
+
+
+if __name__ == "__main__":
+    main()

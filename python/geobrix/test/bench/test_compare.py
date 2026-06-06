@@ -234,3 +234,41 @@ def test_summarize_compare_has_insights(tmp_path):
     assert "rst_ndvi" in md  # biggest lightweight win (132x) surfaced
     assert "divergent" in md.lower()
     assert "rst_viewshed" in md  # unmatched surfaced
+
+
+def test_compare_main_writes_outputs(tmp_path):
+    from databricks.labs.gbx.bench import results as RR
+
+    hw = tmp_path / "heavyweight.jsonl"
+    lw = tmp_path / "lightweight.jsonl"
+    RR.write_jsonl(
+        [
+            _rr(
+                "heavyweight",
+                "rst_slope",
+                "pure-core",
+                20.0,
+                '{"kind":"scalar","value":5}',
+            )
+        ],
+        hw,
+    )
+    RR.write_jsonl(
+        [
+            _rr(
+                "lightweight",
+                "rst_slope",
+                "pure-core",
+                4.0,
+                '{"kind":"scalar","value":5}',
+            )
+        ],
+        lw,
+    )
+    outdir = tmp_path / "out"
+    c.main(
+        ["--heavyweight", str(hw), "--lightweight", str(lw), "--out-dir", str(outdir)]
+    )
+    assert (outdir / "comparison.csv").exists()
+    assert (outdir / "summary.md").exists()
+    assert "Insights" in (outdir / "summary.md").read_text()
