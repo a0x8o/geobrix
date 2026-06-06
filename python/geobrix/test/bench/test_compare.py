@@ -1,3 +1,5 @@
+import csv as _csv
+
 from databricks.labs.gbx.bench import compare as c
 from databricks.labs.gbx.bench import results as R
 
@@ -159,3 +161,76 @@ def test_abs_tol_does_not_mask_real_divergence():
     hw = '{"kind":"scalar","value":1.0}'
     lw = '{"kind":"scalar","value":5.0}'
     assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
+def test_write_csv(tmp_path):
+    cells = [
+        c.CellCompare(
+            "rst_slope",
+            "pure-core",
+            256,
+            2,
+            "float32",
+            4326,
+            0.0,
+            1,
+            20.0,
+            4.0,
+            5.0,
+            "within_tol",
+            0.0004,
+            1020,
+            "nodata_count differs",
+        )
+    ]
+    p = tmp_path / "comparison.csv"
+    c.write_csv(cells, p)
+    rows = list(_csv.DictReader(p.open()))
+    assert rows[0]["fn"] == "rst_slope"
+    assert float(rows[0]["speedup"]) == 5.0
+    assert rows[0]["consistency"] == "within_tol"
+
+
+def test_summarize_compare_has_insights(tmp_path):
+    cells = [
+        c.CellCompare(
+            "rst_slope",
+            "pure-core",
+            256,
+            2,
+            "float32",
+            4326,
+            0.0,
+            1,
+            20.0,
+            4.0,
+            5.0,
+            "within_tol",
+            0.0004,
+            1020,
+            "nodata_count differs",
+        ),
+        c.CellCompare(
+            "rst_ndvi",
+            "pure-core",
+            256,
+            2,
+            "float32",
+            4326,
+            0.0,
+            1,
+            660.0,
+            5.0,
+            132.0,
+            "divergent",
+            0.9,
+            0,
+            "",
+        ),
+    ]
+    unmatched = [("rst_viewshed", "lightweight", ("rst_viewshed",))]
+    md = c.summarize_compare(cells, unmatched, [], [])
+    assert "## Insights" in md
+    assert "rst_ndvi" in md  # biggest lightweight win (132x) surfaced
+    assert "divergent" in md.lower()
+    assert "rst_viewshed" in md  # unmatched surfaced

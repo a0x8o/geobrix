@@ -8,9 +8,11 @@ the kernel border), and fingerprints are never expected byte-equal across APIs.
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 
 from databricks.labs.gbx.bench.results import ResultRow
@@ -197,3 +199,95 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
         (lw_by[k].fn, "lightweight", k) for k in sorted(set(lw_by) - set(hw_by))
     ]
     return cells, unmatched
+
+
+_CSV_FIELDS = [
+    "fn",
+    "mode",
+    "tile_px",
+    "bands",
+    "dtype",
+    "srid",
+    "nodata_frac",
+    "rows",
+    "hw_median_ms",
+    "lw_median_ms",
+    "speedup",
+    "consistency",
+    "max_rel_delta",
+    "nodata_count_delta",
+    "note",
+]
+
+
+def write_csv(cells: List[CellCompare], path) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=_CSV_FIELDS)
+        w.writeheader()
+        for cl in cells:
+            w.writerow({k: getattr(cl, k) for k in _CSV_FIELDS})
+
+
+def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
+    lines = ["# GeoBrix benchmark — heavy vs light comparison", "", "## Insights", ""]
+    insights = []
+    ok_speed = [cl for cl in cells if cl.lw_median_ms > 0 and cl.hw_median_ms > 0]
+    if ok_speed:
+        lw_win = max(ok_speed, key=lambda cl: cl.speedup)
+        hw_win = min(ok_speed, key=lambda cl: cl.speedup)
+        insights.append(
+            f"Biggest lightweight win: `{lw_win.fn}` ({lw_win.mode}) — {lw_win.speedup:.1f}x "
+            f"(hw {lw_win.hw_median_ms:.1f} ms vs lw {lw_win.lw_median_ms:.1f} ms)."
+        )
+        if hw_win.speedup > 0:
+            insights.append(
+                f"Biggest heavyweight win: `{hw_win.fn}` ({hw_win.mode}) — {1.0 / hw_win.speedup:.1f}x "
+                f"(hw {hw_win.hw_median_ms:.1f} ms vs lw {hw_win.lw_median_ms:.1f} ms)."
+            )
+    pc = [cl for cl in cells if cl.consistency != "na"]
+    n_exact = sum(1 for cl in pc if cl.consistency == "exact")
+    n_tol = sum(1 for cl in pc if cl.consistency == "within_tol")
+    div = [cl for cl in pc if cl.consistency == "divergent"]
+    if pc:
+        msg = (
+            f"Consistency ({len(pc)} compared cells): exact {n_exact} - within-tol {n_tol} - "
+            f"divergent {len(div)}"
+        )
+        if div:
+            msg += " - divergent: " + ", ".join(sorted({cl.fn for cl in div}))
+        insights.append(msg)
+    ndc = sorted({cl.fn for cl in cells if cl.nodata_count_delta != 0})
+    if ndc:
+        insights.append(
+            "NoData-count differs (informational, neighborhood-op border) for: "
+            + ", ".join(ndc)
+            + " - value stats still agree within tolerance; not a divergence."
+        )
+    if unmatched:
+        ufns = sorted({u[0] for u in unmatched})
+        insights.append(
+            f"{len(unmatched)} unmatched cell(s) across {len(ufns)} fn(s): "
+            + ", ".join(ufns[:8])
+        )
+    lines += [f"- {b}" for b in insights] if insights else ["- (no cells compared)"]
+    lines += [""]
+
+    for mode in ("pure-core", "spark-path"):
+        mc = [cl for cl in cells if cl.mode == mode]
+        if not mc:
+            continue
+        lines += [
+            f"## {mode} (hw vs lw)",
+            "",
+            "| fn | tile_px | bands | rows | hw_ms | lw_ms | speedup | consistency | note |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
+            lines.append(
+                f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | {cl.hw_median_ms:.3f} | "
+                f"{cl.lw_median_ms:.3f} | {cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
+            )
+        lines += [""]
+    return "\n".join(lines)
