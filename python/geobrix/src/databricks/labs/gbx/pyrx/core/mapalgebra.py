@@ -11,6 +11,8 @@ import numexpr as ne
 import numpy as np
 from rasterio.io import MemoryFile
 
+from databricks.labs.gbx.pyrx.core._nodata import emit, read_masked
+
 _VARS = string.ascii_uppercase  # A..Z (up to 26 inputs)
 
 
@@ -32,25 +34,25 @@ def mapalgebra(rasters, expression: str) -> bytes:
         raise ValueError("mapalgebra requires at least one raster")
     local_dict = {}
     opened = []
+    invalid = None
+    template = None
     try:
-        first_profile = None
         for i, rb in enumerate(rasters):
             mf = MemoryFile(bytes(rb))
             ds = mf.open()
             opened.append((mf, ds))
-            local_dict[_VARS[i]] = ds.read(1).astype("float64")
-            if first_profile is None:
-                first_profile = ds.profile.copy()
+            data, valid = read_masked(ds, 1)
+            local_dict[_VARS[i]] = data
+            invalid = (~valid) if invalid is None else (invalid | ~valid)
+            if template is None:
+                template = ds
         result = ne.evaluate(str(expression), local_dict=local_dict)
         # numexpr may broadcast a scalar expression (e.g. "A * 2") to an ndarray
         # when A is an ndarray — the result is already an array in that case, but
-        # ensure we always have a 2-D array matching the spatial grid.
-        result = np.asarray(result, dtype="float32")
-        first_profile.update(driver="GTiff", count=1, dtype="float32")
-        with MemoryFile() as out:
-            with out.open(**first_profile) as dst:
-                dst.write(result, 1)
-            return out.read()
+        # ensure we always have a 2-D array matching the spatial grid. emit reads
+        # template.profile and writes synchronously, before finally closes ds.
+        result = np.asarray(result, dtype="float64")
+        return emit(template, result, -9999.0, invalid, "float32")
     finally:
         for mf, ds in opened:
             ds.close()
