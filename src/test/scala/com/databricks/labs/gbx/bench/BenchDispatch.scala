@@ -10,17 +10,23 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoord
 import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordX
 import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordY
 import com.databricks.labs.gbx.rasterx.expressions.RST_AsFormat
+import com.databricks.labs.gbx.rasterx.expressions.RST_Clip
 import com.databricks.labs.gbx.rasterx.expressions.RST_Convolve
+import com.databricks.labs.gbx.rasterx.expressions.RST_DerivedBand
 import com.databricks.labs.gbx.rasterx.expressions.RST_Filter
 import com.databricks.labs.gbx.rasterx.expressions.RST_InitNoData
+import com.databricks.labs.gbx.rasterx.expressions.RST_MapAlgebra
 import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_CogConvert
+import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Proximity
+import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Viewshed
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Band
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_FillNodata
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Histogram
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Sample
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_SetSrid
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Threshold
 import com.databricks.labs.gbx.rasterx.expressions.resample.RST_Resample
@@ -31,6 +37,7 @@ import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import com.databricks.labs.gbx.util.NodeFilePathUtil
+import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.Column
 import org.gdal.gdal.Dataset
 
@@ -47,10 +54,40 @@ object BenchDispatch {
   private val BM = "band-math"; private val WARP = "warp"
   private val EDIT = "edit"; private val FEAT = "features"
   private val FOCAL = "focal"; private val FMT = "format"; private val RES = "resample"
+  private val ANALYSIS = "analysis"
 
   // Functions that need a >=2-band source even though they are not band-math
-  // (rst_band selects band 2).
-  private val multiBand: Set[String] = Set("rst_band")
+  // (rst_band selects band 2; rst_evi/savi/index read a second band on the
+  // 2-band corpus).
+  private val multiBand: Set[String] = Set("rst_band", "rst_evi", "rst_savi", "rst_index")
+
+  // --- Task 6: complex-arg constants, hardcoded identically to the pyrx side ---
+  // The band-map, the map-algebra expression, and the derived-band pixel function
+  // cannot ride the stringly-typed bench args map, so they are fixed here exactly
+  // as in spec.py (same policy as the convolve kernel).
+  private val indexName = "ndvi"
+  private val indexBandMap: Map[String, Int] = Map("red" -> 1, "nir" -> 2)
+  private val mapAlgebraExpr = "A*2"
+  private val derivedBandFuncName = "mean_bands"
+  private val derivedBandPyFunc =
+    "import numpy as np\n" +
+      "def mean_bands(in_ar, out_ar, xoff, yoff, xsize, ysize,\n" +
+      "               raster_xsize, raster_ysize, buf_radius, gt, **kwargs):\n" +
+      "    stack = np.array(in_ar, dtype='float64')\n" +
+      "    out_ar[:] = stack.mean(axis=0)\n"
+  // Global-cover clip polygon (±2e7 both axes) — overlaps every corpus tile in
+  // every CRS so the timing-only clip call never errors. Same WKT as the WKB the
+  // pyrx side builds via shapely.geometry.box(-2e7, -2e7, 2e7, 2e7).
+  private val clipGeomWkt =
+    "POLYGON ((-2.0E7 -2.0E7, 2.0E7 -2.0E7, 2.0E7 2.0E7, -2.0E7 2.0E7, -2.0E7 -2.0E7))"
+
+  // Synthetic gdaldem color ramp for the timing-only color_relief call; written to
+  // a temp file on first use (matches spec.py's _COLOR_RAMP_TEXT).
+  private lazy val colorTablePath: String = {
+    val p = Files.createTempFile("bench_color_", ".txt")
+    Files.write(p, "nv 0 0 0\n0% 0 0 255\n50% 0 255 0\n100% 255 0 0\n".getBytes("UTF-8"))
+    p.toString
+  }
 
   private val cats: Map[String, String] = Map(
     "rst_width" -> ACC, "rst_height" -> ACC, "rst_numbands" -> ACC, "rst_avg" -> ACC,
@@ -78,7 +115,12 @@ object BenchDispatch {
     "rst_setsrid" -> EDIT, "rst_updatetype" -> EDIT, "rst_fillnodata" -> FEAT,
     "rst_filter" -> FOCAL, "rst_convolve" -> FOCAL,
     "rst_asformat" -> FMT, "rst_cog_convert" -> FMT,
-    "rst_resample" -> RES, "rst_resample_to_res" -> RES, "rst_resample_to_size" -> RES
+    "rst_resample" -> RES, "rst_resample_to_res" -> RES, "rst_resample_to_size" -> RES,
+    // tile-out transforms with geometry / expression / band-map / function args (Task 6)
+    "rst_evi" -> BM, "rst_savi" -> BM, "rst_index" -> BM,
+    "rst_mapalgebra" -> FMT, "rst_derivedband" -> FMT, "rst_proximity" -> ANALYSIS,
+    "rst_clip" -> EDIT, "rst_color_relief" -> TER, "rst_viewshed" -> ANALYSIS,
+    "rst_sample" -> FMT
   )
 
   def all: Seq[String] = cats.keys.toSeq.sorted
@@ -190,6 +232,48 @@ object BenchDispatch {
         argD(a, "y_res", 5.0), argS(a, "algorithm", "bilinear"))
       RasterDriver.releaseDataset(res._1)
       BenchFingerprint.empty
+    // tile-out transforms with geometry / expression / band-map / function args
+    // (Task 6). SIX are full raster comparisons (same algorithm + CRS-independent
+    // args); FOUR are timing-only (no in-extent geometry across the multi-CRS
+    // corpus, and/or divergent interpolation/scan engines).
+    case "rst_evi" =>
+      fpDerived(RST_EVI.execute(ds, argI(a, "red_idx", 1), argI(a, "nir_idx", 2),
+        argI(a, "blue_idx", 1), argD(a, "l", 1.0), argD(a, "c1", 6.0),
+        argD(a, "c2", 7.5), argD(a, "g", 2.5)))
+    case "rst_savi" =>
+      fpDerived(RST_SAVI.execute(ds, argI(a, "red_idx", 1), argI(a, "nir_idx", 2), argD(a, "l", 0.5)))
+    case "rst_index" =>
+      fpDerived(RST_Index.execute(ds, indexName, indexBandMap))
+    case "rst_mapalgebra" =>
+      fpDerived(RST_MapAlgebra.execute(Seq(ds), Map.empty, mapAlgebraExpr))
+    case "rst_derivedband" =>
+      fpDerived(RST_DerivedBand.execute(Seq(ds), Map.empty, derivedBandPyFunc, derivedBandFuncName))
+    case "rst_proximity" =>
+      fpDerived(RST_Proximity.execute(ds, Map.empty,
+        Some(argS(a, "target_values", "1")), argS(a, "distunits", "GEO"), None))
+    // timing-only: clip needs an in-extent geom; the global-cover polygon avoids
+    // an error on the timing call but the output is not compared.
+    case "rst_clip" =>
+      val res = RST_Clip.execute(ds, Map.empty, JTS.fromWKT(clipGeomWkt),
+        argB(a, "cutline_all_touched", false))
+      RasterDriver.releaseDataset(res._1)
+      BenchFingerprint.empty
+    // timing-only: color-relief reads a color table (synthetic) and the GDAL
+    // DEMProcessing interpolation diverges from the pyrx np.interp path.
+    case "rst_color_relief" =>
+      val res = RST_ColorRelief.execute(ds, colorTablePath)
+      RasterDriver.releaseDataset(res._1)
+      BenchFingerprint.empty
+    // timing-only: observer (0,0) (no in-extent point across CRSs) and an
+    // xrspatial-vs-GDAL parity divergence in the binary mask.
+    case "rst_viewshed" =>
+      val res = RST_Viewshed.execute(ds, Map.empty, 0.0, 0.0,
+        argD(a, "observer_height", 2.0), argD(a, "target_height", 1.6), None)
+      RasterDriver.releaseDataset(res._1)
+      BenchFingerprint.empty
+    // timing-only: sample at world (0,0) (no in-extent point across CRSs).
+    case "rst_sample" =>
+      RST_Sample.execute(ds, 0.0, 0.0); BenchFingerprint.empty
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -283,6 +367,39 @@ object BenchDispatch {
       case "rst_resample_to_res" =>
         rst_resample_to_res(tile, argD(a, "x_res", 5.0),
           argD(a, "y_res", 5.0), argS(a, "algorithm", "bilinear"))
+      // tile-out transforms with geometry / expression / band-map / function args
+      // (Task 6). The full-comparison six run in spark-path; the timing-only four
+      // are pure-core-only and their column form is here only to keep the match
+      // exhaustive (the spark-path runner filters by modes).
+      case "rst_evi" =>
+        rst_evi(tile, argI(a, "red_idx", 1), argI(a, "nir_idx", 2), argI(a, "blue_idx", 1),
+          argD(a, "l", 1.0), argD(a, "c1", 6.0), argD(a, "c2", 7.5), argD(a, "g", 2.5))
+      case "rst_savi" =>
+        rst_savi(tile, argI(a, "red_idx", 1), argI(a, "nir_idx", 2), argD(a, "l", 0.5))
+      case "rst_index" =>
+        import org.apache.spark.sql.functions.{lit, map => sqlMap}
+        val bandMapCol = sqlMap(indexBandMap.toSeq.flatMap { case (k, v) => Seq(lit(k), lit(v)) }: _*)
+        rst_index(tile, indexName, bandMapCol)
+      case "rst_mapalgebra" =>
+        import org.apache.spark.sql.functions.array
+        rst_mapalgebra(array(tile), mapAlgebraExpr)
+      case "rst_derivedband" =>
+        rst_derivedband(tile, derivedBandPyFunc, derivedBandFuncName)
+      case "rst_proximity" =>
+        import org.apache.spark.sql.functions.lit
+        rst_proximity(tile, lit(argS(a, "target_values", "1")), lit(argS(a, "distunits", "GEO")))
+      case "rst_clip" =>
+        import org.apache.spark.sql.functions.lit
+        rst_clip(tile, lit(clipGeomWkt), argB(a, "cutline_all_touched", false))
+      case "rst_color_relief" =>
+        rst_color_relief(tile, colorTablePath)
+      case "rst_viewshed" =>
+        import org.apache.spark.sql.functions.lit
+        rst_viewshed(tile, lit("POINT (0 0)"), lit(argD(a, "observer_height", 2.0)),
+          lit(argD(a, "target_height", 1.6)))
+      case "rst_sample" =>
+        import org.apache.spark.sql.functions.lit
+        rst_sample(tile, lit("POINT (0 0)"))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

@@ -337,3 +337,95 @@ def test_tile_out_scalar_not_in_core_set():
 
 def test_rst_band_requires_two_bands():
     assert s.REGISTRY["rst_band"].min_bands == 2
+
+
+# --- Task 6: tile-out transforms with geometry/expression/band-map/func (10) -
+# All produce a raster tile, all core=False. SIX run both modes and are compared
+# (fingerprint=True): the args are CRS-/band-count-independent and the two engines
+# run the same algorithm. FOUR run pure-core-only (fingerprint=False) because no
+# single literal geometry/observer/point is in-extent across the multi-CRS corpus
+# (clip, sample, viewshed) and/or the engines use different interpolation/scan
+# algorithms (color_relief np.interp vs GDAL DEMProcessing; viewshed xrspatial vs
+# GDAL sweep).
+_COMPLEX_ARG = {
+    "rst_evi",
+    "rst_savi",
+    "rst_index",
+    "rst_mapalgebra",
+    "rst_derivedband",
+    "rst_clip",
+    "rst_color_relief",
+    "rst_proximity",
+    "rst_viewshed",
+    "rst_sample",
+}
+
+_COMPLEX_FULL = {
+    "rst_evi",
+    "rst_savi",
+    "rst_index",
+    "rst_mapalgebra",
+    "rst_derivedband",
+    "rst_proximity",
+}
+
+_COMPLEX_TIMING_ONLY = {
+    "rst_clip",
+    "rst_color_relief",
+    "rst_viewshed",
+    "rst_sample",
+}
+
+
+def test_complex_arg_partition_is_total():
+    # the full + timing-only sets exactly partition the 10 Task-6 functions
+    assert _COMPLEX_FULL | _COMPLEX_TIMING_ONLY == _COMPLEX_ARG
+    assert not (_COMPLEX_FULL & _COMPLEX_TIMING_ONLY)
+    assert len(_COMPLEX_ARG) == 10
+    assert len(_COMPLEX_FULL) == 6
+    assert len(_COMPLEX_TIMING_ONLY) == 4
+
+
+def test_complex_arg_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _COMPLEX_ARG - full
+    assert not missing, f"registry missing complex-arg fns: {sorted(missing)}"
+
+
+def test_complex_arg_wellformed():
+    for name in _COMPLEX_ARG:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert set(fs.modes) <= {"pure-core", "spark-path"}
+
+
+def test_complex_arg_full_comparison_modes_and_fingerprint():
+    for name in _COMPLEX_FULL:
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+        assert fs.fingerprint is True, name
+
+
+def test_complex_arg_timing_only_modes_and_fingerprint():
+    for name in _COMPLEX_TIMING_ONLY:
+        fs = s.REGISTRY[name]
+        assert fs.modes == ("pure-core",), name
+        assert fs.fingerprint is False, name
+
+
+def test_complex_arg_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_COMPLEX_ARG & core)
+
+
+def test_complex_arg_band_index_specs_require_two_bands():
+    # evi/savi/index all read a 2nd band on the 2-band corpus
+    for name in ("rst_evi", "rst_savi", "rst_index"):
+        assert s.REGISTRY[name].min_bands == 2, name
+
+
+def test_full_set_count_is_seventy():
+    # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
+    assert len(s.select(set="full")) == 70

@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List
 
+import shapely.geometry
+import shapely.wkb
 from pyspark.sql import functions as F
 
 from databricks.labs.gbx.pyrx import functions as prx
@@ -24,10 +26,12 @@ from databricks.labs.gbx.pyrx.core import accessors
 from databricks.labs.gbx.pyrx.core import analysis as analysis_core
 from databricks.labs.gbx.pyrx.core import (
     coords,
+    derivedband,
     edit,
     features,
     focal,
     indices,
+    mapalgebra,
     ops,
     resample,
     terrain,
@@ -40,6 +44,99 @@ from databricks.labs.gbx.pyrx.core import (
 # convolve with the same coefficients; the bench args carry only `kernel_size` for
 # documentation (a 2-D kernel cannot ride the stringly-typed Scala args map).
 _CONVOLVE_KERNEL = [[1.0 / 9.0] * 3 for _ in range(3)]
+
+# --- Task 6: complex-arg constants (geometry / expression / band-map / func) -
+# Each of these rides identically through the pyrx core_fn, the pyrx col_fn, AND
+# the Scala BenchDispatch case (same as the convolve kernel) — a stringly-typed
+# bench args map cannot carry a band-map, an expression's variable bindings, or a
+# Python pixel-function body, so they are hardcoded in both engines.
+
+# rst_index: the generic dispatcher needs a formula name + a band-map wiring the
+# formula's named bands to 1-based indices. "ndvi" needs red+nir, both present in
+# the 2-band corpus. Hardcoded identically here and in the Scala case.
+_INDEX_NAME = "ndvi"
+_INDEX_BAND_MAP = {"red": 1, "nir": 2}
+
+# rst_mapalgebra: band 1 of the (single) input binds to A; "A*2" is CRS- and
+# band-count-independent. Same expression on both engines.
+_MAPALGEBRA_EXPR = "A*2"
+
+# rst_derivedband: a GDAL VRT Python pixel-function body. Both engines exec this
+# exact source in-process and fill out_ar in place, so the algorithm is identical
+# (not merely analogous). A trivial per-pixel mean of all input bands.
+_DERIVEDBAND_FUNC_NAME = "mean_bands"
+_DERIVEDBAND_PYFUNC = (
+    "import numpy as np\n"
+    "def mean_bands(in_ar, out_ar, xoff, yoff, xsize, ysize,\n"
+    "               raster_xsize, raster_ysize, buf_radius, gt, **kwargs):\n"
+    "    stack = np.array(in_ar, dtype='float64')\n"
+    "    out_ar[:] = stack.mean(axis=0)\n"
+)
+
+# rst_clip (timing-only): clip needs a geometry. No single literal geometry can
+# intersect every tile across the multi-CRS corpus (EPSG:4326 degrees, 3857 /
+# 32618 / 27700 metres), so clip is timing-only and never compared. We pass a
+# global-cover polygon (±2e7 in both axes) that overlaps every corpus tile in
+# every CRS so the timing call never errors. WKB literal: both the core_fn and
+# the col_fn (rst_clip) take a WKB geometry.
+_CLIP_GEOM_WKB = shapely.geometry.box(-2.0e7, -2.0e7, 2.0e7, 2.0e7).wkb
+
+# rst_sample (timing-only): sample needs a POINT in-extent for the tile. No single
+# world point is in-extent across the multi-CRS corpus, so sample is timing-only
+# and never compared. (0, 0) is a valid POINT for the timing call (out-of-extent
+# points return null, which is fine for timing).
+_SAMPLE_POINT_WKB = shapely.geometry.Point(0.0, 0.0).wkb
+
+# rst_viewshed (timing-only): needs an observer point; like sample, no single
+# world point is in-extent across the multi-CRS corpus. Additionally the pyrx
+# binding documents a parity divergence (xrspatial CPU line-of-sight scan vs
+# GDAL's GVM_Edge sweep with curvature), so the binary masks are not byte-equal
+# even at a shared observer. Timing-only on both counts. Observer (0, 0).
+_VIEWSHED_OBSERVER_WKB = shapely.geometry.Point(0.0, 0.0).wkb
+
+# rst_color_relief (timing-only): heavy reads a gdaldem color-table FILE and runs
+# GDAL DEMProcessing color-relief (its own interpolation), while pyrx parses the
+# same file and interpolates with np.interp — different interpolation engines, so
+# the RGB(A) bytes are not value-identical. It also needs a real file path on the
+# executor, which the static args map cannot synthesize per-engine. Timing-only.
+# The runner does not invoke color_relief's core_fn for fingerprinting (it is
+# fingerprint=False); the path below is a documented placeholder for the args dict
+# and is created on demand by the core_fn.
+_COLOR_RAMP_TEXT = "nv 0 0 0\n0% 0 0 255\n50% 0 255 0\n100% 255 0 0\n"
+
+
+def _ds_to_gtiff_bytes(ds) -> bytes:
+    """Re-serialize an open rasterio DatasetReader to GTiff bytes.
+
+    ``mapalgebra`` (and rst_mapalgebra) consume raster *bytes*, but the bench
+    runner hands core_fn an already-open ``DatasetReader``. Round-trip the open
+    dataset through an in-memory GTiff so the single-input map-algebra call gets
+    the bytes it expects, byte-for-byte the same grid the column path sees.
+    """
+    from rasterio.io import MemoryFile
+
+    profile = ds.profile.copy()
+    profile.update(driver="GTiff")
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(ds.read())
+        return mf.read()
+
+
+def _color_table_path() -> str:
+    """Write the synthetic gdaldem color ramp to a temp file and return its path.
+
+    color_relief is timing-only (see ``_COLOR_RAMP_TEXT``); this only needs to
+    exist so the timing call succeeds.
+    """
+    import tempfile
+
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", prefix="bench_color_", delete=False
+    )
+    f.write(_COLOR_RAMP_TEXT)
+    f.close()
+    return f.name
 
 
 @dataclass(frozen=True)
@@ -777,6 +874,209 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_resample_to_res(
             t, a["x_res"], a["y_res"], a["algorithm"]
         ),
+        core=False,
+        fingerprint=False,
+    ),
+    # --- Task 6: tile-out transforms with geometry / expression / band-map /
+    # function args (10) --------------------------------------------------------
+    # SIX are full raster comparisons (both modes): the arguments are CRS- and
+    # band-count-independent and the two engines run the *same* algorithm.
+    #   evi, savi      -- band indices + coefficients (same numexpr formula)
+    #   index          -- formula name + band-map (hardcoded identically; "ndvi")
+    #   mapalgebra     -- single-input expression "A*2" (same numexpr/gdal_calc)
+    #   derivedband    -- same Python VRT pixel-function body, exec'd in-process
+    #   proximity      -- value-set + distunits (no geometry; CRS-independent)
+    # FOUR are timing-only (pure-core-only, fingerprint suppressed). Reason per
+    # function in the constant's comment above:
+    #   clip, sample, viewshed -- need an in-extent geometry; no single literal
+    #                             is in-extent across the multi-CRS corpus
+    #   viewshed (also)        -- documented xrspatial-vs-GDAL parity divergence
+    #   color_relief           -- needs a color-table file; GDAL DEMProcessing
+    #                             interpolation vs pyrx np.interp diverge
+    # --- band-index (indices.py): full comparison ---
+    "rst_evi": FnSpec(
+        "rst_evi",
+        "gbx_rst_evi",
+        "band-math",
+        _BOTH,
+        # 2-band corpus: reuse band 1 as the blue band. Coefficients are the GDAL
+        # / binding defaults, hardcoded identically on both engines.
+        {
+            "red_idx": 1,
+            "nir_idx": 2,
+            "blue_idx": 1,
+            "l": 1.0,
+            "c1": 6.0,
+            "c2": 7.5,
+            "g": 2.5,
+        },
+        min_bands=2,
+        core_fn=lambda ds, a: indices.evi(
+            ds,
+            a["red_idx"],
+            a["nir_idx"],
+            a["blue_idx"],
+            l=a["l"],
+            c1=a["c1"],
+            c2=a["c2"],
+            g=a["g"],
+        ),
+        col_fn=lambda t, a: prx.rst_evi(
+            t,
+            a["red_idx"],
+            a["nir_idx"],
+            a["blue_idx"],
+            a["l"],
+            a["c1"],
+            a["c2"],
+            a["g"],
+        ),
+        core=False,
+    ),
+    "rst_savi": FnSpec(
+        "rst_savi",
+        "gbx_rst_savi",
+        "band-math",
+        _BOTH,
+        {"red_idx": 1, "nir_idx": 2, "l": 0.5},
+        min_bands=2,
+        core_fn=lambda ds, a: indices.savi(ds, a["red_idx"], a["nir_idx"], l=a["l"]),
+        col_fn=lambda t, a: prx.rst_savi(t, a["red_idx"], a["nir_idx"], a["l"]),
+        core=False,
+    ),
+    # --- generic named-index dispatcher (indices.py): full comparison ---
+    # The band-map cannot ride the stringly args map, so index_name + band_map are
+    # hardcoded identically here and in the Scala BenchDispatch case (the args
+    # dict carries them only for documentation / the language-neutral dump).
+    "rst_index": FnSpec(
+        "rst_index",
+        "gbx_rst_index",
+        "band-math",
+        _BOTH,
+        {"index_name": _INDEX_NAME, "band_map": _INDEX_BAND_MAP},
+        min_bands=2,
+        core_fn=lambda ds, a: indices.index(ds, _INDEX_NAME, _INDEX_BAND_MAP),
+        col_fn=lambda t, a: prx.rst_index(
+            t,
+            _INDEX_NAME,
+            F.create_map(
+                *[x for k, v in _INDEX_BAND_MAP.items() for x in (F.lit(k), F.lit(v))]
+            ),
+        ),
+        core=False,
+    ),
+    # --- map algebra (mapalgebra.py): full comparison ---
+    # Single-input "A*2": CRS- and band-count-independent. core consumes bytes
+    # (round-trip the open ds); the column form wraps the single tile in an array.
+    "rst_mapalgebra": FnSpec(
+        "rst_mapalgebra",
+        "gbx_rst_mapalgebra",
+        "format",
+        _BOTH,
+        {"expr": _MAPALGEBRA_EXPR},
+        core_fn=lambda ds, a: mapalgebra.mapalgebra(
+            [_ds_to_gtiff_bytes(ds)], a["expr"]
+        ),
+        col_fn=lambda t, a: prx.rst_mapalgebra(F.array(t), a["expr"]),
+        core=False,
+    ),
+    # --- derived band (derivedband.py): full comparison ---
+    # Both engines exec the SAME Python VRT pixel-function source in-process and
+    # fill out_ar identically, so this is a genuine algorithmic match.
+    "rst_derivedband": FnSpec(
+        "rst_derivedband",
+        "gbx_rst_derivedband",
+        "format",
+        _BOTH,
+        {"func_name": _DERIVEDBAND_FUNC_NAME},
+        core_fn=lambda ds, a: derivedband.derivedband(
+            ds, _DERIVEDBAND_PYFUNC, _DERIVEDBAND_FUNC_NAME
+        ),
+        col_fn=lambda t, a: prx.rst_derivedband(
+            t, _DERIVEDBAND_PYFUNC, _DERIVEDBAND_FUNC_NAME
+        ),
+        core=False,
+    ),
+    # --- proximity (analysis.py): full comparison ---
+    # No geometry; value-set + distunits are CRS-independent. GDAL ComputeProximity
+    # vs scipy distance_transform_edt may diverge numerically — that divergence is
+    # exactly what the scorecard is meant to surface (same policy as terrain
+    # NoData-edge divergences), so it stays a full comparison.
+    "rst_proximity": FnSpec(
+        "rst_proximity",
+        "gbx_rst_proximity",
+        "analysis",
+        _BOTH,
+        {"target_values": "1", "distunits": "GEO"},
+        core_fn=lambda ds, a: analysis_core.proximity(
+            ds, a["target_values"], a["distunits"], None
+        ),
+        col_fn=lambda t, a: prx.rst_proximity(t, a["target_values"], a["distunits"]),
+        core=False,
+    ),
+    # --- clip (edit.py): timing-only ---
+    # No single literal geometry is in-extent across the multi-CRS corpus; the
+    # global-cover polygon (_CLIP_GEOM_WKB) lets the timing call run on every tile
+    # without erroring, but the clipped output is not compared.
+    "rst_clip": FnSpec(
+        "rst_clip",
+        "gbx_rst_clip",
+        "edit",
+        ("pure-core",),
+        {"cutline_all_touched": False},
+        core_fn=lambda ds, a: edit.clip_to_geom(
+            ds, _CLIP_GEOM_WKB, a["cutline_all_touched"]
+        ),
+        col_fn=lambda t, a: prx.rst_clip(
+            t, F.lit(_CLIP_GEOM_WKB), F.lit(a["cutline_all_touched"])
+        ),
+        core=False,
+        fingerprint=False,
+    ),
+    # --- color relief (terrain.py): timing-only ---
+    # Needs a color-table file path (synthesized on demand) and the heavy GDAL
+    # DEMProcessing interpolation diverges from pyrx np.interp, so not compared.
+    "rst_color_relief": FnSpec(
+        "rst_color_relief",
+        "gbx_rst_color_relief",
+        "terrain",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: terrain.color_relief(ds, _color_table_path()),
+        col_fn=lambda t, a: prx.rst_color_relief(t, _color_table_path()),
+        core=False,
+        fingerprint=False,
+    ),
+    # --- viewshed (analysis.py): timing-only ---
+    # Needs an in-extent observer point (none works across the multi-CRS corpus)
+    # AND the binding documents an xrspatial-vs-GDAL parity divergence in the
+    # binary visibility mask. Timing-only on both counts.
+    "rst_viewshed": FnSpec(
+        "rst_viewshed",
+        "gbx_rst_viewshed",
+        "analysis",
+        ("pure-core",),
+        {"observer_height": 2.0, "target_height": 1.6},
+        core_fn=lambda ds, a: analysis_core.viewshed(
+            ds, 0.0, 0.0, a["observer_height"], a["target_height"], None
+        ),
+        col_fn=lambda t, a: prx.rst_viewshed(
+            t, F.lit(_VIEWSHED_OBSERVER_WKB), a["observer_height"], a["target_height"]
+        ),
+        core=False,
+        fingerprint=False,
+    ),
+    # --- sample (ops.py): timing-only ---
+    # Needs an in-extent POINT; no single world point is in-extent across the
+    # multi-CRS corpus. Out-of-extent points return null, fine for timing.
+    "rst_sample": FnSpec(
+        "rst_sample",
+        "gbx_rst_sample",
+        "format",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: ops.sample(ds, _SAMPLE_POINT_WKB),
+        col_fn=lambda t, a: prx.rst_sample(t, F.lit(_SAMPLE_POINT_WKB)),
         core=False,
         fingerprint=False,
     ),
