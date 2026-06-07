@@ -108,14 +108,18 @@ def test_filter_min_shrinks_window_at_edge():
     # min over VALID in-bounds neighbors only (window shrinks at the border):
     # matches the NaN-aware shrink (cval=nan excludes out-of-bounds).
     data = np.arange(16, dtype="float64").reshape(4, 4)
-    expected = ndimage.generic_filter(data, np.nanmin, size=3, mode="constant", cval=np.nan)
+    expected = ndimage.generic_filter(
+        data, np.nanmin, size=3, mode="constant", cval=np.nan
+    )
     out = _read_band(_run(focal.filt, _tile(data, nodata=None), 3, "min"))
     assert np.allclose(out, expected)
 
 
 def test_filter_max_shrinks_window_at_edge():
     data = np.arange(16, dtype="float64").reshape(4, 4)
-    expected = ndimage.generic_filter(data, np.nanmax, size=3, mode="constant", cval=np.nan)
+    expected = ndimage.generic_filter(
+        data, np.nanmax, size=3, mode="constant", cval=np.nan
+    )
     out = _read_band(_run(focal.filt, _tile(data, nodata=None), 3, "max"))
     assert np.allclose(out, expected)
 
