@@ -59,9 +59,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "gbx_rst_slope",
         "terrain",
         _BOTH,
-        {"unit": "degrees", "scale": 1.0},
-        core_fn=lambda ds, a: terrain.slope(ds, a["unit"], a["scale"]),
-        col_fn=lambda t, a: prx.rst_slope(t, a["unit"], a["scale"]),
+        {"unit": "degrees"},
+        core_fn=lambda ds, a: terrain.slope(ds, a["unit"]),
+        col_fn=lambda t, a: prx.rst_slope(t, a["unit"]),
     ),
     "rst_ndvi": FnSpec(
         "rst_ndvi",

@@ -29,7 +29,7 @@ def test_dump_functions_json(tmp_path):
     data = json.loads(p.read_text())
     by_name = {d["name"]: d for d in data}
     assert by_name["rst_slope"]["sql_name"] == "gbx_rst_slope"
-    assert by_name["rst_slope"]["args"] == {"unit": "degrees", "scale": 1.0}
+    assert by_name["rst_slope"]["args"] == {"unit": "degrees"}
     assert "core_fn" not in by_name["rst_slope"]  # callables are not serialized
 
 

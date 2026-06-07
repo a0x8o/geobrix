@@ -10,7 +10,7 @@ MODES="both"
 TILE_PX="256,512"
 BANDS="2"
 DTYPES="float32"
-SRIDS="4326"
+SRIDS="4326,32618"
 NODATA_FRAC="0.0"
 ROW_ROWS="4"
 ROW_COUNTS="2,4"
@@ -37,7 +37,8 @@ Options:
   --tile-px <list>     Size sweep (default 256,512)
   --bands <list>       Band counts (default 2)
   --dtypes <list>      Dtypes (default float32)
-  --srids <list>       SRIDs (default 4326)
+  --srids <list>       SRIDs (default 4326,32618 -- geographic + projected, so
+                       CRS-auto-scaled terrain ops exercise both branches)
   --nodata-frac <list> NoData fraction(s) (default 0.0)
   --row-rows <n>       Row-pool size (default 4)
   --row-counts <list>  Spark-path row ladder (default 2,4)
