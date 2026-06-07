@@ -355,6 +355,194 @@ def coverage_block(cells) -> str:
     return "\n".join(lines)
 
 
+_CONSISTENCY_RANK = {"divergent": 0, "na": 1, "within_tol": 2, "exact": 3}
+
+
+def _worst_consistency(consistencies) -> str:
+    """The least-agreeing consistency class across a function's cells.
+
+    Ranks divergent < na < within_tol < exact, so a single divergent cell makes
+    the whole function divergent. Empty -> "na".
+    """
+    if not consistencies:
+        return "na"
+    return min(consistencies, key=lambda c: _CONSISTENCY_RANK.get(c, 1))
+
+
+def scorecard_from_store(
+    root=None, specs_by_name=None, stale_only: bool = False
+) -> str:
+    """Aggregate the authoritative store into a neutral coverage/parity scorecard.
+
+    Read-only over ``store.read_all(root)`` (no benchmarking). Reports benchmark
+    coverage (N / 107), parity counts over compared cells (exact/within_tol/
+    divergent + divergent fn names, plus timing-only na), performance win counts
+    (lightweight at-least-as-fast vs heavyweight-faster), the computed functional
+    parity gap (registered minus pyrx-implemented), the registered functions not
+    yet covered by a store record, and a per-function table with a STALE marker
+    when the function's sources changed since its record was validated.
+
+    ``specs_by_name`` is injectable for tests; defaults to the live full registry.
+    With ``stale_only=True`` only the aggregate lines + the stale/missing list
+    print (the per-function table is omitted). Neutral voice — coverage, parity,
+    performance, staleness; no deprecation language.
+    """
+    from databricks.labs.gbx.bench import spec as _spec
+    from databricks.labs.gbx.bench import store as _store
+
+    if specs_by_name is None:
+        specs_by_name = {s.name: s for s in _spec.select(set="full")}
+
+    registered = spec.registered_rst()
+    implemented = pyrx_implemented()
+    n_registered = len(registered)
+
+    records = _store.read_all(root)
+    record_names = {r["fn"] for r in records}
+    n_benched = len(records)
+
+    # Flatten all cells across records for parity + performance aggregation.
+    all_cells = []
+    for r in records:
+        for c in r.get("cells") or []:
+            all_cells.append(c)
+
+    def _cnum(c, k):
+        v = c.get(k)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    compared = [c for c in all_cells if c.get("consistency") != "na"]
+    n_exact = sum(1 for c in compared if c.get("consistency") == "exact")
+    n_tol = sum(1 for c in compared if c.get("consistency") == "within_tol")
+    div_fns = sorted(
+        {
+            r["fn"]
+            for r in records
+            for c in (r.get("cells") or [])
+            if c.get("consistency") == "divergent"
+        }
+    )
+    n_na = sum(1 for c in all_cells if c.get("consistency") == "na")
+
+    # Performance: lightweight at least as fast when speedup >= 1.0 (hw/lw).
+    perf = [
+        c
+        for c in all_cells
+        if (_cnum(c, "lw_median_ms") or 0) > 0 and (_cnum(c, "hw_median_ms") or 0) > 0
+    ]
+    n_lw_fast = sum(1 for c in perf if (_cnum(c, "speedup") or 0) >= 1.0)
+    n_hw_fast = len(perf) - n_lw_fast
+
+    gap = sorted(registered - implemented)
+    not_covered = sorted(registered - record_names)
+
+    # Per-function rows (fn, worst consistency, max delta, representative speedup,
+    # short commit, STALE marker).
+    rows = []
+    for r in sorted(records, key=lambda r: r["fn"]):
+        fn = r["fn"]
+        cells = r.get("cells") or []
+        worst = _worst_consistency([c.get("consistency") for c in cells])
+        deltas = [
+            _cnum(c, "max_rel_delta")
+            for c in cells
+            if _cnum(c, "max_rel_delta") is not None
+        ]
+        max_delta = max(deltas) if deltas else 0.0
+        speedups = [_cnum(c, "speedup") for c in cells if _cnum(c, "speedup")]
+        speedup = speedups[0] if speedups else 0.0
+        commit = r.get("validated_commit") or ""
+        short = commit.replace("dirty:", "")[:7]
+        if commit.startswith("dirty:"):
+            short = "dirty:" + short
+        sp = specs_by_name.get(fn)
+        stale = sp is None or _store.is_stale(sp, r, root=root)
+        rows.append(
+            {
+                "fn": fn,
+                "consistency": worst,
+                "max_rel_delta": max_delta,
+                "speedup": speedup,
+                "commit": short,
+                "stale": stale,
+            }
+        )
+
+    # Sort divergent/stale first for visibility, then by name.
+    def _row_sort_key(row):
+        divergent = row["consistency"] == "divergent"
+        return (not (divergent or row["stale"]), row["fn"])
+
+    rows.sort(key=_row_sort_key)
+
+    lines = ["# GeoBrix benchmark — store scorecard", ""]
+    lines.append(
+        f"- **Coverage:** Benchmarked {n_benched} / {n_registered} registered "
+        f"`rst_` functions."
+    )
+    div_part = (" - divergent: " + ", ".join(div_fns)) if div_fns else ""
+    lines.append(
+        f"- **Parity:** of {len(compared)} compared cell(s) — exact {n_exact} - "
+        f"within_tol {n_tol} - divergent {len(div_fns)}{div_part}. "
+        f"({n_na} timing-only, not compared.)"
+    )
+    lines.append(
+        f"- **Performance:** lightweight at least as fast (speedup ≥ 1.0) in "
+        f"{n_lw_fast} of {len(perf)} compared function-cell(s); heavyweight "
+        f"faster in {n_hw_fast}."
+    )
+    if gap:
+        lines.append(
+            f"- **Functional parity gap:** {len(gap)} registered `rst_` "
+            f"function(s) with no lightweight implementation: " + ", ".join(gap) + "."
+        )
+    else:
+        lines.append(
+            f"- **Functional parity gap:** 0 (lightweight implements all "
+            f"{n_registered} registered functions)."
+        )
+    if not_covered:
+        lines.append(
+            f"- **Not yet covered:** {len(not_covered)} registered `rst_` "
+            f"function(s) without a store record: " + ", ".join(not_covered) + "."
+        )
+    else:
+        lines.append(
+            "- **Not yet covered:** 0 (every registered function has a store record)."
+        )
+
+    stale_fns = sorted(row["fn"] for row in rows if row["stale"])
+    if stale_fns:
+        lines.append(
+            f"- **Stale:** {len(stale_fns)} record(s) whose sources changed since "
+            f"validation — re-run `gbx:bench:changed`: " + ", ".join(stale_fns) + "."
+        )
+    else:
+        lines.append("- **Stale:** 0 (every store record is up to date).")
+    lines.append("")
+
+    if stale_only:
+        return "\n".join(lines)
+
+    lines += [
+        "## Per-function",
+        "",
+        "| fn | consistency | max_rel_delta | speedup | validated | stale |",
+        "|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['fn']} | {row['consistency']} | {row['max_rel_delta']:.3g} | "
+            f"{row['speedup']:.2f} | {row['commit']} | "
+            f"{'STALE' if row['stale'] else ''} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
     lines = ["# GeoBrix benchmark — heavy vs light comparison", "", "## Insights", ""]
     insights = []

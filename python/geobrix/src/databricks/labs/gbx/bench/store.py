@@ -197,6 +197,32 @@ def resolve_changed(base=None, specs=None, root=None):
     )
 
 
+def stale_changed_functions(base=None, root=None, specs_by_name=None) -> list[str]:
+    """Affected functions whose authoritative record is MISSING or STALE.
+
+    Cheap, read-only, advisory: maps the changed sources (working tree vs HEAD, or
+    the diff vs ``base``) onto the registered functions they affect via
+    :func:`resolve_changed`, then returns the sorted subset whose store record is
+    absent or whose ``sources_hash`` no longer matches (``is_stale``). NEVER runs a
+    benchmark; the caller WARNS only. ``specs_by_name`` is injectable for tests.
+    """
+    if specs_by_name is None:
+        from databricks.labs.gbx.bench import spec as _spec
+
+        specs_by_name = {s.name: s for s in _spec.select(set="full")}
+    specs = list(specs_by_name.values())
+    _, affected, _ = resolve_changed(base=base, specs=specs, root=root)
+    stale = []
+    for fn in affected:
+        sp = specs_by_name.get(fn)
+        if sp is None:
+            continue
+        rec = read_record(fn, root=root)
+        if rec is None or is_stale(sp, rec, root=root):
+            stale.append(fn)
+    return sorted(stale)
+
+
 def _comparison_rows_for(run_dir, fn) -> list[dict]:
     """Comparison-csv rows (as dicts) for one function; [] if the csv is absent."""
     csv_path = Path(run_dir) / "comparison.csv"
@@ -323,6 +349,20 @@ def _cli_selected_names(argv) -> int:
     return 0
 
 
+def _cli_status(argv) -> int:
+    """``python -m ...store status [--stale-only]`` — print the store scorecard.
+
+    Read-only over the authoritative store: aggregates coverage / parity /
+    performance / staleness via :func:`compare.scorecard_from_store`. With
+    ``--stale-only`` only the aggregate + the stale/missing function list prints.
+    """
+    from databricks.labs.gbx.bench import compare as _compare
+
+    stale_only = "--stale-only" in argv
+    print(_compare.scorecard_from_store(stale_only=stale_only))
+    return 0
+
+
 if __name__ == "__main__":
     import sys
 
@@ -330,11 +370,12 @@ if __name__ == "__main__":
         "write-run": _cli_write_run,
         "orphans": _cli_orphans,
         "selected-names": _cli_selected_names,
+        "status": _cli_status,
     }
     if len(sys.argv) < 2 or sys.argv[1] not in _SUBCMDS:
         sys.stderr.write(
             "usage: python -m databricks.labs.gbx.bench.store "
-            "{write-run|orphans|selected-names} [args...]\n"
+            "{write-run|orphans|selected-names|status} [args...]\n"
         )
         sys.exit(2)
     sys.exit(_SUBCMDS[sys.argv[1]](sys.argv[2:]))
