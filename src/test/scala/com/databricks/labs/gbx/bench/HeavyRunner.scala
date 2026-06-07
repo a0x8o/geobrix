@@ -48,16 +48,21 @@ object HeavyRunner {
       e("env_arch"), e("env_cpu_model"), 0, e("env_os"), e("env_gbx_version"),
       e("env_gdal_version"), e("env_runtime_version"), e("env_where"), fp)
 
+  /** `sink` is invoked for every row as soon as it is produced, so a caller can
+   *  flush each row to disk immediately (crash-resilient shard). Defaults to a
+   *  no-op, preserving the in-memory-only behavior for callers that don't pass one. */
   def runPureCore(corpusRoot: String, corpus: Corpus, fns: Seq[String], runId: String,
-                  warmup: Int, measured: Int, argsByFn: Map[String, Map[String, String]]): Seq[BenchRow] = {
+                  warmup: Int, measured: Int, argsByFn: Map[String, Map[String, String]],
+                  sink: BenchRow => Unit = _ => ()): Seq[BenchRow] = {
     val e = env("docker")
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
+    def emit(r: BenchRow): Unit = { out += r; sink(r) }
     for (fn <- fns; te <- corpus.size_sweep) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       if (te.bands < BenchDispatch.minBands(fn)) {
-        out += row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
+        emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
           te.nodata_frac, warmup, 0, 0, 0, 0, 0, 0, "na_by_design",
-          s"requires >= ${BenchDispatch.minBands(fn)} bands", "")
+          s"requires >= ${BenchDispatch.minBands(fn)} bands", ""))
       } else {
         val path = resolve(corpusRoot, te.path)
         var ds: Dataset = null
@@ -66,14 +71,14 @@ object HeavyRunner {
           val fp = BenchDispatch.pureCore(fn, ds, a)  // untimed fingerprint capture
           val (median, mn, p90) = timeIters(() => BenchDispatch.pureCore(fn, ds, a), warmup, measured)
           val mpixS = if (median > 0) mpix(te.tile_px, te.bands, 1) / (median / 1000.0) else 0.0
-          out += row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
+          emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
             te.nodata_frac, warmup, measured, median, mn, p90, mpixS,
-            if (median > 0) 1.0 / (median / 1000.0) else 0.0, "ok", "", fp)
+            if (median > 0) 1.0 / (median / 1000.0) else 0.0, "ok", "", fp))
         } catch {
           case ex: Throwable =>
-            out += row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
+            emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
               te.nodata_frac, warmup, 0, 0, 0, 0, 0, 0, "error",
-              Option(ex.getMessage).getOrElse(ex.toString).take(300), "")
+              Option(ex.getMessage).getOrElse(ex.toString).take(300), ""))
         } finally {
           if (ds != null) ds.delete()
         }
@@ -84,7 +89,8 @@ object HeavyRunner {
 
   def runSparkPath(spark: SparkSession, corpusRoot: String, corpus: Corpus, fns: Seq[String],
                    runId: String, rowCounts: Seq[Int], warmup: Int, measured: Int,
-                   argsByFn: Map[String, Map[String, String]]): Seq[BenchRow] = {
+                   argsByFn: Map[String, Map[String, String]],
+                   sink: BenchRow => Unit = _ => ()): Seq[BenchRow] = {
     functions.register(spark)
     val e = env("docker")
     val pool = corpus.row_pool
@@ -105,6 +111,7 @@ object HeavyRunner {
       } catch { case _: Throwable => () }  // warm-up failures must never abort timing
     }
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
+    def emit(r: BenchRow): Unit = { out += r; sink(r) }
     for (fn <- fns; n <- rowCounts.sorted) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       try {
@@ -114,13 +121,13 @@ object HeavyRunner {
             .write.format("noop").mode("overwrite").save()
         }, warmup, measured)
         val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
-        out += row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
+        emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
           warmup, measured, median, mn, p90, mpixS,
-          if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", "")
+          if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", ""))
       } catch {
         case ex: Throwable =>
-          out += row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
-            warmup, 0, 0, 0, 0, 0, 0, "error", Option(ex.getMessage).getOrElse(ex.toString).take(300), "")
+          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
+            warmup, 0, 0, 0, 0, 0, 0, "error", Option(ex.getMessage).getOrElse(ex.toString).take(300), ""))
       }
     }
     dfAll.unpersist()

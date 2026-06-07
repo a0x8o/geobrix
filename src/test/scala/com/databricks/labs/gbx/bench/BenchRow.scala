@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.bench
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import java.io.{FileOutputStream, OutputStreamWriter}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 
@@ -51,4 +52,29 @@ object BenchIO {
     rows.foreach(r => sb.append(toJson(r)).append("\n"))
     Files.write(p, sb.toString.getBytes(StandardCharsets.UTF_8))
   }
+
+  /** Incremental, crash-resilient JSONL sink. Truncates `path` on open; each
+   *  `append` writes one row's serialized line (byte-identical to `writeJsonl`)
+   *  and fsyncs to disk so rows survive a later native JVM crash. */
+  final class JsonlAppender private[bench] (path: String) extends AutoCloseable {
+    private val p = Paths.get(path)
+    Option(p.getParent).foreach(Files.createDirectories(_))
+    // append=false → truncate at start, matching writeJsonl's "w" semantics.
+    private val fos = new FileOutputStream(p.toFile, false)
+    private val writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)
+
+    def append(row: BenchRow): Unit = {
+      writer.write(toJson(row))
+      writer.write("\n")
+      writer.flush()       // push out of the JVM writer buffer
+      fos.getFD.sync()     // fsync so completed rows survive a native crash
+    }
+
+    override def close(): Unit = {
+      writer.flush()
+      writer.close()
+    }
+  }
+
+  def appendWriter(path: String): JsonlAppender = new JsonlAppender(path)
 }

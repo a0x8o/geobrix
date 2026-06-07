@@ -36,4 +36,39 @@ class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(byFn("rst_width").head.output_fingerprint.contains("scalar"))
     assert(byFn("rst_ndvi").head.status == "na_by_design")  // 1-band tile, ndvi needs 2
   }
+
+  test("sink is invoked per row and JsonlAppender flushes byte-identical lines") {
+    val tif = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
+      .toString.replace("file:/", "/")
+    val dir = Files.createTempDirectory("corpus")
+    val json =
+      s"""{"seed":1,"size_sweep":[
+         | {"path":"$tif","cellid":0,"srid":4326,"dtype":"float32","bands":1,"tile_px":1200,"nodata_frac":0.0}],
+         | "row_pool":{"tile_px":1200,"bands":1,"dtype":"float32","tiles":[]}}""".stripMargin
+    Files.write(dir.resolve("corpus.json"), json.getBytes)
+    val corpus = BenchManifest.read(dir.resolve("corpus.json").toString)
+    val fns = Seq("rst_width", "rst_avg", "rst_ndvi")
+
+    // Sink fires once per produced row, in order.
+    val sunk = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
+    val rows = HeavyRunner.runPureCore(
+      corpusRoot = dir.toString, corpus = corpus, fns = fns,
+      runId = "t", warmup = 1, measured = 2, argsByFn = Map.empty, sink = sunk += _)
+    assert(sunk.toSeq == rows, "every row must be handed to the sink, in order")
+
+    // JsonlAppender produces exactly the same bytes as the bulk writeJsonl.
+    val incPath = dir.resolve("inc.jsonl").toString
+    val bulkPath = dir.resolve("bulk.jsonl").toString
+    val w = BenchIO.appendWriter(incPath)
+    try rows.foreach(w.append) finally w.close()
+    BenchIO.writeJsonl(rows, bulkPath)
+    val incBytes = Files.readAllBytes(java.nio.file.Paths.get(incPath))
+    val bulkBytes = Files.readAllBytes(java.nio.file.Paths.get(bulkPath))
+    assert(java.util.Arrays.equals(incBytes, bulkBytes),
+      "incremental append must be byte-identical to bulk writeJsonl")
+    // Each line is one valid row (count matches).
+    val lines = new String(incBytes, java.nio.charset.StandardCharsets.UTF_8)
+      .split("\n").filter(_.nonEmpty)
+    assert(lines.length == rows.length)
+  }
 }

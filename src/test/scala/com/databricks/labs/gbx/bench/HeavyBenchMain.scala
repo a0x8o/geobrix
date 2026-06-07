@@ -26,11 +26,18 @@ object HeavyBenchMain {
       else fnsCsv.split(",").map(_.trim).filter(_.nonEmpty).toSeq
     val rowCounts = rowCountsCsv.split(",").map(_.trim).filter(_.nonEmpty).map(_.toInt).toSeq
     val corpus = BenchManifest.read(s"$corpusRoot/corpus.json")
-    val rows = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
-    if (modes == "pure-core" || modes == "both")
-      rows ++= HeavyRunner.runPureCore(corpusRoot, corpus, fns, runId, warmup, measured, Map.empty)
-    if (modes == "spark-path" || modes == "both")
-      rows ++= HeavyRunner.runSparkPath(spark, corpusRoot, corpus, fns, runId, rowCounts, warmup, measured, Map.empty)
-    BenchIO.writeJsonl(rows.toSeq, outPath)
+    // Stream each row to disk (truncate-on-open, fsync per row) so a later native
+    // crash leaves a partial-but-valid shard rather than voiding the whole run.
+    val writer = BenchIO.appendWriter(outPath)
+    try {
+      if (modes == "pure-core" || modes == "both")
+        HeavyRunner.runPureCore(
+          corpusRoot, corpus, fns, runId, warmup, measured, Map.empty, writer.append)
+      if (modes == "spark-path" || modes == "both")
+        HeavyRunner.runSparkPath(
+          spark, corpusRoot, corpus, fns, runId, rowCounts, warmup, measured, Map.empty, writer.append)
+    } finally {
+      writer.close()
+    }
   }
 }
