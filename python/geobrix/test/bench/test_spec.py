@@ -71,7 +71,8 @@ def test_select_core_is_subset_of_full():
     core = {f.name for f in s.select(set="core")}
     full = {f.name for f in s.select(set="full")}
     assert core
-    assert core < full
+    assert core <= full
+    assert len(core) == 19  # core == all current representative functions
     assert "rst_slope" in core and "rst_ndvi" in core
 
 
