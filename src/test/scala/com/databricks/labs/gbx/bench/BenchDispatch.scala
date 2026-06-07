@@ -67,7 +67,10 @@ object BenchDispatch {
   // as in spec.py (same policy as the convolve kernel).
   private val indexName = "ndvi"
   private val indexBandMap: Map[String, Int] = Map("red" -> 1, "nir" -> 2)
-  private val mapAlgebraExpr = "A*2"
+  // RST_MapAlgebra.execute takes a JSON spec (rasters A-Z + "calc"), NOT a bare
+  // gdal_calc expression. With no explicit A_index the single input binds to A,
+  // so {"calc":"A*2"} is the heavy-side equivalent of the pyrx "A*2" expression.
+  private val mapAlgebraExpr = """{"calc":"A*2"}"""
   private val derivedBandFuncName = "mean_bands"
   private val derivedBandPyFunc =
     "import numpy as np\n" +
@@ -75,11 +78,16 @@ object BenchDispatch {
       "               raster_xsize, raster_ysize, buf_radius, gt, **kwargs):\n" +
       "    stack = np.array(in_ar, dtype='float64')\n" +
       "    out_ar[:] = stack.mean(axis=0)\n"
-  // Global-cover clip polygon (±2e7 both axes) — overlaps every corpus tile in
-  // every CRS so the timing-only clip call never errors. Same WKT as the WKB the
-  // pyrx side builds via shapely.geometry.box(-2e7, -2e7, 2e7, 2e7).
+  // Small clip polygon (1000-unit box at the origin). A global-cover polygon
+  // (±2e7) is NOT safe here: rst_clip falls back to the raster CRS when the
+  // cutline carries no SRID, and gdalwarp -crop_to_cutline against a ±2e7-metre
+  // cutline on a projected (metre) tile expands the output grid to ~1e8 px/side,
+  // a native GDAL allocation abort that kills the JVM. A small finite box keeps
+  // the timing-only call cheap and crash-free on every CRS (out-of-extent clips
+  // are fine for timing). Same WKT as the WKB the pyrx side builds via
+  // shapely.geometry.box(-500, -500, 500, 500).
   private val clipGeomWkt =
-    "POLYGON ((-2.0E7 -2.0E7, 2.0E7 -2.0E7, 2.0E7 2.0E7, -2.0E7 2.0E7, -2.0E7 -2.0E7))"
+    "POLYGON ((-500 -500, 500 -500, 500 500, -500 500, -500 -500))"
 
   // Synthetic gdaldem color ramp for the timing-only color_relief call; written to
   // a temp file on first use (matches spec.py's _COLOR_RAMP_TEXT).

@@ -59,7 +59,8 @@ Scale the run with these options:
 |---|---|
 | `--modes pure-core \| spark-path \| both` | Which timing model(s) to run (default `both`). |
 | `--row-counts 10,100,1000,10000` | The spark-path row ladder — the main scale dimension. |
-| `--functions rst_slope,rst_ndvi` | Restrict to specific functions (default: all). |
+| `--set core \| full` | Which function set to benchmark — the representative `core` set (default) or every benchmarked function (`full`). |
+| `--functions rst_slope,rst_ndvi` | Restrict to specific functions (overrides `--set`). |
 | `--warmup` / `--measured` | Warmup and measured iteration counts (defaults 2 / 5). |
 | `--lightweight-only` | Skip the heavyweight leg — **required on ARM clusters** (heavyweight is x86-only). |
 | `--heavyweight-only` | Skip the lightweight leg. |
@@ -87,6 +88,23 @@ bash scripts/commands/gbx-bench-all.sh --run-id local-1 --modes pure-core
 ```
 
 The heavyweight and lightweight legs run **one after the other** (never concurrently) so they don't contend for CPU and skew each other's timings. Outputs land in `test-logs/bench/<run-id>/`.
+
+### Core vs full
+
+`--set` selects how many functions the run benchmarks:
+
+- `--set core` (the default) runs a small, representative set covering each function family — accessors, terrain, band math, warps. It's fast and is the right choice for a routine check.
+- `--set full` runs every benchmarked function. It takes longer but gives the complete coverage and parity picture.
+
+An explicit `--functions` list overrides `--set`.
+
+```bash
+# Routine check (default): the representative core set
+bash scripts/commands/gbx-bench-all.sh --modes pure-core
+
+# Complete coverage: every benchmarked function
+bash scripts/commands/gbx-bench-all.sh --set full --modes pure-core
+```
 
 Scale and shape the corpus with:
 

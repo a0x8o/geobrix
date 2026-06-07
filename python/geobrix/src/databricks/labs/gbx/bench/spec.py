@@ -75,11 +75,15 @@ _DERIVEDBAND_PYFUNC = (
 
 # rst_clip (timing-only): clip needs a geometry. No single literal geometry can
 # intersect every tile across the multi-CRS corpus (EPSG:4326 degrees, 3857 /
-# 32618 / 27700 metres), so clip is timing-only and never compared. We pass a
-# global-cover polygon (±2e7 in both axes) that overlaps every corpus tile in
-# every CRS so the timing call never errors. WKB literal: both the core_fn and
-# the col_fn (rst_clip) take a WKB geometry.
-_CLIP_GEOM_WKB = shapely.geometry.box(-2.0e7, -2.0e7, 2.0e7, 2.0e7).wkb
+# 32618 / 27700 metres), so clip is timing-only and never compared. A small
+# finite box keeps the call crash-free on every CRS: a global-cover polygon
+# (±2e7) is unsafe because the heavyweight clip falls back to the raster CRS
+# for an SRID-less cutline, and gdalwarp -crop_to_cutline against a ±2e7-metre
+# cutline on a projected (metre) tile expands the output grid to ~1e8 px/side,
+# a native GDAL allocation abort. Out-of-extent clips are fine for timing.
+# WKB literal: both the core_fn and the col_fn (rst_clip) take a WKB geometry.
+# Mirrors BenchDispatch.clipGeomWkt (box(-500, -500, 500, 500)).
+_CLIP_GEOM_WKB = shapely.geometry.box(-500.0, -500.0, 500.0, 500.0).wkb
 
 # rst_sample (timing-only): sample needs a POINT in-extent for the tile. No single
 # world point is in-extent across the multi-CRS corpus, so sample is timing-only
