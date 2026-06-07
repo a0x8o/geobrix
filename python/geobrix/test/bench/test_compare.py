@@ -163,6 +163,40 @@ def test_abs_tol_does_not_mask_real_divergence():
     assert c.compare_fingerprints(hw, lw)[0] == "divergent"
 
 
+def test_aspect_min_near_zero_not_divergent():
+    # rst_aspect: mean/max/std agree to 8-9 sig figs, but the `min` aspect bearing
+    # is a single near-zero pixel (~0.00029 deg) whose ~2.2e-5 deg abs diff blows
+    # past the 1e-3 RELATIVE tolerance when divided by the near-zero reference.
+    # This is a metric artifact at near-zero values, not an algorithmic divergence;
+    # the absolute-tolerance floor must absorb it -> within_tol, NOT divergent.
+    hw = (
+        '{"kind":"raster","bands":[{"shape":[256,256],"dtype":"Float32",'
+        '"nodata_count":0,"min":0.00029,"max":359.9876,"mean":180.4231,'
+        '"std":103.8842}]}'
+    )
+    lw = (
+        '{"kind":"raster","bands":[{"shape":[256,256],"dtype":"float32",'
+        '"nodata_count":0,"min":0.0000679,"max":359.9876,"mean":180.4231,'
+        '"std":103.8842}]}'
+    )
+    cls, _, _, _ = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol"
+
+
+def test_abs_tol_does_not_mask_real_min_divergence():
+    # A genuine divergence on `min` (abs diff 2.0 on values ~10) must stay divergent;
+    # the near-zero abs floor must not swallow real, order-of-magnitude-1+ differences.
+    hw = (
+        '{"kind":"raster","bands":[{"shape":[4,4],"dtype":"Float32",'
+        '"nodata_count":0,"min":10.0,"max":90.0,"mean":45.0,"std":10.0}]}'
+    )
+    lw = (
+        '{"kind":"raster","bands":[{"shape":[4,4],"dtype":"float32",'
+        '"nodata_count":0,"min":12.0,"max":90.0,"mean":45.0,"std":10.0}]}'
+    )
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
 def test_write_csv(tmp_path):
     cells = [
         c.CellCompare(

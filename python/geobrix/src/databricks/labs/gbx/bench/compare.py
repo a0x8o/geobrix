@@ -18,7 +18,16 @@ from typing import List, Tuple
 from databricks.labs.gbx.bench.results import ResultRow
 
 REL_TOL = 1e-3
-ABS_TOL = 1e-6
+# Near-zero absolute floor. `_close` uses OR-semantics (abs OR rel), so this
+# floor is what saves comparisons of near-zero values where the relative test
+# is meaningless: a tiny absolute diff divided by a near-zero reference blows
+# past REL_TOL (e.g. rst_aspect `min` bearing ~0.0003 deg, hw-vs-light abs diff
+# ~2e-4 deg -> ~0.7 relative, a pure metric artifact, NOT a divergence).
+# 1e-3 absorbs float32 quantization and near-zero angular noise while staying
+# two-plus orders of magnitude below the genuine divergences this suite catches
+# (abs diffs >> 1e-2 on values of order 1-100). Do NOT raise REL_TOL to fix
+# near-zero cases; that would mask real divergences on meaningful magnitudes.
+ABS_TOL = 1e-3
 _STATS = ("min", "max", "mean", "std")
 
 
