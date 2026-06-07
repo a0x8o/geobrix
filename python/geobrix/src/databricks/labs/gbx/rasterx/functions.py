@@ -1283,9 +1283,11 @@ def rst_slope(
     Args:
         tile: Single-band DEM tile column.
         unit: ``"degrees"`` (default) or ``"percent"``.
-        scale: Vertical exaggeration (default 1.0). Use 111120 for
-            unprojected geographic CRS (degrees lon/lat) and 1.0 for
-            projected CRS in metres.
+        scale: Horizontal scale (ratio of vertical units to horizontal units).
+            By default the scale is auto-derived from the raster CRS (GDAL 3.11
+            behavior), so projected CRS in metres and geographic CRS in degrees
+            both work without an explicit value. Pass an explicit ``scale``
+            (e.g. 111120 for degree grids) to override.
 
     Returns:
         Single-band Float32 GTiff tile column.
@@ -1295,7 +1297,7 @@ def rst_slope(
         if unit is None
         else (f.lit(unit) if isinstance(unit, str) else _col(unit))
     )
-    scale_col = f.lit(1.0) if scale is None else _col(scale)
+    scale_col = f.lit(float("nan")) if scale is None else _col(scale)
     return f.call_function("gbx_rst_slope", _col(tile), unit_col, scale_col)
 
 

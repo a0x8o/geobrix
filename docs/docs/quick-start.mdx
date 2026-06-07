@@ -2,12 +2,43 @@
 sidebar_position: 3
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import quickstartCode from '!!raw-loader!../tests/python/quickstart/examples.py';
 
 # Quick Start
 
 This guide will help you get started with GeoBrix quickly after installation. All code below is copy-paste executable when you use the sample data paths shown.
+
+## Choose your execution tier
+
+GeoBrix offers two interchangeable execution tiers with the same `rst_*` function names — pick one and the rest of this guide is the same (both alias the module as `rx`):
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+Pure-Python, no JAR — installs from a Volume-staged wheel and runs on serverless, standard/shared, and ARM clusters. Covers **RasterX** (`rst_*`) today.
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+rx.register(spark)   # installs the gbx_rst_* SQL names, pyspark-backed
+```
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+JVM-native (Scala + GDAL), installed via the JAR + init script. Covers **RasterX, GridX, and VectorX**.
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx
+rx.register(spark)
+```
+
+</TabItem>
+</Tabs>
+
+See [Installation](./installation) for the two install paths and [Choosing an Execution Tier](./api/execution-tiers) for the full comparison. The **GridX** and **VectorX** sections below are heavyweight-only.
 
 :::tip Set up sample data first
 The examples on this page use **sample data paths** (e.g. `/Volumes/.../geobrix-examples/nyc/...`). To run them as-is, set up sample data first: **[Sample Data Guide](./sample-data/overview)** — then use the same paths or volume in your notebook.
@@ -159,4 +190,4 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
 - [Sample Data](./sample-data/overview) — Download and use sample data in examples
 - [Readers](./readers/overview) — Shapefile, GeoJSON, GDAL, and more
 - [API Reference](./api/overview) — Function reference
-- [RasterX](./api/rasterx-functions) · [GridX](./api/gridx-functions) · [VectorX](./api/vectorx-functions)
+- [Raster Functions](./api/raster-functions) · [GridX](./api/gridx-functions) · [VectorX](./api/vectorx-functions)

@@ -4,8 +4,11 @@ sidebar_position: 8
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import pmtilesSqlCode from '!!raw-loader!../../tests/python/api/pmtiles_functions_sql.py';
+import Tier from '@site/src/components/Tier';
 
 # PMTiles Function Reference
+
+<Tier heavy/> These functions are available in the **Heavyweight** execution tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
 
 GeoBrix encodes tile pyramids (raster or vector) into the [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) single-file archive format. PMTiles replaces the "directory of tiles" pattern with one compact, hash-deduplicated, range-readable file servable directly from cloud object storage. Tile content bytes (PNG / JPEG / WebP / MVT) pass through verbatim — PMTiles is container-only.
 
@@ -212,5 +215,5 @@ PMTiles is designed to be served as a single static file via HTTP `Range` reques
 ## Next Steps
 
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to disk.
-- [RasterX Function Reference](./rasterx-functions) — Generate tile bytes with `gbx_rst_xyzpyramid`.
+- [Raster Functions](./raster-functions#rst_xyzpyramid) — Generate tile bytes with `gbx_rst_xyzpyramid`.
 - [VectorX Function Reference](./vectorx-functions) — Generate MVT tiles with `gbx_st_asmvt_pyramid`.

@@ -1,0 +1,456 @@
+"""Pure-function tests for pyrx Analysis ports: proximity (scipy EDT) and
+cog_convert (rio-cogeo)."""
+
+import math
+
+import numpy as np
+import pytest
+from rasterio.io import MemoryFile
+from rasterio.transform import from_origin
+
+from databricks.labs.gbx.pyrx import _serde
+from databricks.labs.gbx.pyrx.core import analysis
+
+from .conftest import make_geotiff_bytes
+
+
+def _single_source_bytes(width=5, height=5, src_row=0, src_col=0, pixel=1.0):
+    """A raster that is all-zero except one source pixel (value != 0).
+
+    Pixel size 1x1 so PIXEL and GEO distances coincide; CRS EPSG:32633.
+    """
+    data = np.zeros((height, width), dtype="float32")
+    data[src_row, src_col] = pixel
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        return mf.read()
+
+
+# --- proximity --------------------------------------------------------------
+def test_proximity_distance_increases_with_pixel_distance():
+    src = _single_source_bytes(width=5, height=5, src_row=0, src_col=0)
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, None, "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # source pixel -> 0 distance
+        assert arr[0, 0] == pytest.approx(0.0)
+        # one pixel right / down -> 1.0
+        assert arr[0, 1] == pytest.approx(1.0)
+        assert arr[1, 0] == pytest.approx(1.0)
+        # diagonal corner -> sqrt(2)
+        assert arr[1, 1] == pytest.approx(math.sqrt(2.0), rel=1e-5)
+
+
+def test_proximity_output_is_float32_nodata_minus1():
+    src = _single_source_bytes()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, None, "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        assert o.dtypes[0] == "float32"
+        assert o.nodata == -1.0
+
+
+def test_proximity_geo_units_scale_by_pixel_size():
+    # pixel size 0.5 (make_geotiff_bytes); single source at (0,0).
+    width, height = 5, 5
+    data = np.zeros((height, width), dtype="float32")
+    data[0, 0] = 1.0
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 50.0, 0.5, 0.5),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        geo = analysis.proximity(ds, None, "GEO", None)
+    with _serde.open_tile(geo) as o:
+        arr = o.read(1)
+        # one pixel right in GEO = 0.5 ground units (pixel width)
+        assert arr[0, 1] == pytest.approx(0.5)
+        assert arr[1, 0] == pytest.approx(0.5)
+
+
+def test_proximity_preserves_georef():
+    src = _single_source_bytes(width=5, height=5)
+    with _serde.open_tile(src) as ds:
+        src_transform = ds.transform
+        src_crs = ds.crs
+        out = analysis.proximity(ds, None, "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        assert o.transform == src_transform
+        assert o.crs == src_crs
+        assert (o.width, o.height) == (5, 5)
+
+
+def test_proximity_max_distance_marks_far_pixels_nodata():
+    src = _single_source_bytes(width=5, height=5, src_row=0, src_col=0)
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, None, "PIXEL", 1.5)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # within 1.5: source (0), adjacent (1), diagonal sqrt2 ~1.41 kept
+        assert arr[0, 0] == pytest.approx(0.0)
+        assert arr[0, 1] == pytest.approx(1.0)
+        assert arr[1, 1] == pytest.approx(math.sqrt(2.0), rel=1e-5)
+        # far corner (4,4) dist ~5.66 > 1.5 -> nodata
+        assert arr[4, 4] == pytest.approx(-1.0)
+
+
+def test_proximity_default_source_rule_nonzero():
+    # default (target_values=None): source = pixels with value != 0.
+    width, height = 4, 1
+    data = np.array([[0.0, 7.0, 0.0, 0.0]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, None, "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        assert list(arr[0]) == pytest.approx([1.0, 0.0, 1.0, 2.0])
+
+
+def test_proximity_target_values_selects_specific_values():
+    # source pixels = only those whose value is in target_values.
+    width, height = 4, 1
+    data = np.array([[0.0, 7.0, 9.0, 0.0]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    # only value 9 is a source.
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, "9", "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # distances to col=2 (the only 9): [2,1,0,1]
+        assert list(arr[0]) == pytest.approx([2.0, 1.0, 0.0, 1.0])
+
+
+def test_proximity_target_values_comma_separated():
+    width, height = 5, 1
+    data = np.array([[0.0, 7.0, 0.0, 9.0, 0.0]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, "7,9", "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # sources at col 1 and 3: distances [1,0,1,0,1]
+        assert list(arr[0]) == pytest.approx([1.0, 0.0, 1.0, 0.0, 1.0])
+
+
+def test_proximity_bad_distunits_raises():
+    with _serde.open_tile(_single_source_bytes()) as ds:
+        with pytest.raises(ValueError):
+            analysis.proximity(ds, None, "BOGUS", None)
+
+
+def test_proximity_bad_max_distance_raises():
+    with _serde.open_tile(_single_source_bytes()) as ds:
+        with pytest.raises(ValueError):
+            analysis.proximity(ds, None, "PIXEL", 0.0)
+        with pytest.raises(ValueError):
+            analysis.proximity(ds, None, "PIXEL", -5.0)
+
+
+# --- cog_convert ------------------------------------------------------------
+def test_cog_convert_roundtrips_and_validates():
+    src = make_geotiff_bytes(width=64, height=64)
+    with _serde.open_tile(src) as ds:
+        out = analysis.cog_convert(ds, "DEFLATE", 512, "AVERAGE")
+    # reopens with rasterio
+    with _serde.open_tile(out) as o:
+        assert (o.width, o.height) == (64, 64)
+    # validates as a COG
+    try:
+        from rio_cogeo.cogeo import cog_validate
+
+        with MemoryFile(out) as mf:
+            is_valid, errors, warnings = cog_validate(mf.name)
+        assert is_valid, f"COG invalid: {errors}"
+    except ImportError:
+        pytest.skip("rio-cogeo not installed")
+
+
+def test_cog_convert_honors_blocksize_and_compression():
+    from rio_cogeo.cogeo import cog_info
+
+    src = make_geotiff_bytes(width=256, height=256)
+    with _serde.open_tile(src) as ds:
+        out = analysis.cog_convert(ds, "LZW", 128, "NEAREST")
+    with MemoryFile(out) as mf:
+        info = cog_info(mf.name)
+    assert tuple(info.IFD[0].Blocksize) == (128, 128)
+    assert info.Compression.upper() == "LZW"
+
+
+def test_cog_convert_bad_blocksize_raises():
+    with _serde.open_tile(make_geotiff_bytes()) as ds:
+        with pytest.raises(ValueError):
+            analysis.cog_convert(ds, "DEFLATE", 0, "AVERAGE")
+
+
+def test_cog_convert_empty_compression_raises():
+    with _serde.open_tile(make_geotiff_bytes()) as ds:
+        with pytest.raises(ValueError):
+            analysis.cog_convert(ds, "", 512, "AVERAGE")
+
+
+def test_cog_convert_unknown_compression_raises():
+    with _serde.open_tile(make_geotiff_bytes()) as ds:
+        with pytest.raises(ValueError):
+            analysis.cog_convert(ds, "NOT_A_PROFILE", 512, "AVERAGE")
+
+
+# --- contour ----------------------------------------------------------------
+def _ramp_bytes(width=6, height=5, crs="EPSG:32633", ulx=100.0, uly=50.0, px=1.0):
+    """A raster whose value equals the column index (a left-to-right ramp).
+
+    A contour at level v is a near-vertical iso-line at column ~v; in world
+    coords its x ~= ulx + (v + 0.5)*px (pixel-center offset).
+    """
+    band = np.tile(np.arange(width, dtype="float64"), (height, 1))
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float64",
+        crs=crs,
+        transform=from_origin(ulx, uly, px, px),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(band, 1)
+        return mf.read()
+
+
+def test_contour_fixed_level_yields_linestring_at_expected_world_x():
+    import shapely.wkb
+
+    src = _ramp_bytes(width=6, height=5, ulx=100.0, uly=50.0, px=1.0)
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [2.5], 0.0, 0.0, "elev")
+    assert len(out) >= 1
+    entry = out[0]
+    assert set(entry.keys()) == {"geom_wkb", "value"}
+    assert entry["value"] == pytest.approx(2.5)
+    line = shapely.wkb.loads(entry["geom_wkb"])
+    assert line.geom_type == "LineString"
+    assert len(line.coords) >= 2
+    # ramp -> iso x ~= ulx + (2.5 + 0.5) = 103.0 for every vertex
+    xs = [c[0] for c in line.coords]
+    assert all(x == pytest.approx(103.0) for x in xs)
+
+
+def test_contour_each_value_matches_requested_level():
+    src = _ramp_bytes(width=8, height=4)
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [1.5, 3.5, 5.5], 0.0, 0.0, "elev")
+    produced = sorted({e["value"] for e in out})
+    assert produced == pytest.approx([1.5, 3.5, 5.5])
+
+
+def test_contour_empty_levels_with_interval_yields_multiple():
+    src = _ramp_bytes(width=10, height=4)  # data range 0..9
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [], 2.0, 0.0, "elev")
+    vals = sorted({e["value"] for e in out})
+    # base 0 + k*2 within [0..9] inclusive: 0, 2, 4, 6, 8
+    assert vals == pytest.approx([0.0, 2.0, 4.0, 6.0, 8.0])
+    assert len(vals) > 1
+
+
+def test_contour_empty_levels_honors_base_offset():
+    src = _ramp_bytes(width=10, height=4)  # data range 0..9
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [], 3.0, 1.0, "elev")
+    vals = sorted({e["value"] for e in out})
+    # base 1 + k*3 within (0..9): 1, 4, 7
+    assert vals == pytest.approx([1.0, 4.0, 7.0])
+
+
+def test_contour_empty_levels_nonpositive_interval_raises():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [], 0.0, 0.0, "elev")
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [], -1.0, 0.0, "elev")
+
+
+def test_contour_empty_attr_field_raises():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        with pytest.raises(ValueError):
+            analysis.contour(ds, [2.5], 0.0, 0.0, "")
+
+
+def test_contour_returns_list_of_struct_dicts():
+    src = _ramp_bytes()
+    with _serde.open_tile(src) as ds:
+        out = analysis.contour(ds, [2.5], 0.0, 0.0, "elev")
+    assert isinstance(out, list)
+    assert all(
+        isinstance(e, dict)
+        and isinstance(e["geom_wkb"], (bytes, bytearray))
+        and isinstance(e["value"], float)
+        for e in out
+    )
+
+
+# --- viewshed ---------------------------------------------------------------
+def _dem_with_wall_bytes(crs="EPSG:32633"):
+    """7x7 flat DEM with a tall wall at column 3 (blocks line of sight)."""
+    h, w = 7, 7
+    dem = np.zeros((h, w), dtype="float64")
+    dem[:, 3] = 100.0
+    profile = dict(
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=1,
+        dtype="float64",
+        crs=crs,
+        transform=from_origin(0.0, float(h), 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(dem, 1)
+        return mf.read()
+
+
+def _observer_world_xy(ds, col, row):
+    """World (x, y) at the center of pixel (row, col)."""
+    from rasterio.transform import xy as _xy
+
+    x, y = _xy(ds.transform, row, col, offset="center")
+    return float(x), float(y)
+
+
+def test_viewshed_returns_byte_tile_binary_mask():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        assert o.count == 1
+        assert o.dtypes[0] == "uint8"
+        arr = o.read(1)
+        assert set(np.unique(arr)).issubset({0, 255})
+
+
+def test_viewshed_observer_cell_visible():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        assert arr[3, 0] == 255
+
+
+def test_viewshed_cell_behind_wall_invisible():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # column 5 sits behind the wall at column 3 -> not visible.
+        assert arr[3, 5] == 0
+
+
+def test_viewshed_preserves_georef_and_crs():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        src_transform = ds.transform
+        src_crs = ds.crs
+        ox, oy = _observer_world_xy(ds, col=3, row=3)
+        out = analysis.viewshed(ds, ox, oy, 1.0, 0.0, None)
+    with _serde.open_tile(out) as o:
+        assert o.transform == src_transform
+        assert o.crs == src_crs
+        assert (o.width, o.height) == (7, 7)
+
+
+def test_viewshed_negative_observer_height_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, -1.0, 0.0, None)
+
+
+def test_viewshed_negative_target_height_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, -2.0, None)
+
+
+def test_viewshed_nonpositive_max_distance_raises():
+    src = _dem_with_wall_bytes()
+    with _serde.open_tile(src) as ds:
+        ox, oy = _observer_world_xy(ds, col=0, row=3)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, 0.0, 0.0)
+        with pytest.raises(ValueError):
+            analysis.viewshed(ds, ox, oy, 1.0, 0.0, -10.0)

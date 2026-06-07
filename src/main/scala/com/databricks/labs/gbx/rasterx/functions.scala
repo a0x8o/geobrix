@@ -388,9 +388,9 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
 
     // Terrain analysis (DEM processing) - Column form
     def rst_slope(tileExpr: Column): Column =
-        ColumnAdapter(RST_Slope.name, Seq(tileExpr, lit("degrees"), lit(1.0)))
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, lit("degrees"), lit(Double.NaN)))
     def rst_slope(tileExpr: Column, unit: Column): Column =
-        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, lit(1.0)))
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, lit(Double.NaN)))
     def rst_slope(tileExpr: Column, unit: Column, scale: Column): Column =
         ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, scale))
     def rst_slope(tileExpr: Column, unit: String): Column = rst_slope(tileExpr, lit(unit))

@@ -13,12 +13,9 @@ from path_config import SAMPLE_DATA_BASE
 SAMPLE_RASTER_PATH = f"{SAMPLE_DATA_BASE}/nyc/sentinel2/nyc_sentinel2_red.tif"
 
 # Common setup: create temp view so SQL examples can use FROM rasters
-def _rasterx_sql_setup_content():
-    return f"""-- After registering RasterX (Python: rx.register(spark)), create the view:
+RASTERX_SQL_SETUP = f"""-- After registering RasterX (Python: rx.register(spark)), create the view:
 CREATE OR REPLACE TEMP VIEW rasters AS
 SELECT * FROM gdal.`{SAMPLE_RASTER_PATH}`;"""
-
-RASTERX_SQL_SETUP = _rasterx_sql_setup_content()
 
 RASTERX_SQL_SETUP_output = """
 View `rasters` created. You can now run SELECT ... FROM rasters; for each example.

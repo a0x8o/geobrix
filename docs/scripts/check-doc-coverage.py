@@ -41,14 +41,17 @@ REGISTERED_TXT = REPO_ROOT / "docs/tests-function-info/registered_functions.txt"
 RASTERX_SCALA_ROOT = REPO_ROOT / "src/main/scala/com/databricks/labs/gbx/rasterx"
 RASTERX_SQL_FILE = REPO_ROOT / "docs/tests/python/api/rasterx_functions_sql.py"
 
-# prefix -> docs page
-PAGE_MAP: dict[str, Path] = {
-    "gbx_rst_": REPO_ROOT / "docs/docs/api/rasterx-functions.mdx",
-    "gbx_bng_": REPO_ROOT / "docs/docs/api/gridx-functions.mdx",
-    "gbx_quadbin_": REPO_ROOT / "docs/docs/api/gridx-functions.mdx",
-    "gbx_custom_": REPO_ROOT / "docs/docs/api/gridx-functions.mdx",
-    "gbx_st_": REPO_ROOT / "docs/docs/api/vectorx-functions.mdx",
-    "gbx_pmtiles_": REPO_ROOT / "docs/docs/api/pmtiles-functions.mdx",
+# prefix -> docs page(s); value is always a list so callers can iterate uniformly
+PAGE_MAP: dict[str, list[Path]] = {
+    "gbx_rst_": [
+        REPO_ROOT / "docs/docs/api/raster-functions.mdx",
+        REPO_ROOT / "docs/docs/api/raster-functions-heavyweight.mdx",
+    ],
+    "gbx_bng_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],
+    "gbx_quadbin_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],
+    "gbx_custom_": [REPO_ROOT / "docs/docs/api/gridx-functions.mdx"],
+    "gbx_st_": [REPO_ROOT / "docs/docs/api/vectorx-functions.mdx"],
+    "gbx_pmtiles_": [REPO_ROOT / "docs/docs/api/pmtiles-functions.mdx"],
 }
 
 # prefix -> SQL example file
@@ -102,11 +105,27 @@ def canonical_sql() -> list[str]:
     return names
 
 
-def page_for(name: str) -> Path | None:
-    for prefix, page in PAGE_MAP.items():
+def pages_for(name: str) -> list[Path] | None:
+    """Return the list of candidate doc pages for *name*, or None if unmapped."""
+    for prefix, pages in PAGE_MAP.items():
         if name.startswith(prefix):
-            return page
+            return pages
     return None
+
+
+# Backwards-compat alias (returns first page; used for display purposes only)
+def page_for(name: str) -> Path | None:
+    pages = pages_for(name)
+    return pages[0] if pages else None
+
+
+def _combined_page_text(pages: list[Path]) -> str:
+    """Concatenate the text of all existing pages in *pages*."""
+    parts: list[str] = []
+    for p in pages:
+        if p.exists():
+            parts.append(p.read_text())
+    return "\n".join(parts)
 
 
 def sql_file_for(name: str) -> Path | None:
@@ -431,34 +450,35 @@ def _find_tables_in_value(value: str) -> list[tuple[int, list[str]]]:
 
 def check_d2(names: list[str]) -> tuple[bool, str]:
     """Return (passed, report_text)."""
-    # Pre-load page texts (one read per unique page)
+    # Pre-load page texts (one read per unique page path)
+    all_pages: set[Path] = set()
+    for pages in PAGE_MAP.values():
+        all_pages.update(pages)
     page_texts: dict[Path, str] = {}
-    for page in set(PAGE_MAP.values()):
-        if page.exists():
-            page_texts[page] = page.read_text()
-        else:
-            page_texts[page] = ""
+    for page in all_pages:
+        page_texts[page] = page.read_text() if page.exists() else ""
 
-    # Group missing by page
-    missing_by_page: dict[Path, list[str]] = {}
+    # Group missing by prefix-group (represented by first candidate page)
+    missing_by_group: dict[Path, list[str]] = {}
     for name in names:
-        page = page_for(name)
-        if page is None:
+        candidate_pages = pages_for(name)
+        if candidate_pages is None:
             continue
-        text = page_texts.get(page, "")
-        if not is_documented(name, text):
-            missing_by_page.setdefault(page, []).append(name)
+        combined_text = "\n".join(page_texts.get(p, "") for p in candidate_pages)
+        if not is_documented(name, combined_text):
+            # Key by the first page for display grouping
+            missing_by_group.setdefault(candidate_pages[0], []).append(name)
 
-    if not missing_by_page:
+    if not missing_by_group:
         total = len(names)
         return True, f"[OK] D2 doc-coverage OK -- all {total} registered functions are documented on their pages."
 
     lines = ["[FAIL] D2 doc-coverage FAILED -- registered functions with no documentation on their mapped page:"]
-    for page in sorted(str(p) for p in missing_by_page):
+    for page in sorted(str(p) for p in missing_by_group):
         page_path = Path(page)
         rel = page_path.relative_to(REPO_ROOT)
         lines.append(f"\n  {rel}:")
-        for fn in missing_by_page[page_path]:
+        for fn in missing_by_group[page_path]:
             lines.append(f"     - {fn}")
     return False, "\n".join(lines)
 

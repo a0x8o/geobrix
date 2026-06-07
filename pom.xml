@@ -42,7 +42,15 @@
           scala_build action's `suite_pattern` input.
         -->
         <suites></suites>
-        
+        <gbx.bench.corpus></gbx.bench.corpus>
+        <gbx.bench.out></gbx.bench.out>
+        <gbx.bench.functions></gbx.bench.functions>
+        <gbx.bench.modes>both</gbx.bench.modes>
+        <gbx.bench.warmup>2</gbx.bench.warmup>
+        <gbx.bench.measured>5</gbx.bench.measured>
+        <gbx.bench.rowCounts>10,100,1000,10000</gbx.bench.rowCounts>
+        <gbx.bench.runId>local</gbx.bench.runId>
+
         <!-- Debug Configuration -->
         <jdwp.agent>-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005</jdwp.agent>
         <agentLib />
@@ -198,6 +206,20 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>bench-test-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.8.0</version>
                 <configuration>
@@ -297,6 +319,14 @@
                         -XX:InitialCodeCacheSize=256m
                         -XX:MaxMetaspaceSize=1024m
                         -Dgbx.suites=${suites}
+                        -Dgbx.bench.corpus=${gbx.bench.corpus}
+                        -Dgbx.bench.out=${gbx.bench.out}
+                        -Dgbx.bench.functions=${gbx.bench.functions}
+                        -Dgbx.bench.modes=${gbx.bench.modes}
+                        -Dgbx.bench.warmup=${gbx.bench.warmup}
+                        -Dgbx.bench.measured=${gbx.bench.measured}
+                        -Dgbx.bench.rowCounts=${gbx.bench.rowCounts}
+                        -Dgbx.bench.runId=${gbx.bench.runId}
                         ${agentLib}
                     </argLine>
                     <!--

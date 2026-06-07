@@ -30,7 +30,7 @@ Three API packages, each with its own SQL prefix:
 |---|---|---|---|---|
 | **RasterX** | `com.databricks.labs.gbx.rasterx` | `databricks.labs.gbx.rasterx` | `gbx_rst_*` | Raster ops (ported from Mosaic raster). Gap-filling — product has no built-in raster. |
 | **GridX** | `com.databricks.labs.gbx.gridx.{bng,grid,h3}` | `databricks.labs.gbx.gridx.bng` | `gbx_bng_*` | Discrete global grids, primarily BNG (ported — preserve baseline behavior). |
-| **VectorX** | `com.databricks.labs.gbx.vectorx` | `databricks.labs.gbx.vectorx` | `gbx_st_*` | Augments product built-in ST functions; mostly legacy-geometry migration helpers. |
+| **VectorX** | `com.databricks.labs.gbx.vectorx` | `databricks.labs.gbx.vectorx` | `gbx_st_*` | Augments product built-in ST functions: vector-tile (MVT) encoding, TIN surface modeling, and legacy-geometry migration. |
 
 Each package exposes `functions` with `register(spark)` to install SQL UDFs. Shared primitives (`expressions`, `ds`, `util`) live under `com.databricks.labs.gbx`. Spark data source registrations are in `src/main/resources/META-INF/services/org.apache.spark.sql.sources.DataSourceRegister`.
 

@@ -3,14 +3,71 @@ sidebar_position: 2
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import initScript from '!!raw-loader!../../scripts/geobrix-gdal-init.sh';
 import verifyInstallation from '!!raw-loader!../tests/python/installation/verify_installation.py';
 
 # Installation
 
-GeoBrix currently offers heavy-weight, distributed APIs, primarily written in Scala for Spark with additional language bindings for PySpark and Spark SQL.
+GeoBrix offers two execution tiers with different installation paths. See [Choosing an Execution Tier](./api/execution-tiers) for the tradeoffs.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier is a single Python wheel installed with the `pyrx` extra — **no init script, no JAR, no native GDAL bundle** (rasterio's bundled GDAL does the work). It runs on serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM.
+
+The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **not** published to PyPI. Install it from a Unity Catalog Volume so the same path works on both Serverless and Classic compute:
+
+1. **Download** `geobrix-<version>-py3-none-any.whl` from the [GeoBrix releases](https://github.com/databrickslabs/geobrix/releases) (0.4.0 or later).
+2. **Stage** it in a Unity Catalog Volume your compute can read, e.g. `/Volumes/<catalog>/<schema>/<volume>/geobrix/`.
+3. **Install** it — either notebook-scoped with the `%pip` magic (installs across the whole cluster for the notebook session; plain `pip` installs only on the driver), or as a [cluster-scoped library](https://docs.databricks.com/aws/en/libraries/notebooks-python-libraries#manage-libraries-with-pip-commands) pointing at the same Volume path (works on Serverless and Classic):
+
+```python
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[pyrx]'
+```
+
+Then import and (optionally) register the SQL functions:
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+# optional — only needed to call the gbx_rst_* SQL functions:
+rx.register(spark)
+```
+
+## Verify the lightweight install
+
+Confirm the wheel imports, rasterio's bundled GDAL is present, and a function runs end to end (no JAR, no init script):
+
+```python
+import rasterio
+from databricks.labs.gbx.pyrx import functions as rx
+
+print("rasterio", rasterio.__version__, "| bundled GDAL", rasterio.__gdal_version__)
+
+# Functional check: load a GeoTIFF and read its properties through pyrx.
+tiles = (
+    spark.read.format("binaryFile")
+    .load("/Volumes/<catalog>/<schema>/<volume>/path/to/*.tif")
+    .select(rx.rst_fromcontent("content", "GTiff").alias("tile"))
+)
+tiles.select(
+    rx.rst_width("tile").alias("width"),
+    rx.rst_height("tile").alias("height"),
+    rx.rst_srid("tile").alias("srid"),
+).show()
+```
+
+If the import succeeds and the query returns raster dimensions, the lightweight tier is ready. The rest of this page covers the heavyweight tier.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+The heavyweight tier needs the Scala JAR + a cluster init script that installs native GDAL. Follow the steps below.
 
 ## Prerequisites
+
+The following prerequisites apply to the **heavyweight (rasterx)** tier.
 
 - **Databricks Runtime 17.3 LTS.** The init script's pinned GDAL package
   targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS; other
@@ -255,3 +312,6 @@ If you encounter permission errors:
 
 - Follow the [Quick Start Guide](./quick-start) to begin using GeoBrix
 - Explore the [Functions](./api/overview) documentation
+
+</TabItem>
+</Tabs>

@@ -1,0 +1,327 @@
+"""Spark-free TIN / IDW interpolation to raster tiles — pure-Python counterparts
+to the heavyweight rasterx ``RST_GridFromPoints`` (IDW via ``gdal.Grid``) and
+``RST_DTMFromGeoms`` (Delaunay-TIN DTM) constructors / aggregators.
+
+Both builders take plain Python inputs (point coordinate arrays + extent / size /
+srid params) and return the result raster's single-band Float64 GTiff ``bytes``.
+
+  * ``idw_grid``      -> RST_GridFromPoints (inverse-distance-weighted grid)
+  * ``delaunay_dtm``  -> RST_DTMFromGeoms (Delaunay TIN elevation surface)
+
+PARITY DIVERGENCES vs heavyweight (documented inline):
+  * IDW: the heavyweight delegates to ``gdal.Grid(invdist:power=p:max_points=m)``.
+    This reimplements the same inverse-distance formula directly with a KD-tree
+    nearest-neighbour query (``scipy.spatial.cKDTree``). The math matches
+    gdal_grid's ``invdist`` mode (no smoothing, no search radius); ``max_pts``
+    caps the neighbours considered per output cell.
+  * DTM: the heavyweight builds a CONSTRAINED-Delaunay TIN (breaklines enforced
+    as hard edges; ``merge_tolerance`` / ``snap_tolerance`` control vertex
+    coalescing). scipy's ``Delaunay`` is UNCONSTRAINED — it cannot enforce
+    breaklines as edges and has no analogue for those tolerances. They are
+    accepted for signature parity but NOT enforced; breakline vertices are
+    folded in as additional triangulation points only.
+"""
+
+import numpy as np
+import shapely.wkb
+from rasterio.io import MemoryFile
+from rasterio.transform import from_bounds
+from scipy.spatial import Delaunay, cKDTree
+
+_NODATA = -9999.0
+
+
+def _write_float64_grid(arr, xmin, ymin, xmax, ymax, width_px, height_px, srid, nodata):
+    """Write a (height_px, width_px) Float64 array as single-band GTiff bytes.
+
+    The transform is derived from the bounds + size; CRS = EPSG:srid; the given
+    nodata is stamped on the band. Shared by ``idw_grid`` and ``delaunay_dtm``.
+    """
+    transform = from_bounds(
+        float(xmin),
+        float(ymin),
+        float(xmax),
+        float(ymax),
+        int(width_px),
+        int(height_px),
+    )
+    profile = dict(
+        driver="GTiff",
+        width=int(width_px),
+        height=int(height_px),
+        count=1,
+        dtype="float64",
+        crs=f"EPSG:{int(srid)}",
+        transform=transform,
+        nodata=float(nodata),
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(np.asarray(arr, dtype="float64"), 1)
+        return mf.read()
+
+
+def _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px):
+    """Return an ``(height_px*width_px, 2)`` array of cell-CENTER world coords.
+
+    Row-major (row 0 = top), matching GTiff raster ordering. Cell (row, col)
+    center is at ``(xmin + (col+0.5)*xres, ymax - (row+0.5)*yres)``.
+    """
+    width_px = int(width_px)
+    height_px = int(height_px)
+    xres = (float(xmax) - float(xmin)) / width_px
+    yres = (float(ymax) - float(ymin)) / height_px
+    cols = (np.arange(width_px) + 0.5) * xres + float(xmin)
+    rows = float(ymax) - (np.arange(height_px) + 0.5) * yres
+    gx, gy = np.meshgrid(cols, rows)  # shape (height_px, width_px)
+    return np.column_stack([gx.ravel(), gy.ravel()])
+
+
+def idw_grid(
+    points_xy,
+    values,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    power=2.0,
+    max_pts=12,
+):
+    """Inverse-distance-weighted grid from scattered points (GTiff bytes).
+
+    For each output cell CENTER, the value is the inverse-distance-weighted mean
+    of the nearest ``max_pts`` input points::
+
+        v(cell) = sum(v_i / d_i**power) / sum(1 / d_i**power)
+
+    where ``d_i`` is the distance from the cell center to neighbour ``i``. If a
+    neighbour coincides with the cell center (``d_i == 0``) its value is returned
+    directly. Cells with no usable neighbour become NoData (-9999.0).
+
+    Mirrors RST_GridFromPoints (``gdal.Grid`` invdist). ``power`` defaults to
+    2.0; ``max_pts`` defaults to 12 (matching the heavyweight defaults).
+    """
+    pts = np.asarray(points_xy, dtype="float64")
+    vals = np.asarray(values, dtype="float64")
+    width_px = int(width_px)
+    height_px = int(height_px)
+    if width_px <= 0 or height_px <= 0:
+        raise ValueError("rst_gridfrompoints: width_px and height_px must be positive")
+    if float(power) <= 0.0:
+        raise ValueError("rst_gridfrompoints: power must be positive")
+    if int(max_pts) <= 0:
+        raise ValueError("rst_gridfrompoints: max_pts must be positive")
+
+    if pts.ndim != 2 or pts.shape[0] == 0:
+        # No points -> all-NoData raster of the requested shape.
+        out = np.full((height_px, width_px), _NODATA, dtype="float64")
+        return _write_float64_grid(
+            out, xmin, ymin, xmax, ymax, width_px, height_px, srid, _NODATA
+        )
+    if pts.shape[0] != vals.shape[0]:
+        raise ValueError(
+            "rst_gridfrompoints: points "
+            f"({pts.shape[0]}) and values ({vals.shape[0]}) length mismatch"
+        )
+
+    power = float(power)
+    k = min(int(max_pts), pts.shape[0])
+    tree = cKDTree(pts)
+    centers = _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px)
+    dist, idx = tree.query(centers, k=k)
+    # cKDTree.query returns 1-D arrays when k == 1; normalise to 2-D.
+    if k == 1:
+        dist = dist[:, None]
+        idx = idx[:, None]
+
+    neigh_vals = vals[idx]  # (n_cells, k)
+    out = np.full(centers.shape[0], _NODATA, dtype="float64")
+
+    # Exact hits (distance 0): take that neighbour's value directly.
+    exact = dist[:, 0] == 0.0
+    if np.any(exact):
+        out[exact] = neigh_vals[exact, 0]
+
+    interp_mask = ~exact
+    if np.any(interp_mask):
+        d = dist[interp_mask]
+        nv = neigh_vals[interp_mask]
+        w = 1.0 / np.power(d, power)
+        wsum = w.sum(axis=1)
+        vsum = (w * nv).sum(axis=1)
+        # wsum is always > 0 here (all distances are finite and > 0), but guard
+        # against degenerate inf weights anyway.
+        good = np.isfinite(wsum) & (wsum > 0)
+        res = np.full(d.shape[0], _NODATA, dtype="float64")
+        res[good] = vsum[good] / wsum[good]
+        out[interp_mask] = res
+
+    out = out.reshape(height_px, width_px)
+    return _write_float64_grid(
+        out, xmin, ymin, xmax, ymax, width_px, height_px, srid, _NODATA
+    )
+
+
+def _coords_with_z(geom):
+    """Yield (x, y, z) tuples for every coordinate of a shapely geometry.
+
+    Z defaults to NaN where a coordinate lacks an elevation.
+    """
+    if geom is None or geom.is_empty:
+        return
+    if geom.geom_type == "Point":
+        c = geom.coords[0]
+        yield (c[0], c[1], c[2] if len(c) > 2 else float("nan"))
+    elif geom.geom_type in ("MultiPoint", "GeometryCollection"):
+        for g in geom.geoms:
+            yield from _coords_with_z(g)
+    else:
+        for c in geom.coords:
+            yield (c[0], c[1], c[2] if len(c) > 2 else float("nan"))
+
+
+def delaunay_dtm(
+    points_xyz,
+    breaklines,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    no_data=_NODATA,
+):
+    """Delaunay-TIN DTM from Z-valued points (GTiff bytes).
+
+    Builds an (unconstrained) Delaunay triangulation of the points' (x, y) and
+    interpolates Z at each output cell CENTER by barycentric interpolation within
+    the containing triangle::
+
+        z(cell) = b0*z_a + b1*z_b + b2*z_c
+
+    where ``(b0, b1, b2)`` are the barycentric coordinates of the cell center in
+    its containing triangle (``a``, ``b``, ``c`` the triangle vertices). Cells
+    OUTSIDE the convex hull (``Delaunay.find_simplex == -1``) become ``no_data``.
+
+    Mirrors RST_DTMFromGeoms. ``points_xyz`` is an ``(n, 3)`` array (Z required).
+    ``breaklines`` is a list of WKB linestring bytes (may be empty/None).
+
+    PARITY DIVERGENCE: scipy's Delaunay is UNCONSTRAINED. ``breaklines`` are NOT
+    enforced as hard edges; their vertices are folded in as extra triangulation
+    points only. ``merge_tolerance`` / ``snap_tolerance`` (handled by the caller)
+    have no scipy analogue and are not applied.
+    """
+    width_px = int(width_px)
+    height_px = int(height_px)
+    if width_px <= 0 or height_px <= 0:
+        raise ValueError("rst_dtmfromgeoms: width_px and height_px must be positive")
+
+    pts = np.asarray(points_xyz, dtype="float64")
+    if pts.ndim != 2 or pts.shape[0] == 0:
+        raise ValueError("rst_dtmfromgeoms: at least one point is required")
+    if pts.shape[1] < 3:
+        raise ValueError("rst_dtmfromgeoms: points must carry a Z coordinate")
+
+    # Fold breakline vertices in as additional triangulation points (NOT as
+    # constraint edges — scipy Delaunay is unconstrained). Drop vertices without
+    # a usable Z.
+    extra = []
+    for wkb in breaklines or []:
+        if wkb is None or len(bytes(wkb)) == 0:
+            continue
+        geom = shapely.wkb.loads(bytes(wkb))
+        for x, y, z in _coords_with_z(geom):
+            if not np.isnan(z):
+                extra.append((x, y, z))
+    if extra:
+        pts = np.vstack([pts, np.asarray(extra, dtype="float64")])
+
+    xy = pts[:, :2]
+    z = pts[:, 2]
+
+    out = np.full(height_px * width_px, float(no_data), dtype="float64")
+    # Delaunay needs >= 3 non-collinear points; fall back to all-NoData otherwise.
+    if xy.shape[0] >= 3:
+        try:
+            tri = Delaunay(xy)
+        except Exception:  # noqa: BLE001 — degenerate (collinear) input
+            tri = None
+        if tri is not None:
+            centers = _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px)
+            simplex = tri.find_simplex(centers)
+            inside = simplex >= 0
+            if np.any(inside):
+                s = simplex[inside]
+                # Barycentric coordinates via the precomputed transform.
+                T = tri.transform[s]  # (m, 3, 2): rows 0-1 = inv affine, row 2 = r
+                delta = centers[inside] - T[:, 2, :]
+                b01 = np.einsum("mij,mj->mi", T[:, :2, :], delta)  # b0, b1
+                b2 = 1.0 - b01.sum(axis=1)
+                bary = np.column_stack([b01, b2])  # (m, 3)
+                vert = tri.simplices[s]  # (m, 3) vertex indices
+                zvals = (bary * z[vert]).sum(axis=1)
+                flat = np.where(inside)[0]
+                out[flat] = zvals
+
+    out = out.reshape(height_px, width_px)
+    return _write_float64_grid(
+        out, xmin, ymin, xmax, ymax, width_px, height_px, srid, float(no_data)
+    )
+
+
+def points_xy_from_wkb(wkbs):
+    """Decode a list of POINT WKB bytes into an ``(n, 2)`` (x, y) float array.
+
+    Empty / None elements are dropped. Used by the IDW constructor / aggregator
+    where only planar coordinates matter.
+    """
+    out = []
+    for wkb in wkbs:
+        if wkb is None or len(bytes(wkb)) == 0:
+            continue
+        g = shapely.wkb.loads(bytes(wkb))
+        if g.is_empty:
+            continue
+        out.append((g.x, g.y))
+    return (
+        np.asarray(out, dtype="float64") if out else np.empty((0, 2), dtype="float64")
+    )
+
+
+def points_xyz_from_wkb(wkbs):
+    """Decode a list of POINT-with-Z WKB bytes into an ``(n, 3)`` (x, y, z) array.
+
+    Empty / None elements are dropped. Raises if any point lacks a Z value
+    (mirrors the heavyweight RST_DTMFromGeoms requirement).
+    """
+    out = []
+    for wkb in wkbs:
+        if wkb is None or len(bytes(wkb)) == 0:
+            continue
+        g = shapely.wkb.loads(bytes(wkb))
+        if g.is_empty:
+            continue
+        if not g.has_z:
+            raise ValueError(
+                "rst_dtmfromgeoms: point has no Z coordinate — supply 3D WKB "
+                "(e.g. 'POINT Z (x y z)')"
+            )
+        c = g.coords[0]
+        out.append((c[0], c[1], c[2]))
+    return (
+        np.asarray(out, dtype="float64") if out else np.empty((0, 3), dtype="float64")
+    )
+
+
+# Re-export for symmetry with other core modules (struct unused here but keeps
+# the import set explicit for callers that build cellid envelopes elsewhere).
+__all__ = [
+    "idw_grid",
+    "delaunay_dtm",
+    "points_xy_from_wkb",
+    "points_xyz_from_wkb",
+]

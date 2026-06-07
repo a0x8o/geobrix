@@ -1,0 +1,56 @@
+# Source of truth for the lightweight pyrx CI job's Python deps.
+# Consumed by .github/actions/pyrx_build via:
+#   pip install --require-hashes -r python/geobrix/requirements-pyrx-ci.txt
+#
+# Regenerate the hash-pinned lock alongside any edit:
+#   cd python/geobrix
+#   uv pip compile --generate-hashes --python-version 3.12 \
+#       --output-file requirements-pyrx-ci.txt requirements-pyrx-ci.in
+#
+# Unlike requirements-ci.txt (heavyweight), this lock needs NO GDAL exception:
+# the lightweight API uses rasterio's bundled-GDAL binary wheel, which is itself
+# hash-pinned here. There is no separate native GDAL install and no JAR.
+# Versions track DBR 17.3 LTS / the dev container (requirements-dev-container.in)
+# where applicable; bump in lockstep and regenerate the lock.
+
+# --- build backend (for `python -m build` lightweight wheel) ---
+build==1.4.4
+setuptools==80.9.0
+wheel==0.45.1
+
+# --- runtime: pyspark local mode + pandas_udf (Arrow) ---
+# base pyspark pulls neither pandas nor pyarrow; pandas_udf needs both.
+# numpy / pandas / pyarrow pinned to DBR 17.3 LTS installed versions:
+# https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts#installed-python-libraries
+pyspark==4.0.0
+numpy==2.1.3
+pandas==2.2.3
+pyarrow==19.0.1
+
+# --- lightweight raster stack (rasterio ships bundled GDAL — no native install) ---
+rasterio==1.5.0
+shapely==2.1.2
+
+# --- band math: focal filters / convolution (scipy.ndimage) + map-algebra (numexpr) ---
+# scipy pinned to the DBR 17.3 LTS installed version. numexpr is NOT in DBR's
+# library set, so it is pinned independently (safe math-expression evaluator for
+# rst_mapalgebra — no arbitrary-code exec).
+scipy==1.15.1
+numexpr==2.11.0
+
+# --- web-mercator XYZ tiling (rio-tiler bundles morecantile + color-operations) ---
+rio-tiler==9.0.6
+
+# --- COG output (rst_cog_convert) ---
+rio-cogeo==7.0.2
+
+# --- discrete global grids: raster->H3/quadbin aggregation ---
+h3==4.4.2
+quadbin==0.2.2
+
+# --- contour (scikit-image) + viewshed (xarray-spatial) ---
+scikit-image==0.26.0
+xarray-spatial==0.9.9
+
+# --- test runner ---
+pytest==8.4.2

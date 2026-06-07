@@ -24,6 +24,7 @@ import java.nio.file.Files
 class DEMProcessingTest extends AnyFunSuite with BeforeAndAfterAll {
 
     private var demDs: Dataset = _
+    private var geoDemDs: Dataset = _
     private var resultsBuf: List[Dataset] = List.empty
 
     override def beforeAll(): Unit = {
@@ -33,11 +34,13 @@ class DEMProcessingTest extends AnyFunSuite with BeforeAndAfterAll {
         import com.databricks.labs.gbx.util.NodeFilePathUtil
         Files.createDirectories(NodeFilePathUtil.rootPath)
         demDs = buildSyntheticDEM(width = 100, height = 100)
+        geoDemDs = buildGeographicDEM(width = 100, height = 100)
     }
 
     override def afterAll(): Unit = {
         resultsBuf.foreach { d => try d.delete() catch { case _: Throwable => () } }
         if (demDs != null) demDs.delete()
+        if (geoDemDs != null) geoDemDs.delete()
     }
 
     /** Helper: track result Datasets so we can release them in afterAll. */
@@ -57,6 +60,38 @@ class DEMProcessingTest extends AnyFunSuite with BeforeAndAfterAll {
         ds.SetGeoTransform(Array(500000.0, 1.0, 0.0, 5000000.0, 0.0, -1.0))
         val band = ds.GetRasterBand(1)
         // Ramp: each column gets value = column index (0 .. width-1).
+        val buf = new Array[Float](width * height)
+        var r = 0
+        while (r < height) {
+            var c = 0
+            while (c < width) {
+                buf(r * width + c) = c.toFloat
+                c += 1
+            }
+            r += 1
+        }
+        band.WriteRaster(0, 0, width, height, buf)
+        band.FlushCache()
+        ds.FlushCache()
+        ds
+    }
+
+    /** Build a 100x100 Float32 DEM in a GEOGRAPHIC CRS (EPSG:4326).
+     *
+     *  Same west-to-east elevation ramp (0 .. width-1 m) but the pixel size is
+     *  ~0.001 degrees (≈111 m at the equator) rather than 1 m. On a geographic
+     *  raster, `gdaldem slope` must auto-derive a degree→metre scale (GDAL 3.11+)
+     *  or the slope saturates at ~90 deg.
+     */
+    private def buildGeographicDEM(width: Int, height: Int): Dataset = {
+        val memDriver = gdal.GetDriverByName("GTiff")
+        val path = s"/vsimem/dem_geo_${java.util.UUID.randomUUID().toString.replace("-", "")}.tif"
+        val ds = memDriver.Create(path, width, height, 1, gdalconstConstants.GDT_Float32)
+        // EPSG:4326 — geographic, units degrees.
+        ds.SetProjection(srsWkt(4326))
+        // Origin at lon=0, lat=0; ~0.001 deg pixel size (≈111 m at equator).
+        ds.SetGeoTransform(Array(0.0, 0.001, 0.0, 0.0, 0.0, -0.001))
+        val band = ds.GetRasterBand(1)
         val buf = new Array[Float](width * height)
         var r = 0
         while (r < height) {
@@ -125,6 +160,41 @@ class DEMProcessingTest extends AnyFunSuite with BeforeAndAfterAll {
         // Tolerance is broad - the center cell of a 1m/m gradient should be ~45 deg.
         val sl = centerPixel(out)
         sl should (be > 30.0 and be < 60.0)
+    }
+
+    /** Extract the default `scale` literal the builder injects when the caller
+     *  omits it (1-arg form). This is the value the GDAL-normal default hinges on:
+     *  Double.NaN => no -s => auto-scale; 1.0 => forced -s 1.0 => saturation.
+     */
+    private def builderDefaultScale(): Double = {
+        val tile = org.apache.spark.sql.catalyst.expressions.Literal(null, org.apache.spark.sql.types.BinaryType)
+        val expr = RST_Slope.builder()(Seq(tile)).asInstanceOf[RST_Slope]
+        expr.scaleExpr.asInstanceOf[org.apache.spark.sql.catalyst.expressions.Literal].value
+            .asInstanceOf[Double]
+    }
+
+    test("RST_Slope default (no explicit scale) is the NaN sentinel so -s is omitted") {
+        // GDAL-normal default: the 1-arg/2-arg builder must inject Double.NaN, not
+        // 1.0. Under the old code this is 1.0 (forces -s 1.0); under the fix it is
+        // NaN (omits -s, lets GDAL 3.11 auto-derive the CRS scale).
+        builderDefaultScale().isNaN shouldBe true
+    }
+
+    test("RST_Slope auto-scales a geographic (EPSG:4326) DEM but saturates with explicit -s 1.0") {
+        // Drive the SAME paths the SQL/Column API drives: the default scale (from
+        // the builder) vs an explicit 1.0. On a geographic raster, the default
+        // (NaN => omit -s => GDAL auto-scale) yields a sane slope, while -s 1.0
+        // treats ~0.001 deg spacing as metres and saturates near vertical.
+        val (auto, _) = track(RST_Slope.execute(geoDemDs, "degrees", builderDefaultScale()))
+        val (saturated, _) = track(RST_Slope.execute(geoDemDs, "degrees", 1.0))
+        auto should not be null
+        saturated should not be null
+        val autoSl = centerPixel(auto)
+        val satSl = centerPixel(saturated)
+        // Saturated (-s 1.0) is pinned near vertical; auto is well below it.
+        satSl should be > 80.0
+        autoSl should be < 80.0
+        satSl should be > (autoSl + 1.0)
     }
 
     test("RST_Aspect.execute returns ~270 deg (west-facing) for a west-to-east ramp") {

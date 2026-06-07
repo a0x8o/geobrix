@@ -47,6 +47,21 @@
   line-height: 1.6;
 }
 
+.tierCallout {
+  padding: 3rem 0;
+  background-color: var(--ifm-color-emphasis-200);
+  text-align: center;
+}
+
+.tierCallout h2 {
+  margin-bottom: 1rem;
+}
+
+.tierCallout p {
+  margin-bottom: 2rem;
+  font-size: 1.1rem;
+}
+
 .cta {
   padding: 4rem 0;
   text-align: center;

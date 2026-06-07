@@ -47,17 +47,17 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Process satellite imagery, elevation models, and gridded spatial data with GDAL-powered functions."
-            link="/docs/api/rasterx-functions"
+            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Runs lightweight (pure-Python) or heavyweight (Scala/GDAL)."
+            link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
-            description="Spatial indexing with British National Grid (BNG) support for efficient location-based analysis."
+            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
             link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Migrate legacy Mosaic geometries and work seamlessly with Databricks spatial types."
+            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types."
             link="/docs/api/vectorx-functions"
           />
         </div>
@@ -93,6 +93,25 @@ export default function Home() {
       <main>
         <HomepageFeatures />
         
+        <section className={styles.tierCallout}>
+          <div className="container">
+            <div className="row">
+              <div className="col col--8 col--offset-2 text--center">
+                <h2>New in 0.4.0 — a lightweight execution tier</h2>
+                <p>
+                  Run the GeoBrix raster API on pure Python + rasterio: no JAR, no init script,
+                  works on serverless, shared clusters, and ARM.
+                </p>
+                <Link
+                  className="button button--primary button--md"
+                  to="/docs/api/execution-tiers">
+                  Compare Execution Tiers →
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className={styles.quickStart}>
           <div className="container">
             <div className="row">

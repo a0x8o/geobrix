@@ -85,7 +85,10 @@ const sidebars = {
           label: 'Function Reference',
           collapsed: false,
           items: [
-            'api/rasterx-functions',
+            'api/execution-tiers',
+            'api/benchmarking',
+            'api/raster-functions',
+            'api/raster-functions-heavyweight',
             'api/gridx-functions',
             'api/vectorx-functions',
             'api/pmtiles-functions',

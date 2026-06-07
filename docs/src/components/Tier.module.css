@@ -1,0 +1,7 @@
+.tierGroup { display: inline-flex; gap: 0.3rem; vertical-align: middle; }
+.tier {
+  font-size: 0.72rem; font-weight: 600; line-height: 1.4;
+  padding: 0.05rem 0.45rem; border-radius: 0.7rem; white-space: nowrap;
+}
+.light { background: #e6f4ea; color: #1e7e34; border: 1px solid #b7dfc2; }
+.heavy { background: #e7eefc; color: #2545b3; border: 1px solid #c2d2f5; }

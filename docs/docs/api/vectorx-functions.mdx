@@ -6,12 +6,16 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 import vectorxFunctionsExamples from '!!raw-loader!../../tests/python/api/vectorx_functions.py';
 import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_functions_sql.py';
 import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.py';
+import Tier from '@site/src/components/Tier';
 
 # VectorX Function Reference
 
-VectorX augments the product's native `ST_*` functions with vector-tile encoding and legacy-geometry migration helpers. As of v0.4.0 it covers:
+<Tier heavy/> These functions are available in the **Heavyweight** execution tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
+
+VectorX augments the product's native `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-geometry migration helpers. As of v0.4.0 it covers:
 
 - **Vector tile encoding** — `gbx_st_asmvt` aggregator + `gbx_st_asmvt_pyramid` generator for publishing Mapbox Vector Tile (MVT) layers
+- **TIN surface modeling** — `gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`, and `gbx_st_interpolateelevationgeom` for constrained-Delaunay triangulation and grid elevation interpolation from Z-valued points
 - **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB
 - **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating from DBLabs Mosaic
 

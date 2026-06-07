@@ -118,6 +118,11 @@ const config = {
             position: 'left'
           },
           {
+            to: '/docs/api/execution-tiers',
+            label: 'Lightweight vs Heavyweight',
+            position: 'left'
+          },
+          {
             href: 'https://github.com/databrickslabs/geobrix',
             label: 'GitHub',
             position: 'right',
@@ -148,8 +153,8 @@ const config = {
             title: 'Functions',
             items: [
               {
-                label: 'RasterX',
-                to: '/docs/api/rasterx-functions',
+                label: 'Raster Functions',
+                to: '/docs/api/raster-functions',
               },
               {
                 label: 'GridX',
