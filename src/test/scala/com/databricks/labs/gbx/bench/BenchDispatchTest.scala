@@ -18,12 +18,14 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
   }
   override def afterAll(): Unit = if (ds != null) ds.delete()
 
-  test("registry covers the 19 ds-in functions with categories + min_bands") {
+  test("registry covers the ds-in functions with categories + min_bands") {
     assert(BenchDispatch.all.toSet.contains("rst_width"))
-    assert(BenchDispatch.all.size == 19)
+    // 19 original representative fns + 15 Task 2 scalar accessors
+    assert(BenchDispatch.all.size == 34)
     assert(BenchDispatch.minBands("rst_ndvi") == 2)
     assert(BenchDispatch.minBands("rst_width") == 1)
     assert(BenchDispatch.category("rst_slope") == "terrain")
+    assert(BenchDispatch.category("rst_srid") == "accessor")
   }
 
   test("pureCore runs an accessor and a terrain op, returning a fingerprint") {

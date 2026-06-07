@@ -96,3 +96,59 @@ def test_explicit_functions_filter_ignores_set():
     # naming a function selects it even if not core
     got = {f.name for f in s.select(functions=["rst_width"], set="full")}
     assert got == {"rst_width"}
+
+
+# --- Task 2: scalar-accessor coverage (15 no-arg accessors) -----------------
+_SCALAR_ACCESSORS = {
+    "rst_format",
+    "rst_getnodata",
+    "rst_isempty",
+    "rst_memsize",
+    "rst_pixelheight",
+    "rst_pixelwidth",
+    "rst_rotation",
+    "rst_scalex",
+    "rst_scaley",
+    "rst_skewx",
+    "rst_skewy",
+    "rst_srid",
+    "rst_type",
+    "rst_upperleftx",
+    "rst_upperlefty",
+}
+
+# rst_memsize and rst_type cannot produce a cross-engine-identical fingerprint
+# (memsize differs file-size vs in-memory; type is a string array with no heavy
+# array-of-strings fingerprint constructor), so they run pure-core-only.
+_PURE_CORE_ONLY = {"rst_memsize", "rst_type"}
+
+
+def test_scalar_accessors_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _SCALAR_ACCESSORS - full
+    assert not missing, f"registry missing scalar accessors: {sorted(missing)}"
+
+
+def test_scalar_accessors_wellformed():
+    for name in _SCALAR_ACCESSORS:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.category == "accessor"
+        assert fs.args == {}
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert set(fs.modes) <= {"pure-core", "spark-path"}
+
+
+def test_scalar_accessors_modes():
+    for name in _SCALAR_ACCESSORS:
+        fs = s.REGISTRY[name]
+        if name in _PURE_CORE_ONLY:
+            assert fs.modes == ("pure-core",), name
+        else:
+            assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_scalar_accessors_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_SCALAR_ACCESSORS & core)

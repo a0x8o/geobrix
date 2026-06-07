@@ -1,5 +1,6 @@
 package com.databricks.labs.gbx.bench
 
+import com.databricks.labs.gbx.rasterx.expressions.RST_IsEmpty
 import com.databricks.labs.gbx.rasterx.expressions.RST_NDVI
 import com.databricks.labs.gbx.rasterx.expressions.RST_Transform
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
@@ -30,7 +31,13 @@ object BenchDispatch {
     "rst_slope" -> TER, "rst_aspect" -> TER, "rst_hillshade" -> TER,
     "rst_tri" -> TER, "rst_tpi" -> TER, "rst_roughness" -> TER,
     "rst_ndvi" -> BM, "rst_ndwi" -> BM, "rst_nbr" -> BM,
-    "rst_transform" -> WARP, "rst_to_webmercator" -> WARP
+    "rst_transform" -> WARP, "rst_to_webmercator" -> WARP,
+    // scalar accessors (Task 2)
+    "rst_srid" -> ACC, "rst_pixelwidth" -> ACC, "rst_pixelheight" -> ACC,
+    "rst_upperleftx" -> ACC, "rst_upperlefty" -> ACC, "rst_scalex" -> ACC,
+    "rst_scaley" -> ACC, "rst_skewx" -> ACC, "rst_skewy" -> ACC,
+    "rst_rotation" -> ACC, "rst_isempty" -> ACC, "rst_getnodata" -> ACC,
+    "rst_format" -> ACC, "rst_type" -> ACC, "rst_memsize" -> ACC
   )
 
   def all: Seq[String] = cats.keys.toSeq.sorted
@@ -63,6 +70,25 @@ object BenchDispatch {
     case "rst_nbr"        => fpDerived(RST_NBR.execute(ds, argI(a, "nir_idx", 1), argI(a, "swir_idx", 2)))
     case "rst_transform"  => fpDerived(RST_Transform.execute(ds, Map.empty, argI(a, "target_srid", 3857)))
     case "rst_to_webmercator" => fpDerived(RST_ToWebMercator.execute(ds, Map.empty, argS(a, "resampling", "bilinear")))
+    // scalar accessors (Task 2)
+    case "rst_srid"        => BenchFingerprint.ofScalar(RST_SRID.execute(ds))
+    case "rst_pixelwidth"  => BenchFingerprint.ofScalar(RST_PixelWidth.execute(ds))
+    case "rst_pixelheight" => BenchFingerprint.ofScalar(RST_PixelHeight.execute(ds))
+    case "rst_upperleftx"  => BenchFingerprint.ofScalar(RST_UpperLeftX.execute(ds))
+    case "rst_upperlefty"  => BenchFingerprint.ofScalar(RST_UpperLeftY.execute(ds))
+    case "rst_scalex"      => BenchFingerprint.ofScalar(RST_ScaleX.execute(ds))
+    case "rst_scaley"      => BenchFingerprint.ofScalar(RST_ScaleY.execute(ds))
+    case "rst_skewx"       => BenchFingerprint.ofScalar(RST_SkewX.execute(ds))
+    case "rst_skewy"       => BenchFingerprint.ofScalar(RST_SkewY.execute(ds))
+    case "rst_rotation"    => BenchFingerprint.ofScalar(RST_Rotation.execute(ds))
+    // bool -> 1.0/0.0 to match the pyrx core_fn's numeric coercion
+    case "rst_isempty"     => BenchFingerprint.ofScalar(if (RST_IsEmpty.execute(ds)) 1.0 else 0.0)
+    case "rst_getnodata"   => BenchFingerprint.ofArray(RST_GetNoData.execute(ds))
+    case "rst_format"      => BenchFingerprint.ofScalar(RST_Format.execute(ds))
+    // pure-core-only (fingerprint suppressed downstream): no array-of-strings fp
+    case "rst_type"        => BenchFingerprint.ofScalar(RST_Type.execute(ds).mkString(","))
+    // pure-core-only (fingerprint suppressed downstream): file size vs in-memory
+    case "rst_memsize"     => BenchFingerprint.ofScalar(RST_MemSize.execute(ds))
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -95,6 +121,22 @@ object BenchDispatch {
       case "rst_nbr"        => rst_nbr(tile, argI(a, "nir_idx", 1), argI(a, "swir_idx", 2))
       case "rst_transform"  => rst_transform(tile, argI(a, "target_srid", 3857))
       case "rst_to_webmercator" => rst_to_webmercator(tile, argS(a, "resampling", "bilinear"))
+      // scalar accessors (Task 2)
+      case "rst_srid"        => rst_srid(tile)
+      case "rst_pixelwidth"  => rst_pixelwidth(tile)
+      case "rst_pixelheight" => rst_pixelheight(tile)
+      case "rst_upperleftx"  => rst_upperleftx(tile)
+      case "rst_upperlefty"  => rst_upperlefty(tile)
+      case "rst_scalex"      => rst_scalex(tile)
+      case "rst_scaley"      => rst_scaley(tile)
+      case "rst_skewx"       => rst_skewx(tile)
+      case "rst_skewy"       => rst_skewy(tile)
+      case "rst_rotation"    => rst_rotation(tile)
+      case "rst_isempty"     => rst_isempty(tile)
+      case "rst_getnodata"   => rst_getnodata(tile)
+      case "rst_format"      => rst_format(tile)
+      case "rst_type"        => rst_type(tile)
+      case "rst_memsize"     => rst_memsize(tile)
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
