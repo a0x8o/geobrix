@@ -32,6 +32,9 @@ class FnSpec:
     core_fn: Callable = None  # (ds, args) -> Any
     col_fn: Callable = None  # (tile_col, args) -> Column
     core: bool = False  # in the fast "core" benchmark set
+    fingerprint: bool = (
+        True  # emit a comparable output fingerprint; False = timing-only
+    )
 
 
 _BOTH = ("pure-core", "spark-path")
@@ -391,6 +394,7 @@ REGISTRY: Dict[str, FnSpec] = {
         core_fn=lambda ds, a: accessors.type(ds),
         col_fn=lambda t, a: prx.rst_type(t),
         core=False,
+        fingerprint=False,
     ),
     "rst_memsize": FnSpec(
         "rst_memsize",
@@ -399,10 +403,11 @@ REGISTRY: Dict[str, FnSpec] = {
         ("pure-core",),
         {},
         # No accessors.memsize: use the in-memory raster buffer length from the
-        # open dataset (deterministic; fingerprint suppressed downstream).
+        # open dataset (deterministic; timing-only, fingerprint suppressed).
         core_fn=lambda ds, a: int(ds.read().nbytes),
         col_fn=lambda t, a: prx.rst_memsize(t),
         core=False,
+        fingerprint=False,
     ),
     # --- coordinate / index accessors (Task 3) ----------------------------------
     # raster->world is the forward geotransform (pure affine): rasterio.xy and
@@ -462,6 +467,7 @@ REGISTRY: Dict[str, FnSpec] = {
         core_fn=lambda ds, a: coords.world_to_raster_x(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_worldtorastercoordx(t, a["x"], a["y"]),
         core=False,
+        fingerprint=False,
     ),
     "rst_worldtorastercoordy": FnSpec(
         "rst_worldtorastercoordy",
@@ -472,6 +478,7 @@ REGISTRY: Dict[str, FnSpec] = {
         core_fn=lambda ds, a: coords.world_to_raster_y(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_worldtorastercoordy(t, a["x"], a["y"]),
         core=False,
+        fingerprint=False,
     ),
     "rst_worldtorastercoord": FnSpec(
         "rst_worldtorastercoord",
@@ -486,6 +493,7 @@ REGISTRY: Dict[str, FnSpec] = {
         ],
         col_fn=lambda t, a: prx.rst_worldtorastercoord(t, a["x"], a["y"]),
         core=False,
+        fingerprint=False,
     ),
     # rst_tilexyz renders a warped+encoded slippy-map tile. The output bytes depend
     # on the warp/encode stack (GDAL vs rasterio/PIL) and the source CRS, so it is
@@ -502,6 +510,80 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         col_fn=lambda t, a: prx.rst_tilexyz(t, a["z"], a["x"], a["y"]),
         core=False,
+        fingerprint=False,
+    ),
+    # --- map / struct accessors (Task 4): timing-only ---------------------------
+    # These return maps (metadata, bandmetadata, histogram), structs/dicts
+    # (georeference), CRS/encoding-dependent bytes (boundingbox WKB) or
+    # gdalinfo-style JSON (summary). None can be made byte- or value-identical
+    # cross-engine, so they are TIMED but not compared: fingerprint=False emits an
+    # empty fingerprint on both engines and the comparator marks the cell `na`.
+    "rst_metadata": FnSpec(
+        "rst_metadata",
+        "gbx_rst_metadata",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.metadata(ds),
+        col_fn=lambda t, a: prx.rst_metadata(t),
+        core=False,
+        fingerprint=False,
+    ),
+    "rst_bandmetadata": FnSpec(
+        "rst_bandmetadata",
+        "gbx_rst_bandmetadata",
+        "accessor",
+        ("pure-core",),
+        {},
+        # bandmetadata needs a 1-based band index; band 1 exists in every tile.
+        core_fn=lambda ds, a: accessors.bandmetadata(ds, 1),
+        col_fn=lambda t, a: prx.rst_bandmetadata(t, 1),
+        core=False,
+        fingerprint=False,
+    ),
+    "rst_georeference": FnSpec(
+        "rst_georeference",
+        "gbx_rst_georeference",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.georeference(ds),
+        col_fn=lambda t, a: prx.rst_georeference(t),
+        core=False,
+        fingerprint=False,
+    ),
+    "rst_boundingbox": FnSpec(
+        "rst_boundingbox",
+        "gbx_rst_boundingbox",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.boundingbox(ds),
+        col_fn=lambda t, a: prx.rst_boundingbox(t),
+        core=False,
+        fingerprint=False,
+    ),
+    "rst_summary": FnSpec(
+        "rst_summary",
+        "gbx_rst_summary",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.summary(ds),
+        col_fn=lambda t, a: prx.rst_summary(t),
+        core=False,
+        fingerprint=False,
+    ),
+    "rst_histogram": FnSpec(
+        "rst_histogram",
+        "gbx_rst_histogram",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.histogram(ds),
+        col_fn=lambda t, a: prx.rst_histogram(t),
+        core=False,
+        fingerprint=False,
     ),
 }
 

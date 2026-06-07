@@ -9,6 +9,13 @@ import org.gdal.gdal.Dataset
 object BenchFingerprint {
   private val mapper = new ObjectMapper()
 
+  /** Timing-only sentinel: an empty fingerprint. The comparator treats an empty
+    * fingerprint on either side as `na` (timed, not compared), so functions whose
+    * output cannot be made cross-engine-comparable (maps/structs, CRS/render-
+    * dependent bytes, on-disk-vs-in-memory sizes) emit this after executing for
+    * real timing. */
+  val empty: String = ""
+
   def ofScalar(v: Any): String = {
     val n = mapper.createObjectNode()
     n.put("kind", "scalar")

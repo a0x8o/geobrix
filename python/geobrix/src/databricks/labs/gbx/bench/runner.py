@@ -125,9 +125,14 @@ def run_pure_core(
             raster = (root / te.path).read_bytes()
             try:
                 # Untimed: capture the actual output once for consistency fingerprinting.
-                with _serde.open_tile(raster) as ds:
-                    _out = fs.core_fn(ds, fs.args)
-                fingerprint = fingerprint_output(_out)
+                # Timing-only fns (fingerprint=False) still execute for real timing but
+                # emit an empty fingerprint -> the comparator marks the cell `na`.
+                if getattr(fs, "fingerprint", True):
+                    with _serde.open_tile(raster) as ds:
+                        _out = fs.core_fn(ds, fs.args)
+                    fingerprint = fingerprint_output(_out)
+                else:
+                    fingerprint = ""
 
                 def call(_b=raster, _fs=fs):
                     with _serde.open_tile(_b) as ds:

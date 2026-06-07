@@ -216,3 +216,63 @@ def test_coord_accessors_modes():
 def test_coord_accessors_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not (_COORD_ACCESSORS & core)
+
+
+# --- Task 4: timing-only fingerprint flag + map/struct coverage (6) ---------
+# Map/struct outputs (metadata maps, georeference dicts, bbox WKB, gdalinfo JSON,
+# per-band histograms) cannot be made byte- or value-identical cross-engine, so
+# they are timed but never compared: fingerprint=False suppresses the fingerprint
+# on BOTH sides, and an empty fingerprint compares as `na` (not divergent).
+_MAP_STRUCT = {
+    "rst_metadata",
+    "rst_bandmetadata",
+    "rst_georeference",
+    "rst_boundingbox",
+    "rst_summary",
+    "rst_histogram",
+}
+
+# The 6 prior ad-hoc downgrades (Task 2/3) now ride the same flag instead of
+# emitting a real-but-suppressed fingerprint.
+_RETROFITTED = {
+    "rst_memsize",
+    "rst_type",
+    "rst_worldtorastercoord",
+    "rst_worldtorastercoordx",
+    "rst_worldtorastercoordy",
+    "rst_tilexyz",
+}
+
+
+def test_fnspec_fingerprint_defaults_true():
+    fs = s.FnSpec("x", "gbx_x", "accessor", ("pure-core",))
+    assert fs.fingerprint is True
+
+
+def test_map_struct_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _MAP_STRUCT - full
+    assert not missing, f"registry missing map/struct fns: {sorted(missing)}"
+
+
+def test_map_struct_wellformed_timing_only():
+    for name in _MAP_STRUCT:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.category == "accessor"
+        assert fs.core is False
+        assert fs.modes == ("pure-core",), name
+        assert fs.fingerprint is False, name
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+
+
+def test_map_struct_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_MAP_STRUCT & core)
+
+
+def test_retrofitted_downgrades_are_timing_only():
+    for name in _RETROFITTED:
+        fs = s.REGISTRY[name]
+        assert fs.modes == ("pure-core",), name
+        assert fs.fingerprint is False, name

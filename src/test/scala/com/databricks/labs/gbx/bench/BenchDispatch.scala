@@ -12,6 +12,7 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordY
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Histogram
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_TileXYZ
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
@@ -49,7 +50,10 @@ object BenchDispatch {
     "rst_rastertoworldcoord" -> ACC, "rst_rastertoworldcoordx" -> ACC,
     "rst_rastertoworldcoordy" -> ACC, "rst_worldtorastercoord" -> ACC,
     "rst_worldtorastercoordx" -> ACC, "rst_worldtorastercoordy" -> ACC,
-    "rst_tilexyz" -> ACC
+    "rst_tilexyz" -> ACC,
+    // map / struct accessors (Task 4): timing-only
+    "rst_metadata" -> ACC, "rst_bandmetadata" -> ACC, "rst_georeference" -> ACC,
+    "rst_boundingbox" -> ACC, "rst_summary" -> ACC, "rst_histogram" -> ACC
   )
 
   def all: Seq[String] = cats.keys.toSeq.sorted
@@ -97,10 +101,10 @@ object BenchDispatch {
     case "rst_isempty"     => BenchFingerprint.ofScalar(if (RST_IsEmpty.execute(ds)) 1.0 else 0.0)
     case "rst_getnodata"   => BenchFingerprint.ofArray(RST_GetNoData.execute(ds))
     case "rst_format"      => BenchFingerprint.ofScalar(RST_Format.execute(ds))
-    // pure-core-only (fingerprint suppressed downstream): no array-of-strings fp
-    case "rst_type"        => BenchFingerprint.ofScalar(RST_Type.execute(ds).mkString(","))
-    // pure-core-only (fingerprint suppressed downstream): file size vs in-memory
-    case "rst_memsize"     => BenchFingerprint.ofScalar(RST_MemSize.execute(ds))
+    // timing-only (per-band string array; no cross-engine fingerprint)
+    case "rst_type"        => { RST_Type.execute(ds); BenchFingerprint.empty }
+    // timing-only (file size vs in-memory size; not comparable)
+    case "rst_memsize"     => { RST_MemSize.execute(ds); BenchFingerprint.empty }
     // coordinate / index accessors (Task 3).
     // raster->world: forward affine; X = pair._1, Y = pair._2; pair as scalar_list.
     case "rst_rastertoworldcoordx" =>
@@ -110,19 +114,25 @@ object BenchDispatch {
     case "rst_rastertoworldcoord" =>
       val p = RST_RasterToWorldCoord.execute(ds, argI(a, "x", 64), argI(a, "y", 64))
       BenchFingerprint.ofArray(Array(p._1, p._2))
-    // world->raster: pure-core-only (fingerprint suppressed downstream; CRS-dependent).
+    // world->raster: timing-only (CRS-dependent inverse-affine index; not comparable).
     case "rst_worldtorastercoordx" =>
-      BenchFingerprint.ofScalar(RST_WorldToRasterCoordX.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)))
+      RST_WorldToRasterCoordX.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)); BenchFingerprint.empty
     case "rst_worldtorastercoordy" =>
-      BenchFingerprint.ofScalar(RST_WorldToRasterCoordY.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)))
+      RST_WorldToRasterCoordY.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)); BenchFingerprint.empty
     case "rst_worldtorastercoord" =>
-      val p = RST_WorldToRasterCoord.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745))
-      BenchFingerprint.ofArray(Array(p._1.toDouble, p._2.toDouble))
-    // rst_tilexyz: pure-core-only (fingerprint suppressed; render/encode-dependent).
+      RST_WorldToRasterCoord.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)); BenchFingerprint.empty
+    // rst_tilexyz: timing-only (render/encode-dependent bytes; not comparable).
     case "rst_tilexyz" =>
-      val bytes = RST_TileXYZ.execute(ds, Map.empty, argI(a, "z", 12), argI(a, "x", 1205),
+      RST_TileXYZ.execute(ds, Map.empty, argI(a, "z", 12), argI(a, "x", 1205),
         argI(a, "y", 1539), argS(a, "format", "PNG"), argI(a, "size", 256), argS(a, "resampling", "bilinear"))
-      BenchFingerprint.ofScalar(bytes.length)
+      BenchFingerprint.empty
+    // map / struct accessors (Task 4): timing-only (maps, structs, CRS/JSON bytes).
+    case "rst_metadata"      => { RST_MetaData.execute(ds); BenchFingerprint.empty }
+    case "rst_bandmetadata"  => { RST_BandMetaData.execute(ds.GetRasterBand(1)); BenchFingerprint.empty }
+    case "rst_georeference"  => { RST_GeoReference.execute(ds); BenchFingerprint.empty }
+    case "rst_boundingbox"   => { RST_BoundingBox.execute(ds); BenchFingerprint.empty }
+    case "rst_summary"       => { RST_Summary.execute(ds); BenchFingerprint.empty }
+    case "rst_histogram"     => { RST_Histogram.execute(ds, 256, None, None, false); BenchFingerprint.empty }
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -181,6 +191,14 @@ object BenchDispatch {
       case "rst_worldtorastercoordy" => rst_worldtorastercoordy(tile, argD(a, "x", -73.985), argD(a, "y", 40.745))
       case "rst_worldtorastercoord"  => rst_worldtorastercoord(tile, argD(a, "x", -73.985), argD(a, "y", 40.745))
       case "rst_tilexyz"             => rst_tilexyz(tile, argI(a, "z", 12), argI(a, "x", 1205), argI(a, "y", 1539))
+      // map / struct accessors (Task 4) are pure-core-only; the column form is here
+      // only to keep the match exhaustive (the spark-path runner filters by modes).
+      case "rst_metadata"      => rst_metadata(tile)
+      case "rst_bandmetadata"  => rst_bandmetadata(tile, 1)
+      case "rst_georeference"  => rst_georeference(tile)
+      case "rst_boundingbox"   => rst_boundingbox(tile)
+      case "rst_summary"       => rst_summary(tile)
+      case "rst_histogram"     => rst_histogram(tile)
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
