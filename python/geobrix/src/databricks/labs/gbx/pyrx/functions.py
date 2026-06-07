@@ -1763,21 +1763,17 @@ def _slope_udf(tile, unit, xscale, yscale):
 
 
 @f.udf(_serde.TILE_SCHEMA)
-def _aspect_udf(tile, trigonometric, zero_for_flat, xscale, yscale):
+def _aspect_udf(tile, trigonometric, zero_for_flat):
     if tile is None or tile["raster"] is None:
         return None
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
-    xs = None if xscale is None else float(xscale)
-    ys = None if yscale is None else float(yscale)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
         new_bytes = terrain.aspect(
             ds,
             trigonometric=bool(trigonometric),
             zero_for_flat=bool(zero_for_flat),
-            xscale=xs,
-            yscale=ys,
         )
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
@@ -1835,23 +1831,21 @@ def rst_aspect(
     tile: ColLike,
     trigonometric: ColLike = False,
     zero_for_flat: ColLike = False,
-    xscale: ColLike = None,
-    yscale: ColLike = None,
 ) -> Column:
     """Compute terrain aspect from a single-band DEM tile (Horn's 3x3 method).
 
     Default output is compass degrees: 0 = North, increasing clockwise.
     Flat cells are -9999 unless zero_for_flat is True.
 
-    Horizontal scale is auto-derived from the CRS by default; pass both
-    ``xscale`` and ``yscale`` to override.
+    Aspect is a pure direction, so it is scale-invariant: ``gdaldem aspect``
+    does not apply the horizontal CRS scale, and neither does this function (no
+    ``xscale`` / ``yscale``). Only slope and hillshade, whose magnitude depends
+    on the gradient, are CRS-scale-aware.
 
     Args:
         tile:           Tile struct column containing a single-band DEM raster.
         trigonometric:  Return math-convention (CCW from east) instead of compass.
         zero_for_flat:  Return 0 for flat cells instead of -9999.
-        xscale:         Optional explicit horizontal scale override (with ``yscale``).
-        yscale:         Optional explicit vertical scale override (with ``xscale``).
 
     Returns:
         Single-band Float32 tile; nodata = -9999.
@@ -1862,9 +1856,7 @@ def rst_aspect(
     zff_col = (
         f.lit(zero_for_flat) if isinstance(zero_for_flat, bool) else _col(zero_for_flat)
     )
-    xs_col = f.lit(None) if xscale is None else _col(xscale)
-    ys_col = f.lit(None) if yscale is None else _col(yscale)
-    return _aspect_udf(_col(tile), trig_col, zff_col, xs_col, ys_col)
+    return _aspect_udf(_col(tile), trig_col, zff_col)
 
 
 def rst_hillshade(

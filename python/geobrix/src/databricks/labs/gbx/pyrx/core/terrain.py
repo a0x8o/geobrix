@@ -141,27 +141,27 @@ def aspect(
     ds,
     trigonometric: bool = False,
     zero_for_flat: bool = False,
-    xscale=None,
-    yscale=None,
 ) -> bytes:
     """Compute terrain aspect (Horn's method), matching gdaldem.
 
-    Horizontal scale is auto-derived from the CRS by default (see ``slope``);
-    on geographic grids the scale is anisotropic, which shifts the aspect angle
-    exactly as gdaldem does. Pass ``xscale``/``yscale`` to override.
+    Aspect is a pure direction (the compass bearing of steepest descent), so it
+    is computed from the raw gradient ratio ``atan2(dzdy, -dzdx)``. ``gdaldem
+    aspect`` does NOT apply the horizontal CRS scale: scaling dx/dy by equal
+    factors leaves the angle unchanged, and GDAL never applies the anisotropic
+    geographic scale to aspect (only slope/hillshade, whose output depends on
+    gradient magnitude, are scale-aware). pyrx matches that — no ``xscale`` /
+    ``yscale`` parameters here, by design.
 
     Args:
         ds:              Open rasterio DatasetReader. Band 1 used as DEM.
         trigonometric:   If True, math-convention degrees (CCW from east).
         zero_for_flat:   If True, flat cells get 0 instead of -9999.
-        xscale, yscale:  optional explicit scale overrides (both or neither).
 
     Returns:
         Single-band Float32 GTiff bytes; nodata = -9999.
     """
     dzdx, dzdy, valid = _horn_gradients(ds)
-    xs, ys = _resolve_scale(ds, xscale, yscale)
-    dx, dy = dzdx / xs, dzdy / ys
+    dx, dy = dzdx, dzdy
     aspect_rad = np.arctan2(dy, -dx)
     aspect_deg = np.degrees(aspect_rad)
     if trigonometric:

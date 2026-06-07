@@ -337,7 +337,12 @@ def test_slope_explicit_xyscale_overrides_auto():
     assert np.allclose(r[1:-1, 1:-1], expected[1:-1, 1:-1], atol=1e-3)
 
 
-def test_aspect_anisotropic_scale_shifts_angle():
+def test_aspect_scale_invariant_matches_gdaldem():
+    """gdaldem aspect ignores the horizontal CRS scale (aspect is a pure
+    direction). pyrx must match: the angle comes from the raw gradient ratio,
+    not the anisotropic geographic scale. This guards against re-introducing the
+    dzdx/xs, dzdy/ys division, which shifted the geographic aspect distribution
+    away from heavyweight GDAL (Task 5 acceptance-gate divergence)."""
     dem = (
         np.tile(np.arange(12, dtype="float32"), (12, 1))
         + np.arange(12, dtype="float32")[:, None]
@@ -345,9 +350,13 @@ def test_aspect_anisotropic_scale_shifts_angle():
     tr = from_origin(-73.99, 40.75, 0.0001, 0.0001)
     with _serde.open_tile(_tile_with_crs(dem, "EPSG:4326", tr)) as ds:
         dzdx, dzdy, _ = terrain._horn_gradients(ds)
+        # Auto-scale would be anisotropic on this geographic tile; aspect must
+        # NOT apply it.
         xs, ys = terrain._gdaldem_scale(ds)
+        assert abs(xs - ys) > 1.0
         out = terrain.aspect(ds)
-    arad = np.arctan2(dzdy / ys, -(dzdx / xs))
+    # Expected = raw, unscaled gradient ratio (what gdaldem aspect computes).
+    arad = np.arctan2(dzdy, -dzdx)
     expected = (90.0 - np.degrees(arad)) % 360.0
     with _serde.open_tile(out) as o:
         r = o.read(1)
