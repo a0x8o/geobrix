@@ -104,6 +104,20 @@ def store_function_names(root=None) -> set:
     return {p.stem for p in d.glob("*.json")} if d.exists() else set()
 
 
+def orphan_records(root=None) -> list[str]:
+    """Store record names no longer in ``spec.select(set="full")`` (removed fns).
+
+    A record is orphaned when its function name is absent from the live full
+    registry — e.g. the function was renamed or dropped but its authoritative
+    record was left behind. Returns the sorted orphan names; the caller deletes
+    ``<name>.json`` for each.
+    """
+    from databricks.labs.gbx.bench import spec as _spec
+
+    registered = {s.name for s in _spec.select(set="full")}
+    return sorted(store_function_names(root) - registered)
+
+
 def is_stale(fn_spec, record, root=None) -> bool:
     """Stale if the current hash of the fn's sources differs from the stored one."""
     if record is None:
@@ -240,3 +254,87 @@ def write_records_from_run(
         )
         written[fn] = path
     return written
+
+
+def write_run_to_store(
+    run_dir, fns, *, commit, validated_at, which, corpus_json
+) -> dict:
+    """High-level store-write entry shared by gbx:bench:{seed,changed} (DRY).
+
+    Resolves the live ``select(set=which)`` registry and the corpus tag from
+    ``corpus_json`` (``seed=<n>`` when present, else ``unknown``), then delegates
+    to :func:`write_records_from_run`. ``fns`` is the explicit list to persist
+    (seed: the whole selected set; changed: the affected subset). Returns
+    ``{fn: path}``.
+    """
+    from databricks.labs.gbx.bench import spec as _spec
+
+    specs_by_name = {s.name: s for s in _spec.select(set=which)}
+    corpus = "unknown"
+    cp = Path(corpus_json)
+    if cp.exists():
+        d = json.loads(cp.read_text())
+        corpus = "seed=%s" % d.get("seed", "unknown")
+    return write_records_from_run(
+        run_dir,
+        list(fns),
+        commit=commit,
+        validated_at=validated_at,
+        which=which,
+        corpus=corpus,
+        specs_by_name=specs_by_name,
+    )
+
+
+def _cli_write_run(argv) -> int:
+    """``python -m databricks.labs.gbx.bench.store write-run ...`` — store-write CLI.
+
+    Args (positional): run_dir, fns_csv, commit, validated_at, which, corpus_json.
+    Prints one ``  validated -> <fn> (<path>)`` line per record written.
+    """
+    run_dir, fns_csv, commit, validated_at, which, corpus_json = argv
+    fns = [f for f in fns_csv.split(",") if f]
+    written = write_run_to_store(
+        run_dir,
+        fns,
+        commit=commit,
+        validated_at=validated_at,
+        which=which,
+        corpus_json=corpus_json,
+    )
+    for fn, path in sorted(written.items()):
+        print("  validated -> %s (%s)" % (fn, path))
+    return 0
+
+
+def _cli_orphans(argv) -> int:
+    """``python -m ...store orphans`` — print orphaned record names, one per line."""
+    for name in orphan_records():
+        print(name)
+    return 0
+
+
+def _cli_selected_names(argv) -> int:
+    """``python -m ...store selected-names <core|full>`` — CSV of selected fn names."""
+    from databricks.labs.gbx.bench import spec as _spec
+
+    which = argv[0] if argv else "full"
+    print(",".join(sorted(s.name for s in _spec.select(set=which))))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    _SUBCMDS = {
+        "write-run": _cli_write_run,
+        "orphans": _cli_orphans,
+        "selected-names": _cli_selected_names,
+    }
+    if len(sys.argv) < 2 or sys.argv[1] not in _SUBCMDS:
+        sys.stderr.write(
+            "usage: python -m databricks.labs.gbx.bench.store "
+            "{write-run|orphans|selected-names} [args...]\n"
+        )
+        sys.exit(2)
+    sys.exit(_SUBCMDS[sys.argv[1]](sys.argv[2:]))

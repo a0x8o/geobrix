@@ -170,6 +170,41 @@ def test_read_all_and_store_function_names(tmp_path):
     assert store.store_function_names(root=tmp_path) == {"rst_avg", "rst_slope"}
 
 
+def test_orphan_records(tmp_path, monkeypatch):
+    # A store with one real fn (in select(set="full")) and one bogus fn (removed
+    # from the registry). orphan_records returns only the bogus name.
+    common = dict(
+        sources=("a.py",),
+        cells=[],
+        heavy_rows=[],
+        light_rows=[],
+        commit="c",
+        validated_at="t",
+        corpus="essential",
+        which="full",
+        root=tmp_path,
+    )
+    store.write_record("rst_slope", **common)
+    store.write_record("rst_notreal", **common)
+
+    # Stub the registry so the test doesn't depend on the live full set: only
+    # rst_slope is "registered".
+    from databricks.labs.gbx.bench import spec as _spec
+
+    monkeypatch.setattr(
+        _spec,
+        "select",
+        lambda **kw: [SimpleNamespace(name="rst_slope", sources=("a.py",))],
+    )
+
+    orphans = store.orphan_records(root=tmp_path)
+    assert orphans == ["rst_notreal"]
+
+
+def test_orphan_records_empty_store(tmp_path):
+    assert store.orphan_records(root=tmp_path) == []
+
+
 def test_affected_functions_against_real_registry():
     # Smoke check the helpers tie into the real FnSpec.sources contract: editing
     # the shared _nodata.py affects more than one function.

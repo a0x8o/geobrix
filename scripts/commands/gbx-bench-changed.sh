@@ -116,27 +116,8 @@ RUN_DIR="${PROJECT_ROOT}/test-logs/bench/${RUN_ID}"
 CORPUS_JSON="${PROJECT_ROOT}/${HOST_CORPUS}/corpus.json"
 
 echo -e "${CYAN}▶ writing authoritative store records${NC}"
-WRITE_PY="
-import json, sys
-from pathlib import Path
-from databricks.labs.gbx.bench import spec as S, store
-run_dir, fns_csv, commit, validated_at, which, corpus_json = sys.argv[1:7]
-fns = [f for f in fns_csv.split(',') if f]
-specs_by_name = {s.name: s for s in S.select(set=which)}
-corpus = 'unknown'
-cp = Path(corpus_json)
-if cp.exists():
-    d = json.loads(cp.read_text())
-    corpus = 'seed=%s' % d.get('seed', 'unknown')
-written = store.write_records_from_run(
-    run_dir, fns, commit=commit, validated_at=validated_at,
-    which=which, corpus=corpus, specs_by_name=specs_by_name,
-)
-for fn, path in sorted(written.items()):
-    print('  validated -> %s (%s)' % (fn, path))
-"
-
-run_in_pyrx_venv "python -c \"$WRITE_PY\" '$RUN_DIR' '$AFFECTED' '$COMMIT' '$VALIDATED_AT' '$SET' '$CORPUS_JSON'"
+# Shared store-write entry (DRY — gbx:bench:seed calls the same CLI).
+run_in_pyrx_venv "python -m databricks.labs.gbx.bench.store write-run '$RUN_DIR' '$AFFECTED' '$COMMIT' '$VALIDATED_AT' '$SET' '$CORPUS_JSON'"
 WRITE_RC=$?
 if [[ $WRITE_RC -ne 0 ]]; then
     echo -e "${RED}❌ writing store records failed (rc=$WRITE_RC)${NC}"
