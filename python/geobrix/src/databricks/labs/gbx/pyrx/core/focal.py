@@ -1,5 +1,5 @@
 """Spark-free focal ops via scipy.ndimage, matching rasterx GDALBlock semantics:
-NoData-aware skip + edge window-shrink (filter) / zero-pad (convolve).
+NoData-aware skip + edge window-shrink (filter) / replicate-edge (convolve).
 
 GDALBlock.valuesAt (avg/min/max/median): a neighbor contributes only if it is
 in-bounds AND in-mask AND not-NoData; out-of-bounds neighbors are skipped so the
@@ -72,13 +72,18 @@ def filt(ds, kernel_size, operation: str) -> bytes:
 
 
 def convolve(ds, kernel) -> bytes:
-    """2-D correlation (UN-flipped kernel) per band, zero-padding out-of-bounds.
+    """2-D correlation (UN-flipped kernel) per band, replicate-edge boundary.
 
     Mirrors GDALBlock.convolveAt: ``sum`` starts at 0 and accumulates
-    ``value * kernel(i)(j)`` only over in-bounds valid neighbors; invalid /
-    out-of-bounds neighbors contribute 0 with no weight renormalization. The
+    ``value * kernel(i)(j)`` over valid neighbors; invalid / NoData neighbors
+    contribute 0 (via ``data * valid``) with no weight renormalization, and the
     returned sum is emitted verbatim (convolveAt never yields NoData). Output
     dtype is Float64.
+
+    The heavyweight applies a GDAL block-halo convolution whose edge behavior
+    matches no single scipy boundary mode exactly; empirically ``mode="nearest"``
+    (replicate edge) minimizes the residual divergence vs the heavyweight, so it
+    is used here. A small edge residual remains (the accepted GDAL-halo gap).
     """
     k = np.asarray(kernel, dtype="float64")
     nd = _nodata_value(ds, default=-9999.0)
@@ -87,7 +92,7 @@ def convolve(ds, kernel) -> bytes:
         data, valid = read_masked(ds, i)
         # data * valid zeroes out masked / NoData neighbors so they add 0,
         # exactly matching the heavyweight's skip-and-keep-sum behavior.
-        res = ndimage.correlate(data * valid, k, mode="constant", cval=0.0)
+        res = ndimage.correlate(data * valid, k, mode="nearest")
         out_bands.append(res)
     out = np.stack(out_bands)
     profile = _out_profile(ds, "float64", nd, ds.nodata is not None)

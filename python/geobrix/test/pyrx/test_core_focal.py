@@ -58,20 +58,24 @@ def _run(fn, raster_bytes, *args):
         return fn(ds, *args)
 
 
-def test_convolve_edge_is_zero_padded_not_replicated():
+def test_convolve_edge_is_replicate_nearest():
+    # convolve uses mode="nearest" (replicate edge) -- empirically the closest
+    # scipy boundary to the heavyweight's GDAL block-halo convolution.
     data = np.arange(16, dtype="float64").reshape(4, 4)
     k = np.ones((3, 3), dtype="float64")
-    expected = ndimage.correlate(data, k, mode="constant", cval=0.0)
+    expected = ndimage.correlate(data, k, mode="nearest")
     out = _read_band(_run(focal.convolve, _tile(data, nodata=None), k.tolist()))
     assert np.allclose(out, expected)
+    # and NOT zero-padded (the regressed behavior we reverted)
+    assert not np.allclose(out, ndimage.correlate(data, k, mode="constant", cval=0.0))
 
 
 def test_convolve_asymmetric_kernel_is_unflipped_correlation():
     data = np.arange(25, dtype="float64").reshape(5, 5)
     k = np.array([[0, 0, 0], [0, 0, 1], [0, 0, 0]], dtype="float64")
     out = _read_band(_run(focal.convolve, _tile(data, nodata=None), k.tolist()))
-    assert np.allclose(out, ndimage.correlate(data, k, mode="constant", cval=0.0))
-    assert not np.allclose(out, ndimage.convolve(data, k, mode="constant", cval=0.0))
+    assert np.allclose(out, ndimage.correlate(data, k, mode="nearest"))
+    assert not np.allclose(out, ndimage.convolve(data, k, mode="nearest"))
 
 
 def test_filter_mean_shrinks_window_at_edge():
