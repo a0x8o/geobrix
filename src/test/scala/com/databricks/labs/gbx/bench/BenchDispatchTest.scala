@@ -24,7 +24,11 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     // + 13 Task 5 tile-out scalar-args + 10 Task 6 tile-out complex-args
     // + 6 bucket-C C1/C2 (readers + buildoverviews + subdataset fns)
     // + 3 bucket-C C3 (multi-tile: frombands/combineavg/merge)
-    assert(BenchDispatch.all.size == 79)
+    // + 5 bucket-C C4 (tiling: maketiles/retile/tooverlappingtiles/
+    //   separatebands/xyzpyramid -> raster_collection fingerprint)
+    assert(BenchDispatch.all.size == 84)
+    assert(BenchDispatch.category("rst_xyzpyramid") == "format")
+    assert(BenchDispatch.category("rst_separatebands") == "format")
     assert(BenchDispatch.minBands("rst_ndvi") == 2)
     assert(BenchDispatch.minBands("rst_band") == 2)
     assert(BenchDispatch.minBands("rst_evi") == 2)

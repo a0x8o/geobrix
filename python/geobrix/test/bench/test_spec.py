@@ -446,11 +446,13 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_seventy_nine():
+def test_full_set_count_is_eighty_four():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
     # + 3 bucket-C group C3 (multi-tile: frombands/combineavg/merge)
-    assert len(s.select(set="full")) == 79
+    # + 5 bucket-C group C4 (tiling: maketiles/retile/tooverlappingtiles/
+    #   separatebands/xyzpyramid -> raster_collection fingerprint)
+    assert len(s.select(set="full")) == 84
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -572,6 +574,65 @@ def test_c3_synth_recipe_maps_to_known_recipe():
 def test_c3_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not (_C3 & core)
+
+
+# --- bucket C, group C4: tiling functions (5) --------------------------------
+# rst_maketiles / rst_retile / rst_tooverlappingtiles / rst_separatebands /
+# rst_xyzpyramid each take ONE tile and emit a COLLECTION of tiles. They run on
+# the default input_kind == "tile" (a single open dataset), but their core_fn
+# returns a LIST of tile bytes, so the runner fingerprints the list with the new
+# `raster_collection` fingerprint (tile count + pooled, order-independent agg).
+# All run both modes (the spark-path col_fn yields an ARRAY column).
+_C4 = {
+    "rst_maketiles",
+    "rst_retile",
+    "rst_tooverlappingtiles",
+    "rst_separatebands",
+    "rst_xyzpyramid",
+}
+
+_C4_ARGS = {
+    "rst_maketiles": {"size_in_mb"},
+    "rst_retile": {"tile_width", "tile_height"},
+    "rst_tooverlappingtiles": {"tile_width", "tile_height", "overlap"},
+    "rst_separatebands": set(),
+    "rst_xyzpyramid": {"min_z", "max_z"},
+}
+
+
+def test_c4_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _C4 - full
+    assert not missing, f"registry missing C4 fns: {sorted(missing)}"
+
+
+def test_c4_wellformed_tile_in_collection_out():
+    for name in _C4:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        # C4 takes a single open dataset (default input_kind), not a tile_array.
+        assert fs.input_kind == "tile", name
+        assert fs.fingerprint is True, name
+        assert fs.sources, name
+
+
+def test_c4_both_modes():
+    for name in _C4:
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_c4_args_present():
+    for name, keys in _C4_ARGS.items():
+        fs = s.REGISTRY[name]
+        assert set(fs.args.keys()) == keys, name
+
+
+def test_c4_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_C4 & core)
 
 
 def test_every_fnspec_declares_existing_sources():

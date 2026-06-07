@@ -500,3 +500,46 @@ def test_results_main_writes_summary(tmp_path):
     out = tmp_path / "heavyweight.summary.md"
     assert out.exists()
     assert "GeoBrix benchmark summary" in out.read_text()
+
+
+# --- bucket C, group C4: raster_collection fingerprint (tiling fns) ----------
+# C4 outputs a LIST of tiles. The fingerprint records the tile COUNT plus the
+# pooled (order-independent) agg stats over every output tile's pixels. The
+# comparator requires the count to match EXACTLY, then compares the pooled agg
+# with the same float tolerance as the raster kind.
+def _coll(count, mn, mx, mean, std):
+    import json
+
+    return json.dumps(
+        {
+            "kind": "raster_collection",
+            "count": count,
+            "agg": {"min": mn, "max": mx, "mean": mean, "std": std},
+        },
+        sort_keys=True,
+    )
+
+
+def test_raster_collection_equal_count_close_agg_within_tol():
+    hw = _coll(4, 0.0, 100.0, 50.0, 10.0)
+    # Identical agg -> exact.
+    assert c.compare_fingerprints(hw, hw)[0] == "exact"
+    # Tiny agg diff within tolerance -> within_tol (not divergent).
+    lw = _coll(4, 0.0, 100.00005, 50.00005, 10.0)
+    cls, delta, _, _ = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol", (cls, delta)
+
+
+def test_raster_collection_count_mismatch_is_divergent():
+    hw = _coll(4, 0.0, 100.0, 50.0, 10.0)
+    lw = _coll(9, 0.0, 100.0, 50.0, 10.0)
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "divergent"
+    # The note must name both counts so the divergence is diagnosable.
+    assert "4" in note and "9" in note
+
+
+def test_raster_collection_agg_divergence():
+    hw = _coll(4, 0.0, 90.0, 45.0, 10.0)
+    lw = _coll(4, 0.0, 1.0, 0.5, 0.25)
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"

@@ -58,6 +58,61 @@ def _close(a, b, rel_tol: float, abs_tol: float) -> bool:
     return abs(a - b) <= max(abs_tol, rel_tol * max(abs(a), abs(b)))
 
 
+def _cmp_pairs(pairs, rel_tol, abs_tol):
+    """Compare numeric (a, b) pairs -> (exact, all_close, deltas).
+
+    Shared by every fingerprint kind: each pair is coerced via ``_num``, tested
+    for bitwise equality (exact) and float-tolerant agreement (all_close), and
+    its finite relative delta is collected.
+    """
+    exact = True
+    all_close = True
+    deltas = []
+    for a, b in pairs:
+        a, b = _num(a), _num(b)
+        exact = exact and (a == b)
+        all_close = all_close and _close(a, b, rel_tol, abs_tol)
+        d = _rel_delta(a, b)
+        if d != math.inf:
+            deltas.append(d)
+    return exact, all_close, deltas
+
+
+def _pairs_for_kind(kind, hw, lw):
+    """Numeric (a, b) pairs + nodata_count_delta for a fingerprint kind.
+
+    Returns (pairs, ndc_delta, err) where err is a divergence note (and pairs is
+    None) on a structural mismatch the caller must short-circuit (length/count).
+    """
+    if kind == "scalar":
+        return [(hw.get("value"), lw.get("value"))], 0, None
+    if kind == "scalar_list":
+        av, bv = hw.get("values") or [], lw.get("values") or []
+        if len(av) != len(bv):
+            return None, 0, f"scalar_list length {len(av)} vs {len(bv)}"
+        return list(zip(av, bv)), 0, None
+    if kind == "raster":
+        hb, lb = hw.get("bands") or [], lw.get("bands") or []
+        if len(hb) != len(lb):
+            return None, 0, f"band count {len(hb)} vs {len(lb)}"
+        pairs = []
+        ndc = 0
+        for h, low in zip(hb, lb):
+            ndc += int((h.get("nodata_count") or 0) - (low.get("nodata_count") or 0))
+            pairs += [(h.get(k), low.get(k)) for k in _STATS]
+        return pairs, ndc, None
+    if kind == "raster_collection":
+        # Tile COUNT must match exactly (a different number of output tiles is a
+        # structural divergence, not a numeric one). Then compare the pooled,
+        # order-independent agg stats with the same float tolerance as `raster`.
+        hc, lc = hw.get("count"), lw.get("count")
+        if hc != lc:
+            return None, 0, f"tile count {hc} vs {lc}"
+        ha, la = hw.get("agg") or {}, lw.get("agg") or {}
+        return [(ha.get(k), la.get(k)) for k in _STATS], 0, None
+    return None, 0, f"unknown kind {kind}"
+
+
 def compare_fingerprints(
     hw_fp: str, lw_fp: str, rel_tol: float = REL_TOL, abs_tol: float = ABS_TOL
 ) -> Tuple[str, float, int, str]:
@@ -83,51 +138,10 @@ def compare_fingerprints(
         )
     kind = hw.get("kind")
 
-    deltas = []
-    ndc_delta = 0
-    exact = True
-    all_close = True
-
-    if kind == "scalar":
-        a, b = _num(hw.get("value")), _num(lw.get("value"))
-        exact = exact and (a == b)
-        all_close = all_close and _close(a, b, rel_tol, abs_tol)
-        d = _rel_delta(a, b)
-        if d != math.inf:
-            deltas.append(d)
-    elif kind == "scalar_list":
-        av, bv = hw.get("values") or [], lw.get("values") or []
-        if len(av) != len(bv):
-            return (
-                "divergent",
-                math.inf,
-                0,
-                f"scalar_list length {len(av)} vs {len(bv)}",
-            )
-        for a, b in zip(av, bv):
-            a, b = _num(a), _num(b)
-            exact = exact and (a == b)
-            all_close = all_close and _close(a, b, rel_tol, abs_tol)
-            d = _rel_delta(a, b)
-            if d != math.inf:
-                deltas.append(d)
-    elif kind == "raster":
-        hb, lb = hw.get("bands") or [], lw.get("bands") or []
-        if len(hb) != len(lb):
-            return ("divergent", math.inf, 0, f"band count {len(hb)} vs {len(lb)}")
-        for h, l in zip(hb, lb):
-            ndc_delta += int(
-                (h.get("nodata_count") or 0) - (l.get("nodata_count") or 0)
-            )
-            for k in _STATS:
-                ha, la = _num(h.get(k)), _num(l.get(k))
-                exact = exact and (ha == la)
-                all_close = all_close and _close(ha, la, rel_tol, abs_tol)
-                d = _rel_delta(ha, la)
-                if d != math.inf:
-                    deltas.append(d)
-    else:
-        return ("divergent", math.inf, 0, f"unknown kind {kind}")
+    pairs, ndc_delta, err = _pairs_for_kind(kind, hw, lw)
+    if pairs is None:
+        return ("divergent", math.inf, 0, err)
+    exact, all_close, deltas = _cmp_pairs(pairs, rel_tol, abs_tol)
 
     max_delta = max(deltas) if deltas else 0.0
     if exact:

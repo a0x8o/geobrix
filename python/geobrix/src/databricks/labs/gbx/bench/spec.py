@@ -36,6 +36,7 @@ from databricks.labs.gbx.pyrx.core import (
     ops,
     resample,
     terrain,
+    tiling,
     warp,
     xyz,
 )
@@ -230,6 +231,7 @@ _MAPALGEBRA_LIGHT = (_PYRX + "mapalgebra.py", _NODATA)
 # these core modules do NOT import _nodata (grep-confirmed)
 _WARP_LIGHT = (_PYRX + "warp.py",)
 _COORDS_LIGHT = (_PYRX + "coords.py",)
+_TILING_LIGHT = (_PYRX + "tiling.py",)
 _XYZ_LIGHT = (_PYRX + "xyz.py",)
 _OPS_LIGHT = (_PYRX + "ops.py",)
 _ANALYSIS_LIGHT = (_PYRX + "analysis.py",)
@@ -1433,6 +1435,103 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
         input_kind="tile_array",
+    ),
+    # --- bucket C, group C4: tiling fns -> a COLLECTION of tiles (5) ----------
+    # rst_maketiles / rst_retile / rst_tooverlappingtiles / rst_separatebands /
+    # rst_xyzpyramid each take ONE tile and emit MANY. They ride the default
+    # input_kind == "tile" (a single open dataset), but the core_fn returns a
+    # LIST of tile bytes, which the runner fingerprints with the new
+    # `raster_collection` kind: tile COUNT (compared exactly) plus the pooled,
+    # ORDER-INDEPENDENT agg stats over all output tiles' pixels. The col_fn
+    # yields an ARRAY column the spark-path runner writes via noop. Args are
+    # sized for the 256/512-px corpus (e.g. retile 128x128 -> 4 tiles on 256).
+    "rst_maketiles": FnSpec(
+        "rst_maketiles",
+        "gbx_rst_maketiles",
+        "format",
+        _BOTH,
+        {"size_in_mb": 1},
+        core_fn=lambda ds, a: tiling.make_tiles(ds, float(a["size_in_mb"])),
+        col_fn=lambda t, a: prx.rst_maketiles(t, a["size_in_mb"]),
+        sources=_TILING_LIGHT
+        + (
+            _HEAVY + "generators/RST_MakeTiles.scala",
+            _OPS + "BalancedSubdivision.scala",
+            _OPS + "ReTile.scala",
+        ),
+        core=False,
+    ),
+    "rst_retile": FnSpec(
+        "rst_retile",
+        "gbx_rst_retile",
+        "format",
+        _BOTH,
+        {"tile_width": 128, "tile_height": 128},
+        core_fn=lambda ds, a: tiling.retile(ds, a["tile_width"], a["tile_height"]),
+        col_fn=lambda t, a: prx.rst_retile(t, a["tile_width"], a["tile_height"]),
+        sources=_TILING_LIGHT
+        + (_HEAVY + "generators/RST_ReTile.scala", _OPS + "ReTile.scala"),
+        core=False,
+    ),
+    "rst_tooverlappingtiles": FnSpec(
+        "rst_tooverlappingtiles",
+        "gbx_rst_tooverlappingtiles",
+        "format",
+        _BOTH,
+        {"tile_width": 128, "tile_height": 128, "overlap": 32},
+        core_fn=lambda ds, a: tiling.to_overlapping_tiles(
+            ds, a["tile_width"], a["tile_height"], a["overlap"]
+        ),
+        col_fn=lambda t, a: prx.rst_tooverlappingtiles(
+            t, a["tile_width"], a["tile_height"], a["overlap"]
+        ),
+        sources=_TILING_LIGHT
+        + (
+            _HEAVY + "generators/RST_ToOverlappingTiles.scala",
+            _OPS + "OverlappingTiles.scala",
+            _OPS + "ReTile.scala",
+        ),
+        core=False,
+    ),
+    "rst_separatebands": FnSpec(
+        "rst_separatebands",
+        "gbx_rst_separatebands",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda ds, a: tiling.separate_bands(ds),
+        col_fn=lambda t, a: prx.rst_separatebands(t),
+        sources=_TILING_LIGHT
+        + (
+            _HEAVY + "generators/RST_SeparateBands.scala",
+            _OPS + "SeparateBands.scala",
+        ),
+        core=False,
+    ),
+    "rst_xyzpyramid": FnSpec(
+        "rst_xyzpyramid",
+        "gbx_rst_xyzpyramid",
+        "format",
+        _BOTH,
+        # zoom 10-11 (not 0-1): the corpus tiles are a small NYC extent, so at low
+        # zoom the single whole-world (0,0,0) tile forces an enormous warp that
+        # stalls in native GDAL. At z10-11 the extent maps to a handful of small,
+        # cheap tiles (matches rst_tilexyz's high-zoom bench args).
+        {"min_z": 10, "max_z": 11},
+        # pyramid returns [{"z","x","y","bytes"}, ...]; project to the tile bytes
+        # so the runner produces a raster_collection fingerprint. The PNG tiles
+        # are RGBA web-mercator renders; pooled pixel agg + tile count compare.
+        core_fn=lambda ds, a: [
+            d["bytes"] for d in xyz.pyramid(ds, a["min_z"], a["max_z"])
+        ],
+        col_fn=lambda t, a: prx.rst_xyzpyramid(t, a["min_z"], a["max_z"]),
+        sources=_XYZ_LIGHT
+        + (
+            _HEAVY + "web/RST_XYZPyramid.scala",
+            _HEAVY + "web/RST_TileXYZ.scala",
+            "src/main/scala/com/databricks/labs/gbx/rasterx/tile/TileMath.scala",
+        ),
+        core=False,
     ),
 }
 

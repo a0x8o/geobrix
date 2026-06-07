@@ -93,6 +93,56 @@ def _mpix(tile_px: int, bands: int, rows: int) -> float:
     return (tile_px * tile_px * bands * rows) / 1e6
 
 
+def _open_ds_list(paths):
+    """Open synthesized tile paths into a list of datasets under one ExitStack."""
+    stack = ExitStack()
+    dss = [stack.enter_context(_serde.open_tile(Path(p).read_bytes())) for p in paths]
+    return stack, dss
+
+
+def _capture_and_call(fs, input_kind, raster, tile_path, synth_paths):
+    """Build (fingerprint, call) for a pure-core function via its input_kind adapter.
+
+    The fingerprint is the untimed output summary (empty for timing-only fns); the
+    `call` closure runs the core_fn once per timed iteration. Both branch on the
+    same input_kind: "bytes" (raw raster bytes), "path" (corpus file path),
+    "tile_array" (a list of open datasets from the synthesized multi-tile input),
+    or "tile" (the default: a single opened DatasetReader).
+    """
+    if input_kind == "bytes":
+        feed = lambda: raster  # noqa: E731
+        call = lambda _b=raster, _fs=fs: _fs.core_fn(_b, _fs.args)  # noqa: E731
+    elif input_kind == "path":
+        feed = lambda: tile_path  # noqa: E731
+        call = lambda _p=tile_path, _fs=fs: _fs.core_fn(_p, _fs.args)  # noqa: E731
+    elif input_kind == "tile_array":
+
+        def _run_array(_fs=fs, _paths=synth_paths):
+            stack, dss = _open_ds_list(_paths)
+            try:
+                return _fs.core_fn(dss, _fs.args)
+            finally:
+                stack.close()
+
+        feed = None
+        call = _run_array
+    else:
+
+        def _run_tile(_fs=fs, _b=raster):
+            with _serde.open_tile(_b) as ds:
+                return _fs.core_fn(ds, _fs.args)
+
+        feed = None
+        call = _run_tile
+
+    if not getattr(fs, "fingerprint", True):
+        return "", call
+    # bytes/path feed a value; tile/tile_array reuse the timed `call` (which
+    # returns the output) for the one untimed fingerprint pass.
+    out = fs.core_fn(feed(), fs.args) if feed is not None else call()
+    return fingerprint_output(out), call
+
+
 def run_pure_core(
     corpus_root,
     corpus: m.Corpus,
@@ -159,62 +209,12 @@ def run_pure_core(
                 else None
             )
 
-            def _open_ds_list(_paths):
-                """Open synthesized paths into a list of datasets under one ExitStack."""
-                stack = ExitStack()
-                dss = [
-                    stack.enter_context(_serde.open_tile(Path(p).read_bytes()))
-                    for p in _paths
-                ]
-                return stack, dss
-
             try:
-                # Untimed: capture the actual output once for consistency fingerprinting.
-                # Timing-only fns (fingerprint=False) still execute for real timing but
-                # emit an empty fingerprint -> the comparator marks the cell `na`.
-                if getattr(fs, "fingerprint", True):
-                    if input_kind == "bytes":
-                        _out = fs.core_fn(raster, fs.args)
-                    elif input_kind == "path":
-                        _out = fs.core_fn(tile_path, fs.args)
-                    elif input_kind == "tile_array":
-                        _stack, _dss = _open_ds_list(synth_paths)
-                        try:
-                            _out = fs.core_fn(_dss, fs.args)
-                        finally:
-                            _stack.close()
-                    else:
-                        with _serde.open_tile(raster) as ds:
-                            _out = fs.core_fn(ds, fs.args)
-                    fingerprint = fingerprint_output(_out)
-                else:
-                    fingerprint = ""
-
-                if input_kind == "bytes":
-
-                    def call(_b=raster, _fs=fs):
-                        _fs.core_fn(_b, _fs.args)
-
-                elif input_kind == "path":
-
-                    def call(_p=tile_path, _fs=fs):
-                        _fs.core_fn(_p, _fs.args)
-
-                elif input_kind == "tile_array":
-
-                    def call(_paths=synth_paths, _fs=fs):
-                        _stack, _dss = _open_ds_list(_paths)
-                        try:
-                            _fs.core_fn(_dss, _fs.args)
-                        finally:
-                            _stack.close()
-
-                else:
-
-                    def call(_b=raster, _fs=fs):
-                        with _serde.open_tile(_b) as ds:
-                            _fs.core_fn(ds, _fs.args)
-
+                # Capture the untimed output fingerprint (consistency) and build the
+                # timed `call` closure, both keyed off the input_kind adapter.
+                fingerprint, call = _capture_and_call(
+                    fs, input_kind, raster, tile_path, synth_paths
+                )
                 stats = time_iters(call, warmup, measured)
                 ms = stats["median_ms"]
                 out.append(

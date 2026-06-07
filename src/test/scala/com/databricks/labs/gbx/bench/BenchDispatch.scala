@@ -39,7 +39,9 @@ import com.databricks.labs.gbx.rasterx.expressions.resample.RST_ResampleToSize
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_TileXYZ
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
-import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.rasterx.gdal.{GDAL, RasterDriver}
+import com.databricks.labs.gbx.rasterx.operations.{BalancedSubdivision, BoundingBox, OverlappingTiles, ReTile, SeparateBands}
+import com.databricks.labs.gbx.rasterx.tile.TileMath
 import com.databricks.labs.gbx.util.NodeFilePathUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.Column
@@ -144,7 +146,10 @@ object BenchDispatch {
     "rst_buildoverviews" -> FMT,
     "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC,
     // bucket C, group C3: multi-tile-input fns (consume an ARRAY of tiles) -> format.
-    "rst_frombands" -> FMT, "rst_combineavg" -> FMT, "rst_merge" -> FMT
+    "rst_frombands" -> FMT, "rst_combineavg" -> FMT, "rst_merge" -> FMT,
+    // bucket C, group C4: tiling fns -> a COLLECTION of tiles -> format.
+    "rst_maketiles" -> FMT, "rst_retile" -> FMT, "rst_tooverlappingtiles" -> FMT,
+    "rst_separatebands" -> FMT, "rst_xyzpyramid" -> FMT
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -357,8 +362,71 @@ object BenchDispatch {
       val sub = RST_GetSubdataset.execute(ds, argS(a, "name", "0"))
       if (sub != null) RasterDriver.releaseDataset(sub)
       BenchFingerprint.empty
+    // bucket C, group C4: tiling fns -> a COLLECTION of tiles. Each reduces ONE
+    // input tile to MANY output tiles; the output is fingerprinted as a
+    // raster_collection (tile count + pooled, order-independent agg). The tiling
+    // *Iter operations UNLINK the input ds when exhausted, but HeavyRunner reuses
+    // the same open ds across its warmup+measured loop, so we feed each iterator a
+    // CLONE (it destroys the clone, not the shared input). Each output tile is
+    // released after pooling. xyzpyramid uses RST_TileXYZ.execute, which does NOT
+    // close the source, so it runs directly on the shared ds.
+    case "rst_maketiles" =>
+      collectAndFingerprint(
+        BalancedSubdivision.splitRasterIter(cloneDs(ds), Map.empty, argI(a, "size_in_mb", 1)))
+    case "rst_retile" =>
+      collectAndFingerprint(
+        ReTile.reTileIter(cloneDs(ds), Map.empty, argI(a, "tile_width", 128), argI(a, "tile_height", 128)))
+    case "rst_tooverlappingtiles" =>
+      collectAndFingerprint(
+        OverlappingTiles.reTileIter(cloneDs(ds), Map.empty,
+          argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 32)))
+    case "rst_separatebands" =>
+      collectAndFingerprint(SeparateBands.separateIter(cloneDs(ds), Map.empty))
+    case "rst_xyzpyramid" =>
+      fpXyzPyramid(ds, argI(a, "min_z", 10), argI(a, "max_z", 11),
+        argS(a, "format", "PNG"), argI(a, "size", 256), argS(a, "resampling", "bilinear"))
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
+  }
+
+  /** Clone an open Dataset into an in-memory (MEM driver) copy. The tiling
+    * iterators unlink their source ds on exhaustion; feed them a clone so the
+    * HeavyRunner's reused input ds survives the warmup+measured loop. */
+  private def cloneDs(ds: Dataset): Dataset =
+    org.gdal.gdal.gdal.GetDriverByName("MEM").CreateCopy("", ds)
+
+  /** Drain a (Dataset, metadata) tiling iterator into a raster_collection
+    * fingerprint, pooling pixels across all output tiles, then release each
+    * output tile. The iterator owns (and destroys) its CLONED source ds. */
+  private def collectAndFingerprint(iter: Iterator[(Dataset, Map[String, String])]): String = {
+    val tiles = iter.map(_._1).filter(_ != null).toSeq
+    try BenchFingerprint.ofCollection(tiles)
+    finally tiles.foreach(RasterDriver.releaseDataset)
+  }
+
+  /** Heavy xyzpyramid pure-core: enumerate intersecting (z, x, y) tiles across the
+    * zoom range (WGS84 extent -> TileMath), render each via RST_TileXYZ.execute
+    * (PNG/JPEG/WEBP bytes), open each render into a dataset, and fingerprint the
+    * collection. RST_TileXYZ does not close the source, so `ds` stays valid. */
+  private def fpXyzPyramid(ds: Dataset, minZ: Int, maxZ: Int,
+      format: String, size: Int, resampling: String): String = {
+    val env = BoundingBox.bbox(ds, GDAL.WSG84).getEnvelopeInternal
+    val (lonMin, lonMax, latMin, latMax) = (env.getMinX, env.getMaxX, env.getMinY, env.getMaxY)
+    val rendered = scala.collection.mutable.ArrayBuffer.empty[Array[Byte]]
+    var z = minZ
+    while (z <= maxZ) {
+      val tiles = TileMath.intersectingTiles(lonMin, latMin, lonMax, latMax, z)
+      var i = 0
+      while (i < tiles.length) {
+        val (zz, xx, yy) = tiles(i)
+        rendered += RST_TileXYZ.execute(ds, Map.empty, zz, xx, yy, format, size, resampling)
+        i += 1
+      }
+      z += 1
+    }
+    val opened = rendered.map(b => RasterDriver.readFromBytes(b, Map.empty)).filter(_ != null).toSeq
+    try BenchFingerprint.ofCollection(opened)
+    finally opened.foreach(RasterDriver.releaseDataset)
   }
 
   /** Pure-core dispatch for `input_kind == "bytes"` reader/constructor fns: the
@@ -618,6 +686,17 @@ object BenchDispatch {
       case "rst_frombands"  => rst_frombands(tile)
       case "rst_combineavg" => rst_combineavg(tile)
       case "rst_merge"      => rst_merge(tile)
+      // bucket C, group C4: tiling fns -> ARRAY column (spark-path is timing-only,
+      // not fingerprint-compared, so the args only need to be valid). The Scala
+      // rst_maketiles wrapper takes (tileWidth, tileHeight) rather than the SQL
+      // sizeInMB form, so the column path passes tile dimensions; the pure-core
+      // path (which IS compared) uses the sizeInMB BalancedSubdivision directly.
+      case "rst_maketiles"   => rst_maketiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128))
+      case "rst_retile"      => rst_retile(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128))
+      case "rst_tooverlappingtiles" =>
+        rst_tooverlappingtiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 32))
+      case "rst_separatebands" => rst_separatebands(tile)
+      case "rst_xyzpyramid"  => rst_xyzpyramid(tile, argI(a, "min_z", 10), argI(a, "max_z", 11))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

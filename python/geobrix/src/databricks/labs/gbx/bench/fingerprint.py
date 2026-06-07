@@ -36,6 +36,38 @@ def _stat(arr_valid: np.ndarray) -> dict:
     }
 
 
+def _pool_valid_pixels(tile_bytes) -> np.ndarray:
+    """Read every band of a raster tile, returning its valid (non-nodata) pixels.
+
+    Used by the collection fingerprint to pool pixels across many output tiles.
+    """
+    parts = []
+    with _serde.open_tile(bytes(tile_bytes)) as ds:
+        nod = ds.nodata
+        for bi in range(1, ds.count + 1):
+            a = ds.read(bi)
+            valid = a[a != nod] if nod is not None else a.ravel()
+            parts.append(np.asarray(valid, dtype="float64").ravel())
+    return np.concatenate(parts) if parts else np.empty(0, dtype="float64")
+
+
+def fingerprint_collection(tiles) -> str:
+    """Fingerprint a COLLECTION of output tiles (bucket C, group C4 tiling fns).
+
+    The output is a LIST of tile byte strings. The fingerprint records the tile
+    COUNT plus the agg stats pooled over ALL tiles' valid pixels across every
+    band. Pooling is ORDER-INDEPENDENT, so heavy and light may emit tiles in any
+    order and still agree, while the count is compared exactly.
+    """
+    tiles = list(tiles)
+    pools = [_pool_valid_pixels(t) for t in tiles]
+    pooled = np.concatenate(pools) if pools else np.empty(0, dtype="float64")
+    return json.dumps(
+        {"kind": "raster_collection", "count": len(tiles), "agg": _stat(pooled)},
+        sort_keys=True,
+    )
+
+
 def fingerprint_output(out: Any) -> str:
     """Return a JSON string summarizing a function output for consistency comparison."""
     # Raster output: GTiff bytes -> per-band stats over valid (non-nodata) pixels.
@@ -56,8 +88,12 @@ def fingerprint_output(out: Any) -> str:
                     }
                 )
         return json.dumps({"kind": "raster", "bands": bands}, sort_keys=True)
-    # Scalar list (e.g. per-band avg/min/max).
     if isinstance(out, (list, tuple)):
+        # A LIST of raster tile bytes -> a raster_collection fingerprint (the C4
+        # tiling fns return one). A list of scalars -> scalar_list (per-band
+        # avg/min/max). Distinguish by element type: bytes => tile collection.
+        if out and all(isinstance(x, (bytes, bytearray)) for x in out):
+            return fingerprint_collection(out)
         return json.dumps(
             {"kind": "scalar_list", "values": [_py(x) for x in out]}, sort_keys=True
         )
