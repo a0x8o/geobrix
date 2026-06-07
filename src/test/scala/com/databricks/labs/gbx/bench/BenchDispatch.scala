@@ -2,10 +2,17 @@ package com.databricks.labs.gbx.bench
 
 import com.databricks.labs.gbx.rasterx.expressions.RST_IsEmpty
 import com.databricks.labs.gbx.rasterx.expressions.RST_NDVI
+import com.databricks.labs.gbx.rasterx.expressions.RST_RasterToWorldCoord
+import com.databricks.labs.gbx.rasterx.expressions.RST_RasterToWorldCoordX
+import com.databricks.labs.gbx.rasterx.expressions.RST_RasterToWorldCoordY
 import com.databricks.labs.gbx.rasterx.expressions.RST_Transform
+import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoord
+import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordX
+import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordY
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
+import com.databricks.labs.gbx.rasterx.expressions.web.RST_TileXYZ
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
@@ -37,7 +44,12 @@ object BenchDispatch {
     "rst_upperleftx" -> ACC, "rst_upperlefty" -> ACC, "rst_scalex" -> ACC,
     "rst_scaley" -> ACC, "rst_skewx" -> ACC, "rst_skewy" -> ACC,
     "rst_rotation" -> ACC, "rst_isempty" -> ACC, "rst_getnodata" -> ACC,
-    "rst_format" -> ACC, "rst_type" -> ACC, "rst_memsize" -> ACC
+    "rst_format" -> ACC, "rst_type" -> ACC, "rst_memsize" -> ACC,
+    // coordinate / index accessors (Task 3)
+    "rst_rastertoworldcoord" -> ACC, "rst_rastertoworldcoordx" -> ACC,
+    "rst_rastertoworldcoordy" -> ACC, "rst_worldtorastercoord" -> ACC,
+    "rst_worldtorastercoordx" -> ACC, "rst_worldtorastercoordy" -> ACC,
+    "rst_tilexyz" -> ACC
   )
 
   def all: Seq[String] = cats.keys.toSeq.sorted
@@ -89,6 +101,28 @@ object BenchDispatch {
     case "rst_type"        => BenchFingerprint.ofScalar(RST_Type.execute(ds).mkString(","))
     // pure-core-only (fingerprint suppressed downstream): file size vs in-memory
     case "rst_memsize"     => BenchFingerprint.ofScalar(RST_MemSize.execute(ds))
+    // coordinate / index accessors (Task 3).
+    // raster->world: forward affine; X = pair._1, Y = pair._2; pair as scalar_list.
+    case "rst_rastertoworldcoordx" =>
+      BenchFingerprint.ofScalar(RST_RasterToWorldCoordX.execute(ds, argI(a, "x", 64), argI(a, "y", 64))._1)
+    case "rst_rastertoworldcoordy" =>
+      BenchFingerprint.ofScalar(RST_RasterToWorldCoordY.execute(ds, argI(a, "x", 64), argI(a, "y", 64))._2)
+    case "rst_rastertoworldcoord" =>
+      val p = RST_RasterToWorldCoord.execute(ds, argI(a, "x", 64), argI(a, "y", 64))
+      BenchFingerprint.ofArray(Array(p._1, p._2))
+    // world->raster: pure-core-only (fingerprint suppressed downstream; CRS-dependent).
+    case "rst_worldtorastercoordx" =>
+      BenchFingerprint.ofScalar(RST_WorldToRasterCoordX.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)))
+    case "rst_worldtorastercoordy" =>
+      BenchFingerprint.ofScalar(RST_WorldToRasterCoordY.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745)))
+    case "rst_worldtorastercoord" =>
+      val p = RST_WorldToRasterCoord.execute(ds, argD(a, "x", -73.985), argD(a, "y", 40.745))
+      BenchFingerprint.ofArray(Array(p._1.toDouble, p._2.toDouble))
+    // rst_tilexyz: pure-core-only (fingerprint suppressed; render/encode-dependent).
+    case "rst_tilexyz" =>
+      val bytes = RST_TileXYZ.execute(ds, Map.empty, argI(a, "z", 12), argI(a, "x", 1205),
+        argI(a, "y", 1539), argS(a, "format", "PNG"), argI(a, "size", 256), argS(a, "resampling", "bilinear"))
+      BenchFingerprint.ofScalar(bytes.length)
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -137,6 +171,16 @@ object BenchDispatch {
       case "rst_format"      => rst_format(tile)
       case "rst_type"        => rst_type(tile)
       case "rst_memsize"     => rst_memsize(tile)
+      // coordinate / index accessors (Task 3)
+      case "rst_rastertoworldcoordx" => rst_rastertoworldcoordx(tile, argI(a, "x", 64), argI(a, "y", 64))
+      case "rst_rastertoworldcoordy" => rst_rastertoworldcoordy(tile, argI(a, "x", 64), argI(a, "y", 64))
+      case "rst_rastertoworldcoord"  => rst_rastertoworldcoord(tile, argI(a, "x", 64), argI(a, "y", 64))
+      // world->raster + tilexyz are pure-core-only; the column form is here only
+      // to keep the match exhaustive (the spark-path runner filters by modes).
+      case "rst_worldtorastercoordx" => rst_worldtorastercoordx(tile, argD(a, "x", -73.985), argD(a, "y", 40.745))
+      case "rst_worldtorastercoordy" => rst_worldtorastercoordy(tile, argD(a, "x", -73.985), argD(a, "y", 40.745))
+      case "rst_worldtorastercoord"  => rst_worldtorastercoord(tile, argD(a, "x", -73.985), argD(a, "y", 40.745))
+      case "rst_tilexyz"             => rst_tilexyz(tile, argI(a, "z", 12), argI(a, "x", 1205), argI(a, "y", 1539))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

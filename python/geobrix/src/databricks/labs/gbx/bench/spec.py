@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Callable, Dict, List
 
 from databricks.labs.gbx.pyrx import functions as prx
-from databricks.labs.gbx.pyrx.core import accessors, indices, terrain, warp
+from databricks.labs.gbx.pyrx.core import accessors, coords, indices, terrain, warp, xyz
 
 
 @dataclass(frozen=True)
@@ -402,6 +402,105 @@ REGISTRY: Dict[str, FnSpec] = {
         # open dataset (deterministic; fingerprint suppressed downstream).
         core_fn=lambda ds, a: int(ds.read().nbytes),
         col_fn=lambda t, a: prx.rst_memsize(t),
+        core=False,
+    ),
+    # --- coordinate / index accessors (Task 3) ----------------------------------
+    # raster->world is the forward geotransform (pure affine): rasterio.xy and
+    # GDAL.toWorldCoord agree for any pixel index in any CRS, so these compare in
+    # both modes. The pixel index {x:64, y:64} is inside every corpus tile (256px
+    # and 512px). The non-suffixed `...coord` returns the pair [x, y] (a list, not
+    # a dict) so the fingerprint is a scalar_list matching the heavy ofArray(x, y).
+    "rst_rastertoworldcoordx": FnSpec(
+        "rst_rastertoworldcoordx",
+        "gbx_rst_rastertoworldcoordx",
+        "accessor",
+        _BOTH,
+        {"x": 64, "y": 64},
+        core_fn=lambda ds, a: coords.raster_to_world_x(ds, a["x"], a["y"]),
+        col_fn=lambda t, a: prx.rst_rastertoworldcoordx(t, a["x"], a["y"]),
+        core=False,
+    ),
+    "rst_rastertoworldcoordy": FnSpec(
+        "rst_rastertoworldcoordy",
+        "gbx_rst_rastertoworldcoordy",
+        "accessor",
+        _BOTH,
+        {"x": 64, "y": 64},
+        core_fn=lambda ds, a: coords.raster_to_world_y(ds, a["x"], a["y"]),
+        col_fn=lambda t, a: prx.rst_rastertoworldcoordy(t, a["x"], a["y"]),
+        core=False,
+    ),
+    "rst_rastertoworldcoord": FnSpec(
+        "rst_rastertoworldcoord",
+        "gbx_rst_rastertoworldcoord",
+        "accessor",
+        _BOTH,
+        {"x": 64, "y": 64},
+        # Return the pair as a LIST [x, y] (not the {x, y} dict the binding emits)
+        # so fingerprint_output yields a scalar_list, matching the heavy side's
+        # ofArray(Array(pair._1, pair._2)). Order: x (easting) then y (northing).
+        core_fn=lambda ds, a: [
+            coords.raster_to_world_x(ds, a["x"], a["y"]),
+            coords.raster_to_world_y(ds, a["x"], a["y"]),
+        ],
+        col_fn=lambda t, a: prx.rst_rastertoworldcoord(t, a["x"], a["y"]),
+        core=False,
+    ),
+    # world->raster is the INVERSE geotransform. It is exact per-CRS, but a single
+    # fixed world literal is in-extent for only one of the corpus CRSs; for the
+    # others the index is huge/negative (the EPSG:4326 0.0001-deg grid overflows
+    # int32, where rasterio.index floor-casts and GDAL .toInt truncate differently).
+    # So these run pure-core-only and their fingerprints are suppressed in the
+    # scorecard, exactly like rst_memsize / rst_type. The world point (-73.985,
+    # 40.745) is in-extent for the EPSG:4326 (NYC) corpus tiles.
+    "rst_worldtorastercoordx": FnSpec(
+        "rst_worldtorastercoordx",
+        "gbx_rst_worldtorastercoordx",
+        "accessor",
+        ("pure-core",),
+        {"x": -73.985, "y": 40.745},
+        core_fn=lambda ds, a: coords.world_to_raster_x(ds, a["x"], a["y"]),
+        col_fn=lambda t, a: prx.rst_worldtorastercoordx(t, a["x"], a["y"]),
+        core=False,
+    ),
+    "rst_worldtorastercoordy": FnSpec(
+        "rst_worldtorastercoordy",
+        "gbx_rst_worldtorastercoordy",
+        "accessor",
+        ("pure-core",),
+        {"x": -73.985, "y": 40.745},
+        core_fn=lambda ds, a: coords.world_to_raster_y(ds, a["x"], a["y"]),
+        col_fn=lambda t, a: prx.rst_worldtorastercoordy(t, a["x"], a["y"]),
+        core=False,
+    ),
+    "rst_worldtorastercoord": FnSpec(
+        "rst_worldtorastercoord",
+        "gbx_rst_worldtorastercoord",
+        "accessor",
+        ("pure-core",),
+        {"x": -73.985, "y": 40.745},
+        # Pair as a LIST [col, row] to mirror the heavy ofArray(pair._1, pair._2).
+        core_fn=lambda ds, a: [
+            coords.world_to_raster_x(ds, a["x"], a["y"]),
+            coords.world_to_raster_y(ds, a["x"], a["y"]),
+        ],
+        col_fn=lambda t, a: prx.rst_worldtorastercoord(t, a["x"], a["y"]),
+        core=False,
+    ),
+    # rst_tilexyz renders a warped+encoded slippy-map tile. The output bytes depend
+    # on the warp/encode stack (GDAL vs rasterio/PIL) and the source CRS, so it is
+    # pure-core-only with its fingerprint suppressed in the scorecard. (z, x, y)
+    # cover NYC at zoom 12 so the EPSG:4326 corpus tiles intersect the tile bbox.
+    "rst_tilexyz": FnSpec(
+        "rst_tilexyz",
+        "gbx_rst_tilexyz",
+        "accessor",
+        ("pure-core",),
+        {"z": 12, "x": 1205, "y": 1539},
+        core_fn=lambda ds, a: xyz.render_tile(
+            ds, a["z"], a["x"], a["y"], "PNG", 256, "bilinear"
+        ),
+        col_fn=lambda t, a: prx.rst_tilexyz(t, a["z"], a["x"], a["y"]),
         core=False,
     ),
 }

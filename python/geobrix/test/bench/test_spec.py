@@ -152,3 +152,67 @@ def test_scalar_accessors_modes():
 def test_scalar_accessors_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not (_SCALAR_ACCESSORS & core)
+
+
+# --- Task 3: coordinate / index accessors (7) -------------------------------
+_COORD_ACCESSORS = {
+    "rst_rastertoworldcoord",
+    "rst_rastertoworldcoordx",
+    "rst_rastertoworldcoordy",
+    "rst_worldtorastercoord",
+    "rst_worldtorastercoordx",
+    "rst_worldtorastercoordy",
+    "rst_tilexyz",
+}
+
+# raster->world is pure affine (forward geotransform), so rasterio.xy and
+# GDAL.toWorldCoord agree for any pixel index in any CRS -> both modes, compared.
+_COORD_BOTH = {
+    "rst_rastertoworldcoord",
+    "rst_rastertoworldcoordx",
+    "rst_rastertoworldcoordy",
+}
+# world->raster cannot be made cross-engine-consistent over the multi-CRS corpus:
+# a single fixed world literal is in-extent for only one CRS, and for the others
+# the inverse-affine index is huge/negative (the EPSG:4326 0.0001-deg grid even
+# overflows int32, where rasterio.index floor-casts and GDAL .toInt truncate
+# differently). rst_tilexyz renders a warped+encoded image whose bytes depend on
+# the warp/encode stack (GDAL vs rasterio/PIL) and the source CRS. All four run
+# pure-core-only; their fingerprints are suppressed in the scorecard, exactly as
+# rst_memsize / rst_type are.
+_COORD_PURE_CORE_ONLY = {
+    "rst_worldtorastercoord",
+    "rst_worldtorastercoordx",
+    "rst_worldtorastercoordy",
+    "rst_tilexyz",
+}
+
+
+def test_coord_accessors_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _COORD_ACCESSORS - full
+    assert not missing, f"registry missing coord accessors: {sorted(missing)}"
+
+
+def test_coord_accessors_wellformed():
+    for name in _COORD_ACCESSORS:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.category == "accessor"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert set(fs.modes) <= {"pure-core", "spark-path"}
+
+
+def test_coord_accessors_modes():
+    for name in _COORD_ACCESSORS:
+        fs = s.REGISTRY[name]
+        if name in _COORD_PURE_CORE_ONLY:
+            assert fs.modes == ("pure-core",), name
+        else:
+            assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_coord_accessors_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_COORD_ACCESSORS & core)
