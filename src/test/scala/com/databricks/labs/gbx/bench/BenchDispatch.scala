@@ -222,9 +222,19 @@ object BenchDispatch {
     case "rst_updatetype"  => fpDerived(RST_UpdateType.execute(ds, Map.empty, argS(a, "new_type", "Float64")))
     case "rst_fillnodata"  =>
       fpDerived(RST_FillNodata.execute(ds, Map.empty, argD(a, "max_search_dist", 10.0), argI(a, "smoothing_iter", 0)))
-    case "rst_filter"      => fpDerived(RST_Filter.execute(ds, argI(a, "kernel_size", 3), argS(a, "operation", "mean")))
+    // KernelFilter accepts {avg, min, max, median, mode} -- NOT "mean" (which
+    // throws "Invalid operation"). "median" is valid on BOTH engines (the light
+    // focal.filt also accepts it), so the bench args carry "median".
+    case "rst_filter"      => fpDerived(RST_Filter.execute(ds, argI(a, "kernel_size", 3), argS(a, "operation", "median")))
     case "rst_convolve"    => fpDerived(RST_Convolve.execute((0L, ds, Map.empty), convolveKernel))
-    case "rst_asformat"    => fpDerived(RST_AsFormat.execute(ds, Map.empty, argS(a, "new_format", "GTiff")))
+    // RST_AsFormat is a no-op when newFormat == the input driver: execute returns
+    // the *input* ds unchanged. fpDerived would then release that input ds, and
+    // HeavyRunner reuses the same open ds across the warmup+measured loop, so the
+    // next iteration calls GetDriver() on a freed dataset -> "GetDriver() null".
+    // Guard the release: only release the result when it is a genuinely new
+    // dataset (identity != input ds). The GTiff round-trip still times correctly
+    // when newFormat differs; the no-op case times the cheap identity return.
+    case "rst_asformat"    => fpAsFormat(RST_AsFormat.execute(ds, Map.empty, argS(a, "new_format", "GTiff")), ds)
     case "rst_cog_convert" =>
       fpDerived(RST_CogConvert.execute(ds, Map.empty, argS(a, "compression", "DEFLATE"),
         argI(a, "blocksize", 512), argS(a, "overview_resampling", "AVERAGE")))
@@ -259,10 +269,12 @@ object BenchDispatch {
     case "rst_proximity" =>
       fpDerived(RST_Proximity.execute(ds, Map.empty,
         Some(argS(a, "target_values", "1")), argS(a, "distunits", "GEO"), None))
-    // timing-only: clip needs an in-extent geom; the global-cover polygon avoids
-    // an error on the timing call but the output is not compared.
+    // timing-only: clip needs an in-extent geom. A fixed box is out-of-extent on
+    // some CRS (e.g. UTM), so derive the cutline per-tile from the dataset's
+    // geotransform + size (bounds box shrunk 50% about the tile center, in the
+    // tile's own CRS). Output is not compared; just must run on every tile.
     case "rst_clip" =>
-      val res = RST_Clip.execute(ds, Map.empty, JTS.fromWKT(clipGeomWkt),
+      val res = RST_Clip.execute(ds, Map.empty, JTS.fromWKT(shrunkBoundsBoxWkt(ds)),
         argB(a, "cutline_all_touched", false))
       RasterDriver.releaseDataset(res._1)
       BenchFingerprint.empty
@@ -272,10 +284,13 @@ object BenchDispatch {
       val res = RST_ColorRelief.execute(ds, colorTablePath)
       RasterDriver.releaseDataset(res._1)
       BenchFingerprint.empty
-    // timing-only: observer (0,0) (no in-extent point across CRSs) and an
-    // xrspatial-vs-GDAL parity divergence in the binary mask.
+    // timing-only: observer must be in-extent. A fixed (0,0) is outside the
+    // UTM/3857 tile ranges, so derive the observer from the tile center (the
+    // dataset geotransform + size), in the tile's own CRS. Output is not
+    // compared (also an xrspatial-vs-GDAL parity divergence on the light side).
     case "rst_viewshed" =>
-      val res = RST_Viewshed.execute(ds, Map.empty, 0.0, 0.0,
+      val (ox, oy) = tileCenterXY(ds)
+      val res = RST_Viewshed.execute(ds, Map.empty, ox, oy,
         argD(a, "observer_height", 2.0), argD(a, "target_height", 1.6), None)
       RasterDriver.releaseDataset(res._1)
       BenchFingerprint.empty
@@ -290,6 +305,46 @@ object BenchDispatch {
     val out = res._1
     try BenchFingerprint.ofDataset(out)
     finally RasterDriver.releaseDataset(out)
+  }
+
+  // Fingerprint an AsFormat result without releasing the *input* ds. When
+  // newFormat == the input driver, RST_AsFormat returns the input ds unchanged;
+  // HeavyRunner reuses that open ds across its warmup+measured loop, so releasing
+  // it here would invalidate the next iteration (GetDriver() on a freed dataset).
+  // Only release a genuinely new result (identity != input).
+  private def fpAsFormat(res: (Dataset, Map[String, String]), input: Dataset): String = {
+    val out = res._1
+    try BenchFingerprint.ofDataset(out)
+    finally if (!(out eq input)) RasterDriver.releaseDataset(out)
+  }
+
+  // Tile center (x, y) in the dataset's own CRS, from the geotransform + size.
+  // GT = (originX, pixelW, rowRotation, originY, colRotation, pixelH); pixelH<0
+  // for north-up rasters. Center = origin + (size/2) along each axis.
+  private def tileCenterXY(ds: Dataset): (Double, Double) = {
+    val gt = ds.GetGeoTransform()
+    val w = ds.GetRasterXSize().toDouble
+    val h = ds.GetRasterYSize().toDouble
+    val cx = gt(0) + (w / 2.0) * gt(1) + (h / 2.0) * gt(2)
+    val cy = gt(3) + (w / 2.0) * gt(4) + (h / 2.0) * gt(5)
+    (cx, cy)
+  }
+
+  // WKT of the tile's bounds box shrunk 50% about its center, in the tile's CRS.
+  // Guarantees an in-extent cutline for the timing-only rst_clip on every CRS.
+  private def shrunkBoundsBoxWkt(ds: Dataset): String = {
+    val gt = ds.GetGeoTransform()
+    val w = ds.GetRasterXSize().toDouble
+    val h = ds.GetRasterYSize().toDouble
+    // Two opposite corners (ignoring rotation terms, which are 0 for the corpus).
+    val x0 = gt(0); val y0 = gt(3)
+    val x1 = gt(0) + w * gt(1); val y1 = gt(3) + h * gt(5)
+    val (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    val hw = math.abs(x1 - x0) / 4.0
+    val hh = math.abs(y1 - y0) / 4.0
+    val (minx, maxx) = (cx - hw, cx + hw)
+    val (miny, maxy) = (cy - hh, cy + hh)
+    s"POLYGON (($minx $miny, $maxx $miny, $maxx $maxy, $minx $maxy, $minx $miny))"
   }
 
   def column(fn: String, tile: Column, a: Map[String, String]): Column = {
@@ -356,7 +411,7 @@ object BenchDispatch {
       case "rst_updatetype"  => rst_updatetype(tile, argS(a, "new_type", "Float64"))
       case "rst_fillnodata"  =>
         rst_fillnodata(tile, argD(a, "max_search_dist", 10.0), argI(a, "smoothing_iter", 0))
-      case "rst_filter"      => rst_filter(tile, argI(a, "kernel_size", 3), argS(a, "operation", "mean"))
+      case "rst_filter"      => rst_filter(tile, argI(a, "kernel_size", 3), argS(a, "operation", "median"))
       case "rst_convolve"    =>
         import org.apache.spark.sql.functions.{array, lit}
         val kernelCol = array(convolveKernel.map(row => array(row.map(lit): _*)): _*)

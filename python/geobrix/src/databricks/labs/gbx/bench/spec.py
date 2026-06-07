@@ -75,15 +75,32 @@ _DERIVEDBAND_PYFUNC = (
 
 # rst_clip (timing-only): clip needs a geometry. No single literal geometry can
 # intersect every tile across the multi-CRS corpus (EPSG:4326 degrees, 3857 /
-# 32618 / 27700 metres), so clip is timing-only and never compared. A small
-# finite box keeps the call crash-free on every CRS: a global-cover polygon
-# (±2e7) is unsafe because the heavyweight clip falls back to the raster CRS
-# for an SRID-less cutline, and gdalwarp -crop_to_cutline against a ±2e7-metre
-# cutline on a projected (metre) tile expands the output grid to ~1e8 px/side,
-# a native GDAL allocation abort. Out-of-extent clips are fine for timing.
-# WKB literal: both the core_fn and the col_fn (rst_clip) take a WKB geometry.
-# Mirrors BenchDispatch.clipGeomWkt (box(-500, -500, 500, 500)).
+# 32618 / 27700 metres), so clip is timing-only and never compared. A FIXED box
+# (e.g. box(-500,-500,500,500)) is out-of-extent for a UTM (EPSG:32618) tile and
+# makes rasterio.mask raise "Input shapes do not overlap raster." Instead the
+# core_fn derives the cutline per-tile from ``ds.bounds`` (shrunk 50% about the
+# tile center, in the tile's own CRS) so every tile gets an in-extent clip. The
+# col_fn (spark-path) is mode-filtered out (clip is pure-core-only), so the
+# static WKB below is unused at runtime and kept only for the col_fn signature.
 _CLIP_GEOM_WKB = shapely.geometry.box(-500.0, -500.0, 500.0, 500.0).wkb
+
+
+def _shrunk_bounds_box_wkb(ds) -> bytes:
+    """WKB of the tile's bounds box shrunk 50% about its center, in the tile CRS.
+
+    Guarantees an in-extent cutline for ``rst_clip`` timing on every corpus CRS.
+    """
+    left, bottom, right, top = ds.bounds
+    cx, cy = (left + right) / 2.0, (bottom + top) / 2.0
+    hw, hh = (right - left) / 4.0, (top - bottom) / 4.0
+    return shapely.geometry.box(cx - hw, cy - hh, cx + hw, cy + hh).wkb
+
+
+def _tile_center_xy(ds) -> tuple:
+    """World (x, y) of the tile center in the tile's own CRS (in-extent observer)."""
+    left, bottom, right, top = ds.bounds
+    return ((left + right) / 2.0, (bottom + top) / 2.0)
+
 
 # rst_sample (timing-only): sample needs a POINT in-extent for the tile. No single
 # world point is in-extent across the multi-CRS corpus, so sample is timing-only
@@ -92,10 +109,15 @@ _CLIP_GEOM_WKB = shapely.geometry.box(-500.0, -500.0, 500.0, 500.0).wkb
 _SAMPLE_POINT_WKB = shapely.geometry.Point(0.0, 0.0).wkb
 
 # rst_viewshed (timing-only): needs an observer point; like sample, no single
-# world point is in-extent across the multi-CRS corpus. Additionally the pyrx
-# binding documents a parity divergence (xrspatial CPU line-of-sight scan vs
-# GDAL's GVM_Edge sweep with curvature), so the binary masks are not byte-equal
-# even at a shared observer. Timing-only on both counts. Observer (0, 0).
+# world point is in-extent across the multi-CRS corpus, and a fixed (0, 0)
+# observer falls outside the UTM/3857 tile x/y ranges (xrspatial raises
+# "observer (0,0) outside raster x_range"). The core_fn derives the observer
+# from the tile center (``ds.bounds``) so it is in-extent on every CRS.
+# Additionally the pyrx binding documents a parity divergence (xrspatial CPU
+# line-of-sight scan vs GDAL's GVM_Edge sweep with curvature), so the binary
+# masks are not byte-equal even at a shared observer — timing-only on both
+# counts. The col_fn is mode-filtered out (viewshed is pure-core-only), so the
+# static WKB below is unused at runtime and kept only for the col_fn signature.
 _VIEWSHED_OBSERVER_WKB = shapely.geometry.Point(0.0, 0.0).wkb
 
 # rst_color_relief (timing-only): heavy reads a gdaldem color-table FILE and runs
@@ -780,12 +802,16 @@ REGISTRY: Dict[str, FnSpec] = {
         core=False,
     ),
     # --- focal (focal.py) ---
+    # operation="median" is valid on BOTH engines: the heavy KernelFilter accepts
+    # {avg, min, max, median, mode} (NOT "mean" -> "Invalid operation"), and the
+    # light focal.filt accepts {min, max, median, mean}. "median" is the common
+    # value, so the bench args carry it for both. (Timing-only, not compared.)
     "rst_filter": FnSpec(
         "rst_filter",
         "gbx_rst_filter",
         "focal",
         _BOTH,
-        {"kernel_size": 3, "operation": "mean"},
+        {"kernel_size": 3, "operation": "median"},
         core_fn=lambda ds, a: focal.filt(ds, a["kernel_size"], a["operation"]),
         col_fn=lambda t, a: prx.rst_filter(t, a["kernel_size"], a["operation"]),
         core=False,
@@ -1028,8 +1054,10 @@ REGISTRY: Dict[str, FnSpec] = {
         "edit",
         ("pure-core",),
         {"cutline_all_touched": False},
+        # Derive the cutline per-tile from ds.bounds (shrunk 50%) so it is
+        # in-extent on every CRS; the static _CLIP_GEOM_WKB arg is ignored here.
         core_fn=lambda ds, a: edit.clip_to_geom(
-            ds, _CLIP_GEOM_WKB, a["cutline_all_touched"]
+            ds, _shrunk_bounds_box_wkb(ds), a["cutline_all_touched"]
         ),
         col_fn=lambda t, a: prx.rst_clip(
             t, F.lit(_CLIP_GEOM_WKB), F.lit(a["cutline_all_touched"])
@@ -1061,8 +1089,10 @@ REGISTRY: Dict[str, FnSpec] = {
         "analysis",
         ("pure-core",),
         {"observer_height": 2.0, "target_height": 1.6},
+        # Observer = tile center (in the tile's own CRS) so it is in-extent on
+        # every CRS; a fixed (0,0) falls outside the UTM/3857 tile ranges.
         core_fn=lambda ds, a: analysis_core.viewshed(
-            ds, 0.0, 0.0, a["observer_height"], a["target_height"], None
+            ds, *_tile_center_xy(ds), a["observer_height"], a["target_height"], None
         ),
         col_fn=lambda t, a: prx.rst_viewshed(
             t, F.lit(_VIEWSHED_OBSERVER_WKB), a["observer_height"], a["target_height"]

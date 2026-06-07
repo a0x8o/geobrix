@@ -50,13 +50,25 @@ object RST_InitNoData extends WithExpressionInfo {
         )
 
     def execute(ds: Dataset, options: Map[String, String]): (Dataset, Map[String, String]) = {
-        val noDataValues = (1 to ds.GetRasterCount())
+        val perBand = (1 to ds.GetRasterCount())
             .map { bandIndex =>
                 val band = ds.GetRasterBand(bandIndex)
                 GDAL.getNoDataConstant(band.getDataType)
             }
-            .mkString(" ")
-        val cmd = s"""gdalwarp -dstnodata "$noDataValues""""
+        // gdalwarp -dstnodata takes ONE argv (a single value applied to all bands,
+        // or a space-separated per-band list). The command string is later split on
+        // spaces by OperatorOptions.parseOptions, so a multi-value string must NOT
+        // be quote-wrapped (the quotes survive the split and gdalwarp rejects the
+        // stray-quote tokens). When all bands share one constant (uniform dtype, the
+        // common case) emit a single unquoted value; that is one token and applies
+        // to every band. (A genuinely mixed-dtype multi-band raster would still need
+        // a per-band list, which the space-splitting command path cannot carry; that
+        // is out of scope here and uniform-dtype is the norm for these rasters.)
+        val noDataValues = perBand.distinct match {
+            case Seq(single) => single.toString
+            case _           => perBand.mkString(" ")
+        }
+        val cmd = s"""gdalwarp -dstnodata $noDataValues"""
         val uuid = java.util.UUID.randomUUID().toString
         val driver = ds.GetDriver()
         val extension = GDAL.getExtension(driver.getShortName)
