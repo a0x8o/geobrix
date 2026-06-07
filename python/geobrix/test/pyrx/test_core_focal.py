@@ -102,3 +102,29 @@ def test_all_nodata_window_yields_nodata():
     nd = _read_nodata(res)
     # every pixel's window all-invalid -> nodata
     assert np.all(band == nd)
+
+
+def test_filter_min_shrinks_window_at_edge():
+    # min over VALID in-bounds neighbors only (window shrinks at the border):
+    # matches the NaN-aware shrink (cval=nan excludes out-of-bounds).
+    data = np.arange(16, dtype="float64").reshape(4, 4)
+    expected = ndimage.generic_filter(data, np.nanmin, size=3, mode="constant", cval=np.nan)
+    out = _read_band(_run(focal.filt, _tile(data, nodata=None), 3, "min"))
+    assert np.allclose(out, expected)
+
+
+def test_filter_max_shrinks_window_at_edge():
+    data = np.arange(16, dtype="float64").reshape(4, 4)
+    expected = ndimage.generic_filter(data, np.nanmax, size=3, mode="constant", cval=np.nan)
+    out = _read_band(_run(focal.filt, _tile(data, nodata=None), 3, "max"))
+    assert np.allclose(out, expected)
+
+
+def test_filter_min_max_skip_nodata_neighbor():
+    # the NoData center must be excluded from a corner's min/max window
+    data = np.array([[2.0, 2.0, 2.0], [2.0, -9999.0, 2.0], [2.0, 8.0, 2.0]])
+    mn = _read_band(_run(focal.filt, _tile(data, nodata=-9999.0), 3, "min"))
+    mx = _read_band(_run(focal.filt, _tile(data, nodata=-9999.0), 3, "max"))
+    # corner [0,0] sees valid {2,2,2} (center -9999 skipped) -> min=max=2.0
+    assert abs(mn[0, 0] - 2.0) < 1e-6
+    assert abs(mx[0, 0] - 2.0) < 1e-6
