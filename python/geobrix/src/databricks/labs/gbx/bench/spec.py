@@ -179,9 +179,47 @@ class FnSpec:
     fingerprint: bool = (
         True  # emit a comparable output fingerprint; False = timing-only
     )
+    # Repo-relative file paths whose CONTENT defines this function's heavy+light
+    # behavior (the pyrx core module(s) the core_fn calls, plus the heavy Scala
+    # RST_<Name> expression and any shared heavy helper it delegates to). This
+    # powers change-aware benchmarking: a changed file -> the set of functions to
+    # re-bench. Deliberately EXCLUDES the bench harness (this file, BenchDispatch)
+    # so editing the registry does not mark every function stale.
+    sources: tuple = ()
 
 
 _BOTH = ("pure-core", "spark-path")
+
+# --- source-path groups (DRY) ----------------------------------------------
+# Editing the registry must NOT re-bench everything, so the harness files
+# (spec.py / BenchDispatch.scala) are never listed. Each tuple is the set of
+# repo-relative files whose content defines a function's heavy+light behavior.
+_PYRX = "python/geobrix/src/databricks/labs/gbx/pyrx/core/"
+_HEAVY = "src/main/scala/com/databricks/labs/gbx/rasterx/expressions/"
+_OPS = "src/main/scala/com/databricks/labs/gbx/rasterx/operations/"
+_GDAL = "src/main/scala/com/databricks/labs/gbx/rasterx/gdal/"
+_NODATA = _PYRX + "_nodata.py"
+_DEM_HELPER = _HEAVY + "dem/RST_DEMProcessingHelper.scala"
+_PIXEL_COMBINE = _OPS + "PixelCombineRasters.scala"
+_GDAL_BLOCK = _GDAL + "GDALBlock.scala"
+
+# pyrx core module + shared _nodata, by module (added to per-function sources
+# together with that function's heavy Scala expression / helpers).
+_ACCESSORS_LIGHT = (_PYRX + "accessors.py", _NODATA)
+_TERRAIN_LIGHT = (_PYRX + "terrain.py", _NODATA)
+_INDICES_LIGHT = (_PYRX + "indices.py", _NODATA)
+_EDIT_LIGHT = (_PYRX + "edit.py", _NODATA)
+_FOCAL_LIGHT = (_PYRX + "focal.py", _NODATA)
+_FEATURES_LIGHT = (_PYRX + "features.py", _NODATA)
+_MAPALGEBRA_LIGHT = (_PYRX + "mapalgebra.py", _NODATA)
+# these core modules do NOT import _nodata (grep-confirmed)
+_WARP_LIGHT = (_PYRX + "warp.py",)
+_COORDS_LIGHT = (_PYRX + "coords.py",)
+_XYZ_LIGHT = (_PYRX + "xyz.py",)
+_OPS_LIGHT = (_PYRX + "ops.py",)
+_ANALYSIS_LIGHT = (_PYRX + "analysis.py",)
+_RESAMPLE_LIGHT = (_PYRX + "resample.py",)
+_DERIVEDBAND_LIGHT = (_PYRX + "derivedband.py",)
 
 REGISTRY: Dict[str, FnSpec] = {
     "rst_width": FnSpec(
@@ -193,6 +231,7 @@ REGISTRY: Dict[str, FnSpec] = {
         core=True,
         core_fn=lambda ds, a: accessors.width(ds),
         col_fn=lambda t, a: prx.rst_width(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Width.scala",),
     ),
     "rst_avg": FnSpec(
         "rst_avg",
@@ -200,6 +239,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Avg.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.avg(ds),
         col_fn=lambda t, a: prx.rst_avg(t),
@@ -210,6 +250,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {"unit": "degrees"},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_Slope.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.slope(ds, a["unit"]),
         col_fn=lambda t, a: prx.rst_slope(t, a["unit"]),
@@ -221,6 +262,7 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"red_band": 1, "nir_band": 2},
         min_bands=2,
+        sources=_INDICES_LIGHT + (_HEAVY + "RST_NDVI.scala",),
         core=True,
         core_fn=lambda ds, a: indices.ndvi(ds, a["red_band"], a["nir_band"]),
         col_fn=lambda t, a: prx.rst_ndvi(t, a["red_band"], a["nir_band"]),
@@ -231,6 +273,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "warp",
         _BOTH,
         {"target_srid": 3857},
+        sources=_WARP_LIGHT + (_HEAVY + "RST_Transform.scala",),
         core=True,
         core_fn=lambda ds, a: warp.reproject_to_srid(ds, a["target_srid"]),
         col_fn=lambda t, a: prx.rst_transform(t, a["target_srid"]),
@@ -242,6 +285,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Height.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.height(ds),
         col_fn=lambda t, a: prx.rst_height(t),
@@ -252,6 +296,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_NumBands.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.numbands(ds),
         col_fn=lambda t, a: prx.rst_numbands(t),
@@ -262,6 +307,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Min.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.minimum(ds),
         col_fn=lambda t, a: prx.rst_min(t),
@@ -272,6 +318,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Max.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.maximum(ds),
         col_fn=lambda t, a: prx.rst_max(t),
@@ -282,6 +329,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Median.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.median(ds),
         col_fn=lambda t, a: prx.rst_median(t),
@@ -292,6 +340,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_PixelCount.scala",),
         core=True,
         core_fn=lambda ds, a: accessors.pixelcount(ds),
         col_fn=lambda t, a: prx.rst_pixelcount(t),
@@ -303,6 +352,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {"trigonometric": False, "zero_for_flat": False},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_Aspect.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.aspect(
             ds, a["trigonometric"], a["zero_for_flat"]
@@ -315,6 +365,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {"azimuth": 315.0, "altitude": 45.0, "z_factor": 1.0},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_Hillshade.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.hillshade(
             ds, a["azimuth"], a["altitude"], a["z_factor"]
@@ -329,6 +380,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_TRI.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.tri(ds),
         col_fn=lambda t, a: prx.rst_tri(t),
@@ -339,6 +391,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_TPI.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.tpi(ds),
         col_fn=lambda t, a: prx.rst_tpi(t),
@@ -349,6 +402,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {},
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_Roughness.scala", _DEM_HELPER),
         core=True,
         core_fn=lambda ds, a: terrain.roughness(ds),
         col_fn=lambda t, a: prx.rst_roughness(t),
@@ -361,6 +415,7 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"green_idx": 1, "nir_idx": 2},
         min_bands=2,
+        sources=_INDICES_LIGHT + (_HEAVY + "spectral/RST_NDWI.scala",),
         core=True,
         core_fn=lambda ds, a: indices.ndwi(ds, a["green_idx"], a["nir_idx"]),
         col_fn=lambda t, a: prx.rst_ndwi(t, a["green_idx"], a["nir_idx"]),
@@ -372,6 +427,7 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"nir_idx": 1, "swir_idx": 2},
         min_bands=2,
+        sources=_INDICES_LIGHT + (_HEAVY + "spectral/RST_NBR.scala",),
         core=True,
         core_fn=lambda ds, a: indices.nbr(ds, a["nir_idx"], a["swir_idx"]),
         col_fn=lambda t, a: prx.rst_nbr(t, a["nir_idx"], a["swir_idx"]),
@@ -383,6 +439,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "warp",
         _BOTH,
         {"resampling": "bilinear"},
+        sources=_WARP_LIGHT + (_HEAVY + "web/RST_ToWebMercator.scala",),
         core=True,
         core_fn=lambda ds, a: warp.reproject_to_srid(
             ds, 3857, resampling=a["resampling"]
@@ -405,6 +462,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.srid(ds),
         col_fn=lambda t, a: prx.rst_srid(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_SRID.scala",),
         core=False,
     ),
     "rst_pixelwidth": FnSpec(
@@ -415,6 +473,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.pixelwidth(ds),
         col_fn=lambda t, a: prx.rst_pixelwidth(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_PixelWidth.scala",),
         core=False,
     ),
     "rst_pixelheight": FnSpec(
@@ -425,6 +484,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.pixelheight(ds),
         col_fn=lambda t, a: prx.rst_pixelheight(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_PixelHeight.scala",),
         core=False,
     ),
     "rst_upperleftx": FnSpec(
@@ -435,6 +495,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.upperleftx(ds),
         col_fn=lambda t, a: prx.rst_upperleftx(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_UpperLeftX.scala",),
         core=False,
     ),
     "rst_upperlefty": FnSpec(
@@ -445,6 +506,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.upperlefty(ds),
         col_fn=lambda t, a: prx.rst_upperlefty(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_UpperLeftY.scala",),
         core=False,
     ),
     "rst_scalex": FnSpec(
@@ -455,6 +517,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.scalex(ds),
         col_fn=lambda t, a: prx.rst_scalex(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_ScaleX.scala",),
         core=False,
     ),
     "rst_scaley": FnSpec(
@@ -465,6 +528,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.scaley(ds),
         col_fn=lambda t, a: prx.rst_scaley(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_ScaleY.scala",),
         core=False,
     ),
     "rst_skewx": FnSpec(
@@ -475,6 +539,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.skewx(ds),
         col_fn=lambda t, a: prx.rst_skewx(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_SkewX.scala",),
         core=False,
     ),
     "rst_skewy": FnSpec(
@@ -485,6 +550,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.skewy(ds),
         col_fn=lambda t, a: prx.rst_skewy(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_SkewY.scala",),
         core=False,
     ),
     "rst_rotation": FnSpec(
@@ -495,6 +561,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.rotation(ds),
         col_fn=lambda t, a: prx.rst_rotation(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Rotation.scala",),
         core=False,
     ),
     "rst_isempty": FnSpec(
@@ -507,6 +574,7 @@ REGISTRY: Dict[str, FnSpec] = {
         # side, which serializes RST_IsEmpty as ofScalar(1.0/0.0).
         core_fn=lambda ds, a: 1.0 if accessors.isempty(ds) else 0.0,
         col_fn=lambda t, a: prx.rst_isempty(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "RST_IsEmpty.scala",),
         core=False,
     ),
     "rst_getnodata": FnSpec(
@@ -517,6 +585,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.getnodata(ds),
         col_fn=lambda t, a: prx.rst_getnodata(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_GetNoData.scala",),
         core=False,
     ),
     "rst_format": FnSpec(
@@ -527,6 +596,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.format(ds),
         col_fn=lambda t, a: prx.rst_format(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Format.scala",),
         core=False,
     ),
     "rst_type": FnSpec(
@@ -537,6 +607,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.type(ds),
         col_fn=lambda t, a: prx.rst_type(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Type.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -550,6 +621,7 @@ REGISTRY: Dict[str, FnSpec] = {
         # open dataset (deterministic; timing-only, fingerprint suppressed).
         core_fn=lambda ds, a: int(ds.read().nbytes),
         col_fn=lambda t, a: prx.rst_memsize(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_MemSize.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -567,6 +639,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"x": 64, "y": 64},
         core_fn=lambda ds, a: coords.raster_to_world_x(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_rastertoworldcoordx(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_RasterToWorldCoordX.scala",),
         core=False,
     ),
     "rst_rastertoworldcoordy": FnSpec(
@@ -577,6 +650,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"x": 64, "y": 64},
         core_fn=lambda ds, a: coords.raster_to_world_y(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_rastertoworldcoordy(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_RasterToWorldCoordY.scala",),
         core=False,
     ),
     "rst_rastertoworldcoord": FnSpec(
@@ -593,6 +667,7 @@ REGISTRY: Dict[str, FnSpec] = {
             coords.raster_to_world_y(ds, a["x"], a["y"]),
         ],
         col_fn=lambda t, a: prx.rst_rastertoworldcoord(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_RasterToWorldCoord.scala",),
         core=False,
     ),
     # world->raster is the INVERSE geotransform. It is exact per-CRS, but a single
@@ -610,6 +685,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"x": -73.985, "y": 40.745},
         core_fn=lambda ds, a: coords.world_to_raster_x(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_worldtorastercoordx(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_WorldToRasterCoordX.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -621,6 +697,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"x": -73.985, "y": 40.745},
         core_fn=lambda ds, a: coords.world_to_raster_y(ds, a["x"], a["y"]),
         col_fn=lambda t, a: prx.rst_worldtorastercoordy(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_WorldToRasterCoordY.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -636,6 +713,7 @@ REGISTRY: Dict[str, FnSpec] = {
             coords.world_to_raster_y(ds, a["x"], a["y"]),
         ],
         col_fn=lambda t, a: prx.rst_worldtorastercoord(t, a["x"], a["y"]),
+        sources=_COORDS_LIGHT + (_HEAVY + "RST_WorldToRasterCoord.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -653,6 +731,7 @@ REGISTRY: Dict[str, FnSpec] = {
             ds, a["z"], a["x"], a["y"], "PNG", 256, "bilinear"
         ),
         col_fn=lambda t, a: prx.rst_tilexyz(t, a["z"], a["x"], a["y"]),
+        sources=_XYZ_LIGHT + (_HEAVY + "web/RST_TileXYZ.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -670,6 +749,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.metadata(ds),
         col_fn=lambda t, a: prx.rst_metadata(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_MetaData.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -682,6 +762,7 @@ REGISTRY: Dict[str, FnSpec] = {
         # bandmetadata needs a 1-based band index; band 1 exists in every tile.
         core_fn=lambda ds, a: accessors.bandmetadata(ds, 1),
         col_fn=lambda t, a: prx.rst_bandmetadata(t, 1),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_BandMetaData.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -693,6 +774,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.georeference(ds),
         col_fn=lambda t, a: prx.rst_georeference(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_GeoReference.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -704,6 +786,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.boundingbox(ds),
         col_fn=lambda t, a: prx.rst_boundingbox(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_BoundingBox.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -715,6 +798,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.summary(ds),
         col_fn=lambda t, a: prx.rst_summary(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Summary.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -726,6 +810,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.histogram(ds),
         col_fn=lambda t, a: prx.rst_histogram(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "pixel/RST_Histogram.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -744,6 +829,7 @@ REGISTRY: Dict[str, FnSpec] = {
         min_bands=2,
         core_fn=lambda ds, a: edit.band(ds, a["band_index"]),
         col_fn=lambda t, a: prx.rst_band(t, a["band_index"]),
+        sources=_EDIT_LIGHT + (_HEAVY + "pixel/RST_Band.scala",),
         core=False,
     ),
     # rst_threshold (timing-only): the two tiers implement DIFFERENT, documented
@@ -762,6 +848,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"op": ">", "value": 0.5},
         core_fn=lambda ds, a: edit.threshold(ds, a["op"], a["value"]),
         col_fn=lambda t, a: prx.rst_threshold(t, a["op"], a["value"]),
+        sources=_EDIT_LIGHT + (_HEAVY + "pixel/RST_Threshold.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -773,6 +860,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: edit.init_nodata(ds),
         col_fn=lambda t, a: prx.rst_initnodata(t),
+        sources=_EDIT_LIGHT + (_HEAVY + "RST_InitNoData.scala",),
         core=False,
     ),
     "rst_setsrid": FnSpec(
@@ -783,6 +871,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"srid": 4326},
         core_fn=lambda ds, a: edit.set_srid(ds, a["srid"]),
         col_fn=lambda t, a: prx.rst_setsrid(t, a["srid"]),
+        sources=_EDIT_LIGHT + (_HEAVY + "pixel/RST_SetSrid.scala",),
         core=False,
     ),
     "rst_updatetype": FnSpec(
@@ -793,6 +882,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"new_type": "Float64"},
         core_fn=lambda ds, a: edit.update_type(ds, a["new_type"]),
         col_fn=lambda t, a: prx.rst_updatetype(t, a["new_type"]),
+        sources=_EDIT_LIGHT + (_HEAVY + "RST_UpdateType.scala",),
         core=False,
     ),
     # --- features (features.py) ---
@@ -808,6 +898,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_fillnodata(
             t, a["max_search_dist"], a["smoothing_iter"]
         ),
+        sources=_FEATURES_LIGHT + (_HEAVY + "pixel/RST_FillNodata.scala",),
         core=False,
     ),
     # --- focal (focal.py) ---
@@ -823,6 +914,8 @@ REGISTRY: Dict[str, FnSpec] = {
         {"kernel_size": 3, "operation": "median"},
         core_fn=lambda ds, a: focal.filt(ds, a["kernel_size"], a["operation"]),
         col_fn=lambda t, a: prx.rst_filter(t, a["kernel_size"], a["operation"]),
+        sources=_FOCAL_LIGHT
+        + (_HEAVY + "RST_Filter.scala", _OPS + "KernelFilter.scala", _GDAL_BLOCK),
         core=False,
     ),
     "rst_convolve": FnSpec(
@@ -837,6 +930,8 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_convolve(
             t, F.array(*[F.array(*[F.lit(c) for c in row]) for row in _CONVOLVE_KERNEL])
         ),
+        sources=_FOCAL_LIGHT
+        + (_HEAVY + "RST_Convolve.scala", _OPS + "Convolve.scala", _GDAL_BLOCK),
         core=False,
     ),
     # --- format (ops.py / analysis.py) ---
@@ -848,6 +943,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {"new_format": "GTiff"},
         core_fn=lambda ds, a: ops.as_format(ds, a["new_format"]),
         col_fn=lambda t, a: prx.rst_asformat(t, a["new_format"]),
+        sources=_OPS_LIGHT + (_HEAVY + "RST_AsFormat.scala",),
         core=False,
     ),
     "rst_cog_convert": FnSpec(
@@ -866,6 +962,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_cog_convert(
             t, a["compression"], a["blocksize"], a["overview_resampling"]
         ),
+        sources=_ANALYSIS_LIGHT + (_HEAVY + "analysis/RST_CogConvert.scala",),
         core=False,
     ),
     # --- resample (resample.py) ---
@@ -879,6 +976,7 @@ REGISTRY: Dict[str, FnSpec] = {
             ds, a["factor"], a["algorithm"]
         ),
         col_fn=lambda t, a: prx.rst_resample(t, a["factor"], a["algorithm"]),
+        sources=_RESAMPLE_LIGHT + (_HEAVY + "resample/RST_Resample.scala",),
         core=False,
     ),
     "rst_resample_to_size": FnSpec(
@@ -893,6 +991,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_resample_to_size(
             t, a["width_px"], a["height_px"], a["algorithm"]
         ),
+        sources=_RESAMPLE_LIGHT + (_HEAVY + "resample/RST_ResampleToSize.scala",),
         core=False,
     ),
     # rst_resample_to_res takes an absolute ground resolution in CRS units. A
@@ -913,6 +1012,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_resample_to_res(
             t, a["x_res"], a["y_res"], a["algorithm"]
         ),
+        sources=_RESAMPLE_LIGHT + (_HEAVY + "resample/RST_ResampleToRes.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -970,6 +1070,7 @@ REGISTRY: Dict[str, FnSpec] = {
             a["c2"],
             a["g"],
         ),
+        sources=_INDICES_LIGHT + (_HEAVY + "spectral/RST_EVI.scala",),
         core=False,
     ),
     "rst_savi": FnSpec(
@@ -981,6 +1082,7 @@ REGISTRY: Dict[str, FnSpec] = {
         min_bands=2,
         core_fn=lambda ds, a: indices.savi(ds, a["red_idx"], a["nir_idx"], l=a["l"]),
         col_fn=lambda t, a: prx.rst_savi(t, a["red_idx"], a["nir_idx"], a["l"]),
+        sources=_INDICES_LIGHT + (_HEAVY + "spectral/RST_SAVI.scala",),
         core=False,
     ),
     # --- generic named-index dispatcher (indices.py): full comparison ---
@@ -1002,6 +1104,7 @@ REGISTRY: Dict[str, FnSpec] = {
                 *[x for k, v in _INDEX_BAND_MAP.items() for x in (F.lit(k), F.lit(v))]
             ),
         ),
+        sources=_INDICES_LIGHT + (_HEAVY + "spectral/RST_Index.scala",),
         core=False,
     ),
     # --- map algebra (mapalgebra.py): full comparison ---
@@ -1017,6 +1120,7 @@ REGISTRY: Dict[str, FnSpec] = {
             [_ds_to_gtiff_bytes(ds)], a["expr"]
         ),
         col_fn=lambda t, a: prx.rst_mapalgebra(F.array(t), a["expr"]),
+        sources=_MAPALGEBRA_LIGHT + (_HEAVY + "RST_MapAlgebra.scala",),
         core=False,
     ),
     # --- derived band (derivedband.py): full comparison ---
@@ -1034,6 +1138,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_derivedband(
             t, _DERIVEDBAND_PYFUNC, _DERIVEDBAND_FUNC_NAME
         ),
+        sources=_DERIVEDBAND_LIGHT + (_HEAVY + "RST_DerivedBand.scala", _PIXEL_COMBINE),
         core=False,
     ),
     # --- proximity (analysis.py): full comparison ---
@@ -1051,6 +1156,7 @@ REGISTRY: Dict[str, FnSpec] = {
             ds, a["target_values"], a["distunits"], None
         ),
         col_fn=lambda t, a: prx.rst_proximity(t, a["target_values"], a["distunits"]),
+        sources=_ANALYSIS_LIGHT + (_HEAVY + "analysis/RST_Proximity.scala",),
         core=False,
     ),
     # --- clip (edit.py): timing-only ---
@@ -1071,6 +1177,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_clip(
             t, F.lit(_CLIP_GEOM_WKB), F.lit(a["cutline_all_touched"])
         ),
+        sources=_EDIT_LIGHT + (_HEAVY + "RST_Clip.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -1085,6 +1192,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: terrain.color_relief(ds, _color_table_path()),
         col_fn=lambda t, a: prx.rst_color_relief(t, _color_table_path()),
+        sources=_TERRAIN_LIGHT + (_HEAVY + "dem/RST_ColorRelief.scala", _DEM_HELPER),
         core=False,
         fingerprint=False,
     ),
@@ -1106,6 +1214,7 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_viewshed(
             t, F.lit(_VIEWSHED_OBSERVER_WKB), a["observer_height"], a["target_height"]
         ),
+        sources=_ANALYSIS_LIGHT + (_HEAVY + "analysis/RST_Viewshed.scala",),
         core=False,
         fingerprint=False,
     ),
@@ -1120,6 +1229,7 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: ops.sample(ds, _SAMPLE_POINT_WKB),
         col_fn=lambda t, a: prx.rst_sample(t, F.lit(_SAMPLE_POINT_WKB)),
+        sources=_OPS_LIGHT + (_HEAVY + "pixel/RST_Sample.scala",),
         core=False,
         fingerprint=False,
     ),

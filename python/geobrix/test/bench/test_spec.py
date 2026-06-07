@@ -449,3 +449,17 @@ def test_complex_arg_band_index_specs_require_two_bands():
 def test_full_set_count_is_seventy():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     assert len(s.select(set="full")) == 70
+
+
+def test_every_fnspec_declares_existing_sources():
+    from pathlib import Path
+
+    root = Path(__file__).resolve()
+    for _ in range(12):
+        if (root / "pom.xml").exists():
+            break
+        root = root.parent
+    for f in s.select(set="full"):
+        assert f.sources, f"{f.name} has no sources"
+        for p in f.sources:
+            assert (root / p).exists(), f"{f.name}: missing source {p}"
