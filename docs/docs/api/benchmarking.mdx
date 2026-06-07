@@ -1,0 +1,182 @@
+---
+sidebar_position: 2
+---
+
+# Benchmarking
+
+GeoBrix ships a benchmark suite that compares the two [execution tiers](./execution-tiers) — **Heavyweight (rasterx)** and **Lightweight (pyrx)** — on the **same inputs**, reporting both **performance** (per-function timing) and **output consistency** (do the two tiers produce the same result?).
+
+This page explains what the benchmark measures, how to run it **on a Databricks cluster** (the primary, same-hardware comparison), how to run it **locally**, how to read the output, and a full table of representative local results.
+
+## What it measures
+
+Each function is timed under two independent models:
+
+- **Pure-core** — the raster operation in isolation: open a tile, call the function, measure. This is the fairest apples-to-apples view of the algorithm itself, with no Spark or serialization in the path.
+- **Spark-path** — the registered function (`gbx_rst_*`) applied to a Spark DataFrame of *N* rows. This includes the realistic per-row overhead (UDF dispatch, serialization, Python-worker round-trips for the lightweight tier), and is swept across a **row ladder** (e.g. 10 → 100 → 1,000 → 10,000 rows).
+
+Alongside timing, every pure-core result carries an **output fingerprint** (per-band statistics) so the two tiers can be checked for **consistency**:
+
+- **exact** — every statistic is bitwise-equal across tiers.
+- **within_tol** — every statistic agrees to a relative tolerance of `1e-3` **or** an absolute tolerance of `1e-3` (the absolute floor handles near-zero values where a relative comparison is meaningless).
+- **divergent** — neither tolerance is met.
+
+The goal of the [one-line tier swap](./execution-tiers#the-one-line-swap) is that results stay consistent; the benchmark is how that guarantee is verified.
+
+:::note
+The benchmark is run **from the GeoBrix source repository** (it uses the repo's `gbx:bench:*` commands and a job notebook). A wheel-only install does not include these tools — the cluster benchmark *submits a job to your own provisioned cluster* from a checkout of the repo.
+:::
+
+## Running on a cluster
+
+Running on a provisioned cluster is the **true comparison**: both tiers execute on the same hardware, against the same corpus, and the full row ladder and larger tiles are within reach. Results append to a `bench_results` Delta table and a `comparison.csv` / `summary.md` land on the configured Volume.
+
+### Prerequisites
+
+Provision a cluster and stage the artifacts per the [installation guide](../installation):
+
+| Tier | Cluster | Artifacts |
+|---|---|---|
+| Heavyweight (rasterx) | x86 · DBR 17.3 LTS | Init script + bundle + GeoBrix wheel + the bench tests JAR (`geobrix-*-tests.jar`) |
+| Lightweight (pyrx) | x86 **or ARM** | The `[pyrx]` wheel only |
+
+Then fill in the cluster configuration file (`notebooks/tests/databricks_cluster_config.env`) with your cluster ID and Volume paths.
+
+### Run
+
+```bash
+# Both tiers, same cluster, full row ladder, all functions
+bash scripts/commands/gbx-bench-cluster.sh \
+  --cluster-id <your-cluster-id> \
+  --run-id cluster-2026-06 \
+  --modes both \
+  --row-counts 10,100,1000,10000
+```
+
+Scale the run with these options:
+
+| Option | Purpose |
+|---|---|
+| `--modes pure-core \| spark-path \| both` | Which timing model(s) to run (default `both`). |
+| `--row-counts 10,100,1000,10000` | The spark-path row ladder — the main scale dimension. |
+| `--functions rst_slope,rst_ndvi` | Restrict to specific functions (default: all). |
+| `--warmup` / `--measured` | Warmup and measured iteration counts (defaults 2 / 5). |
+| `--lightweight-only` | Skip the heavyweight leg — **required on ARM clusters** (heavyweight is x86-only). |
+| `--heavyweight-only` | Skip the lightweight leg. |
+| `--no-wait` | Submit the job without blocking on completion. |
+
+```bash
+# ARM cluster: lightweight only
+bash scripts/commands/gbx-bench-cluster.sh --cluster-id <arm-cluster-id> --lightweight-only
+```
+
+Tile sizes, band counts, data types, and projections are set when the corpus is generated (see the local section's scale knobs); the same corpus is reused for both tiers so the comparison is fair.
+
+### Output
+
+- **`bench_results` Delta table** — every measured row (tagged with environment + run ID), so runs accumulate and can be queried/visualized over time.
+- **`summary.md` / `comparison.csv`** on the Volume — the human-readable speedup + consistency report (see [Reading the output](#reading-the-output)).
+
+## Running locally
+
+The local pipeline runs the heavyweight tier in the `geobrix-dev` Docker container and the lightweight tier in an isolated Python virtual environment, then compares them. Local runs are intentionally **modest in scale** (small tiles, a single row) — the full row ladder and large tiles belong on a cluster — but they're ideal for a quick, reproducible check.
+
+```bash
+# Full local pipeline: generate corpus -> heavyweight -> lightweight -> compare
+bash scripts/commands/gbx-bench-all.sh --run-id local-1 --modes pure-core
+```
+
+The heavyweight and lightweight legs run **one after the other** (never concurrently) so they don't contend for CPU and skew each other's timings. Outputs land in `test-logs/bench/<run-id>/`.
+
+Scale and shape the corpus with:
+
+| Option | Purpose |
+|---|---|
+| `--tile-px 256,512` | Tile sizes (pixels per side). |
+| `--bands 1,4` | Band counts. |
+| `--dtypes float32,uint16` | Pixel data types. |
+| `--srids 4326,32618` | Projections — include a geographic (lat/long) **and** a projected (metre) CRS to exercise both. |
+| `--nodata-frac 0.0,0.25` | Fraction of NoData pixels. |
+| `--row-counts 10,100` | Spark-path row ladder (keep modest locally). |
+| `--modes pure-core \| spark-path \| both` | Timing model(s). |
+
+The individual stages are also available as standalone commands — `gbx:bench:gen-data`, `gbx:bench:heavyweight`, `gbx:bench:lightweight`, and `gbx:bench:compare` — if you want to regenerate just one part of the pipeline.
+
+## Reading the output
+
+The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table:
+
+```text
+Consistency (38 compared cells): exact 12 - within-tol 26 - divergent 0
+
+| fn | tile_px | hw_ms | lw_ms | hw_mpix/s | lw_mpix/s | speedup | consistency |
+| rst_ndvi | 256 | 588.929 | 0.683 | 0.2 | 195.9 | 861.85 | within_tol |
+| rst_slope | 256 | 6.285 | 1.742 | 20.9 | 75.2 | 3.61 | within_tol |
+| rst_width | 512 | 0.017 | 0.244 | 31224.3 | 2145.4 | 0.07 | exact |
+```
+
+- **`speedup`** is `heavy_ms / light_ms` — greater than 1 means the lightweight tier is faster.
+- **`hw_mpix/s` / `lw_mpix/s`** are per-tier throughput (megapixels per second) for each engine; the spark-path tables report `rows/s` instead.
+- **`consistency`** is the `exact` / `within_tol` / `divergent` label defined above. Per-cell deltas are in `comparison.csv` (the `max_rel_delta` column).
+
+A per-engine summary is also written for each tier (`heavyweight.summary.md`, `lightweight.summary.md`) with that tier's own timing and throughput in isolation.
+
+## Local results
+
+The table below is a representative **pure-core** local run, sorted by speedup (lightweight-faster at the top). It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable.
+
+> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · pure-core · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618). **Consistency: 12 exact, 26 within-tol, 0 divergent.**
+
+| Function | Tile | Heavy (ms) | Light (ms) | Speedup | Consistency |
+|---|---|---|---|---|---|
+| `rst_nbr` | 256² | 616.49 | 0.67 | 923.30× | within_tol |
+| `rst_ndwi` | 256² | 608.89 | 0.67 | 910.04× | within_tol |
+| `rst_ndvi` | 256² | 588.93 | 0.68 | 861.85× | within_tol |
+| `rst_nbr` | 512² | 657.79 | 1.79 | 368.59× | within_tol |
+| `rst_ndwi` | 512² | 644.56 | 1.80 | 359.02× | within_tol |
+| `rst_ndvi` | 512² | 646.27 | 1.84 | 350.61× | within_tol |
+| `rst_median` | 256² | 13.12 | 0.71 | 18.57× | within_tol |
+| `rst_median` | 512² | 49.17 | 3.44 | 14.28× | within_tol |
+| `rst_pixelcount` | 512² | 12.33 | 1.18 | 10.48× | exact |
+| `rst_pixelcount` | 256² | 3.63 | 0.36 | 10.04× | exact |
+| `rst_avg` | 256² | 3.51 | 0.37 | 9.53× | within_tol |
+| `rst_avg` | 512² | 12.50 | 1.34 | 9.33× | within_tol |
+| `rst_transform` | 512² | 77.54 | 8.79 | 8.82× | within_tol |
+| `rst_transform` | 256² | 18.58 | 2.57 | 7.22× | within_tol |
+| `rst_hillshade` | 512² | 35.03 | 5.71 | 6.13× | within_tol |
+| `rst_hillshade` | 256² | 8.23 | 1.64 | 5.03× | within_tol |
+| `rst_to_webmercator` | 512² | 81.17 | 18.06 | 4.49× | within_tol |
+| `rst_roughness` | 512² | 19.77 | 4.60 | 4.30× | within_tol |
+| `rst_tpi` | 512² | 17.98 | 4.20 | 4.28× | within_tol |
+| `rst_to_webmercator` | 256² | 28.78 | 6.79 | 4.24× | within_tol |
+| `rst_roughness` | 256² | 5.32 | 1.39 | 3.83× | within_tol |
+| `rst_slope` | 256² | 6.29 | 1.74 | 3.61× | within_tol |
+| `rst_tpi` | 256² | 4.60 | 1.32 | 3.49× | within_tol |
+| `rst_slope` | 512² | 20.20 | 5.88 | 3.44× | within_tol |
+| `rst_tri` | 512² | 18.54 | 5.72 | 3.24× | within_tol |
+| `rst_aspect` | 512² | 37.41 | 11.65 | 3.21× | within_tol |
+| `rst_tri` | 256² | 4.80 | 1.60 | 3.00× | within_tol |
+| `rst_aspect` | 256² | 8.75 | 3.08 | 2.84× | within_tol |
+| `rst_max` | 512² | 1.85 | 1.19 | 1.56× | exact |
+| `rst_min` | 512² | 1.84 | 1.19 | 1.55× | exact |
+| `rst_max` | 256² | 0.49 | 0.36 | 1.33× | exact |
+| `rst_min` | 256² | 0.48 | 0.37 | 1.29× | exact |
+| `rst_height` | 256² | 0.05 | 0.09 | 0.49× | exact |
+| `rst_numbands` | 256² | 0.03 | 0.09 | 0.31× | exact |
+| `rst_width` | 256² | 0.02 | 0.09 | 0.23× | exact |
+| `rst_height` | 512² | 0.04 | 0.24 | 0.17× | exact |
+| `rst_numbands` | 512² | 0.04 | 0.24 | 0.15× | exact |
+| `rst_width` | 512² | 0.02 | 0.24 | 0.07× | exact |
+
+### How to read these numbers
+
+- **Band math (`rst_ndvi`/`ndwi`/`nbr`)** shows the largest lightweight wins (350–920×). The heavyweight tier computes these by shelling out to a `gdal_calc` subprocess per call, which dominates its time; the lightweight tier evaluates the expression in-process with NumPy.
+- **Reductions and warps (`rst_median`/`avg`/`transform`/`to_webmercator`)** favor the lightweight tier by roughly 4–18×.
+- **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~3–6× lightweight win, and all match within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
+- **Trivial metadata accessors (`rst_width`/`height`/`numbands`)** are sub-millisecond on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is fractions of a millisecond.
+
+### Caveats
+
+- Absolute timings depend on the machine, the corpus, and the tier's install; treat the **relative** speedup and the **consistency** outcome as the durable signal, not the millisecond values.
+- Pure-core isolates the algorithm. The **spark-path** model — which you should run on a cluster across the row ladder — adds per-row UDF and serialization overhead and is the better predictor of end-to-end job cost.
+- Consistency is checked on output statistics with tolerance, not byte-equality: GDAL and NumPy can differ in the last bits, and neighborhood operations legitimately differ on the one-pixel kernel border. The benchmark treats those as informational, not as divergences.

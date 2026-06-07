@@ -38,7 +38,13 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 
 Choose **Lightweight (pyrx)** for a fast, dependency-light start, or when your compute cannot load the JAR or init script — serverless clusters, standard/shared clusters, ARM instances, and Lakeflow declarative pipelines all fall into this category.
 
-Choose **Heavyweight (rasterx)** when you need the full raster function set or JVM-side performance on a dedicated cluster with the init script already configured.
+Choose **Heavyweight (rasterx)** when you need the JVM-side performance on a dedicated cluster via the init script configuration.
+
+## Performance & consistency
+
+The one-line swap is safe to make: across the benchmark suite the two tiers produce **consistent output** (0 divergent cells — every function agrees within tolerance, including on geographic rasters). On per-operation timing the lightweight tier is competitive-to-faster in pure-core measurements — dramatically so for band math (hundreds of times faster, since the heavyweight tier shells out to a subprocess there) and a steady few-times faster for terrain and reductions; trivial metadata accessors are sub-millisecond on both.
+
+See **[Benchmarking](./benchmarking)** for the full results table, the two timing models, and how to run the benchmark on a cluster or locally.
 
 ## Function availability
 
