@@ -11,10 +11,12 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
+from databricks.labs.gbx.bench import spec
 from databricks.labs.gbx.bench.results import ResultRow
 
 REL_TOL = 1e-3
@@ -257,6 +259,102 @@ def write_csv(cells: List[CellCompare], path) -> None:
             w.writerow({k: getattr(cl, k) for k in _CSV_FIELDS})
 
 
+def pyrx_implemented() -> "frozenset[str]":
+    """Names of every `rst_*` function the lightweight pyrx API implements.
+
+    Derived by parsing `def rst_<name>` definitions out of the pyrx
+    `functions.py` so the coverage scorecard guards against a regression (a
+    registered function losing its pyrx binding). Path resolved relative to the
+    repo root, mirroring `spec.registered_rst()`.
+    """
+    root = Path(__file__).resolve()
+    rel = Path("python/geobrix/src/databricks/labs/gbx/pyrx/functions.py")
+    cand = None
+    for _ in range(12):
+        c = root / rel
+        if c.exists():
+            cand = c
+            break
+        root = root.parent
+    if cand is None:
+        raise FileNotFoundError("pyrx functions.py not found above " + __file__)
+    names = set(re.findall(r"def (rst_[a-z0-9_]+)", cand.read_text()))
+    return frozenset(names)
+
+
+def coverage_block(cells) -> str:
+    """Build the neutral 'Coverage & parity' markdown section.
+
+    Reports benchmark coverage, parity counts among compared cells, performance
+    win counts, the computed functional-parity gap (registered minus pyrx-
+    implemented), and the registered functions not yet benchmarked.
+    """
+    registered = spec.registered_rst()
+    implemented = pyrx_implemented()
+    n_registered = len(registered)
+
+    benched_fns = {cl.fn for cl in cells}
+    n_benched = len(benched_fns)
+
+    # Parity over compared (non-na) cells.
+    compared = [cl for cl in cells if cl.consistency != "na"]
+    n_exact = sum(1 for cl in compared if cl.consistency == "exact")
+    n_tol = sum(1 for cl in compared if cl.consistency == "within_tol")
+    div_fns = sorted({cl.fn for cl in compared if cl.consistency == "divergent"})
+    n_na = sum(1 for cl in cells if cl.consistency == "na")
+
+    # Performance: lightweight >= heavyweight when speedup >= 1.0.
+    perf = [cl for cl in cells if cl.lw_median_ms > 0 and cl.hw_median_ms > 0]
+    n_lw_fast = sum(1 for cl in perf if cl.speedup >= 1.0)
+    n_hw_fast = len(perf) - n_lw_fast
+
+    # Functional parity gap: registered minus pyrx-implemented (COMPUTED).
+    gap = sorted(registered - implemented)
+
+    # Not yet covered: registered minus benchmarked.
+    not_covered = sorted(registered - benched_fns)
+
+    lines = ["## Coverage & parity", ""]
+    lines.append(
+        f"- **Coverage:** Benchmarked {n_benched} / {n_registered} registered "
+        f"`rst_` functions."
+    )
+    div_part = (" - divergent: " + ", ".join(div_fns)) if div_fns else ""
+    lines.append(
+        f"- **Parity:** of {len(compared)} compared cell(s) — exact {n_exact} - "
+        f"within_tol {n_tol} - divergent {len(div_fns)}{div_part}. "
+        f"({n_na} timing-only, not compared.)"
+    )
+    lines.append(
+        f"- **Performance:** lightweight at least as fast (speedup ≥ 1.0) in "
+        f"{n_lw_fast} of {len(perf)} compared function-cell(s); heavyweight "
+        f"faster in {n_hw_fast}."
+    )
+    if gap:
+        lines.append(
+            f"- **Functional parity gap:** {len(gap)} registered `rst_` "
+            f"function(s) with no lightweight implementation: " + ", ".join(gap) + "."
+        )
+    else:
+        lines.append(
+            f"- **Functional parity gap:** 0 (lightweight implements all "
+            f"{n_registered} registered functions)."
+        )
+    if not_covered:
+        lines.append(
+            f"- **Not yet covered:** {len(not_covered)} registered `rst_` "
+            f"function(s) not yet in the benchmark registry: "
+            + ", ".join(not_covered)
+            + "."
+        )
+    else:
+        lines.append(
+            "- **Not yet covered:** 0 (every registered function is benchmarked)."
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
     lines = ["# GeoBrix benchmark — heavy vs light comparison", "", "## Insights", ""]
     insights = []
@@ -306,6 +404,8 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
         f"**divergent** = neither. Per-cell max_rel_delta in comparison.csv._",
         "",
     ]
+
+    lines += coverage_block(cells).split("\n")
 
     for mode in ("pure-core", "spark-path"):
         mc = [cl for cl in cells if cl.mode == mode]

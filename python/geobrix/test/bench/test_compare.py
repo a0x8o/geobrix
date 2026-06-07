@@ -429,6 +429,57 @@ def test_summarize_compare_exact_label_is_bare():
     assert "exact (" not in row
 
 
+def test_pyrx_implemented_returns_all_107():
+    impl = c.pyrx_implemented()
+    assert len(impl) == 107
+    assert "rst_slope" in impl
+    assert "rst_merge" in impl
+
+
+def test_coverage_block_reports_coverage_parity_gap_and_uncovered():
+    cells = [
+        _cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", ""),
+        _cmp("rst_ndvi", "pure-core", 20.0, 4.0, 5.0, "within_tol", ""),
+        _cmp("rst_proximity", "pure-core", 20.0, 4.0, 5.0, "divergent", ""),
+        _cmp("rst_aspect", "spark-path", 20.0, 30.0, 0.66, "exact", ""),
+        # a timing-only cell (na) for a distinct fn
+        _cmp("rst_clip", "pure-core", 20.0, 10.0, 2.0, "na", ""),
+    ]
+    md = c.coverage_block(cells)
+    # Coverage: distinct fn count across all cells = 5, out of 107
+    assert "Benchmarked" in md
+    assert "/ 107" in md
+    assert "5 / 107" in md
+    # Parity counts among non-na cells (4 compared: exact 2, within_tol 1, divergent 1)
+    assert "exact" in md
+    assert "within_tol" in md
+    assert "divergent" in md
+    assert "rst_proximity" in md  # divergent fn named
+    # Functional parity gap computed = 0
+    assert "Functional parity gap:** 0" in md
+    # timing-only count line
+    assert "timing-only" in md
+    # Not yet covered: count + at least one known-missing name
+    assert "Not yet covered:" in md
+    assert "rst_merge" in md or "rst_rasterize" in md
+
+
+def test_summarize_compare_includes_coverage_block():
+    cells = [
+        _cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", ""),
+        _cmp("rst_proximity", "pure-core", 20.0, 4.0, 5.0, "divergent", ""),
+        _cmp("rst_clip", "pure-core", 20.0, 10.0, 2.0, "na", ""),
+    ]
+    md = c.summarize_compare(cells, [], [], [])
+    assert "Coverage & parity" in md
+    assert "/ 107" in md
+    assert "Functional parity gap:** 0" in md
+    assert "Not yet covered:" in md
+    # ordering: Insights before Coverage before the per-mode tables
+    assert md.index("## Insights") < md.index("Coverage & parity")
+    assert md.index("Coverage & parity") < md.index("## pure-core")
+
+
 def test_results_main_writes_summary(tmp_path):
     from databricks.labs.gbx.bench import results as RR
 
