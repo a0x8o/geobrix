@@ -23,7 +23,8 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     // 19 representative + 15 Task 2 scalar + 7 Task 3 coord + 6 Task 4 map/struct
     // + 13 Task 5 tile-out scalar-args + 10 Task 6 tile-out complex-args
     // + 6 bucket-C C1/C2 (readers + buildoverviews + subdataset fns)
-    assert(BenchDispatch.all.size == 76)
+    // + 3 bucket-C C3 (multi-tile: frombands/combineavg/merge)
+    assert(BenchDispatch.all.size == 79)
     assert(BenchDispatch.minBands("rst_ndvi") == 2)
     assert(BenchDispatch.minBands("rst_band") == 2)
     assert(BenchDispatch.minBands("rst_evi") == 2)

@@ -4,12 +4,43 @@ import com.databricks.labs.gbx.rasterx.functions
 import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.gdal.gdal.{Dataset, gdal}
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
+import java.security.MessageDigest
 
 object HeavyRunner {
 
   private def resolve(corpusRoot: String, path: String): String =
     if (Paths.get(path).isAbsolute) path else Paths.get(corpusRoot, path).toString
+
+  // Deterministic synth output dir, mirroring bench.synth.synth_dir on the pyrx
+  // side EXACTLY (sha1(tile_rel_path)[:12]) so the heavy runner reads the SAME
+  // files the pyrx runner wrote (write-once-read-both cross-engine identity).
+  private def synthDir(corpusRoot: String, tileRelPath: String, recipe: String): Path = {
+    val sha = MessageDigest.getInstance("SHA-1").digest(tileRelPath.getBytes("UTF-8"))
+    val stem = sha.map("%02x".format(_)).mkString.take(12)
+    Paths.get(corpusRoot, "_synth", recipe, stem)
+  }
+
+  // The synthesized file paths for a tile_array fn, in consumption order. The
+  // pyrx runner writes them; here we only resolve the deterministic filenames so
+  // both engines read identical bytes. Filenames mirror bench.synth exactly.
+  private def synthPaths(corpusRoot: String, tileRelPath: String, fn: String): Seq[String] = {
+    val recipe = BenchDispatch.synthRecipe(fn)
+    val dir = synthDir(corpusRoot, tileRelPath, recipe)
+    val names = recipe match {
+      case "frombands" =>
+        // one single-band tile per source band; determined by opening the source.
+        val src = resolve(corpusRoot, tileRelPath)
+        val ds = gdal.Open(src)
+        val n = if (ds != null) ds.GetRasterCount() else 0
+        if (ds != null) ds.delete()
+        (1 to n).map(b => f"band_$b%02d.tif")
+      case "combineavg" => Seq("copy_0.tif", "copy_1.tif")
+      case "merge"      => Seq("part_0.tif", "part_1.tif")
+      case other        => throw new IllegalArgumentException(s"no synth recipe: $other")
+    }
+    names.map(nm => dir.resolve(nm).toString)
+  }
 
   private def env(where: String): Map[String, String] = Map(
     "env_arch" -> System.getProperty("os.arch", "unknown"),
@@ -79,6 +110,18 @@ object HeavyRunner {
             case "path" =>
               (BenchDispatch.pureCorePath(fn, path, a),
                 () => BenchDispatch.pureCorePath(fn, path, a))
+            case "tile_array" =>
+              // Read the SAME synthesized files the pyrx runner wrote (the bench
+              // synthesizes once, both engines read identical bytes). Open them
+              // fresh inside the helper per call so each timed iteration owns its
+              // datasets (the dispatch releases its output, not these inputs).
+              val paths = synthPaths(corpusRoot, te.path, fn)
+              def callArr(): String = {
+                val arr = paths.map(p => gdal.Open(p)).toArray
+                try BenchDispatch.pureCoreTileArray(fn, arr, a)
+                finally arr.foreach(d => if (d != null) d.delete())
+              }
+              (callArr(), () => callArr())
             case _ =>
               ds = gdal.Open(path)
               (BenchDispatch.pureCore(fn, ds, a),
@@ -116,12 +159,26 @@ object HeavyRunner {
       .select(col("raster"))
       .cache()
     dfAll.count()
+    // tile_array adapter (spark-path): the multi-tile fns consume an ARRAY<tile>
+    // column. Build a CONSTANT array literal from the SAME synthesized files the
+    // pure-core path reads (write-once-read-both), broadcast across every row. The
+    // representative source is the first row_pool tile (matches the pyrx runner).
+    import org.apache.spark.sql.functions.array
+    val arrayRoot = pool.tiles.headOption.map(_.path).getOrElse("")
+    def synthArrayCol(fn: String): Column = {
+      val tileCols = synthPaths(corpusRoot, arrayRoot, fn).map { p =>
+        functions.rst_fromcontent(lit(Files.readAllBytes(Paths.get(p))), lit("GTiff"))
+      }
+      array(tileCols: _*)
+    }
+    def inputCol(fn: String): Column =
+      if (BenchDispatch.inputKind(fn) == "tile_array") synthArrayCol(fn) else col("raster")
     // throwaway materialized job so JVM/Spark spin-up isn't timed.
     // Wrapped + band-aware so a band-math head fn on a low-band pool can't abort the run.
     val warmFn = fns.find(f => BenchDispatch.minBands(f) <= pool.bands).orElse(fns.headOption)
     warmFn.foreach { wf =>
       try {
-        dfAll.limit(1).select(BenchDispatch.column(wf, col("raster"), Map.empty).alias("o"))
+        dfAll.limit(1).select(BenchDispatch.column(wf, inputCol(wf), Map.empty).alias("o"))
           .write.format("noop").mode("overwrite").save()
       } catch { case _: Throwable => () }  // warm-up failures must never abort timing
     }
@@ -132,7 +189,7 @@ object HeavyRunner {
       try {
         val df = dfAll.limit(n)
         val (median, mn, p90) = timeIters(() => {
-          df.select(BenchDispatch.column(fn, col("raster"), a).alias("o"))
+          df.select(BenchDispatch.column(fn, inputCol(fn), a).alias("o"))
             .write.format("noop").mode("overwrite").save()
         }, warmup, measured)
         val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0

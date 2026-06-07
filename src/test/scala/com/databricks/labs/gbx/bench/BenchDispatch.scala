@@ -16,6 +16,9 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_DerivedBand
 import com.databricks.labs.gbx.rasterx.expressions.RST_Filter
 import com.databricks.labs.gbx.rasterx.expressions.RST_InitNoData
 import com.databricks.labs.gbx.rasterx.expressions.RST_MapAlgebra
+import com.databricks.labs.gbx.rasterx.expressions.RST_Merge
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineAvg
+import com.databricks.labs.gbx.rasterx.expressions.constructor.RST_FromBands
 import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_BuildOverviews
@@ -139,7 +142,9 @@ object BenchDispatch {
     // and buildoverviews emit a tile -> format.
     "rst_tryopen" -> ACC, "rst_fromcontent" -> FMT, "rst_fromfile" -> FMT,
     "rst_buildoverviews" -> FMT,
-    "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC
+    "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC,
+    // bucket C, group C3: multi-tile-input fns (consume an ARRAY of tiles) -> format.
+    "rst_frombands" -> FMT, "rst_combineavg" -> FMT, "rst_merge" -> FMT
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -149,10 +154,23 @@ object BenchDispatch {
   // an open ds, so they cannot use the shared ds-in pureCore path.
   private val byteInput: Set[String] = Set("rst_tryopen", "rst_fromcontent")
   private val pathInput: Set[String] = Set("rst_fromfile")
+  // bucket C, group C3: multi-tile fns consume an ARRAY of tiles. The bench
+  // synthesizes the multi-tile input from the corpus tile and writes it ONCE
+  // (write-once-read-both); the heavy runner reads the SAME synthesized files.
+  private val tileArrayInput: Set[String] = Set("rst_frombands", "rst_combineavg", "rst_merge")
   def inputKind(fn: String): String =
     if (byteInput.contains(fn)) "bytes"
     else if (pathInput.contains(fn)) "path"
+    else if (tileArrayInput.contains(fn)) "tile_array"
     else "tile"
+
+  // bench.synth recipe name for a tile_array fn (mirrors spec.synth_recipe).
+  def synthRecipe(fn: String): String = fn match {
+    case "rst_frombands"  => "frombands"
+    case "rst_combineavg" => "combineavg"
+    case "rst_merge"      => "merge"
+    case other            => throw new IllegalArgumentException(s"no synth recipe for: $other")
+  }
 
   def all: Seq[String] = cats.keys.toSeq.sorted
   def category(fn: String): String = cats(fn)
@@ -389,6 +407,34 @@ object BenchDispatch {
     }
   }
 
+  /** Pure-core dispatch for `input_kind == "tile_array"` multi-tile fns: a LIST of
+    * open Datasets (the synthesized multi-tile input the bench wrote once and BOTH
+    * engines read) is handed in. Each fn reduces the array to one raster tile, so
+    * the output is fingerprinted as a dataset (full comparison). Mirrors the pyrx
+    * tile_array adapter (core_fn(ds_list, args)). */
+  def pureCoreTileArray(fn: String, dss: Array[Dataset], a: Map[String, String]): String = {
+    Files.createDirectories(NodeFilePathUtil.rootPath)
+    // Wrap each input ds as a (cellID, ds, metadata) tile; cellID 0, empty meta.
+    val tiles: Seq[(Long, Dataset, Map[String, String])] =
+      dss.toSeq.map(d => (0L, d, Map.empty[String, String]))
+    fn match {
+      // frombands: stack the N single-band tiles (array/band order preserved) into
+      // one N-band tile. Fingerprint the stacked dataset.
+      case "rst_frombands" =>
+        val (out, _) = RST_FromBands.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      // combineavg: NoData-aware per-pixel mean across the aligned copies.
+      case "rst_combineavg" =>
+        val (_, out, _) = RST_CombineAvg.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      // merge: mosaic the offset-origin copies into their union extent.
+      case "rst_merge" =>
+        val (out, _) = RST_Merge.execute(dss, Map.empty[String, String])
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case other => throw new IllegalArgumentException(s"unknown bench tile_array fn: $other")
+    }
+  }
+
   private def fpDerived(res: (Dataset, Map[String, String])): String = {
     val out = res._1
     try BenchFingerprint.ofDataset(out)
@@ -566,6 +612,12 @@ object BenchDispatch {
         rst_buildoverviews(tile, argIntArray(a, "levels", Array(2, 4)), argS(a, "resampling", "average"))
       case "rst_subdatasets"   => rst_subdatasets(tile)
       case "rst_getsubdataset" => rst_getsubdataset(tile, argS(a, "name", "0"))
+      // bucket C, group C3: multi-tile fns. The `tile` Column passed here IS the
+      // ARRAY<tile> column the runner built from the synthesized tiles (the same
+      // files the pure-core path reads). Each binding takes a single array column.
+      case "rst_frombands"  => rst_frombands(tile)
+      case "rst_combineavg" => rst_combineavg(tile)
+      case "rst_merge"      => rst_merge(tile)
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

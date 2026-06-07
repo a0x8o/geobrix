@@ -23,6 +23,7 @@ from pyspark.sql import functions as F
 
 from databricks.labs.gbx.pyrx import functions as prx
 from databricks.labs.gbx.pyrx.core import accessors
+from databricks.labs.gbx.pyrx.core import agg as agg_core
 from databricks.labs.gbx.pyrx.core import analysis as analysis_core
 from databricks.labs.gbx.pyrx.core import (
     coords,
@@ -234,6 +235,9 @@ _OPS_LIGHT = (_PYRX + "ops.py",)
 _ANALYSIS_LIGHT = (_PYRX + "analysis.py",)
 _RESAMPLE_LIGHT = (_PYRX + "resample.py",)
 _DERIVEDBAND_LIGHT = (_PYRX + "derivedband.py",)
+# multi-tile reducers (bucket C, group C3) live in core/agg.py; it does NOT
+# import _nodata (grep-confirmed).
+_AGG_LIGHT = (_PYRX + "agg.py",)
 
 REGISTRY: Dict[str, FnSpec] = {
     "rst_width": FnSpec(
@@ -1358,7 +1362,92 @@ REGISTRY: Dict[str, FnSpec] = {
         core=False,
         fingerprint=False,
     ),
+    # --- bucket C, group C3: multi-tile-input functions (3) -------------------
+    # rst_frombands / rst_combineavg / rst_merge each consume an ARRAY of tiles.
+    # The corpus row gives ONE tile, so the runner SYNTHESIZES the multi-tile
+    # input from it (bench.synth) and writes it to disk ONCE -> both engines read
+    # byte-identical files (input_kind == "tile_array"). The pyrx runner opens the
+    # synthesized files into a ds list and hands it to core_fn; the col_fn receives
+    # the ARRAY<tile> column the runner built from the same synthesized tiles.
+    #
+    # All produce a raster tile -> raster fingerprint, full comparison, both modes:
+    #   frombands  -> stack N single-band tiles into one N-band tile (band order =
+    #                 array order); deterministic stack, byte-comparable grid.
+    #   combineavg -> NoData-aware per-pixel mean of 2 ALIGNED copies; on aligned
+    #                 inputs the mean is deterministic and the grid is comparable.
+    #   merge      -> mosaic 2 OFFSET-origin copies into their union extent; the
+    #                 union grid + placement is deterministic across engines.
+    "rst_frombands": FnSpec(
+        "rst_frombands",
+        "gbx_rst_frombands",
+        "format",
+        _BOTH,
+        {},
+        # core_fn is fed a LIST of open datasets (the synthesized single-band
+        # tiles, in band order). Pair each with its 0-based position as the band
+        # index so the reducer's ascending sort preserves the array/band order.
+        core_fn=lambda dss, a: agg_core.frombands_tiles(
+            [(i, _ds_to_gtiff_bytes(ds)) for i, ds in enumerate(dss)]
+        ),
+        col_fn=lambda arr, a: prx.rst_frombands(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "constructor/RST_FromBands.scala",
+            _OPS + "MergeBands.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combineavg": FnSpec(
+        "rst_combineavg",
+        "gbx_rst_combineavg",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combineavg_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combineavg(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineAvg.scala",
+            _OPS + "CombineAVG.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_merge": FnSpec(
+        "rst_merge",
+        "gbx_rst_merge",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.merge_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_merge(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_Merge.scala",
+            _OPS + "MergeRasters.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
 }
+
+# Maps each tile_array FnSpec to its bench.synth recipe name. The runner uses this
+# to synthesize the multi-tile input deterministically (write-once-read-both).
+_SYNTH_RECIPE: Dict[str, str] = {
+    "rst_frombands": "frombands",
+    "rst_combineavg": "combineavg",
+    "rst_merge": "merge",
+}
+
+
+def synth_recipe(fn: str) -> str:
+    """The bench.synth recipe name for a `tile_array` function (KeyError if none)."""
+    return _SYNTH_RECIPE[fn]
 
 
 def _getsubdataset_timing(ds, name):

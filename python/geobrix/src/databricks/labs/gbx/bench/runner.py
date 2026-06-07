@@ -5,14 +5,30 @@ from __future__ import annotations
 import platform
 import statistics
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Callable, Dict, List
 
 from databricks.labs.gbx.bench import manifest as m
+from databricks.labs.gbx.bench import spec as _spec
+from databricks.labs.gbx.bench import synth as _synth
 from databricks.labs.gbx.bench.fingerprint import fingerprint_output
 from databricks.labs.gbx.bench.results import ResultRow
 from databricks.labs.gbx.bench.spec import FnSpec
 from databricks.labs.gbx.pyrx import _serde
+
+
+def _synthesized_paths(corpus_root, tile_rel_path: str, fn: str) -> List[str]:
+    """Synthesize (write-once) the multi-tile input for a `tile_array` fn.
+
+    Both engines compute the SAME output dir via ``synth.synth_dir`` (from corpus
+    root + tile path + fn) and read the identical files. The pyrx runner writes
+    them here; the heavy runner reads the same paths. Idempotent: re-runs reuse the
+    existing files. Returns the synthesized GTiff paths in consumption order.
+    """
+    src = str(Path(corpus_root) / tile_rel_path)
+    out_dir = _synth.synth_dir(corpus_root, tile_rel_path, _spec.synth_recipe(fn))
+    return _synth.synthesize(src, _spec.synth_recipe(fn), out_dir)
 
 
 def time_iters(fn: Callable[[], None], warmup: int, measured: int) -> Dict:
@@ -128,9 +144,30 @@ def run_pure_core(
             #   "bytes": the raw raster bytes (reader/constructor fns whose input
             #            is content, not an open ds -- rst_tryopen/fromcontent).
             #   "path":  the corpus tile's file path (rst_fromfile).
+            #   "tile_array": a LIST of open datasets, synthesized from the corpus
+            #            tile (write-once-read-both) -- the multi-tile fns
+            #            (rst_frombands/combineavg/merge).
             #   "tile"  (default): an opened rasterio DatasetReader -- every
             #            pre-existing function takes this path unchanged.
             input_kind = getattr(fs, "input_kind", "tile")
+            # For tile_array, synthesize the multi-tile input ONCE (idempotent) and
+            # reuse the same files for the fingerprint pass and every timed call, so
+            # the heavy runner reads byte-identical inputs from the same paths.
+            synth_paths = (
+                _synthesized_paths(root, te.path, fs.name)
+                if input_kind == "tile_array"
+                else None
+            )
+
+            def _open_ds_list(_paths):
+                """Open synthesized paths into a list of datasets under one ExitStack."""
+                stack = ExitStack()
+                dss = [
+                    stack.enter_context(_serde.open_tile(Path(p).read_bytes()))
+                    for p in _paths
+                ]
+                return stack, dss
+
             try:
                 # Untimed: capture the actual output once for consistency fingerprinting.
                 # Timing-only fns (fingerprint=False) still execute for real timing but
@@ -140,6 +177,12 @@ def run_pure_core(
                         _out = fs.core_fn(raster, fs.args)
                     elif input_kind == "path":
                         _out = fs.core_fn(tile_path, fs.args)
+                    elif input_kind == "tile_array":
+                        _stack, _dss = _open_ds_list(synth_paths)
+                        try:
+                            _out = fs.core_fn(_dss, fs.args)
+                        finally:
+                            _stack.close()
                     else:
                         with _serde.open_tile(raster) as ds:
                             _out = fs.core_fn(ds, fs.args)
@@ -156,6 +199,15 @@ def run_pure_core(
 
                     def call(_p=tile_path, _fs=fs):
                         _fs.core_fn(_p, _fs.args)
+
+                elif input_kind == "tile_array":
+
+                    def call(_paths=synth_paths, _fs=fs):
+                        _stack, _dss = _open_ds_list(_paths)
+                        try:
+                            _fs.core_fn(_dss, _fs.args)
+                        finally:
+                            _stack.close()
 
                 else:
 
@@ -257,6 +309,39 @@ def run_spark_path(
     df_all = base.select(F.struct("cellid", "raster", "metadata").alias("tile")).cache()
     df_all.count()  # materialize the cache so it isn't part of timing
 
+    # tile_array adapter (spark-path): the multi-tile fns (rst_frombands/
+    # combineavg/merge) consume an ARRAY<tile> column, not a single tile. Build a
+    # CONSTANT array literal from the SAME synthesized files the pure-core path
+    # writes (write-once-read-both), broadcast across every row. This times the
+    # array serialization + UDF overhead, which is the point of the spark-path
+    # measurement. The first row_pool tile is the representative source.
+    _array_root = pool.tiles[0].path if pool.tiles else None
+
+    def _synth_array_col(fn: str):
+        """ARRAY<tile> literal column of the synthesized tiles for a tile_array fn."""
+        paths = _synthesized_paths(root, _array_root, fn)
+        elems = []
+        for p in paths:
+            d = _serde.build_tile(Path(p).read_bytes(), "GTiff", 0)
+            elems.append(
+                F.struct(
+                    F.lit(d["cellid"]).cast("long").alias("cellid"),
+                    F.lit(d["raster"]).alias("raster"),
+                    F.create_map(
+                        *[
+                            x
+                            for k, v in d["metadata"].items()
+                            for x in (F.lit(k), F.lit(v))
+                        ]
+                    ).alias("metadata"),
+                )
+            )
+        return F.array(*elems)
+
+    def _input_col(fn: str, kind: str):
+        """The column fed to col_fn: an array literal for tile_array, else the tile."""
+        return _synth_array_col(fn) if kind == "tile_array" else df_all["tile"]
+
     # Spark warm-up: one throwaway job so JVM/Spark spin-up isn't charged to the first
     # timed cell. Band-aware (mirrors the Scala HeavyRunner warm-up) + guarded so a
     # warm-up failure can never abort timing.
@@ -268,7 +353,10 @@ def run_spark_path(
         _warm = _spark_fns[0]
     if _warm is not None:
         try:
-            _wc = _warm.col_fn(df_all["tile"], _warm.args)
+            _wc = _warm.col_fn(
+                _input_col(_warm.name, getattr(_warm, "input_kind", "tile")),
+                _warm.args,
+            )
             df_all.limit(1).select(_wc.alias("warmup")).write.format("noop").mode(
                 "overwrite"
             ).save()
@@ -279,12 +367,13 @@ def run_spark_path(
     for fs in fnspecs:
         if "spark-path" not in fs.modes:
             continue
+        _kind = getattr(fs, "input_kind", "tile")
         for n in sorted(row_counts):
             df = df_all.limit(n)
             try:
 
-                def job(_df=df, _fs=fs):
-                    c = _fs.col_fn(_df["tile"], _fs.args)
+                def job(_df=df, _fs=fs, _k=_kind):
+                    c = _fs.col_fn(_input_col(_fs.name, _k), _fs.args)
                     _df.select(c.alias("out")).write.format("noop").mode(
                         "overwrite"
                     ).save()

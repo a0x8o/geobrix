@@ -446,10 +446,11 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_seventy_six():
+def test_full_set_count_is_seventy_nine():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
-    assert len(s.select(set="full")) == 76
+    # + 3 bucket-C group C3 (multi-tile: frombands/combineavg/merge)
+    assert len(s.select(set="full")) == 79
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -517,6 +518,60 @@ def test_c2_timing_only():
 def test_bucket_c_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not ((_C1 | _C2) & core)
+
+
+# --- bucket C, group C3: multi-tile-input functions (3) ----------------------
+# rst_frombands / rst_combineavg / rst_merge each consume an ARRAY of tiles. The
+# corpus row gives ONE tile, so the runner SYNTHESIZES the multi-tile input from
+# it (bench.synth) and writes it to disk ONCE, so both engines read byte-identical
+# files. These introduce input_kind == "tile_array": the runner synthesizes, opens
+# each into a ds list, and feeds core_fn(ds_list, args); the col_fn builds a Spark
+# ARRAY<tile> column from the same synthesized tiles. All produce a raster tile, so
+# the output is compared via the raster fingerprint, and all run both modes.
+_C3 = {"rst_frombands", "rst_combineavg", "rst_merge"}
+
+_C3_SYNTH = {
+    "rst_frombands": "frombands",
+    "rst_combineavg": "combineavg",
+    "rst_merge": "merge",
+}
+
+
+def test_c3_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _C3 - full
+    assert not missing, f"registry missing C3 fns: {sorted(missing)}"
+
+
+def test_c3_wellformed_tile_array_and_fingerprint():
+    for name in _C3:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert fs.input_kind == "tile_array", name
+        assert fs.fingerprint is True, name
+        assert fs.sources, name
+
+
+def test_c3_both_modes():
+    for name in _C3:
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_c3_synth_recipe_maps_to_known_recipe():
+    from databricks.labs.gbx.bench import synth
+
+    for name, recipe in _C3_SYNTH.items():
+        assert s.synth_recipe(name) == recipe, name
+        # the recipe is one the synthesizer actually implements
+        assert recipe in synth._RECIPES
+
+
+def test_c3_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_C3 & core)
 
 
 def test_every_fnspec_declares_existing_sources():
