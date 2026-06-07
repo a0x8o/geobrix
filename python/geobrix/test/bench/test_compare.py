@@ -199,22 +199,16 @@ def test_abs_tol_does_not_mask_real_min_divergence():
 
 def test_write_csv(tmp_path):
     cells = [
-        c.CellCompare(
+        _cmp(
             "rst_slope",
             "pure-core",
-            256,
-            2,
-            "float32",
-            4326,
-            0.0,
-            1,
             20.0,
             4.0,
             5.0,
             "within_tol",
-            0.0004,
-            1020,
             "nodata_count differs",
+            max_rel_delta=0.0004,
+            nodata_count_delta=1020,
         )
     ]
     p = tmp_path / "comparison.csv"
@@ -227,39 +221,26 @@ def test_write_csv(tmp_path):
 
 def test_summarize_compare_has_insights(tmp_path):
     cells = [
-        c.CellCompare(
+        _cmp(
             "rst_slope",
             "pure-core",
-            256,
-            2,
-            "float32",
-            4326,
-            0.0,
-            1,
             20.0,
             4.0,
             5.0,
             "within_tol",
-            0.0004,
-            1020,
             "nodata_count differs",
+            max_rel_delta=0.0004,
+            nodata_count_delta=1020,
         ),
-        c.CellCompare(
+        _cmp(
             "rst_ndvi",
             "pure-core",
-            256,
-            2,
-            "float32",
-            4326,
-            0.0,
-            1,
             660.0,
             5.0,
             132.0,
             "divergent",
-            0.9,
-            0,
             "",
+            max_rel_delta=0.9,
         ),
     ]
     unmatched = [("rst_viewshed", "lightweight", ("rst_viewshed",))]
@@ -325,3 +306,137 @@ def test_divergent_without_nodata_delta_has_no_border_note():
     assert cls == "divergent"
     assert ndc == 0
     assert note == ""  # pure value divergence, no nodata delta -> no border note
+
+
+def _cmp(fn, mode, hw_ms, lw_ms, speedup, consistency, note, **kw):
+    """Build a CellCompare with sensible defaults for the throughput fields."""
+    base = dict(
+        fn=fn,
+        mode=mode,
+        tile_px=256,
+        bands=2,
+        dtype="float32",
+        srid=4326,
+        nodata_frac=0.0,
+        rows=1,
+        hw_median_ms=hw_ms,
+        lw_median_ms=lw_ms,
+        speedup=speedup,
+        consistency=consistency,
+        max_rel_delta=0.0,
+        nodata_count_delta=0,
+        note=note,
+        hw_mpix_s=0.0,
+        lw_mpix_s=0.0,
+        hw_rows_s=0.0,
+        lw_rows_s=0.0,
+    )
+    base.update(kw)
+    return c.CellCompare(**base)
+
+
+def test_cellcompare_has_throughput_fields_and_csv_includes_them():
+    cell = _cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")
+    assert cell.hw_mpix_s == 0.0
+    assert cell.lw_mpix_s == 0.0
+    assert cell.hw_rows_s == 0.0
+    assert cell.lw_rows_s == 0.0
+    for f in ("hw_mpix_s", "lw_mpix_s", "hw_rows_s", "lw_rows_s"):
+        assert f in c._CSV_FIELDS
+
+
+def test_compare_cells_populates_throughput():
+    hw = [
+        _rr(
+            "heavyweight",
+            "rst_slope",
+            "pure-core",
+            20.0,
+            '{"kind":"scalar","value":5}',
+            throughput_mpix_s=3.3,
+            throughput_rows_s=7.0,
+        )
+    ]
+    lw = [
+        _rr(
+            "lightweight",
+            "rst_slope",
+            "pure-core",
+            4.0,
+            '{"kind":"scalar","value":5}',
+            throughput_mpix_s=16.4,
+            throughput_rows_s=35.0,
+        )
+    ]
+    cells, _ = c.compare_cells(hw, lw)
+    assert cells[0].hw_mpix_s == 3.3
+    assert cells[0].lw_mpix_s == 16.4
+    assert cells[0].hw_rows_s == 7.0
+    assert cells[0].lw_rows_s == 35.0
+
+
+def test_summarize_compare_pure_core_header_has_throughput_columns():
+    cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_ms" in ln][0]
+    assert "hw_mpix/s" in header
+    assert "lw_mpix/s" in header
+
+
+def test_summarize_compare_renders_throughput_values():
+    cells = [
+        _cmp(
+            "rst_slope",
+            "pure-core",
+            20.0,
+            4.0,
+            5.0,
+            "exact",
+            "",
+            hw_mpix_s=3.3,
+            lw_mpix_s=16.4,
+        )
+    ]
+    md = c.summarize_compare(cells, [], [], [])
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_slope ")][0]
+    assert "3.3" in row
+    assert "16.4" in row
+
+
+def test_summarize_compare_has_tolerance_legend():
+    cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    assert f"rel ≤ {c.REL_TOL:g}" in md
+    assert f"abs ≤ {c.ABS_TOL:g}" in md
+    assert "within_tol" in md
+
+
+def test_summarize_compare_exact_label_is_bare():
+    cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_slope ")][0]
+    # the consistency cell is the bare label, no parenthetical / explanation
+    assert "| exact |" in row
+    assert "exact (" not in row
+
+
+def test_results_main_writes_summary(tmp_path):
+    from databricks.labs.gbx.bench import results as RR
+
+    shard = tmp_path / "heavyweight.jsonl"
+    RR.write_jsonl(
+        [
+            _rr(
+                "heavyweight",
+                "rst_slope",
+                "pure-core",
+                20.0,
+                '{"kind":"scalar","value":5}',
+            )
+        ],
+        shard,
+    )
+    RR.main(["--in", str(shard)])
+    out = tmp_path / "heavyweight.summary.md"
+    assert out.exists()
+    assert "GeoBrix benchmark summary" in out.read_text()

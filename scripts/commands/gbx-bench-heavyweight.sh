@@ -65,5 +65,11 @@ MVN="mvn test -PskipScoverage -DskipTests=false \
 docker exec geobrix-dev /bin/bash -c "$DOCKER_MAVEN_ENV && cd /root/geobrix && $MVN"
 EXIT_CODE=$?
 HOST_OUT="${OUT/\/root\/geobrix\//$PROJECT_ROOT/}"
-[[ $EXIT_CODE -eq 0 ]] && echo "✅ heavyweight results: $HOST_OUT"
+if [[ $EXIT_CODE -eq 0 ]]; then
+    echo "✅ heavyweight results: $HOST_OUT"
+    # Symmetric with lightweight: emit heavyweight.summary.md via the venv python.
+    run_in_pyrx_venv "python -m databricks.labs.gbx.bench.results --in '$HOST_OUT'"
+    SUMMARY="${HOST_OUT%.jsonl}.summary.md"
+    [[ -f "$SUMMARY" ]] && echo "   summary: $SUMMARY"
+fi
 exit $EXIT_CODE

@@ -163,6 +163,10 @@ class CellCompare:
     max_rel_delta: float
     nodata_count_delta: int
     note: str
+    hw_mpix_s: float
+    lw_mpix_s: float
+    hw_rows_s: float
+    lw_rows_s: float
 
 
 def _key(r: ResultRow):
@@ -205,6 +209,10 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 max_rel_delta=delta,
                 nodata_count_delta=ndc,
                 note=note,
+                hw_mpix_s=h.throughput_mpix_s,
+                lw_mpix_s=lo.throughput_mpix_s,
+                hw_rows_s=h.throughput_rows_s,
+                lw_rows_s=lo.throughput_rows_s,
             )
         )
     unmatched = [
@@ -232,6 +240,10 @@ _CSV_FIELDS = [
     "max_rel_delta",
     "nodata_count_delta",
     "note",
+    "hw_mpix_s",
+    "lw_mpix_s",
+    "hw_rows_s",
+    "lw_rows_s",
 ]
 
 
@@ -288,22 +300,47 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
         )
     lines += [f"- {b}" for b in insights] if insights else ["- (no cells compared)"]
     lines += [""]
+    lines += [
+        f"_Consistency (all functions): **exact** = every stat bitwise-equal; "
+        f"**within_tol** = every stat agrees to rel ≤ {REL_TOL:g} OR abs ≤ {ABS_TOL:g}; "
+        f"**divergent** = neither. Per-cell max_rel_delta in comparison.csv._",
+        "",
+    ]
 
     for mode in ("pure-core", "spark-path"):
         mc = [cl for cl in cells if cl.mode == mode]
         if not mc:
             continue
-        lines += [
-            f"## {mode} (hw vs lw)",
-            "",
-            "| fn | tile_px | bands | rows | hw_ms | lw_ms | speedup | consistency | note |",
-            "|---|---|---|---|---|---|---|---|---|",
-        ]
-        for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
-            lines.append(
-                f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | {cl.hw_median_ms:.3f} | "
-                f"{cl.lw_median_ms:.3f} | {cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
-            )
+        if mode == "pure-core":
+            lines += [
+                f"## {mode} (hw vs lw)",
+                "",
+                "| fn | tile_px | bands | rows | hw_ms | lw_ms | hw_mpix/s | "
+                "lw_mpix/s | speedup | consistency | note |",
+                "|---|---|---|---|---|---|---|---|---|---|---|",
+            ]
+            for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
+                lines.append(
+                    f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
+                    f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
+                    f"{cl.hw_mpix_s:.1f} | {cl.lw_mpix_s:.1f} | "
+                    f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
+                )
+        else:
+            lines += [
+                f"## {mode} (hw vs lw)",
+                "",
+                "| fn | tile_px | bands | rows | hw_ms | lw_ms | hw_rows/s | "
+                "lw_rows/s | speedup | consistency | note |",
+                "|---|---|---|---|---|---|---|---|---|---|---|",
+            ]
+            for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
+                lines.append(
+                    f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
+                    f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
+                    f"{cl.hw_rows_s:.1f} | {cl.lw_rows_s:.1f} | "
+                    f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
+                )
         lines += [""]
     return "\n".join(lines)
 

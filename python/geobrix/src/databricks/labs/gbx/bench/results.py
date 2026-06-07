@@ -202,3 +202,30 @@ def summarize(rows: List[ResultRow]) -> str:
             lines.append(f"| {r.fn} | {r.tile_px} | {r.bands} | {r.note} |")
         lines.append("")
     return "\n".join(lines)
+
+
+def main(argv=None):
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="bench.results")
+    ap.add_argument(
+        "--in", dest="inp", required=True, help="input <engine>.jsonl shard"
+    )
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="output .md (default: <shard-without-.jsonl>.summary.md)",
+    )
+    a = ap.parse_args(argv)
+    rows = read_jsonl(a.inp)
+    out = a.out or (
+        a.inp[:-6] + ".summary.md"
+        if a.inp.endswith(".jsonl")
+        else a.inp + ".summary.md"
+    )
+    Path(out).write_text(summarize(rows))
+    print(f"summary -> {out}")
+
+
+if __name__ == "__main__":
+    main()
