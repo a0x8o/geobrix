@@ -15,9 +15,11 @@ so tests never touch the real ``test-logs/``.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -121,3 +123,120 @@ def unmapped_changed(changed_paths, specs) -> list[str]:
     for s in specs:
         covered |= set(s.sources)
     return sorted(p for p in set(changed_paths) if p not in covered)
+
+
+# --- change resolution (git) + store-write-from-run --------------------------
+
+
+def _run_git(args, root=None) -> str:
+    """Run ``git <args>`` in ``root`` and return stdout. Monkeypatchable seam.
+
+    Tests patch this to inject a known file list without touching a real repo.
+    """
+    root = root or repo_root()
+    out = subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout
+
+
+def _changed_paths(base=None, root=None) -> list[str]:
+    """Repo-relative changed paths (git already returns repo-relative).
+
+    With ``base`` set: ``git diff --name-only <base>`` (everything since that ref,
+    including the working tree). Without it: the working-tree diff vs HEAD plus
+    untracked-but-not-ignored files (so a brand-new source file still maps to its
+    functions).
+    """
+    if base:
+        raw = _run_git(["diff", "--name-only", base], root)
+        paths = set(raw.split("\n"))
+    else:
+        tracked = _run_git(["diff", "--name-only", "HEAD"], root)
+        untracked = _run_git(["ls-files", "--others", "--exclude-standard"], root)
+        paths = set(tracked.split("\n")) | set(untracked.split("\n"))
+    return sorted(p for p in (s.strip() for s in paths) if p)
+
+
+def resolve_changed(base=None, specs=None, root=None):
+    """Resolve changed paths -> (changed_paths, affected_fns, unmapped).
+
+    ``changed_paths``: repo-relative paths changed since ``base`` (or in the
+    working tree vs HEAD + untracked when ``base`` is None).
+    ``affected_fns``: registered functions whose ``sources`` intersect them.
+    ``unmapped``: changed paths in no function's ``sources`` (forgotten-source
+    candidates / non-source edits).
+    """
+    if specs is None:
+        from databricks.labs.gbx.bench import spec as _spec
+
+        specs = _spec.select(set="full")
+    changed_paths = _changed_paths(base, root)
+    return (
+        changed_paths,
+        affected_functions(changed_paths, specs),
+        unmapped_changed(changed_paths, specs),
+    )
+
+
+def _comparison_rows_for(run_dir, fn) -> list[dict]:
+    """Comparison-csv rows (as dicts) for one function; [] if the csv is absent."""
+    csv_path = Path(run_dir) / "comparison.csv"
+    if not csv_path.exists():
+        return []
+    with csv_path.open(newline="") as fh:
+        return [row for row in csv.DictReader(fh) if row.get("fn") == fn]
+
+
+def write_records_from_run(
+    run_dir,
+    fns,
+    *,
+    commit,
+    validated_at,
+    which,
+    corpus,
+    specs_by_name,
+    root=None,
+) -> dict:
+    """Write one authoritative store record per fn from a completed run's shards.
+
+    Reads ``run_dir/{heavyweight,lightweight}.jsonl`` (via ``results.read_jsonl``)
+    and ``run_dir/comparison.csv``. For each fn in ``fns`` it persists that fn's
+    heavy/light rows, its comparison cells, and the fn's declared ``sources`` (so
+    the content hash is taken over the right files). Returns ``{fn: path}``.
+    """
+    from databricks.labs.gbx.bench import results as _results
+
+    run_dir = Path(run_dir)
+    hw_path = run_dir / "heavyweight.jsonl"
+    lw_path = run_dir / "lightweight.jsonl"
+    hw_rows = _results.read_jsonl(hw_path) if hw_path.exists() else []
+    lw_rows = _results.read_jsonl(lw_path) if lw_path.exists() else []
+
+    from dataclasses import asdict
+
+    def _rows_for(rows, fn):
+        return [asdict(r) for r in rows if r.fn == fn]
+
+    written = {}
+    for fn in fns:
+        spec = specs_by_name[fn]
+        path = write_record(
+            fn,
+            sources=spec.sources,
+            cells=_comparison_rows_for(run_dir, fn),
+            heavy_rows=_rows_for(hw_rows, fn),
+            light_rows=_rows_for(lw_rows, fn),
+            commit=commit,
+            validated_at=validated_at,
+            corpus=corpus,
+            which=which,
+            root=root,
+        )
+        written[fn] = path
+    return written
