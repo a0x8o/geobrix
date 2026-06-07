@@ -179,6 +179,17 @@ class FnSpec:
     fingerprint: bool = (
         True  # emit a comparable output fingerprint; False = timing-only
     )
+    # What the runners feed the core_fn / heavy dispatch for this function:
+    #   "tile"  (default): the opened raster -- rasterio DatasetReader (pyrx) /
+    #            GDAL Dataset (heavy). Preserves every pre-existing function.
+    #   "bytes": the corpus tile's RAW BYTES -- core_fn(raster_bytes, args);
+    #            the heavy dispatch opens the bytes itself (vsimem). Used by the
+    #            reader/constructor fns whose input is content, not an open ds
+    #            (rst_tryopen, rst_fromcontent).
+    #   "path":  the corpus tile's FILE PATH -- core_fn(path, args); the heavy
+    #            dispatch opens the path itself (rst_fromfile). pure-core only,
+    #            since the spark-path tile DataFrame carries no path column.
+    input_kind: str = "tile"
     # Repo-relative file paths whose CONTENT defines this function's heavy+light
     # behavior (the pyrx core module(s) the core_fn calls, plus the heavy Scala
     # RST_<Name> expression and any shared heavy helper it delegates to). This
@@ -199,6 +210,9 @@ _HEAVY = "src/main/scala/com/databricks/labs/gbx/rasterx/expressions/"
 _OPS = "src/main/scala/com/databricks/labs/gbx/rasterx/operations/"
 _GDAL = "src/main/scala/com/databricks/labs/gbx/rasterx/gdal/"
 _NODATA = _PYRX + "_nodata.py"
+# tile (de)serialization — the reader/constructor fns (fromcontent/fromfile)
+# have no dedicated core module; their behavior is the _serde tile round-trip.
+_PYRX_SERDE = "python/geobrix/src/databricks/labs/gbx/pyrx/_serde.py"
 _DEM_HELPER = _HEAVY + "dem/RST_DEMProcessingHelper.scala"
 _PIXEL_COMBINE = _OPS + "PixelCombineRasters.scala"
 _GDAL_BLOCK = _GDAL + "GDALBlock.scala"
@@ -1233,7 +1247,132 @@ REGISTRY: Dict[str, FnSpec] = {
         core=False,
         fingerprint=False,
     ),
+    # --- bucket C, group C1: readers + buildoverviews -------------------------
+    # The reader/constructor fns take CONTENT or a PATH, not an open dataset, so
+    # they use the `input_kind` adapter: the runner hands core_fn the raw bytes
+    # ("bytes") or the corpus file path ("path") instead of an opened ds.
+    #
+    # rst_tryopen (bytes): "do the bytes open?" -> bool, coerced to 1.0/0.0 to
+    # match the heavy scalar fingerprint (same convention as rst_isempty). Both
+    # engines just open + release, so the scalar (1.0 on a valid corpus tile)
+    # compares exactly.
+    "rst_tryopen": FnSpec(
+        "rst_tryopen",
+        "gbx_rst_tryopen",
+        "accessor",
+        _BOTH,
+        {},
+        core_fn=lambda b, a: 1.0 if ops.try_open(b) else 0.0,
+        col_fn=lambda t, a: prx.rst_tryopen(t),
+        sources=_OPS_LIGHT + (_HEAVY + "RST_TryOpen.scala",),
+        core=False,
+        input_kind="bytes",
+    ),
+    # rst_fromcontent (bytes): build a tile from raster bytes + driver. The
+    # comparable output is the decoded raster grid, so core_fn returns the bytes
+    # themselves (already GTiff in the corpus) -> raster fingerprint. The heavy
+    # side opens the same bytes (vsimem) and fingerprints the dataset, so the two
+    # grids match. The spark-path column reads the tile's raster (binary content)
+    # column, mirroring gbx_rst_fromcontent(content, "GTiff").
+    "rst_fromcontent": FnSpec(
+        "rst_fromcontent",
+        "gbx_rst_fromcontent",
+        "format",
+        _BOTH,
+        {"driver": "GTiff"},
+        core_fn=lambda b, a: bytes(b),
+        col_fn=lambda t, a: prx.rst_fromcontent(t["raster"], a["driver"]),
+        sources=(_PYRX_SERDE, _HEAVY + "constructor/RST_FromContent.scala"),
+        core=False,
+        input_kind="bytes",
+    ),
+    # rst_fromfile (path): read the raster at a filesystem path into bytes. core
+    # opens the path and returns its bytes -> raster fingerprint; the heavy side
+    # opens the same path. pure-core only: the spark-path tile DataFrame carries
+    # no file-path column (tiles are materialized from bytes), so there is no
+    # path column to feed gbx_rst_fromfile in the column form.
+    "rst_fromfile": FnSpec(
+        "rst_fromfile",
+        "gbx_rst_fromfile",
+        "format",
+        ("pure-core",),
+        {"driver": "GTiff"},
+        core_fn=lambda p, a: Path(p).read_bytes(),
+        # pure-core only: the spark-path runner filters this out by modes, so the
+        # column form is unused at runtime and kept only for a callable col_fn.
+        col_fn=lambda t, a: prx.rst_fromfile(F.lit("__unused__"), a["driver"]),
+        sources=(_PYRX_SERDE, _HEAVY + "constructor/RST_FromFile.scala"),
+        core=False,
+        input_kind="path",
+    ),
+    # rst_buildoverviews (tile): internal pyramid overviews leave the base band
+    # unchanged, so the raster fingerprint (computed over the full-resolution
+    # band) is identical pre/post -> a full comparison. Args are CRS-independent.
+    "rst_buildoverviews": FnSpec(
+        "rst_buildoverviews",
+        "gbx_rst_buildoverviews",
+        "format",
+        _BOTH,
+        {"levels": [2, 4], "resampling": "average"},
+        core_fn=lambda ds, a: ops.build_overviews(ds, a["levels"], a["resampling"]),
+        col_fn=lambda t, a: prx.rst_buildoverviews(
+            t, F.array(*[F.lit(int(x)) for x in a["levels"]]), a["resampling"]
+        ),
+        sources=_OPS_LIGHT + (_HEAVY + "pixel/RST_BuildOverviews.scala",),
+        core=False,
+        input_kind="tile",
+    ),
+    # --- bucket C, group C2: subdataset fns (timing-only) ---------------------
+    # A plain GTiff corpus tile has no subdatasets, so neither fn produces a
+    # comparable output: rst_subdatasets returns an empty map; rst_getsubdataset
+    # finds no match. Both are TIMED (real work: metadata scan / open attempt)
+    # but fingerprint-suppressed (fingerprint=False -> empty on both engines).
+    "rst_subdatasets": FnSpec(
+        "rst_subdatasets",
+        "gbx_rst_subdatasets",
+        "accessor",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: accessors.subdatasets(ds),
+        col_fn=lambda t, a: prx.rst_subdatasets(t),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_Subdatasets.scala",),
+        core=False,
+        fingerprint=False,
+    ),
+    # rst_getsubdataset: on a plain GTiff there is no subdataset, so the pyrx
+    # core RAISES ValueError ("no subdataset named '0'"). That would surface as a
+    # status=error row from the runner's per-fn try/catch. To time it WITHOUT a
+    # noisy error, the bench core_fn swallows the expected "no subdataset" raise
+    # and returns the empty map (timing-only, fingerprint suppressed). The heavy
+    # RST_GetSubdataset.execute likewise returns null on GTiff; the dispatch
+    # guards the null and emits an empty fingerprint.
+    "rst_getsubdataset": FnSpec(
+        "rst_getsubdataset",
+        "gbx_rst_getsubdataset",
+        "accessor",
+        ("pure-core",),
+        {"name": "0"},
+        core_fn=lambda ds, a: _getsubdataset_timing(ds, a["name"]),
+        col_fn=lambda t, a: prx.rst_getsubdataset(t, a["name"]),
+        sources=_ACCESSORS_LIGHT + (_HEAVY + "accessors/RST_GetSubdataset.scala",),
+        core=False,
+        fingerprint=False,
+    ),
 }
+
+
+def _getsubdataset_timing(ds, name):
+    """Time rst_getsubdataset without a noisy error row on a no-subdataset tile.
+
+    On a plain GTiff corpus tile there is no subdataset, so accessors.getsubdataset
+    raises ValueError. This is timing-only (fingerprint suppressed), and we prefer
+    a clean ``ok`` row over an ``error`` row, so the expected "no subdataset" raise
+    is swallowed and an empty map returned; any other failure still propagates.
+    """
+    try:
+        return accessors.getsubdataset(ds, name)
+    except ValueError:
+        return {}
 
 
 def select(

@@ -446,9 +446,77 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_seventy():
+def test_full_set_count_is_seventy_six():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
-    assert len(s.select(set="full")) == 70
+    # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
+    assert len(s.select(set="full")) == 76
+
+
+# --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
+# C1 (compared): rst_tryopen (bytes->scalar), rst_fromcontent (bytes->raster),
+# rst_fromfile (path->raster), rst_buildoverviews (tile->raster). C2 (timing-
+# only): rst_subdatasets, rst_getsubdataset — a plain GTiff corpus tile has no
+# subdatasets (empty map / no match), so they are timed but never compared.
+#
+# These introduce the `input_kind` adapter on FnSpec: the bytes/path readers do
+# NOT receive an opened dataset — the runner hands core_fn the raw raster bytes
+# ("bytes") or the corpus file path ("path") instead of an open ds ("tile",
+# the default that preserves every pre-existing function).
+_C1 = {"rst_tryopen", "rst_fromcontent", "rst_fromfile", "rst_buildoverviews"}
+_C2 = {"rst_subdatasets", "rst_getsubdataset"}
+
+_C1_INPUT_KIND = {
+    "rst_tryopen": "bytes",
+    "rst_fromcontent": "bytes",
+    "rst_fromfile": "path",
+    "rst_buildoverviews": "tile",
+}
+
+
+def test_fnspec_input_kind_defaults_tile():
+    fs = s.FnSpec("x", "gbx_x", "accessor", ("pure-core",))
+    assert fs.input_kind == "tile"
+
+
+def test_bucket_c_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = (_C1 | _C2) - full
+    assert not missing, f"registry missing bucket-C fns: {sorted(missing)}"
+
+
+def test_c1_wellformed_input_kind_and_fingerprint():
+    for name in _C1:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert fs.input_kind == _C1_INPUT_KIND[name], name
+        assert fs.fingerprint is True, name
+        assert "pure-core" in fs.modes, name
+
+
+def test_c1_compared_modes():
+    # tryopen, fromcontent, buildoverviews run both modes; fromfile is pure-core
+    # only because the spark-path tile DataFrame carries no file-path column.
+    for name in ("rst_tryopen", "rst_fromcontent", "rst_buildoverviews"):
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+    assert s.REGISTRY["rst_fromfile"].modes == ("pure-core",)
+
+
+def test_c2_timing_only():
+    for name in _C2:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert fs.fingerprint is False, name
+        assert fs.modes == ("pure-core",), name
+        assert fs.input_kind == "tile", name
+
+
+def test_bucket_c_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not ((_C1 | _C2) & core)
 
 
 def test_every_fnspec_declares_existing_sources():

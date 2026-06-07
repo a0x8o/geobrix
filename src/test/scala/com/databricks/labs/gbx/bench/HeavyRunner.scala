@@ -4,7 +4,7 @@ import com.databricks.labs.gbx.rasterx.functions
 import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.gdal.gdal.{Dataset, gdal}
-import java.nio.file.Paths
+import java.nio.file.{Files, Paths}
 
 object HeavyRunner {
 
@@ -65,11 +65,26 @@ object HeavyRunner {
           s"requires >= ${BenchDispatch.minBands(fn)} bands", ""))
       } else {
         val path = resolve(corpusRoot, te.path)
+        // input_kind adapter (mirrors the pyrx runner): "bytes"/"path" reader
+        // fns are NOT handed an open Dataset -- the dispatch opens the bytes/path
+        // itself. "tile" (default) opens the dataset here, as before.
+        val kind = BenchDispatch.inputKind(fn)
         var ds: Dataset = null
         try {
-          ds = gdal.Open(path)
-          val fp = BenchDispatch.pureCore(fn, ds, a)  // untimed fingerprint capture
-          val (median, mn, p90) = timeIters(() => BenchDispatch.pureCore(fn, ds, a), warmup, measured)
+          val (fp, body): (String, () => Unit) = kind match {
+            case "bytes" =>
+              val bytes = Files.readAllBytes(Paths.get(path))
+              (BenchDispatch.pureCoreBytes(fn, bytes, a),
+                () => BenchDispatch.pureCoreBytes(fn, bytes, a))
+            case "path" =>
+              (BenchDispatch.pureCorePath(fn, path, a),
+                () => BenchDispatch.pureCorePath(fn, path, a))
+            case _ =>
+              ds = gdal.Open(path)
+              (BenchDispatch.pureCore(fn, ds, a),
+                () => BenchDispatch.pureCore(fn, ds, a))
+          }
+          val (median, mn, p90) = timeIters(body, warmup, measured)
           val mpixS = if (median > 0) mpix(te.tile_px, te.bands, 1) / (median / 1000.0) else 0.0
           emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
             te.nodata_frac, warmup, measured, median, mn, p90, mpixS,

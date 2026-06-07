@@ -18,6 +18,7 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_InitNoData
 import com.databricks.labs.gbx.rasterx.expressions.RST_MapAlgebra
 import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_BuildOverviews
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_CogConvert
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Proximity
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Viewshed
@@ -49,6 +50,10 @@ object BenchDispatch {
   private def argD(a: Map[String, String], k: String, d: Double) = a.get(k).map(_.toDouble).getOrElse(d)
   private def argI(a: Map[String, String], k: String, d: Int) = a.get(k).map(_.toInt).getOrElse(d)
   private def argB(a: Map[String, String], k: String, d: Boolean) = a.get(k).map(_.toBoolean).getOrElse(d)
+  // ARRAY<INT> arg (e.g. buildoverviews levels) ridden as a comma/space-separated
+  // string in the stringly-typed bench args map; falls back to `d` when absent.
+  private def argIntArray(a: Map[String, String], k: String, d: Array[Int]): Array[Int] =
+    a.get(k).map(_.split("[,\\s]+").filter(_.nonEmpty).map(_.trim.toInt)).getOrElse(d)
 
   private val ACC = "accessor"; private val TER = "terrain"
   private val BM = "band-math"; private val WARP = "warp"
@@ -128,8 +133,26 @@ object BenchDispatch {
     "rst_evi" -> BM, "rst_savi" -> BM, "rst_index" -> BM,
     "rst_mapalgebra" -> FMT, "rst_derivedband" -> FMT, "rst_proximity" -> ANALYSIS,
     "rst_clip" -> EDIT, "rst_color_relief" -> TER, "rst_viewshed" -> ANALYSIS,
-    "rst_sample" -> FMT
+    "rst_sample" -> FMT,
+    // bucket C, group C1 (readers + buildoverviews) + C2 (subdataset fns).
+    // tryopen / subdatasets / getsubdataset are accessor-flavored; the readers
+    // and buildoverviews emit a tile -> format.
+    "rst_tryopen" -> ACC, "rst_fromcontent" -> FMT, "rst_fromfile" -> FMT,
+    "rst_buildoverviews" -> FMT,
+    "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC
   )
+
+  // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
+  // fed for a function. "tile" (default) is an open Dataset; "bytes" is the raw
+  // raster bytes (the dispatch opens them via vsimem); "path" is the corpus file
+  // path (the dispatch opens it). Reader/constructor fns take content/path, not
+  // an open ds, so they cannot use the shared ds-in pureCore path.
+  private val byteInput: Set[String] = Set("rst_tryopen", "rst_fromcontent")
+  private val pathInput: Set[String] = Set("rst_fromfile")
+  def inputKind(fn: String): String =
+    if (byteInput.contains(fn)) "bytes"
+    else if (pathInput.contains(fn)) "path"
+    else "tile"
 
   def all: Seq[String] = cats.keys.toSeq.sorted
   def category(fn: String): String = cats(fn)
@@ -297,7 +320,72 @@ object BenchDispatch {
     // timing-only: sample at world (0,0) (no in-extent point across CRSs).
     case "rst_sample" =>
       RST_Sample.execute(ds, 0.0, 0.0); BenchFingerprint.empty
+    // bucket C, group C1: rst_buildoverviews (tile-in). Internal overviews leave
+    // the base band unchanged, so the raster fingerprint (full-resolution band)
+    // is identical pre/post -> a full comparison.
+    case "rst_buildoverviews" =>
+      fpDerived(RST_BuildOverviews.execute(ds, Map.empty,
+        argIntArray(a, "levels", Array(2, 4)), argS(a, "resampling", "average")))
+    // bucket C, group C2: subdataset fns (timing-only). A plain GTiff corpus tile
+    // has no subdatasets -> rst_subdatasets returns an empty map (timed, not
+    // compared).
+    case "rst_subdatasets" =>
+      RST_Subdatasets.execute(ds); BenchFingerprint.empty
+    // rst_getsubdataset on a plain GTiff: gdal.Open("GTiff:path:0") returns null
+    // (no such subdataset). Guard the null so the timing call does not NPE; the
+    // fingerprint is suppressed regardless. Mirrors the pyrx core swallowing its
+    // "no subdataset" raise for a clean timing-only row.
+    case "rst_getsubdataset" =>
+      val sub = RST_GetSubdataset.execute(ds, argS(a, "name", "0"))
+      if (sub != null) RasterDriver.releaseDataset(sub)
+      BenchFingerprint.empty
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
+    }
+  }
+
+  /** Pure-core dispatch for `input_kind == "bytes"` reader/constructor fns: the
+    * raw raster bytes are handed in instead of an open Dataset (the dispatch
+    * opens them via vsimem). Mirrors the pyrx bytes adapter. */
+  def pureCoreBytes(fn: String, bytes: Array[Byte], a: Map[String, String]): String = {
+    Files.createDirectories(NodeFilePathUtil.rootPath)
+    fn match {
+      // rst_tryopen: "do the bytes open?" The Spark expression has no ds-in
+      // execute (it succeeds iff the row deserializes), so replicate its work:
+      // open + release, mapping success/failure to 1.0/0.0 to match the heavy
+      // scalar fingerprint convention (same as rst_isempty).
+      case "rst_tryopen" =>
+        val ok =
+          try {
+            val d = RasterDriver.readFromBytes(bytes, Map.empty)
+            val opened = d != null
+            if (opened) RasterDriver.releaseDataset(d)
+            opened
+          } catch { case _: Throwable => false }
+        BenchFingerprint.ofScalar(if (ok) 1.0 else 0.0)
+      // rst_fromcontent: build a tile from bytes + driver. The comparable output
+      // is the decoded raster grid, so open the bytes and fingerprint the
+      // dataset (the pyrx side returns the same GTiff bytes -> raster fp).
+      case "rst_fromcontent" =>
+        val d = RasterDriver.readFromBytes(bytes, Map.empty)
+        try BenchFingerprint.ofDataset(d)
+        finally RasterDriver.releaseDataset(d)
+      case other => throw new IllegalArgumentException(s"unknown bench bytes fn: $other")
+    }
+  }
+
+  /** Pure-core dispatch for `input_kind == "path"` reader fns: the corpus tile's
+    * file path is handed in instead of an open Dataset (the dispatch opens it).
+    * Mirrors the pyrx path adapter. */
+  def pureCorePath(fn: String, path: String, a: Map[String, String]): String = {
+    Files.createDirectories(NodeFilePathUtil.rootPath)
+    fn match {
+      // rst_fromfile: read the raster at `path` into a dataset and fingerprint it
+      // (the pyrx side returns the file bytes -> the same raster fp).
+      case "rst_fromfile" =>
+        val d = RasterDriver.read(path, Map.empty)
+        try BenchFingerprint.ofDataset(d)
+        finally RasterDriver.releaseDataset(d)
+      case other => throw new IllegalArgumentException(s"unknown bench path fn: $other")
     }
   }
 
@@ -463,6 +551,21 @@ object BenchDispatch {
       case "rst_sample" =>
         import org.apache.spark.sql.functions.lit
         rst_sample(tile, lit("POINT (0 0)"))
+      // bucket C, group C1/C2. tryopen takes the tile; fromcontent reads the
+      // tile's raster (binary content) column; buildoverviews takes the tile +
+      // an ARRAY<INT> levels literal. fromfile / subdatasets / getsubdataset are
+      // pure-core-only here; their column form exists only to keep the match
+      // exhaustive (the spark-path runner filters by modes).
+      case "rst_tryopen"     => rst_tryopen(tile)
+      case "rst_fromcontent" =>
+        rst_fromcontent(tile.getField("raster"), argS(a, "driver", "GTiff"))
+      case "rst_fromfile" =>
+        import org.apache.spark.sql.functions.lit
+        rst_fromfile(lit("__unused__"), argS(a, "driver", "GTiff"))
+      case "rst_buildoverviews" =>
+        rst_buildoverviews(tile, argIntArray(a, "levels", Array(2, 4)), argS(a, "resampling", "average"))
+      case "rst_subdatasets"   => rst_subdatasets(tile)
+      case "rst_getsubdataset" => rst_getsubdataset(tile, argS(a, "name", "0"))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

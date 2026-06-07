@@ -123,20 +123,45 @@ def run_pure_core(
                 )
                 continue
             raster = (root / te.path).read_bytes()
+            tile_path = str(root / te.path)
+            # The `input_kind` adapter decides what the core_fn is fed:
+            #   "bytes": the raw raster bytes (reader/constructor fns whose input
+            #            is content, not an open ds -- rst_tryopen/fromcontent).
+            #   "path":  the corpus tile's file path (rst_fromfile).
+            #   "tile"  (default): an opened rasterio DatasetReader -- every
+            #            pre-existing function takes this path unchanged.
+            input_kind = getattr(fs, "input_kind", "tile")
             try:
                 # Untimed: capture the actual output once for consistency fingerprinting.
                 # Timing-only fns (fingerprint=False) still execute for real timing but
                 # emit an empty fingerprint -> the comparator marks the cell `na`.
                 if getattr(fs, "fingerprint", True):
-                    with _serde.open_tile(raster) as ds:
-                        _out = fs.core_fn(ds, fs.args)
+                    if input_kind == "bytes":
+                        _out = fs.core_fn(raster, fs.args)
+                    elif input_kind == "path":
+                        _out = fs.core_fn(tile_path, fs.args)
+                    else:
+                        with _serde.open_tile(raster) as ds:
+                            _out = fs.core_fn(ds, fs.args)
                     fingerprint = fingerprint_output(_out)
                 else:
                     fingerprint = ""
 
-                def call(_b=raster, _fs=fs):
-                    with _serde.open_tile(_b) as ds:
-                        _fs.core_fn(ds, _fs.args)
+                if input_kind == "bytes":
+
+                    def call(_b=raster, _fs=fs):
+                        _fs.core_fn(_b, _fs.args)
+
+                elif input_kind == "path":
+
+                    def call(_p=tile_path, _fs=fs):
+                        _fs.core_fn(_p, _fs.args)
+
+                else:
+
+                    def call(_b=raster, _fs=fs):
+                        with _serde.open_tile(_b) as ds:
+                            _fs.core_fn(ds, _fs.args)
 
                 stats = time_iters(call, warmup, measured)
                 ms = stats["median_ms"]
