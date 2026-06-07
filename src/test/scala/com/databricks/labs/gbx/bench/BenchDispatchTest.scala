@@ -21,9 +21,12 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
   test("registry covers the ds-in functions with categories + min_bands") {
     assert(BenchDispatch.all.toSet.contains("rst_width"))
     // 19 representative + 15 Task 2 scalar + 7 Task 3 coord + 6 Task 4 map/struct
-    assert(BenchDispatch.all.size == 47)
+    // + 13 Task 5 tile-out scalar-args
+    assert(BenchDispatch.all.size == 60)
     assert(BenchDispatch.minBands("rst_ndvi") == 2)
+    assert(BenchDispatch.minBands("rst_band") == 2)
     assert(BenchDispatch.minBands("rst_width") == 1)
+    assert(BenchDispatch.category("rst_resample") == "resample")
     assert(BenchDispatch.category("rst_slope") == "terrain")
     assert(BenchDispatch.category("rst_srid") == "accessor")
   }

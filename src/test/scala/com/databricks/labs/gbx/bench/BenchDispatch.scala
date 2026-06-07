@@ -9,10 +9,23 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_Transform
 import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoord
 import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordX
 import com.databricks.labs.gbx.rasterx.expressions.RST_WorldToRasterCoordY
+import com.databricks.labs.gbx.rasterx.expressions.RST_AsFormat
+import com.databricks.labs.gbx.rasterx.expressions.RST_Convolve
+import com.databricks.labs.gbx.rasterx.expressions.RST_Filter
+import com.databricks.labs.gbx.rasterx.expressions.RST_InitNoData
+import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
+import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_CogConvert
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Band
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_FillNodata
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Histogram
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_SetSrid
+import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Threshold
+import com.databricks.labs.gbx.rasterx.expressions.resample.RST_Resample
+import com.databricks.labs.gbx.rasterx.expressions.resample.RST_ResampleToRes
+import com.databricks.labs.gbx.rasterx.expressions.resample.RST_ResampleToSize
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_TileXYZ
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
 import com.databricks.labs.gbx.rasterx.functions
@@ -32,6 +45,12 @@ object BenchDispatch {
 
   private val ACC = "accessor"; private val TER = "terrain"
   private val BM = "band-math"; private val WARP = "warp"
+  private val EDIT = "edit"; private val FEAT = "features"
+  private val FOCAL = "focal"; private val FMT = "format"; private val RES = "resample"
+
+  // Functions that need a >=2-band source even though they are not band-math
+  // (rst_band selects band 2).
+  private val multiBand: Set[String] = Set("rst_band")
 
   private val cats: Map[String, String] = Map(
     "rst_width" -> ACC, "rst_height" -> ACC, "rst_numbands" -> ACC, "rst_avg" -> ACC,
@@ -53,12 +72,23 @@ object BenchDispatch {
     "rst_tilexyz" -> ACC,
     // map / struct accessors (Task 4): timing-only
     "rst_metadata" -> ACC, "rst_bandmetadata" -> ACC, "rst_georeference" -> ACC,
-    "rst_boundingbox" -> ACC, "rst_summary" -> ACC, "rst_histogram" -> ACC
+    "rst_boundingbox" -> ACC, "rst_summary" -> ACC, "rst_histogram" -> ACC,
+    // tile-out transforms with scalar / fixed args (Task 5)
+    "rst_band" -> EDIT, "rst_threshold" -> EDIT, "rst_initnodata" -> EDIT,
+    "rst_setsrid" -> EDIT, "rst_updatetype" -> EDIT, "rst_fillnodata" -> FEAT,
+    "rst_filter" -> FOCAL, "rst_convolve" -> FOCAL,
+    "rst_asformat" -> FMT, "rst_cog_convert" -> FMT,
+    "rst_resample" -> RES, "rst_resample_to_res" -> RES, "rst_resample_to_size" -> RES
   )
 
   def all: Seq[String] = cats.keys.toSeq.sorted
   def category(fn: String): String = cats(fn)
-  def minBands(fn: String): Int = if (cats(fn) == BM) 2 else 1
+  def minBands(fn: String): Int = if (cats(fn) == BM || multiBand.contains(fn)) 2 else 1
+
+  // Fixed 3x3 normalised mean kernel for rst_convolve — must match the
+  // _CONVOLVE_KERNEL hardcoded on the pyrx side (1/9 in every cell).
+  private val convolveKernel: Array[Array[Double]] =
+    Array.fill(3, 3)(1.0 / 9.0)
 
   def pureCore(fn: String, ds: Dataset, a: Map[String, String]): String = {
     // gdal_calc/warp-backed functions write to NodeFilePathUtil.rootPath, a per-JVM scratch dir
@@ -133,6 +163,33 @@ object BenchDispatch {
     case "rst_boundingbox"   => { RST_BoundingBox.execute(ds); BenchFingerprint.empty }
     case "rst_summary"       => { RST_Summary.execute(ds); BenchFingerprint.empty }
     case "rst_histogram"     => { RST_Histogram.execute(ds, 256, None, None, false); BenchFingerprint.empty }
+    // tile-out transforms with scalar / fixed args (Task 5): all produce a raster
+    // tile -> fpDerived raster fingerprint (same path as terrain).
+    case "rst_band"        => fpDerived(RST_Band.execute(ds, Map.empty, argI(a, "band_index", 2)))
+    case "rst_threshold"   => fpDerived(RST_Threshold.execute(ds, argS(a, "op", ">"), argD(a, "value", 0.5)))
+    case "rst_initnodata"  => fpDerived(RST_InitNoData.execute(ds, Map.empty))
+    case "rst_setsrid"     => fpDerived(RST_SetSrid.execute(ds, Map.empty, argI(a, "srid", 4326)))
+    case "rst_updatetype"  => fpDerived(RST_UpdateType.execute(ds, Map.empty, argS(a, "new_type", "Float64")))
+    case "rst_fillnodata"  =>
+      fpDerived(RST_FillNodata.execute(ds, Map.empty, argD(a, "max_search_dist", 10.0), argI(a, "smoothing_iter", 0)))
+    case "rst_filter"      => fpDerived(RST_Filter.execute(ds, argI(a, "kernel_size", 3), argS(a, "operation", "mean")))
+    case "rst_convolve"    => fpDerived(RST_Convolve.execute((0L, ds, Map.empty), convolveKernel))
+    case "rst_asformat"    => fpDerived(RST_AsFormat.execute(ds, Map.empty, argS(a, "new_format", "GTiff")))
+    case "rst_cog_convert" =>
+      fpDerived(RST_CogConvert.execute(ds, Map.empty, argS(a, "compression", "DEFLATE"),
+        argI(a, "blocksize", 512), argS(a, "overview_resampling", "AVERAGE")))
+    case "rst_resample" =>
+      fpDerived(RST_Resample.execute(ds, Map.empty, argD(a, "factor", 2.0), argS(a, "algorithm", "bilinear")))
+    case "rst_resample_to_size" =>
+      fpDerived(RST_ResampleToSize.execute(ds, Map.empty, argI(a, "width_px", 128),
+        argI(a, "height_px", 128), argS(a, "algorithm", "bilinear")))
+    // rst_resample_to_res: pure-core-only, fingerprint suppressed (a single fixed
+    // ground resolution is not sane across the multi-CRS corpus).
+    case "rst_resample_to_res" =>
+      val res = RST_ResampleToRes.execute(ds, Map.empty, argD(a, "x_res", 5.0),
+        argD(a, "y_res", 5.0), argS(a, "algorithm", "bilinear"))
+      RasterDriver.releaseDataset(res._1)
+      BenchFingerprint.empty
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -199,6 +256,33 @@ object BenchDispatch {
       case "rst_boundingbox"   => rst_boundingbox(tile)
       case "rst_summary"       => rst_summary(tile)
       case "rst_histogram"     => rst_histogram(tile)
+      // tile-out transforms with scalar / fixed args (Task 5)
+      case "rst_band"        => rst_band(tile, argI(a, "band_index", 2))
+      case "rst_threshold"   => rst_threshold(tile, argS(a, "op", ">"), argD(a, "value", 0.5))
+      case "rst_initnodata"  => rst_initnodata(tile)
+      case "rst_setsrid"     => rst_setsrid(tile, argI(a, "srid", 4326))
+      case "rst_updatetype"  => rst_updatetype(tile, argS(a, "new_type", "Float64"))
+      case "rst_fillnodata"  =>
+        rst_fillnodata(tile, argD(a, "max_search_dist", 10.0), argI(a, "smoothing_iter", 0))
+      case "rst_filter"      => rst_filter(tile, argI(a, "kernel_size", 3), argS(a, "operation", "mean"))
+      case "rst_convolve"    =>
+        import org.apache.spark.sql.functions.{array, lit}
+        val kernelCol = array(convolveKernel.map(row => array(row.map(lit): _*)): _*)
+        rst_convolve(tile, kernelCol)
+      case "rst_asformat"    => rst_asformat(tile, argS(a, "new_format", "GTiff"))
+      case "rst_cog_convert" =>
+        rst_cog_convert(tile, argS(a, "compression", "DEFLATE"),
+          argI(a, "blocksize", 512), argS(a, "overview_resampling", "AVERAGE"))
+      case "rst_resample" =>
+        rst_resample(tile, argD(a, "factor", 2.0), argS(a, "algorithm", "bilinear"))
+      case "rst_resample_to_size" =>
+        rst_resample_to_size(tile, argI(a, "width_px", 128),
+          argI(a, "height_px", 128), argS(a, "algorithm", "bilinear"))
+      // rst_resample_to_res is pure-core-only; the column form is here only to keep
+      // the match exhaustive (the spark-path runner filters by modes).
+      case "rst_resample_to_res" =>
+        rst_resample_to_res(tile, argD(a, "x_res", 5.0),
+          argD(a, "y_res", 5.0), argS(a, "algorithm", "bilinear"))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

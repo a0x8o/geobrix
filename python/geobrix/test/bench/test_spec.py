@@ -276,3 +276,64 @@ def test_retrofitted_downgrades_are_timing_only():
         fs = s.REGISTRY[name]
         assert fs.modes == ("pure-core",), name
         assert fs.fingerprint is False, name
+
+
+# --- Task 5: tile-out transforms with scalar / fixed args (13) ---------------
+# Each produces a raster tile, so its output is compared via the raster
+# fingerprint (same path as terrain). All are core=False and fingerprint=True
+# (both modes, compared) EXCEPT rst_resample_to_res: a single fixed ground
+# resolution cannot be sane across the multi-CRS corpus (a 0.0001-deg grid and a
+# 10-m grid have no common absolute resolution), exactly like the world->raster
+# coord functions, so it runs pure-core-only with its fingerprint suppressed.
+_TILE_OUT_SCALAR = {
+    "rst_band",
+    "rst_threshold",
+    "rst_initnodata",
+    "rst_setsrid",
+    "rst_updatetype",
+    "rst_fillnodata",
+    "rst_filter",
+    "rst_convolve",
+    "rst_asformat",
+    "rst_cog_convert",
+    "rst_resample",
+    "rst_resample_to_res",
+    "rst_resample_to_size",
+}
+
+_TILE_OUT_PURE_CORE_ONLY = {"rst_resample_to_res"}
+
+
+def test_tile_out_scalar_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _TILE_OUT_SCALAR - full
+    assert not missing, f"registry missing tile-out fns: {sorted(missing)}"
+
+
+def test_tile_out_scalar_wellformed():
+    for name in _TILE_OUT_SCALAR:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert set(fs.modes) <= {"pure-core", "spark-path"}
+
+
+def test_tile_out_scalar_modes_and_fingerprint():
+    for name in _TILE_OUT_SCALAR:
+        fs = s.REGISTRY[name]
+        if name in _TILE_OUT_PURE_CORE_ONLY:
+            assert fs.modes == ("pure-core",), name
+            assert fs.fingerprint is False, name
+        else:
+            assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+            assert fs.fingerprint is True, name
+
+
+def test_tile_out_scalar_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_TILE_OUT_SCALAR & core)
+
+
+def test_rst_band_requires_two_bands():
+    assert s.REGISTRY["rst_band"].min_bands == 2

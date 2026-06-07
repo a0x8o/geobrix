@@ -17,8 +17,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List
 
+from pyspark.sql import functions as F
+
 from databricks.labs.gbx.pyrx import functions as prx
-from databricks.labs.gbx.pyrx.core import accessors, coords, indices, terrain, warp, xyz
+from databricks.labs.gbx.pyrx.core import accessors
+from databricks.labs.gbx.pyrx.core import analysis as analysis_core
+from databricks.labs.gbx.pyrx.core import (
+    coords,
+    edit,
+    features,
+    focal,
+    indices,
+    ops,
+    resample,
+    terrain,
+    warp,
+    xyz,
+)
+
+# Fixed 3x3 normalised mean kernel for rst_convolve. Hardcoded identically here
+# (Python core_fn + col_fn) and in the Scala BenchDispatch case so the two engines
+# convolve with the same coefficients; the bench args carry only `kernel_size` for
+# documentation (a 2-D kernel cannot ride the stringly-typed Scala args map).
+_CONVOLVE_KERNEL = [[1.0 / 9.0] * 3 for _ in range(3)]
 
 
 @dataclass(frozen=True)
@@ -582,6 +603,180 @@ REGISTRY: Dict[str, FnSpec] = {
         {},
         core_fn=lambda ds, a: accessors.histogram(ds),
         col_fn=lambda t, a: prx.rst_histogram(t),
+        core=False,
+        fingerprint=False,
+    ),
+    # --- Task 5: tile-out transforms with scalar / fixed args (13) -----------
+    # Each returns a raster tile, so the runner fingerprints the output as a
+    # raster (same path as terrain). All run both modes and are compared, EXCEPT
+    # rst_resample_to_res (see below). Fixed scalar args are identical across the
+    # core_fn, col_fn, and the Scala BenchDispatch case.
+    # --- edit (edit.py) ---
+    "rst_band": FnSpec(
+        "rst_band",
+        "gbx_rst_band",
+        "edit",
+        _BOTH,
+        {"band_index": 2},
+        min_bands=2,
+        core_fn=lambda ds, a: edit.band(ds, a["band_index"]),
+        col_fn=lambda t, a: prx.rst_band(t, a["band_index"]),
+        core=False,
+    ),
+    "rst_threshold": FnSpec(
+        "rst_threshold",
+        "gbx_rst_threshold",
+        "edit",
+        _BOTH,
+        {"op": ">", "value": 0.5},
+        core_fn=lambda ds, a: edit.threshold(ds, a["op"], a["value"]),
+        col_fn=lambda t, a: prx.rst_threshold(t, a["op"], a["value"]),
+        core=False,
+    ),
+    "rst_initnodata": FnSpec(
+        "rst_initnodata",
+        "gbx_rst_initnodata",
+        "edit",
+        _BOTH,
+        {},
+        core_fn=lambda ds, a: edit.init_nodata(ds),
+        col_fn=lambda t, a: prx.rst_initnodata(t),
+        core=False,
+    ),
+    "rst_setsrid": FnSpec(
+        "rst_setsrid",
+        "gbx_rst_setsrid",
+        "edit",
+        _BOTH,
+        {"srid": 4326},
+        core_fn=lambda ds, a: edit.set_srid(ds, a["srid"]),
+        col_fn=lambda t, a: prx.rst_setsrid(t, a["srid"]),
+        core=False,
+    ),
+    "rst_updatetype": FnSpec(
+        "rst_updatetype",
+        "gbx_rst_updatetype",
+        "edit",
+        _BOTH,
+        {"new_type": "Float64"},
+        core_fn=lambda ds, a: edit.update_type(ds, a["new_type"]),
+        col_fn=lambda t, a: prx.rst_updatetype(t, a["new_type"]),
+        core=False,
+    ),
+    # --- features (features.py) ---
+    "rst_fillnodata": FnSpec(
+        "rst_fillnodata",
+        "gbx_rst_fillnodata",
+        "features",
+        _BOTH,
+        {"max_search_dist": 10.0, "smoothing_iter": 0},
+        core_fn=lambda ds, a: features.fill_nodata(
+            ds, a["max_search_dist"], a["smoothing_iter"]
+        ),
+        col_fn=lambda t, a: prx.rst_fillnodata(
+            t, a["max_search_dist"], a["smoothing_iter"]
+        ),
+        core=False,
+    ),
+    # --- focal (focal.py) ---
+    "rst_filter": FnSpec(
+        "rst_filter",
+        "gbx_rst_filter",
+        "focal",
+        _BOTH,
+        {"kernel_size": 3, "operation": "mean"},
+        core_fn=lambda ds, a: focal.filt(ds, a["kernel_size"], a["operation"]),
+        col_fn=lambda t, a: prx.rst_filter(t, a["kernel_size"], a["operation"]),
+        core=False,
+    ),
+    "rst_convolve": FnSpec(
+        "rst_convolve",
+        "gbx_rst_convolve",
+        "focal",
+        _BOTH,
+        # kernel_size documents the fixed 3x3 mean kernel (_CONVOLVE_KERNEL); the
+        # actual coefficients are hardcoded identically on both engines.
+        {"kernel_size": 3},
+        core_fn=lambda ds, a: focal.convolve(ds, _CONVOLVE_KERNEL),
+        col_fn=lambda t, a: prx.rst_convolve(
+            t, F.array(*[F.array(*[F.lit(c) for c in row]) for row in _CONVOLVE_KERNEL])
+        ),
+        core=False,
+    ),
+    # --- format (ops.py / analysis.py) ---
+    "rst_asformat": FnSpec(
+        "rst_asformat",
+        "gbx_rst_asformat",
+        "format",
+        _BOTH,
+        {"new_format": "GTiff"},
+        core_fn=lambda ds, a: ops.as_format(ds, a["new_format"]),
+        col_fn=lambda t, a: prx.rst_asformat(t, a["new_format"]),
+        core=False,
+    ),
+    "rst_cog_convert": FnSpec(
+        "rst_cog_convert",
+        "gbx_rst_cog_convert",
+        "format",
+        _BOTH,
+        {
+            "compression": "DEFLATE",
+            "blocksize": 512,
+            "overview_resampling": "AVERAGE",
+        },
+        core_fn=lambda ds, a: analysis_core.cog_convert(
+            ds, a["compression"], a["blocksize"], a["overview_resampling"]
+        ),
+        col_fn=lambda t, a: prx.rst_cog_convert(
+            t, a["compression"], a["blocksize"], a["overview_resampling"]
+        ),
+        core=False,
+    ),
+    # --- resample (resample.py) ---
+    "rst_resample": FnSpec(
+        "rst_resample",
+        "gbx_rst_resample",
+        "resample",
+        _BOTH,
+        {"factor": 2.0, "algorithm": "bilinear"},
+        core_fn=lambda ds, a: resample.resample_by_factor(
+            ds, a["factor"], a["algorithm"]
+        ),
+        col_fn=lambda t, a: prx.rst_resample(t, a["factor"], a["algorithm"]),
+        core=False,
+    ),
+    "rst_resample_to_size": FnSpec(
+        "rst_resample_to_size",
+        "gbx_rst_resample_to_size",
+        "resample",
+        _BOTH,
+        {"width_px": 128, "height_px": 128, "algorithm": "bilinear"},
+        core_fn=lambda ds, a: resample.resample_to_size(
+            ds, a["width_px"], a["height_px"], a["algorithm"]
+        ),
+        col_fn=lambda t, a: prx.rst_resample_to_size(
+            t, a["width_px"], a["height_px"], a["algorithm"]
+        ),
+        core=False,
+    ),
+    # rst_resample_to_res takes an absolute ground resolution in CRS units. A
+    # single fixed res cannot be sane across the multi-CRS corpus (a 0.0001-deg
+    # grid and a 10-m grid share no common absolute resolution; one CRS would
+    # produce a degenerate 1x1 raster while another blows up), exactly like the
+    # world->raster coord functions. So it runs pure-core-only and its
+    # fingerprint is suppressed in the scorecard.
+    "rst_resample_to_res": FnSpec(
+        "rst_resample_to_res",
+        "gbx_rst_resample_to_res",
+        "resample",
+        ("pure-core",),
+        {"x_res": 5.0, "y_res": 5.0, "algorithm": "bilinear"},
+        core_fn=lambda ds, a: resample.resample_to_res(
+            ds, a["x_res"], a["y_res"], a["algorithm"]
+        ),
+        col_fn=lambda t, a: prx.rst_resample_to_res(
+            t, a["x_res"], a["y_res"], a["algorithm"]
+        ),
         core=False,
         fingerprint=False,
     ),
