@@ -336,6 +336,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="output JSONL shard")
     ap.add_argument("--functions", default="")
     ap.add_argument("--categories", default="")
+    ap.add_argument("--set", default="core", choices=["core", "full"])
     ap.add_argument(
         "--mode", default="both", choices=["pure-core", "spark-path", "both"]
     )
@@ -350,6 +351,7 @@ def main(argv=None):
     fnspecs = _s.select(
         functions=[x for x in a.functions.split(",") if x] or None,
         categories=[x for x in a.categories.split(",") if x] or None,
+        set=getattr(a, "set"),
     )
     row_counts = [int(x) for x in a.row_counts.split(",") if x]
     rows: List[ResultRow] = []

@@ -177,6 +177,15 @@ print_banner() { show_banner "$@"; }
 print_separator() { show_separator "$@"; }
 setup_log() { setup_log_file "$@"; }
 
+# Validate a benchmark selection set ("core" or "full"). Exits non-zero on bad value.
+# Usage: validate_set "$SET"
+validate_set() {
+    case "$1" in
+        core|full) return 0 ;;
+        *) echo "ERROR: --set must be 'core' or 'full' (got '$1')" >&2; return 1 ;;
+    esac
+}
+
 # Run a command inside the isolated pyrx venv (host, no Docker).
 # Usage: run_in_pyrx_venv "<command string>"
 # Requires gbx:venv:sync to have been run (venv at $PROJECT_ROOT/.venv-pyrx).
@@ -200,4 +209,4 @@ run_in_pyrx_venv() {
 export RED GREEN YELLOW BLUE CYAN NC DOCKER_MAVEN_ENV
 export -f check_docker resolve_log_path setup_log_file show_banner show_separator \
           print_report_link open_report generate_timestamp warn_if_jar_stale \
-          print_banner print_separator setup_log run_in_pyrx_venv 2>/dev/null || true
+          print_banner print_separator setup_log run_in_pyrx_venv validate_set 2>/dev/null || true

@@ -31,6 +31,7 @@ class FnSpec:
     min_bands: int = 1
     core_fn: Callable = None  # (ds, args) -> Any
     col_fn: Callable = None  # (tile_col, args) -> Column
+    core: bool = False  # in the fast "core" benchmark set
 
 
 _BOTH = ("pure-core", "spark-path")
@@ -42,6 +43,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        core=True,
         core_fn=lambda ds, a: accessors.width(ds),
         col_fn=lambda t, a: prx.rst_width(t),
     ),
@@ -51,6 +53,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "accessor",
         _BOTH,
         {},
+        core=True,
         core_fn=lambda ds, a: accessors.avg(ds),
         col_fn=lambda t, a: prx.rst_avg(t),
     ),
@@ -60,6 +63,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "terrain",
         _BOTH,
         {"unit": "degrees"},
+        core=True,
         core_fn=lambda ds, a: terrain.slope(ds, a["unit"]),
         col_fn=lambda t, a: prx.rst_slope(t, a["unit"]),
     ),
@@ -70,6 +74,7 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"red_band": 1, "nir_band": 2},
         min_bands=2,
+        core=True,
         core_fn=lambda ds, a: indices.ndvi(ds, a["red_band"], a["nir_band"]),
         col_fn=lambda t, a: prx.rst_ndvi(t, a["red_band"], a["nir_band"]),
     ),
@@ -79,6 +84,7 @@ REGISTRY: Dict[str, FnSpec] = {
         "warp",
         _BOTH,
         {"target_srid": 3857},
+        core=True,
         core_fn=lambda ds, a: warp.reproject_to_srid(ds, a["target_srid"]),
         col_fn=lambda t, a: prx.rst_transform(t, a["target_srid"]),
     ),
@@ -225,13 +231,56 @@ REGISTRY: Dict[str, FnSpec] = {
 }
 
 
-def select(functions: List[str] = None, categories: List[str] = None) -> List[FnSpec]:
+def select(
+    functions: List[str] = None,
+    categories: List[str] = None,
+    set: str = "core",
+) -> List[FnSpec]:
+    """Select FnSpecs from the registry.
+
+    ``set`` chooses the tier: ``"core"`` (the fast default, only ``core=True``
+    entries) or ``"full"`` (every registered FnSpec). An explicit ``functions``
+    list selects by name and ignores the tier. Note: the ``set`` parameter
+    shadows the builtin within this function, so use ``frozenset(...)`` for the
+    membership sets below.
+    """
     out = list(REGISTRY.values())
+    if set == "core":
+        out = [f for f in out if f.core]
+    # set == "full": no core filter
     if functions:
-        out = [f for f in out if f.name in set(functions)]
+        names = frozenset(functions)  # frozenset, NOT set(...) -- `set` is a param name
+        out = [f for f in out if f.name in names]
     if categories:
-        out = [f for f in out if f.category in set(categories)]
+        cats = frozenset(categories)
+        out = [f for f in out if f.category in cats]
     return out
+
+
+def registered_rst() -> "frozenset[str]":
+    """Canonical registered rst_* function names (the 107) from registered_functions.txt."""
+    from pathlib import Path
+
+    # resolve repo root robustly from this file's location
+    root = Path(__file__).resolve()
+    cand = None
+    for _ in range(12):
+        c = root / "docs" / "tests-function-info" / "registered_functions.txt"
+        if c.exists():
+            cand = c
+            break
+        root = root.parent
+    if cand is None:
+        raise FileNotFoundError("registered_functions.txt not found above " + __file__)
+    names = set()
+    for line in cand.read_text().splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        s = s[4:] if s.startswith("gbx_") else s
+        if s.startswith("rst_"):
+            names.add(s)
+    return frozenset(names)
 
 
 def dump_functions_json(path) -> None:

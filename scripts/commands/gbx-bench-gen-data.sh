@@ -12,6 +12,7 @@ SRIDS="4326,3857,32618,27700"
 NODATA_FRAC="0.02"
 SEED="1234"
 ROW_ROWS="10000"
+SET="core"
 LOG_PATH=""
 
 show_help() {
@@ -29,6 +30,8 @@ Options:
   --nodata-frac <list> NoData fraction(s), e.g. 0.02,0.25,0.5 (default 0.02)
   --row-rows <n>       Row-pool size for spark-path sweep (default 10000)
   --seed <n>           RNG seed (default 1234)
+  --set <core|full>    Accepted for pipeline symmetry (default core); the corpus
+                       is function-agnostic, so this does not change its content.
   --log <path>         Tee output under test-logs/
   --help, -h           Show help
 EOF
@@ -43,6 +46,7 @@ while [[ $# -gt 0 ]]; do case $1 in
     --nodata-frac) NODATA_FRAC="$2"; shift 2 ;;
     --row-rows) ROW_ROWS="$2"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
+    --set) SET="$2"; shift 2 ;;
     --log) LOG_PATH=$(resolve_log_path "$2"); shift 2 ;;
     --help|-h) show_help; exit 0 ;;
     *) echo "Unknown option: $1" >&2; show_help; exit 1 ;;
@@ -50,6 +54,7 @@ esac; done
 
 cd "$PROJECT_ROOT"
 show_banner "gbx:bench:gen-data"
+validate_set "$SET" || exit 1
 setup_log_file "$LOG_PATH"
 
 run_in_pyrx_venv "python -m databricks.labs.gbx.bench.datagen \

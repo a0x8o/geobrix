@@ -9,6 +9,7 @@ RUN_ID="local"
 OUT=""
 FUNCTIONS=""
 CATEGORIES=""
+SET="core"
 MODE="both"
 ROW_COUNTS="10,100,1000,10000"
 WARMUP="2"
@@ -26,8 +27,9 @@ Options:
   --corpus <dir>      Corpus root (default sample-data/.../bench-corpus)
   --out <path>        JSONL output (default test-logs/bench/<run-id>/lightweight.jsonl)
   --run-id <id>       Run id (default local)
-  --functions <list>  Comma-separated rst_* names (default: all in registry)
+  --functions <list>  Comma-separated rst_* names (overrides --set)
   --categories <list> Comma-separated categories
+  --set <core|full>   Selection tier: core (fast default) or full (default core)
   --mode <m>          pure-core | spark-path | both (default both)
   --row-counts <l>    Spark-path row ladder (default 10,100,1000,10000)
   --warmup <n>        Warmup iters (default 2)
@@ -48,6 +50,7 @@ while [[ $# -gt 0 ]]; do case $1 in
     --run-id) RUN_ID="$2"; shift 2 ;;
     --functions) FUNCTIONS="$2"; shift 2 ;;
     --categories) CATEGORIES="$2"; shift 2 ;;
+    --set) SET="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
     --row-counts) ROW_COUNTS="$2"; shift 2 ;;
     --warmup) WARMUP="$2"; shift 2 ;;
@@ -60,6 +63,7 @@ esac; done
 
 cd "$PROJECT_ROOT"
 show_banner "gbx:bench:lightweight"
+validate_set "$SET" || exit 1
 setup_log_file "$LOG_PATH"
 
 [[ -z "$OUT" ]] && OUT="${PROJECT_ROOT}/test-logs/bench/${RUN_ID}/lightweight.jsonl"
@@ -70,7 +74,7 @@ export PYSPARK_SUBMIT_ARGS="--driver-memory ${DRIVER_MEM} pyspark-shell"
 
 run_in_pyrx_venv "python -m databricks.labs.gbx.bench.runner \
     --corpus '$CORPUS' --out '$OUT' --run-id '$RUN_ID' --mode '$MODE' \
-    --functions '$FUNCTIONS' --categories '$CATEGORIES' \
+    --functions '$FUNCTIONS' --categories '$CATEGORIES' --set '$SET' \
     --row-counts '$ROW_COUNTS' --warmup '$WARMUP' --measured '$MEASURED'"
 EXIT_CODE=$?
 if [[ $EXIT_CODE -eq 0 ]]; then

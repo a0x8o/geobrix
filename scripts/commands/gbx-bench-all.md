@@ -8,7 +8,10 @@ Outputs land in `test-logs/bench/<run-id>/`: `heavyweight.jsonl`, `lightweight.j
 
 **Usage:** `bash scripts/commands/gbx-bench-all.sh [options]`
 
-**Options:** `--run-id`, `--functions`, `--modes`, `--tile-px`, `--bands`, `--dtypes`, `--srids`, `--nodata-frac`, `--row-rows`, `--row-counts`, `--warmup`, `--measured`, `--driver-mem`, `--seed`, `--log`, `--help`.
+**Options:** `--run-id`, `--functions`, `--set core|full`, `--modes`, `--tile-px`, `--bands`, `--dtypes`, `--srids`, `--nodata-frac`, `--row-rows`, `--row-counts`, `--warmup`, `--measured`, `--driver-mem`, `--seed`, `--log`, `--help`.
 
-**Example:**
+`--set` chooses the benchmark tier: `core` (the fast default representative set) or `full` (every function in the registry). An explicit `--functions` list overrides `--set`. Defaults to `core`, preserving the fast default run.
+
+**Examples:**
 - `bash scripts/commands/gbx-bench-all.sh --run-id full1 --functions rst_width,rst_slope,rst_ndvi --modes both --log all.log`
+- `bash scripts/commands/gbx-bench-all.sh --run-id fullcov --set full --log all-full.log`

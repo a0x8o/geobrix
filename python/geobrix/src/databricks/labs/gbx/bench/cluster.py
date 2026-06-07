@@ -48,13 +48,14 @@ OUT = {out_dir!r}
 TABLE = {table!r}
 RUN_ID = {run_id!r}
 FUNCTIONS = {functions!r}
+SET = {set!r}
 MODES = {modes!r}
 ROW_COUNTS = [int(x) for x in {row_counts!r}.split(",") if x]
 WARMUP, MEASURED = {warmup}, {measured}
 
 os.makedirs(OUT, exist_ok=True)
 corpus = _m.Corpus.read(f"{{CORPUS}}/corpus.json")
-fnspecs = _s.select(functions=[x for x in FUNCTIONS.split(",") if x] or None)
+fnspecs = _s.select(functions=[x for x in FUNCTIONS.split(",") if x] or None, set=SET)
 lw, hw, all_rows = [], [], []
 """
 
@@ -92,12 +93,22 @@ dbutils.notebook.exit(json.dumps(dict(
 
 
 def build_bench_notebook(cfg: dict) -> dict:
+    sel = cfg.get("set", "core")
+    functions = cfg["functions"]
+    # The Scala heavy runner reads an explicit FUNCTIONS list, not the Python
+    # registry. When no explicit functions are named, resolve the selected tier
+    # to concrete names so the heavy path honors --set core|full too.
+    if not functions:
+        from databricks.labs.gbx.bench import spec as _s
+
+        functions = ",".join(f.name for f in _s.select(set=sel))
     body = _PREAMBLE.format(
         corpus=cfg["corpus"],
         out_dir=cfg["out_dir"],
         table=cfg["table"],
         run_id=cfg["run_id"],
-        functions=cfg["functions"],
+        functions=functions,
+        set=sel,
         modes=cfg["modes"],
         row_counts=cfg["row_counts"],
         warmup=cfg["warmup"],

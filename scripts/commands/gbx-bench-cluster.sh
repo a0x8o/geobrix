@@ -17,7 +17,8 @@ Usage: bash scripts/commands/gbx-bench-cluster.sh [options]
 Options:
   --cluster-id <id>     Target cluster (overrides CLUSTER_ID from config)
   --run-id <id>         Run id (default cluster)
-  --functions <csv>     rst_* names (default: all)
+  --functions <csv>     rst_* names (overrides --set)
+  --set <core|full>     Selection tier: core (fast default) or full (default core)
   --modes <m>           pure-core | spark-path | both (default both)
   --row-counts <csv>    Spark-path row ladder (default 10,100,1000,10000)
   --warmup <n>          Warmup iters (default 2)

@@ -65,3 +65,33 @@ def test_every_spec_has_valid_bindings_and_modes():
         assert fs.sql_name.startswith("gbx_")
         assert fs.modes  # non-empty
         assert callable(fs.core_fn) and callable(fs.col_fn)
+
+
+def test_select_core_is_subset_of_full():
+    core = {f.name for f in s.select(set="core")}
+    full = {f.name for f in s.select(set="full")}
+    assert core
+    assert core < full
+    assert "rst_slope" in core and "rst_ndvi" in core
+
+
+def test_select_defaults_to_core():
+    assert {f.name for f in s.select()} == {f.name for f in s.select(set="core")}
+
+
+def test_full_has_only_registered_names():
+    reg = s.registered_rst()
+    assert {f.name for f in s.select(set="full")} <= reg
+    assert len(reg) == 107  # canonical registered rst_ set
+
+
+def test_every_full_spec_is_wellformed():
+    for f in s.select(set="full"):
+        assert f.core_fn is not None and f.col_fn is not None
+        assert set(f.modes) <= {"pure-core", "spark-path"}
+
+
+def test_explicit_functions_filter_ignores_set():
+    # naming a function selects it even if not core
+    got = {f.name for f in s.select(functions=["rst_width"], set="full")}
+    assert got == {"rst_width"}

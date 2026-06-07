@@ -93,6 +93,10 @@ def main() -> int:
 
     run_id = _arg("--run-id", "cluster")
     functions = _arg("--functions", "")
+    sel = _arg("--set", "core")
+    if sel not in ("core", "full"):
+        print(f"ERROR: --set must be 'core' or 'full' (got '{sel}')", file=sys.stderr)
+        return 2
     modes = _arg("--modes", "both")
     row_counts = _arg("--row-counts", "10,100,1000,10000")
     warmup = int(_arg("--warmup", "2"))
@@ -133,6 +137,7 @@ def main() -> int:
         table=table,
         run_id=run_id,
         functions=functions,
+        set=sel,
         modes=modes,
         row_counts=row_counts,
         warmup=warmup,
@@ -165,7 +170,7 @@ def main() -> int:
     print(f"  cluster_id : {cluster_id}")
     print(f"  scope      : heavyweight={heavyweight}  lightweight={lightweight}")
     print(f"  run_id     : {run_id}")
-    print(f"  functions  : {functions or '(all)'}")
+    print(f"  functions  : {functions or f'(set={sel})'}")
     print(f"  modes      : {modes}   row_counts={row_counts}")
     print(f"  warmup/meas: {warmup}/{measured}")
     print(f"  corpus     : {corpus}")

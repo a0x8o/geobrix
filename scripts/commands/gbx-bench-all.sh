@@ -6,6 +6,7 @@ source "$SCRIPT_DIR/common.sh"
 
 RUN_ID="local"
 FUNCTIONS=""
+SET="core"
 MODES="both"
 TILE_PX="256,512"
 BANDS="2"
@@ -32,7 +33,8 @@ so they don't contend for CPU and skew timings.
 Usage: bash scripts/commands/gbx-bench-all.sh [options]
 Options:
   --run-id <id>        Run id (default local)
-  --functions <list>   rst_* names (default: all registry fns)
+  --functions <list>   rst_* names (overrides --set)
+  --set <core|full>    Selection tier: core (fast 5-fn default) or full (default core)
   --modes <m>          pure-core | spark-path | both (default both)
   --tile-px <list>     Size sweep (default 256,512)
   --bands <list>       Band counts (default 2)
@@ -58,6 +60,7 @@ EOF
 while [[ $# -gt 0 ]]; do case $1 in
     --run-id) RUN_ID="$2"; shift 2 ;;
     --functions) FUNCTIONS="$2"; shift 2 ;;
+    --set) SET="$2"; shift 2 ;;
     --modes) MODES="$2"; shift 2 ;;
     --tile-px) TILE_PX="$2"; shift 2 ;;
     --bands) BANDS="$2"; shift 2 ;;
@@ -77,6 +80,7 @@ esac; done
 
 cd "$PROJECT_ROOT"
 show_banner "gbx:bench:all"
+validate_set "$SET" || exit 1
 check_docker
 setup_log_file "$LOG_PATH"
 
@@ -88,12 +92,12 @@ bash "$SCRIPT_DIR/gbx-bench-gen-data.sh" --out "$HOST_CORPUS" \
 
 echo "▶ [2/4] heavyweight (Docker) — runs first, sequentially"
 bash "$SCRIPT_DIR/gbx-bench-heavyweight.sh" --run-id "$RUN_ID" --corpus "$CONTAINER_CORPUS" \
-    --functions "$FUNCTIONS" --modes "$MODES" --row-counts "$ROW_COUNTS" \
+    --functions "$FUNCTIONS" --set "$SET" --modes "$MODES" --row-counts "$ROW_COUNTS" \
     --warmup "$WARMUP" --measured "$MEASURED"
 
 echo "▶ [3/4] lightweight (venv) — runs after heavyweight, sequentially"
 bash "$SCRIPT_DIR/gbx-bench-lightweight.sh" --run-id "$RUN_ID" --corpus "$HOST_CORPUS" \
-    --functions "$FUNCTIONS" --mode "$MODES" --row-counts "$ROW_COUNTS" \
+    --functions "$FUNCTIONS" --set "$SET" --mode "$MODES" --row-counts "$ROW_COUNTS" \
     --warmup "$WARMUP" --measured "$MEASURED" --driver-mem "$DRIVER_MEM"
 
 echo "▶ [4/4] compare"
