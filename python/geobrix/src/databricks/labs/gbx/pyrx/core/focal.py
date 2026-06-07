@@ -1,49 +1,70 @@
-"""Spark-free focal ops via scipy.ndimage. Each returns new GTiff bytes."""
+"""Spark-free focal ops via scipy.ndimage, matching rasterx GDALBlock semantics:
+NoData-aware skip + edge window-shrink (filter) / zero-pad (convolve).
+
+GDALBlock.valuesAt (avg/min/max/median): a neighbor contributes only if it is
+in-bounds AND in-mask AND not-NoData; out-of-bounds neighbors are skipped so the
+window shrinks at edges; if no neighbor is valid the output pixel is NoData.
+GDALBlock.convolveAt: ``sum += value * kernel(i)(j)`` over in-bounds valid
+neighbors only (others contribute 0, no renormalization), kernel applied
+UN-flipped (correlation).
+"""
 
 import numpy as np
 from rasterio.io import MemoryFile
 from scipy import ndimage
 
-_FILTERS = {
-    "min": ndimage.minimum_filter,
-    "max": ndimage.maximum_filter,
-    "median": ndimage.median_filter,
-}
+from databricks.labs.gbx.pyrx.core._nodata import read_masked
+
+_NAN_AGG = {"min": np.nanmin, "max": np.nanmax, "median": np.nanmedian}
+
+
+def _nodata_value(ds, default: float = -9999.0) -> float:
+    return ds.nodata if ds.nodata is not None else default
+
+
+def _out_profile(ds, dtype: str, nd: float, set_nodata: bool) -> dict:
+    """Source profile minus block/tiling options that break small outputs."""
+    profile = ds.profile.copy()
+    for key in ("blockxsize", "blockysize", "tiled", "interleave"):
+        profile.pop(key, None)
+    profile.update(driver="GTiff", dtype=dtype)
+    if set_nodata:
+        profile.update(nodata=nd)
+    return profile
 
 
 def filt(ds, kernel_size, operation: str) -> bytes:
-    """Apply a focal filter over a ``kernel_size`` x ``kernel_size`` window per band.
+    """Apply a focal min/max/mean/median filter per band, GDALBlock semantics.
 
-    Args:
-        ds:           Open rasterio DatasetReader.
-        kernel_size:  Side length of the square neighbourhood (odd int).
-        operation:    ``"min"``, ``"max"``, ``"mean"``, or ``"median"``.
-
-    Returns:
-        GTiff bytes.  Output dtype matches the input except for ``"mean"``,
-        which always returns Float32 (uniform_filter operates on float64
-        internally; we cast back to float32 to stay consistent with the
-        input raster dtype and the rasterx heavyweight equivalent).
+    Output dtype: ``mean`` -> Float32; ``min``/``max``/``median`` -> input dtype.
+    All-invalid windows become NoData.
     """
     size = int(kernel_size)
     op = str(operation)
-    data = ds.read()
-    bands = []
-    for i in range(data.shape[0]):
+    box = np.ones((size, size), dtype="float64")
+    nd = _nodata_value(ds, default=-9999.0)
+    out_bands, any_invalid = [], False
+    for i in range(1, ds.count + 1):
+        data, valid = read_masked(ds, i)
         if op == "mean":
-            # uniform_filter on float64 avoids integer truncation; cast back
-            # to float32 afterward to match the input band dtype.
-            bands.append(
-                ndimage.uniform_filter(data[i].astype("float64"), size=size).astype(
-                    "float32"
-                )
+            num = ndimage.correlate(data * valid, box, mode="constant", cval=0.0)
+            cnt = ndimage.correlate(
+                valid.astype("float64"), box, mode="constant", cval=0.0
             )
+            res = np.where(cnt > 0, num / np.where(cnt > 0, cnt, 1.0), nd)
+            invalid = cnt == 0
         else:
-            bands.append(_FILTERS[op](data[i], size=size))
-    out = np.stack(bands)
-    out_dtype = "float32" if op == "mean" else data.dtype
-    profile = ds.profile.copy()
-    profile.update(driver="GTiff", dtype=out_dtype)
+            arr = np.where(valid, data, np.nan)
+            res = ndimage.generic_filter(
+                arr, _NAN_AGG[op], size=size, mode="constant", cval=np.nan
+            )
+            invalid = ~np.isfinite(res)
+            res = np.where(invalid, nd, res)
+        any_invalid = any_invalid or bool(invalid.any())
+        out_bands.append(res)
+    out_dtype = "float32" if op == "mean" else ds.dtypes[0]
+    out = np.stack(out_bands)
+    profile = _out_profile(ds, out_dtype, nd, any_invalid or ds.nodata is not None)
     with MemoryFile() as mf:
         with mf.open(**profile) as dst:
             dst.write(out.astype(out_dtype))
@@ -51,23 +72,25 @@ def filt(ds, kernel_size, operation: str) -> bytes:
 
 
 def convolve(ds, kernel) -> bytes:
-    """2-D convolution per band with ``kernel`` (a 2-D list/array of floats).
+    """2-D correlation (UN-flipped kernel) per band, zero-padding out-of-bounds.
 
-    Args:
-        ds:     Open rasterio DatasetReader.
-        kernel: 2-D array-like of floats (e.g. ``[[0,1,0],[1,-4,1],[0,1,0]]``).
-
-    Returns:
-        GTiff bytes with dtype Float64.  Float64 is used because arbitrary
-        kernel coefficients can produce values outside the input dtype range.
+    Mirrors GDALBlock.convolveAt: ``sum`` starts at 0 and accumulates
+    ``value * kernel(i)(j)`` only over in-bounds valid neighbors; invalid /
+    out-of-bounds neighbors contribute 0 with no weight renormalization. The
+    returned sum is emitted verbatim (convolveAt never yields NoData). Output
+    dtype is Float64.
     """
     k = np.asarray(kernel, dtype="float64")
-    data = ds.read().astype("float64")
-    out = np.stack(
-        [ndimage.convolve(data[i], k, mode="nearest") for i in range(data.shape[0])]
-    )
-    profile = ds.profile.copy()
-    profile.update(driver="GTiff", dtype="float64")
+    nd = _nodata_value(ds, default=-9999.0)
+    out_bands = []
+    for i in range(1, ds.count + 1):
+        data, valid = read_masked(ds, i)
+        # data * valid zeroes out masked / NoData neighbors so they add 0,
+        # exactly matching the heavyweight's skip-and-keep-sum behavior.
+        res = ndimage.correlate(data * valid, k, mode="constant", cval=0.0)
+        out_bands.append(res)
+    out = np.stack(out_bands)
+    profile = _out_profile(ds, "float64", nd, ds.nodata is not None)
     with MemoryFile() as mf:
         with mf.open(**profile) as dst:
             dst.write(out)
