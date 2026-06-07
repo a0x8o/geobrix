@@ -32,11 +32,19 @@ object PixelCombineRasters {
         val vrtPath = s"${NodeFilePathUtil.rootPath}/combine_rasters_vrt_$uuid.vrt"
         val rasterPath = s"/vsimem/combine_rasters_$uuid.$extension"
 
+        // `-separate` stacks every band of every input dataset as a distinct
+        // VRT band/source. Without it, gdalbuildvrt overlays inputs band-by-band
+        // and preserves the input band count, so a single multi-band input tile
+        // yields a multi-band VRT — and the pixel function would then be applied
+        // per band, emitting N output bands instead of the documented single
+        // derived band. `-separate` + the single-band collapse in
+        // addPixelFunction guarantee exactly one derived output band, whether the
+        // input is N single-band tiles (combineavg / *_agg) or one N-band tile.
         val vrtRaster = GDALBuildVRT.executeVRT(
           vrtPath,
           dss,
           options,
-          command = s"gdalbuildvrt -resolution highest"
+          command = s"gdalbuildvrt -resolution highest -separate"
         )
         vrtRaster._1.delete()
 
@@ -66,7 +74,18 @@ object PixelCombineRasters {
         result
     }
 
-    /** Injects PixelFunctionType, PixelFunctionLanguage=Python, and PixelFunctionCode into the VRT XML at vrtPath. */
+    /**
+      * Collapses every band of the VRT into a SINGLE derived `VRTRasterBand`
+      * driven by the supplied Python pixel function.
+      *
+      * The VRT is built with `gdalbuildvrt -separate`, so each input band is its
+      * own `VRTRasterBand` with one source. We gather the source elements
+      * (`SimpleSource` / `ComplexSource` / `AveragedSource`) from every band into
+      * a single derived band so the pixel function receives all input bands in
+      * `in_ar` and produces exactly one output band — matching the documented and
+      * unit-tested `rst_derivedband` / `rst_combineavg` contract (1 output band)
+      * regardless of whether the input is N single-band tiles or one N-band tile.
+      */
     def addPixelFunction(vrtPath: String, pixFuncCode: String, pixFuncName: String): Unit = {
         val pixFuncTypeEl = <PixelFunctionType>{pixFuncName}</PixelFunctionType>
         val pixFuncLangEl = <PixelFunctionLanguage>Python</PixelFunctionLanguage>
@@ -74,24 +93,42 @@ object PixelCombineRasters {
             {scala.xml.Unparsed(s"<![CDATA[$pixFuncCode]]>")}
         </PixelFunctionCode>
 
+        val sourceLabels = Set("SimpleSource", "ComplexSource", "AveragedSource")
+
         val vrtContent = XML.loadFile(new File(vrtPath))
         val vrtWithPixFunc = vrtContent match {
-            case body @ Elem(_, _, _, _, child @ _*) => body.copy(
-                  child = child.map {
-                      case el @ Elem(_, "VRTRasterBand", _, _, child @ _*) => el
-                              .asInstanceOf[Elem]
-                              .copy(
-                                child = Seq(pixFuncTypeEl, pixFuncLangEl, pixFuncCodeEl) ++ child,
-                                attributes = el
-                                    .asInstanceOf[Elem]
-                                    .attributes
-                                    .append(
-                                      new UnprefixedAttribute("subClass", "VRTDerivedRasterBand", scala.xml.Null)
-                                    )
-                              )
-                      case el                                              => el
-                  }
+            case body @ Elem(_, _, _, _, child @ _*) =>
+                val rasterBands = child.collect {
+                    case el @ Elem(_, "VRTRasterBand", _, _, _*) => el.asInstanceOf[Elem]
+                }
+                // Pull every source element across all bands into one derived band.
+                val allSources = rasterBands.flatMap { band =>
+                    band.child.filter {
+                        case Elem(_, label, _, _, _*) => sourceLabels.contains(label)
+                        case _                        => false
+                    }
+                }
+                // Base the merged band on the first band's attributes; force band="1".
+                val baseBand = rasterBands.headOption.getOrElse(
+                    <VRTRasterBand dataType="Float64" band="1"/>
                 )
+                val mergedBand = baseBand.copy(
+                  child = Seq(pixFuncTypeEl, pixFuncLangEl, pixFuncCodeEl) ++ allSources,
+                  attributes = baseBand.attributes
+                      .remove("band")
+                      .append(new UnprefixedAttribute("band", "1", scala.xml.Null))
+                      .append(new UnprefixedAttribute("subClass", "VRTDerivedRasterBand", scala.xml.Null))
+                )
+                // Drop all original VRTRasterBand children; insert the single merged band
+                // in their place (preserving non-band metadata like SRS / GeoTransform).
+                var inserted = false
+                val newChild = child.flatMap {
+                    case Elem(_, "VRTRasterBand", _, _, _*) =>
+                        if (inserted) Seq.empty
+                        else { inserted = true; Seq(mergedBand) }
+                    case other => Seq(other)
+                }
+                body.copy(child = newChild)
         }
 
         XML.save(vrtPath, vrtWithPixFunc)

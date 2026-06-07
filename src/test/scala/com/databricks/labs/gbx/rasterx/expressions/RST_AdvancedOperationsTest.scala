@@ -199,6 +199,27 @@ def passthrough(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ys
         RasterDriver.releaseDataset(derivedDs)
     }
 
+    test("RST_DerivedBand collapses a multi-band input to a single derived band") {
+        // Regression: a single N-band input tile must still yield exactly ONE
+        // derived band (matching the documented/lightweight contract), not one
+        // output band per input band. multiBandDs has 3 bands.
+        multiBandDs.GetRasterCount shouldBe 3
+        val pyfunc = """
+import numpy as np
+def multiband_average(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+    stacked = np.array(in_ar)
+    out_ar[:] = np.mean(stacked, axis=0)
+"""
+        val (derivedDs, _) = RST_DerivedBand.execute(Seq(multiBandDs), Map.empty, pyfunc, "multiband_average")
+
+        derivedDs should not be null
+        derivedDs.GetRasterCount shouldBe 1
+        derivedDs.GetRasterXSize shouldBe multiBandDs.GetRasterXSize
+        derivedDs.GetRasterYSize shouldBe multiBandDs.GetRasterYSize
+
+        RasterDriver.releaseDataset(derivedDs)
+    }
+
     // ====================================================================
     // RST_MapAlgebra Advanced Tests (8 tests)
     // ====================================================================

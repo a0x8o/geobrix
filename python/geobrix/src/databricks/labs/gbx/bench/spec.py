@@ -746,6 +746,14 @@ REGISTRY: Dict[str, FnSpec] = {
         col_fn=lambda t, a: prx.rst_band(t, a["band_index"]),
         core=False,
     ),
+    # rst_threshold (timing-only): the two tiers implement DIFFERENT, documented
+    # output contracts (see the lightweight-tier note in raster-functions.mdx).
+    # The heavyweight binarises via gdal_calc — a SINGLE-band 0/1 mask over band 1.
+    # The lightweight KEEPS each passing pixel's original value and sets failing
+    # pixels to NoData, preserving every input band. On a multi-band tile that
+    # surfaces as a band-count divergence (heavy 1 vs light N) on top of the
+    # value-semantics difference. This is a by-design contract difference, not a
+    # bug, so the cell is TIMED but never fingerprint-compared.
     "rst_threshold": FnSpec(
         "rst_threshold",
         "gbx_rst_threshold",
@@ -755,6 +763,7 @@ REGISTRY: Dict[str, FnSpec] = {
         core_fn=lambda ds, a: edit.threshold(ds, a["op"], a["value"]),
         col_fn=lambda t, a: prx.rst_threshold(t, a["op"], a["value"]),
         core=False,
+        fingerprint=False,
     ),
     "rst_initnodata": FnSpec(
         "rst_initnodata",
@@ -1131,7 +1140,12 @@ def select(
     membership sets below.
     """
     out = list(REGISTRY.values())
-    if set == "core":
+    # An explicit ``functions`` list selects by name and IGNORES the tier, so the
+    # core filter must be skipped when names are given — otherwise requesting a
+    # core=False function (e.g. rst_threshold / rst_derivedband) by name while the
+    # default tier is "core" silently yields zero specs. Apply the core filter
+    # only when selecting by tier (no explicit functions).
+    if set == "core" and not functions:
         out = [f for f in out if f.core]
     # set == "full": no core filter
     if functions:

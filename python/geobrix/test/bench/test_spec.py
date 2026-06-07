@@ -23,6 +23,17 @@ def test_select_filters_by_category_and_name():
     assert [f.name for f in one] == ["rst_slope"]
 
 
+def test_select_by_name_ignores_core_tier():
+    # An explicit functions list must ignore the tier: requesting core=False
+    # functions by name under the default set="core" must still return them
+    # (regression: the core filter previously ran first and yielded zero specs).
+    names = ["rst_threshold", "rst_derivedband"]
+    for n in names:
+        assert s.REGISTRY[n].core is False
+    picked = {f.name for f in s.select(functions=names, set="core")}
+    assert picked == set(names)
+
+
 def test_dump_functions_json(tmp_path):
     p = tmp_path / "functions.json"
     s.dump_functions_json(p)
@@ -303,6 +314,12 @@ _TILE_OUT_SCALAR = {
 
 _TILE_OUT_PURE_CORE_ONLY = {"rst_resample_to_res"}
 
+# rst_threshold runs BOTH modes (timed) but is never fingerprint-compared: the
+# two tiers implement different, documented output contracts (heavy binarises to a
+# single-band 0/1 mask; light keeps passing pixels and preserves all bands). A
+# by-design contract difference, not a bug — so it is timing-only.
+_TILE_OUT_TIMING_ONLY = {"rst_threshold"}
+
 
 def test_tile_out_scalar_registered_in_full():
     full = {f.name for f in s.select(set="full")}
@@ -324,6 +341,9 @@ def test_tile_out_scalar_modes_and_fingerprint():
         fs = s.REGISTRY[name]
         if name in _TILE_OUT_PURE_CORE_ONLY:
             assert fs.modes == ("pure-core",), name
+            assert fs.fingerprint is False, name
+        elif name in _TILE_OUT_TIMING_ONLY:
+            assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
             assert fs.fingerprint is False, name
         else:
             assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
