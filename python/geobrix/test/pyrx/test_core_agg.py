@@ -71,6 +71,23 @@ def test_merge_tiles_overlap_last_wins():
         assert np.all(arr[:, 4:6] == 20.0)
 
 
+def test_merge_tiles_overlap_winner_order_invariant():
+    # A Spark groupBy().agg() gives no row-arrival-order guarantee, so a last-wins
+    # mosaic must not depend on the order tiles are passed. merge_tiles sorts by
+    # geotransform origin, so the highest-origin tile (right, origin x=2) wins the
+    # overlap whether it is listed first or last.
+    left = _ras(np.full((4, 4), 10.0), ulx=0.0, uly=4.0, px=1.0)
+    right = _ras(np.full((4, 4), 20.0), ulx=2.0, uly=4.0, px=1.0)
+    out_lr = agg.merge_tiles([left, right])
+    out_rl = agg.merge_tiles([right, left])
+    # Bitwise-identical output regardless of input order.
+    assert out_lr == out_rl
+    with _serde.open_tile(out_lr) as ds:
+        arr = ds.read(1)
+        # Overlap cols (2,3) take the higher-origin (right) tile -> 20.
+        assert np.all(arr[:, 2:4] == 20.0)
+
+
 # --- combineavg_tiles -------------------------------------------------------
 def test_combineavg_tiles_mean():
     a = _ras(np.array([[2.0, 4.0], [6.0, 8.0]]))
@@ -132,6 +149,25 @@ def test_rasterize_features_burns_values():
     # Column 0 only g1 -> 1 ; columns 1..3 -> g2 last-wins -> 2.
     assert np.all(arr[:, 0] == 1.0)
     assert np.all(arr[:, 1] == 2.0)
+
+
+def test_rasterize_features_overlap_winner_order_invariant():
+    # A Spark groupBy().agg() gives no feature-arrival-order guarantee, so a
+    # last-wins burn must not depend on feature order. rasterize_features burns in
+    # a canonical (geom_wkb, value) order, so the overlap pixel is identical
+    # whichever order the features are supplied.
+    g1 = shapely.wkb.dumps(box(0, 0, 3, 4))  # left band, value 1
+    g2 = shapely.wkb.dumps(box(1, 0, 4, 4))  # overlaps cols 1..2, value 2
+    out_ab = agg.rasterize_features([(g1, 1.0), (g2, 2.0)], 0, 0, 4, 4, 4, 4, 32633)
+    out_ba = agg.rasterize_features([(g2, 2.0), (g1, 1.0)], 0, 0, 4, 4, 4, 4, 32633)
+    assert out_ab == out_ba  # bitwise-identical regardless of order
+    with _serde.open_tile(out_ab) as ds:
+        arr = ds.read(1)
+    # Overlap cols 1..2 resolve to a single canonical winner (1.0 or 2.0).
+    overlap = arr[:, 1:3]
+    winner = overlap.flat[0]
+    assert winner in (1.0, 2.0)
+    assert np.all(overlap == winner)
 
 
 def test_rasterize_features_empty_returns_none():

@@ -62,11 +62,19 @@ case class RST_MergeAgg(
             buffer.head
         } else {
 
-            // This is a trick to get the rasters sorted by their parent path to ensure more consistent results
-            // when merging rasters with large overlaps
+            // A groupBy().agg() does not guarantee the order tiles reach the aggregator,
+            // so a last-wins mosaic would otherwise pick a different overlap winner from
+            // run to run. Sort by the tile's geotransform origin (originX, originY) -- a
+            // stable key intrinsic to the georef -- so the highest-origin tile reliably
+            // wins the overlap regardless of arrival order. (GetDescription, the previous
+            // key, is a per-open /vsimem/<uuid> path for in-memory tiles and so sorted
+            // nondeterministically.) GetDescription is kept only as a final tie-break.
             val tiles = buffer
                 .map(row => RasterSerializationUtil.rowToTile(row.asInstanceOf[InternalRow], rasterType))
-                .sortBy(_._2.GetDescription())
+                .sortBy { case (_, ds, _) =>
+                    val gt = ds.GetGeoTransform()
+                    (gt(0), gt(3), ds.GetDescription())
+                }
 
             // If merging multiple index rasters, the index value is dropped
             val idx: Long = if (tiles.map(_._1).groupBy(identity).size == 1) tiles.head._1 else -1L

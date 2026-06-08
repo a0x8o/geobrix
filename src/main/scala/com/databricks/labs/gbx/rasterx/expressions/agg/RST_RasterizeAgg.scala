@@ -95,7 +95,12 @@ object RasterizeAcc {
  *  [[VectorRasterBridge]] -- identical to [[RST_Rasterize.execute]] except
  *  that the OGR layer carries all features rather than just one.
  *
- *  Overlap is last-wins in layer order (nondeterministic across the group).
+ *  Overlap is last-wins.  A Spark `groupBy().agg()` does not guarantee the order
+ *  features reach the aggregator, so before burning we sort the accumulated
+ *  features into a canonical order by `(geom_wkb, value)` -- a stable key
+ *  intrinsic to each feature.  The overlap winner is therefore deterministic and
+ *  identical regardless of row-arrival order (and matches the lightweight tier,
+ *  which sorts on the same key).
  */
 case class RST_RasterizeAgg(
     geomWkbExpr:  Expression,
@@ -114,7 +119,7 @@ case class RST_RasterizeAgg(
 
     import RST_RasterizeAgg.{evalDouble, evalInt}
 
-    override lazy val deterministic: Boolean = false  // last-wins on overlap
+    override lazy val deterministic: Boolean = true  // canonical fold order (see eval)
     override val nullable: Boolean = true
     override lazy val dataType: DataType = RST_ExpressionUtil.tileDataType(BinaryType)
     override def prettyName: String = RST_RasterizeAgg.name
@@ -170,7 +175,14 @@ case class RST_RasterizeAgg(
         val heightPx = evalInt(heightPxExpr,    empty, "height_px")
         val srid     = evalInt(sridExpr,        empty, "srid")
 
-        val (ogrDs, layer) = VectorRasterBridge.buildOgrLayer(buffer.features.toSeq, srid)
+        // Canonical fold order: sort by (geom_wkb lexicographic, value) so the
+        // last-wins overlap winner is deterministic regardless of the order rows
+        // arrived from the groupBy, and matches the lightweight tier.
+        val ordered = buffer.features.toSeq.sortWith { (a, b) =>
+            val c = RST_RasterizeAgg.compareBytes(a._1, b._1)
+            if (c != 0) c < 0 else a._2 < b._2
+        }
+        val (ogrDs, layer) = VectorRasterBridge.buildOgrLayer(ordered, srid)
         val rasterDs = VectorRasterBridge.buildEmptyRaster(xmin, ymin, xmax, ymax, widthPx, heightPx, srid)
         try {
             val bands      = Array(1)
@@ -209,6 +221,19 @@ object RST_RasterizeAgg extends WithExpressionInfo {
         case n => throw new IllegalArgumentException(
             s"$name expects 9 arguments " +
             s"(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid); got $n")
+    }
+
+    /** Unsigned lexicographic comparison of two byte arrays (stable canonical key). */
+    private[agg] def compareBytes(a: Array[Byte], b: Array[Byte]): Int = {
+        val n = math.min(a.length, b.length)
+        var i = 0
+        while (i < n) {
+            val ai = a(i) & 0xff
+            val bi = b(i) & 0xff
+            if (ai != bi) return ai - bi
+            i += 1
+        }
+        a.length - b.length
     }
 
     private[agg] def evalDouble(e: Expression, row: InternalRow, label: String): Double =

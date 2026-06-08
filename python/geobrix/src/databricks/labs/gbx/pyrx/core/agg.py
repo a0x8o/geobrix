@@ -52,12 +52,19 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
     Each GTiff carries its own georef/CRS, so ``rasterio.merge.merge`` places
     them by extent and the output spans the union extent (mirrors the
     heavyweight RST_MergeAgg / MergeRasters ``gdalbuildvrt -resolution highest``
-    mosaic). On overlap we use ``method="last"`` so the LAST source in the input
-    order wins, matching the heavyweight: ``gdalbuildvrt`` stacks sources in
-    list order and overlapping pixels take the last-listed source. The
-    heavyweight first sorts tiles by parent path (``GetDescription``) for
-    determinism; that ordering has no analogue on in-memory bytes, so the
-    last-wins tie-break here is resolved against the caller-supplied order.
+    mosaic). On overlap we use ``method="last"`` so the LAST source in the fold
+    order wins, matching the heavyweight ``gdalbuildvrt`` (overlapping pixels
+    take the last-listed source).
+
+    DETERMINISM: a Spark ``groupBy().agg()`` does not guarantee the order rows
+    reach the reducer, so a last-wins mosaic would otherwise pick a different
+    overlap winner from run to run (and from the heavyweight). To make the fold
+    order-invariant we sort the inputs by their geotransform origin
+    ``(origin_x, origin_y)`` -- a stable key intrinsic to each tile's georef --
+    before merging. The heavyweight applies the analogous deterministic ordering
+    by sorting on the tile's source path; for the abutting/offset mosaic tiles
+    both keys agree (lowest origin folds first, highest-origin tile wins the
+    overlap), so the two tiers pick the same winner.
     """
     if not rasters:
         return None
@@ -65,6 +72,9 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
         return bytes(rasters[0])
     memfiles, datasets = _open_all(rasters)
     try:
+        # Sort by geotransform origin so the last-wins overlap winner is
+        # deterministic regardless of caller/row-arrival order.
+        datasets.sort(key=lambda d: (d.transform.c, d.transform.f))
         ref = datasets[0]
         mosaic, out_transform = _rio_merge(datasets, method="last")
         profile = ref.profile.copy()
@@ -192,6 +202,13 @@ def rasterize_features(
     value carried as the burn attribute. Overlap is LAST-WINS in feature order
     (rasterio burns the shape list in order, last write per cell wins). Pixels
     touched by no feature get NoData (-9999.0).
+
+    DETERMINISM: a Spark ``groupBy().agg()`` does not guarantee the order
+    features reach the reducer, so a last-wins burn would otherwise pick a
+    different overlap winner from run to run. To make the fold order-invariant we
+    burn features in a canonical order, sorted by ``(geom_wkb, value)`` -- a
+    stable key intrinsic to each feature. The heavyweight RST_RasterizeAgg burns
+    in the same canonical order, so both tiers resolve overlaps identically.
     """
     if not features:
         return None
@@ -200,11 +217,15 @@ def rasterize_features(
     transform = from_bounds(
         float(xmin), float(ymin), float(xmax), float(ymax), width_px, height_px
     )
-    shapes = [
-        (shapely.wkb.loads(bytes(wkb)), float(v))
-        for wkb, v in features
-        if wkb is not None and len(bytes(wkb)) > 0
-    ]
+    ordered = sorted(
+        (
+            (bytes(wkb), float(v))
+            for wkb, v in features
+            if wkb is not None and len(bytes(wkb)) > 0
+        ),
+        key=lambda t: (t[0], t[1]),
+    )
+    shapes = [(shapely.wkb.loads(wkb), v) for wkb, v in ordered]
     if not shapes:
         return None
     arr = _rasterize(

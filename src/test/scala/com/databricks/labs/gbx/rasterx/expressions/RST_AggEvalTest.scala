@@ -167,4 +167,63 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
         }
     }
 
+    test("rst_merge_agg overlap winner is deterministic regardless of row order") {
+        // Two same-size tiles whose extents overlap (origins differ by half a tile),
+        // filled with distinct constants. The mosaic is last-wins; the aggregator now
+        // orders tiles by geotransform origin, so the highest-origin tile (part_1) must
+        // win the overlap regardless of the order rows reach the aggregator.
+        val sc = spark
+        import com.databricks.labs.gbx.rasterx.functions._
+        import sc.implicits._
+        functions.register(spark)
+
+        val tmpDir = java.nio.file.Files.createTempDirectory("gbx_merge_agg_det_").toFile
+        val w = 8; val h = 8
+        // part_0: origin (149.0, -35.0); part_1: origin shifted +0.04 east / -0.04 south
+        // (half the 8 px * 0.01 extent) so the two extents overlap in their inner corner.
+        def writeByteConst(p: String, v: Int, ox: Double, oy: Double): Unit = {
+            val drv = gdal.GetDriverByName("GTiff")
+            val ds = drv.Create(p, w, h, 1, gdalconstConstants.GDT_Byte, Array[String]("COMPRESS=DEFLATE"))
+            ds.SetGeoTransform(Array[Double](ox, 0.01, 0.0, oy, 0.0, -0.01))
+            val sr = new org.gdal.osr.SpatialReference()
+            sr.ImportFromEPSG(4326)
+            ds.SetProjection(sr.ExportToWkt())
+            val band = ds.GetRasterBand(1)
+            band.WriteRaster(0, 0, w, h, Array.fill[Byte](w * h)(v.toByte))
+            band.FlushCache(); ds.FlushCache(); ds.delete()
+        }
+        val p0 = s"${tmpDir.getAbsolutePath}/part_0.tif"  // origin 149.00, value 10
+        val p1 = s"${tmpDir.getAbsolutePath}/part_1.tif"  // origin 149.04, value 20 (wins overlap)
+        writeByteConst(p0, 10, 149.0, -35.0)
+        writeByteConst(p1, 20, 149.04, -35.04)
+
+        def mergeMean(order: Seq[String]): Double = {
+            val bytes = order.toDF("path")
+                .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+                .groupBy(lit(1).alias("g"))
+                .agg(rst_merge_agg(col("tile")).alias("out"))
+                .select(col("out.raster").alias("raster"))
+                .collect().head.getAs[Array[Byte]]("raster")
+            val mem = s"/vsimem/merge_agg_det_${java.util.UUID.randomUUID()}.tif"
+            gdal.FileFromMemBuffer(mem, bytes)
+            val ds = gdal.Open(mem)
+            try {
+                val n = ds.GetRasterXSize * ds.GetRasterYSize
+                val buf = Array.ofDim[Double](n)
+                ds.GetRasterBand(1).ReadRaster(0, 0, ds.GetRasterXSize, ds.GetRasterYSize,
+                    gdalconstConstants.GDT_Float64, buf)
+                buf.sum / n
+            } finally { RasterDriver.releaseDataset(ds); gdal.Unlink(mem) }
+        }
+
+        try {
+            // Same group, both row orders -> identical mosaic (origin sort, not arrival).
+            val meanAB = mergeMean(Seq(p0, p1))
+            val meanBA = mergeMean(Seq(p1, p0))
+            meanAB shouldBe meanBA +- 1e-9
+        } finally {
+            tmpDir.listFiles().foreach(_.delete()); tmpDir.delete()
+        }
+    }
+
 }

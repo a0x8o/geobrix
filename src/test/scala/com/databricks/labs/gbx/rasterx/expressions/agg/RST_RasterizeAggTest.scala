@@ -132,6 +132,34 @@ class RST_RasterizeAggTest extends AnyFunSuite with BeforeAndAfterAll {
         readPixel(result, 75, 25) shouldBe -9999.0 +- 1e-6
     }
 
+    test("overlap winner is deterministic regardless of update order (canonical fold)") {
+        // Two polygons overlapping in the top-left quadrant; burned in both orders.
+        // The aggregator sorts features by (geom_wkb, value) before burning, so the
+        // overlap pixel must be identical regardless of the order rows arrived.
+        val wkbA = rectWkb(0.0, 0.0, 60.0, 100.0)   // left band, value 10.0
+        val wkbB = rectWkb(40.0, 0.0, 100.0, 100.0) // right band, value 20.0 (overlap x in [40,60))
+
+        val aggAB = makeAgg()
+        val bufAB = aggAB.createAggregationBuffer()
+        aggAB.update(bufAB, wkbA, 10.0)
+        aggAB.update(bufAB, wkbB, 20.0)
+        val resAB: AnyRef = aggAB.eval(bufAB).asInstanceOf[AnyRef]
+
+        val aggBA = makeAgg()
+        val bufBA = aggBA.createAggregationBuffer()
+        aggBA.update(bufBA, wkbB, 20.0)   // reversed arrival order
+        aggBA.update(bufBA, wkbA, 10.0)
+        val resBA: AnyRef = aggBA.eval(bufBA).asInstanceOf[AnyRef]
+
+        // Overlap column 50 (x in [40,60)) must resolve to the SAME winner both ways.
+        val winAB = readPixel(resAB, 50, 50)
+        val winBA = readPixel(resBA, 50, 50)
+        winAB shouldBe winBA +- 1e-9
+        // Non-overlap sanity: col 10 only A (10.0), col 90 only B (20.0).
+        readPixel(resAB, 10, 50) shouldBe 10.0 +- 1e-6
+        readPixel(resAB, 90, 50) shouldBe 20.0 +- 1e-6
+    }
+
     test("buffer serde roundtrip preserves features") {
         val wkbA = rectWkb(0.0, 50.0, 50.0, 100.0)
         val wkbB = rectWkb(50.0, 0.0, 100.0, 50.0)
