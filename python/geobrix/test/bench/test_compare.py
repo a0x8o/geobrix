@@ -784,3 +784,43 @@ def test_vector_attr_agg_divergence():
     hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
     lw = _vec(5, 100.0, 1.0, 90.0, 45.0, 20.0)
     assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
+# --- per-FnSpec rel_tol override (contour) -----------------------------------
+# GDAL's contour generator and the lightweight marching-squares segmenter trace
+# the same iso-lines but split them into segments differently, so per-segment
+# measures/attrs spread ~1.5%. That inherent algorithm spread blows past the
+# strict global REL_TOL (1e-3) and would flag `divergent`, so rst_contour
+# declares rel_tol=0.02 in its FnSpec. compare_cells must honor that per-fn tol
+# WITHOUT loosening the global tol for any other function.
+def test_compare_fingerprints_rel_tol_arg_flips_divergent_to_within_tol():
+    # ~1.5% spread on measure AND attr stats.
+    hw = _vec(3025, 1.0000, 1.0, 100.0, 50.0, 30.0)
+    lw = _vec(3334, 1.0150, 1.0, 101.5, 50.75, 30.45)
+    # Default (global) tol: the 1.5% spread is a divergence.
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+    # With a 2% rel_tol the same spread is within tolerance.
+    assert c.compare_fingerprints(hw, lw, rel_tol=0.02)[0] == "within_tol"
+
+
+def test_compare_cells_applies_contour_per_fn_rel_tol():
+    from databricks.labs.gbx.bench import spec as _spec
+
+    # rst_contour declares the looser per-fn tol; the registry is the source.
+    assert _spec.REGISTRY["rst_contour"].rel_tol == 0.02
+
+    fp_hw = _vec(3025, 1.0000, 1.0, 100.0, 50.0, 30.0)
+    fp_lw = _vec(3334, 1.0150, 1.0, 101.5, 50.75, 30.45)
+
+    # A function with NO per-fn tol (default None -> global REL_TOL) is divergent
+    # on this same ~1.5% spread.
+    hw_default = [_rr("heavyweight", "rst_polygonize", "pure-core", 20.0, fp_hw)]
+    lw_default = [_rr("lightweight", "rst_polygonize", "pure-core", 4.0, fp_lw)]
+    cells, _ = c.compare_cells(hw_default, lw_default)
+    assert cells[0].consistency == "divergent"
+
+    # rst_contour, same spread, must be within_tol via its 0.02 per-fn tol.
+    hw_contour = [_rr("heavyweight", "rst_contour", "pure-core", 20.0, fp_hw)]
+    lw_contour = [_rr("lightweight", "rst_contour", "pure-core", 4.0, fp_lw)]
+    cells, _ = c.compare_cells(hw_contour, lw_contour)
+    assert cells[0].consistency == "within_tol"

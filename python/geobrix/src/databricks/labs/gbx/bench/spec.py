@@ -211,6 +211,14 @@ class FnSpec:
     # Honored only by the pure-core fingerprint pass (the spark-path mode never
     # fingerprints its output).
     fingerprint_kind: str = "auto"
+    # Optional per-function relative tolerance for the fingerprint comparison.
+    # ``None`` (default) means use the comparator's global ``REL_TOL``. A function
+    # whose two engines run genuinely different algorithms with a small, inherent
+    # numeric spread (e.g. rst_contour: GDAL's contour generator vs the lightweight
+    # marching-squares segmentation differ ~1.5% on segment measures/attrs) sets a
+    # looser per-fn tol so the comparator does not flag that inherent spread as a
+    # divergence -- WITHOUT loosening the strict global tol for every other function.
+    rel_tol: float | None = None
     # Repo-relative file paths whose CONTENT defines this function's heavy+light
     # behavior (the pyrx core module(s) the core_fn calls, plus the heavy Scala
     # RST_<Name> expression and any shared heavy helper it delegates to). This
@@ -1831,6 +1839,12 @@ REGISTRY: Dict[str, FnSpec] = {
             t, F.array(*[F.lit(float(v)) for v in a["levels"]])
         ),
         fingerprint_kind="vector",
+        # GDAL's contour generator and the lightweight marching-squares segmenter
+        # produce the same iso-lines but split them into segments differently, so
+        # per-segment measures/attrs spread ~1.5%. That is an inherent algorithm
+        # difference, not a parity bug -- a 2% per-fn tol absorbs it without
+        # loosening the strict global tol for any other function.
+        rel_tol=0.02,
         sources=_ANALYSIS_LIGHT + (_HEAVY + "analysis/RST_Contour.scala",),
         core=False,
     ),

@@ -285,8 +285,13 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
         h, lo = hw_by[k], lw_by[k]
         speedup = (h.median_ms / lo.median_ms) if lo.median_ms > 0 else 0.0
         if h.status == "ok" and lo.status == "ok":
+            # A function may declare a looser per-fn rel_tol for an inherent
+            # cross-engine algorithm spread (e.g. rst_contour's segmentation);
+            # fall back to the strict global REL_TOL when it declares none.
+            fn_spec = spec.REGISTRY.get(h.fn)
+            fn_rel_tol = (fn_spec.rel_tol if fn_spec else None) or REL_TOL
             cls, delta, ndc, note = compare_fingerprints(
-                h.output_fingerprint, lo.output_fingerprint
+                h.output_fingerprint, lo.output_fingerprint, rel_tol=fn_rel_tol
             )
         else:
             cls, delta, ndc, note = (
