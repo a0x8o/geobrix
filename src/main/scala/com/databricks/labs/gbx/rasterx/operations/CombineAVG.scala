@@ -58,14 +58,20 @@ object CombineAVG {
                |        np.copyto(out_ar, means, casting='unsafe')
                |""".stripMargin
 
-        val (resultDs, resultMeta) = PixelCombineRasters.combine(rasters, options, pythonFunc, "average")
+        // combineavg PRESERVES band count: averaging K aligned N-band tiles yields an
+        // N-band result (output band j = NoData-aware mean of band j across inputs),
+        // unlike derivedband which collapses to a single derived band. All inputs are
+        // aligned, so the first input's band count is N for the whole stack.
+        val bandCount = math.max(rasters.head.GetRasterCount, 1)
+        val (resultDs, resultMeta) =
+            PixelCombineRasters.combine(rasters, options, pythonFunc, "average", collapseBands = false, bandCount = bandCount)
 
-        // Stamp the chosen NoData onto the output band so callers can detect
+        // Stamp the chosen NoData onto every output band so callers can detect
         // all-NoData pixels. Only do this when at least one input declared
         // NoData — otherwise we'd invent a sentinel that wasn't present.
         if (sourceNoData.exists(_.isDefined) && resultDs != null) {
             scala.util.Try {
-                resultDs.GetRasterBand(1).SetNoDataValue(fallback)
+                (1 to resultDs.GetRasterCount).foreach(b => resultDs.GetRasterBand(b).SetNoDataValue(fallback))
                 resultDs.FlushCache()
             }
         }
