@@ -153,6 +153,40 @@ def test_stale_changed_functions(tmp_path, monkeypatch):
     assert "rst_ok" not in out
 
 
+def test_scorecard_per_function_table_has_delta_columns(tmp_path):
+    # Δms = hw - lw; Δ% = (hw - lw) / hw * 100. Sign convention: positive =>
+    # heavy slower / lightweight faster. _cell uses hw=10.0, speedup=2.0 =>
+    # lw=5.0 => Δms=+5.0, Δ%=+50.0.
+    src = _write_source(tmp_path, "core/avg.py", "v1\n")
+    _write(tmp_path, "rst_avg", sources=(src,), cells=[_cell("exact", 0.0, 2.0)])
+    specs_by_name = {"rst_avg": _spec("rst_avg", (src,))}
+    out = compare.scorecard_from_store(root=tmp_path, specs_by_name=specs_by_name)
+    header = [ln for ln in out.splitlines() if "| fn |" in ln][0]
+    assert "Δms" in header
+    assert "Δ%" in header
+    row = [ln for ln in out.splitlines() if ln.startswith("| rst_avg ")][0]
+    assert "+5.000" in row
+    assert "+50.0" in row
+    assert "heavy − light" in out
+
+
+def test_scorecard_delta_pct_zero_hw_guard(tmp_path):
+    # hw_median_ms == 0 must render the guard token, not raise ZeroDivisionError.
+    src = _write_source(tmp_path, "core/z.py", "v1\n")
+    cell = {
+        "consistency": "na",
+        "max_rel_delta": 0.0,
+        "speedup": 0.0,
+        "hw_median_ms": 0.0,
+        "lw_median_ms": 2.0,
+    }
+    _write(tmp_path, "rst_z", sources=(src,), cells=[cell])
+    specs_by_name = {"rst_z": _spec("rst_z", (src,))}
+    out = compare.scorecard_from_store(root=tmp_path, specs_by_name=specs_by_name)
+    row = [ln for ln in out.splitlines() if ln.startswith("| rst_z ")][0]
+    assert "n/a" in row or "—" in row
+
+
 def test_stale_changed_functions_none_affected(tmp_path, monkeypatch):
     monkeypatch.setattr(
         store,

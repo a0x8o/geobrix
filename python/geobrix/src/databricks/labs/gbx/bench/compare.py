@@ -183,6 +183,32 @@ class CellCompare:
     lw_mpix_s: float
     hw_rows_s: float
     lw_rows_s: float
+    # Timing deltas, heavy - light. Positive => heavy took MORE time (heavy
+    # slower / lightweight faster); negative => heavy faster.
+    hw_minus_lw_ms: float
+    delta_pct: float  # (hw - lw) / hw * 100; 0.0 when hw_median_ms == 0
+
+
+# Token rendered for Δ% when hw_median_ms == 0 (percentage undefined).
+_DELTA_PCT_NA = "n/a"
+
+
+def _delta_ms(hw_median_ms: float, lw_median_ms: float) -> float:
+    """Δms = heavy - light. Positive => heavy slower (lightweight faster)."""
+    return hw_median_ms - lw_median_ms
+
+
+def _delta_pct(hw_median_ms: float, lw_median_ms: float):
+    """Δ% = (hw - lw) / hw * 100, or None when hw is 0 (undefined)."""
+    if not hw_median_ms:
+        return None
+    return (hw_median_ms - lw_median_ms) / hw_median_ms * 100.0
+
+
+def _fmt_delta_pct(hw_median_ms: float, lw_median_ms: float) -> str:
+    """Render Δ% as a signed, 1-decimal string, or the guard token when hw == 0."""
+    pct = _delta_pct(hw_median_ms, lw_median_ms)
+    return _DELTA_PCT_NA if pct is None else f"{pct:+.1f}"
 
 
 def _key(r: ResultRow):
@@ -229,6 +255,8 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 lw_mpix_s=lo.throughput_mpix_s,
                 hw_rows_s=h.throughput_rows_s,
                 lw_rows_s=lo.throughput_rows_s,
+                hw_minus_lw_ms=_delta_ms(h.median_ms, lo.median_ms),
+                delta_pct=(_delta_pct(h.median_ms, lo.median_ms) or 0.0),
             )
         )
     unmatched = [
@@ -251,6 +279,8 @@ _CSV_FIELDS = [
     "rows",
     "hw_median_ms",
     "lw_median_ms",
+    "hw_minus_lw_ms",
+    "delta_pct",
     "speedup",
     "consistency",
     "max_rel_delta",
@@ -468,6 +498,17 @@ def scorecard_from_store(
         max_delta = max(deltas) if deltas else 0.0
         speedups = [_cnum(c, "speedup") for c in cells if _cnum(c, "speedup")]
         speedup = speedups[0] if speedups else 0.0
+        # Representative cell for timing deltas: the same one used for speedup
+        # above (first cell with a usable speedup), else the first cell.
+        rep = None
+        for cell in cells:
+            if _cnum(cell, "speedup"):
+                rep = cell
+                break
+        if rep is None and cells:
+            rep = cells[0]
+        rep_hw = (_cnum(rep, "hw_median_ms") or 0.0) if rep else 0.0
+        rep_lw = (_cnum(rep, "lw_median_ms") or 0.0) if rep else 0.0
         commit = r.get("validated_commit") or ""
         short = commit.replace("dirty:", "")[:7]
         if commit.startswith("dirty:"):
@@ -480,6 +521,8 @@ def scorecard_from_store(
                 "consistency": worst,
                 "max_rel_delta": max_delta,
                 "speedup": speedup,
+                "delta_ms": _delta_ms(rep_hw, rep_lw),
+                "delta_pct": _fmt_delta_pct(rep_hw, rep_lw),
                 "commit": short,
                 "stale": stale,
             }
@@ -544,14 +587,17 @@ def scorecard_from_store(
     lines += [
         "## Per-function",
         "",
-        "| fn | consistency | max_rel_delta | speedup | validated | stale |",
-        "|---|---|---|---|---|---|",
+        "_Δms/Δ% = heavy − light (heavy timing minus light); positive → heavy "
+        "slower (lightweight faster), negative → heavy faster._",
+        "",
+        "| fn | consistency | max_rel_delta | speedup | Δms | Δ% | validated | stale |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
             f"| {row['fn']} | {row['consistency']} | {row['max_rel_delta']:.3g} | "
-            f"{row['speedup']:.2f} | {row['commit']} | "
-            f"{'STALE' if row['stale'] else ''} |"
+            f"{row['speedup']:.2f} | {row['delta_ms']:+.3f} | {row['delta_pct']} | "
+            f"{row['commit']} | {'STALE' if row['stale'] else ''} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -605,6 +651,9 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
         f"**within_tol** = every stat agrees to rel ≤ {REL_TOL:g} OR abs ≤ {ABS_TOL:g}; "
         f"**divergent** = neither. Per-cell max_rel_delta in comparison.csv._",
         "",
+        "_Δms/Δ% = heavy − light (heavy timing minus light); positive → heavy "
+        "slower (lightweight faster), negative → heavy faster._",
+        "",
     ]
 
     lines += coverage_block(cells).split("\n")
@@ -617,14 +666,16 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
             lines += [
                 f"## {mode} (hw vs lw)",
                 "",
-                "| fn | tile_px | bands | rows | hw_ms | lw_ms | hw_mpix/s | "
-                "lw_mpix/s | speedup | consistency | note |",
-                "|---|---|---|---|---|---|---|---|---|---|---|",
+                "| fn | tile_px | bands | rows | hw_ms | lw_ms | Δms | Δ% | "
+                "hw_mpix/s | lw_mpix/s | speedup | consistency | note |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
             ]
             for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
                 lines.append(
                     f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
                     f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
+                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.3f} | "
+                    f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)} | "
                     f"{cl.hw_mpix_s:.1f} | {cl.lw_mpix_s:.1f} | "
                     f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
                 )
@@ -632,14 +683,16 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
             lines += [
                 f"## {mode} (hw vs lw)",
                 "",
-                "| fn | tile_px | bands | rows | hw_ms | lw_ms | hw_rows/s | "
-                "lw_rows/s | speedup | consistency | note |",
-                "|---|---|---|---|---|---|---|---|---|---|---|",
+                "| fn | tile_px | bands | rows | hw_ms | lw_ms | Δms | Δ% | "
+                "hw_rows/s | lw_rows/s | speedup | consistency | note |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
             ]
             for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
                 lines.append(
                     f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
                     f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
+                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.3f} | "
+                    f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)} | "
                     f"{cl.hw_rows_s:.1f} | {cl.lw_rows_s:.1f} | "
                     f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
                 )

@@ -339,6 +339,8 @@ def _cmp(fn, mode, hw_ms, lw_ms, speedup, consistency, note, **kw):
         lw_mpix_s=0.0,
         hw_rows_s=0.0,
         lw_rows_s=0.0,
+        hw_minus_lw_ms=hw_ms - lw_ms,
+        delta_pct=((hw_ms - lw_ms) / hw_ms * 100.0) if hw_ms else 0.0,
     )
     base.update(kw)
     return c.CellCompare(**base)
@@ -543,3 +545,93 @@ def test_raster_collection_agg_divergence():
     hw = _coll(4, 0.0, 90.0, 45.0, 10.0)
     lw = _coll(4, 0.0, 1.0, 0.5, 0.25)
     assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
+# --- heavy - light timing deltas (Δms / Δ%) ---------------------------------
+# Sign convention: Δ = heavy - light. Positive => heavy took more time =>
+# heavy slower / lightweight faster. Negative => heavy faster.
+def test_summarize_compare_header_has_delta_columns():
+    cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_ms" in ln][0]
+    assert "Δms" in header
+    assert "Δ%" in header
+
+
+def test_summarize_compare_renders_positive_delta_heavy_slower():
+    # hw=10, lw=2 => Δms = +8.0, Δ% = +80.0 (heavy slower / lightweight faster)
+    cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_slope ")][0]
+    assert "+8.000" in row
+    assert "+80.0" in row
+
+
+def test_summarize_compare_renders_negative_delta_heavy_faster():
+    # hw=1, lw=4 => Δms = -3.0, Δ% = -300.0 (heavy faster)
+    cells = [_cmp("rst_h", "pure-core", 1.0, 4.0, 0.25, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_h ")][0]
+    assert "-3.000" in row
+    assert "-300.0" in row
+
+
+def test_summarize_compare_zero_hw_delta_pct_guard():
+    # hw=0 => Δ% undefined; must render the guard token, not raise.
+    cells = [_cmp("rst_z", "pure-core", 0.0, 2.0, 0.0, "na", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_z ")][0]
+    assert "n/a" in row or "—" in row
+
+
+def test_summarize_compare_spark_path_header_has_delta_columns():
+    cells = [_cmp("rst_w", "spark-path", 10.0, 2.0, 5.0, "na", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "lw_rows/s" in ln][0]
+    assert "Δms" in header
+    assert "Δ%" in header
+
+
+def test_summarize_compare_has_delta_legend():
+    cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
+    md = c.summarize_compare(cells, [], [], [])
+    assert "heavy − light" in md
+    assert "positive → heavy slower" in md
+
+
+def test_cellcompare_csv_includes_delta_fields():
+    assert "hw_minus_lw_ms" in c._CSV_FIELDS
+    assert "delta_pct" in c._CSV_FIELDS
+
+
+def test_compare_cells_populates_delta_fields():
+    hw = [
+        _rr(
+            "heavyweight",
+            "rst_slope",
+            "pure-core",
+            10.0,
+            '{"kind":"scalar","value":5}',
+        )
+    ]
+    lw = [
+        _rr(
+            "lightweight",
+            "rst_slope",
+            "pure-core",
+            2.0,
+            '{"kind":"scalar","value":5}',
+        )
+    ]
+    cells, _ = c.compare_cells(hw, lw)
+    assert abs(cells[0].hw_minus_lw_ms - 8.0) < 1e-9
+    assert abs(cells[0].delta_pct - 80.0) < 1e-9
+
+
+def test_write_csv_with_delta_fields(tmp_path):
+    cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
+    p = tmp_path / "comparison.csv"
+    c.write_csv(cells, p)
+    rows = list(_csv.DictReader(p.open()))
+    assert abs(float(rows[0]["hw_minus_lw_ms"]) - 8.0) < 1e-9
+    assert abs(float(rows[0]["delta_pct"]) - 80.0) < 1e-9
