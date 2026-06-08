@@ -365,7 +365,7 @@ def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
         tile_px=pool.tile_px,
         bands=pool.bands,
         dtype=pool.dtype,
-        srid=0,
+        srid=(pool.tiles[0].srid if pool.tiles else 0),
         rows=n,
         nodata_frac=0.0,
         warmup_iters=warmup,
@@ -595,6 +595,12 @@ def run_spark_path(
     for te in tiles:
         d = _serde.build_tile((root / te.path).read_bytes(), "GTiff", te.cellid)
         payload.append((d["cellid"], d["raster"], d["metadata"]))
+    # createDataFrame from a local list defaults to spark.sparkContext.defaultParallelism
+    # partitions (e.g. a 12-core cluster -> 12 partitions, so 12 Spark tasks for 10 rows,
+    # 2 of them empty). We deliberately DON'T coalesce: coalesce(N) can pack several tiles
+    # into one partition (and still leave empties), which would skew the per-row spark-path
+    # timing. A couple of empty no-op partitions are harmless; even one-tile-per-partition
+    # spread is preferred for clean per-row measurement.
     base = spark.createDataFrame(payload, schema=_serde.TILE_SCHEMA)
     # Wrap the 3 columns into the tile struct the prx.rst_* wrappers expect.
     df_all = base.select(F.struct("cellid", "raster", "metadata").alias("tile")).cache()
@@ -707,7 +713,7 @@ def run_spark_path(
                         tile_px=pool.tile_px,
                         bands=pool.bands,
                         dtype=pool.dtype,
-                        srid=0,
+                        srid=(pool.tiles[0].srid if pool.tiles else 0),
                         rows=n,
                         nodata_frac=0.0,
                         warmup_iters=stats["warmup_iters"],
@@ -739,7 +745,7 @@ def run_spark_path(
                         tile_px=pool.tile_px,
                         bands=pool.bands,
                         dtype=pool.dtype,
-                        srid=0,
+                        srid=(pool.tiles[0].srid if pool.tiles else 0),
                         rows=n,
                         nodata_frac=0.0,
                         warmup_iters=warmup,

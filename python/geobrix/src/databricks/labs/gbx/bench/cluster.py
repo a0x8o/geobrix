@@ -52,6 +52,7 @@ SET = {set!r}
 MODES = {modes!r}
 ROW_COUNTS = [int(x) for x in {row_counts!r}.split(",") if x]
 WARMUP, MEASURED = {warmup}, {measured}
+TRUNCATE = {truncate!r}
 
 os.makedirs(OUT, exist_ok=True)
 corpus = _m.Corpus.read(f"{{CORPUS}}/corpus.json")
@@ -65,6 +66,10 @@ if MODES in ("pure-core", "both"):
 if MODES in ("spark-path", "both"):
     lw += runner.run_spark_path(spark, CORPUS, corpus, fnspecs, RUN_ID, ROW_COUNTS, WARMUP, MEASURED, "cluster")
 results.write_jsonl(lw, f"{OUT}/lightweight.jsonl")
+# Always write a per-tier summary so every run (incl. lightweight-only, which
+# has no heavy-vs-light comparison summary.md) leaves a readable summary file.
+with open(f"{OUT}/lightweight.summary.md", "w") as fh:
+    fh.write(results.summarize(lw))
 all_rows += lw
 """
 
@@ -78,17 +83,38 @@ all_rows += hw
 """
 
 _EPILOGUE = """
+if TRUNCATE:
+    try:
+        spark.sql(f"TRUNCATE TABLE {TABLE}")
+        print(f"truncated {TABLE} -- only this run's rows will remain")
+    except Exception as _e:  # table doesn't exist yet -> the append creates it
+        print(f"truncate skipped ({TABLE} not found): {_e}")
 delta_rows = _cl.to_delta(all_rows, spark, TABLE, where="cluster")
-compared = 0
+
+# Status-led result payload. Lead with a human status + counts; only surface
+# `compared` (the heavy-vs-light comparison cell count) when BOTH tiers ran, so a
+# lightweight-only run doesn't report a bare `compared: 0` that reads like failure.
+ok = sum(1 for r in all_rows if getattr(r, "status", "ok") == "ok")
+errors = sum(1 for r in all_rows if getattr(r, "status", "ok") == "error")
+result = dict(
+    status=("error" if errors else "success"),
+    run_id=RUN_ID,
+    rows=len(all_rows), ok=ok, errors=errors,
+    delta_rows=delta_rows, table=TABLE, out=OUT,
+)
 if hw and lw:
     cells, unmatched = compare.compare_cells(hw, lw)
     compare.write_csv(cells, f"{OUT}/comparison.csv")
     with open(f"{OUT}/summary.md", "w") as fh:
         fh.write(compare.summarize_compare(cells, unmatched, hw, lw))
-    compared = len(cells)
+    result["compared"] = len(cells)
+    result["summary"] = f"{OUT}/summary.md"
+elif lw:
+    result["summary"] = f"{OUT}/lightweight.summary.md"
+else:
+    result["summary"] = f"{OUT}/heavyweight.jsonl"
 
-dbutils.notebook.exit(json.dumps(dict(
-    rows=len(all_rows), delta_rows=delta_rows, compared=compared, out=OUT, table=TABLE)))
+dbutils.notebook.exit(json.dumps(result))
 """
 
 
@@ -113,6 +139,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         row_counts=cfg["row_counts"],
         warmup=cfg["warmup"],
         measured=cfg["measured"],
+        truncate=cfg.get("truncate_results", False),
     )
     if cfg.get("lightweight"):
         body += _LIGHT

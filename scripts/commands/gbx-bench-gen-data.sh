@@ -12,6 +12,9 @@ SRIDS="4326,3857,32618,27700"
 NODATA_FRAC="0.02"
 SEED="1234"
 ROW_ROWS="10000"
+ROW_TILE_PX=""
+ROW_BANDS=""
+ROW_DTYPE=""
 SET="core"
 LOG_PATH=""
 
@@ -29,6 +32,10 @@ Options:
   --srids <list>       SRIDs to cycle (default 4326,3857,32618,27700)
   --nodata-frac <list> NoData fraction(s), e.g. 0.02,0.25,0.5 (default 0.02)
   --row-rows <n>       Row-pool size for spark-path sweep (default 10000)
+  --row-tile-px <n>    Row-pool tile size in px (default 1024) — the tile the
+                       spark-path sweep actually benchmarks
+  --row-bands <n>      Row-pool band count (default 4)
+  --row-dtype <t>      Row-pool dtype (default float32)
   --seed <n>           RNG seed (default 1234)
   --set <core|full>    Accepted for pipeline symmetry (default core); the corpus
                        is function-agnostic, so this does not change its content.
@@ -45,6 +52,9 @@ while [[ $# -gt 0 ]]; do case $1 in
     --srids) SRIDS="$2"; shift 2 ;;
     --nodata-frac) NODATA_FRAC="$2"; shift 2 ;;
     --row-rows) ROW_ROWS="$2"; shift 2 ;;
+    --row-tile-px) ROW_TILE_PX="$2"; shift 2 ;;
+    --row-bands) ROW_BANDS="$2"; shift 2 ;;
+    --row-dtype) ROW_DTYPE="$2"; shift 2 ;;
     --seed) SEED="$2"; shift 2 ;;
     --set) SET="$2"; shift 2 ;;
     --log) LOG_PATH=$(resolve_log_path "$2"); shift 2 ;;
@@ -57,8 +67,16 @@ show_banner "gbx:bench:gen-data"
 validate_set "$SET" || exit 1
 setup_log_file "$LOG_PATH"
 
+# Row-pool knobs are optional; only pass the flag when set so datagen's own
+# defaults (1024px / 4 bands / float32) still apply when unspecified.
+ROW_OPTS=""
+[[ -n "$ROW_TILE_PX" ]] && ROW_OPTS="$ROW_OPTS --row-tile-px '$ROW_TILE_PX'"
+[[ -n "$ROW_BANDS" ]] && ROW_OPTS="$ROW_OPTS --row-bands '$ROW_BANDS'"
+[[ -n "$ROW_DTYPE" ]] && ROW_OPTS="$ROW_OPTS --row-dtype '$ROW_DTYPE'"
+
 run_in_pyrx_venv "python -m databricks.labs.gbx.bench.datagen \
     --out '$OUT' --tile-px '$TILE_PX' --bands '$BANDS' --dtypes '$DTYPES' \
-    --srids '$SRIDS' --nodata-frac '$NODATA_FRAC' --row-rows '$ROW_ROWS' --seed '$SEED'"
+    --srids '$SRIDS' --nodata-frac '$NODATA_FRAC' --row-rows '$ROW_ROWS' \
+    --seed '$SEED'$ROW_OPTS"
 EXIT_CODE=$?
 exit $EXIT_CODE

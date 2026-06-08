@@ -144,6 +144,9 @@ def main() -> int:
         measured=measured,
         heavyweight=heavyweight,
         lightweight=lightweight,
+        # --truncate-results: empty the bench_results table first so only THIS
+        # run's rows remain (otherwise runs accumulate/append).
+        truncate_results=("--truncate-results" in sys.argv),
     )
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -255,8 +258,18 @@ def main() -> int:
             except Exception:
                 pass
             if result_state == "SUCCESS":
-                print(f"Run {run_id_remote} finished successfully.")
-                print(f"Results: Delta table {table} | out_dir {out_dir} (comparison.csv / summary.md).")
+                # Point at the summary file that actually exists for this scope:
+                # both tiers -> comparison summary.md; lightweight-only ->
+                # lightweight.summary.md; heavyweight-only -> heavyweight.jsonl.
+                if heavyweight and lightweight:
+                    summary_file = "summary.md"
+                elif lightweight:
+                    summary_file = "lightweight.summary.md"
+                else:
+                    summary_file = "heavyweight.jsonl"
+                print(f"Run {run_id_remote} finished: result_state=SUCCESS.")
+                print(f"Results -> table {table}")
+                print(f"Summary  -> {out_dir}/{summary_file}")
                 return 0
             print(f"Run {run_id_remote} finished with result_state={result_state}", file=sys.stderr)
             print(f"Check the Delta table {table} and out_dir {out_dir} for partial results.", file=sys.stderr)
