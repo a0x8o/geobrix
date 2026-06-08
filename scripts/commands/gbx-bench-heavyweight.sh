@@ -86,7 +86,11 @@ MVN="mvn test -PskipScoverage -DskipTests=false \
     -Dgbx.bench.functions='$FUNCTIONS' -Dgbx.bench.modes='$MODES' \
     -Dgbx.bench.rowCounts='$ROW_COUNTS' -Dgbx.bench.warmup='$WARMUP' -Dgbx.bench.measured='$MEASURED'"
 
-docker exec geobrix-dev /bin/bash -c "$DOCKER_MAVEN_ENV && cd /root/geobrix && $MVN"
+# Unset JAVA_TOOL_OPTIONS: the container sets a global JDWP agent (-agentlib:jdwp
+# ...address=5005,server=y); the forked ScalaTest JVM inherits it and fails to
+# bind 5005 when another JVM already holds it -> a spurious BUILD FAILURE (not a
+# crash). The bench JVM does not need the debugger.
+docker exec geobrix-dev /bin/bash -c "unset JAVA_TOOL_OPTIONS; $DOCKER_MAVEN_ENV && cd /root/geobrix && $MVN"
 EXIT_CODE=$?
 HOST_OUT="${OUT/\/root\/geobrix\//$PROJECT_ROOT/}"
 if [[ $EXIT_CODE -eq 0 ]]; then
