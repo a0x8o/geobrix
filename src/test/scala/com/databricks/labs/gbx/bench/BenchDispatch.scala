@@ -23,8 +23,10 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_BuildOverviews
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_CogConvert
+import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Contour
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Proximity
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Viewshed
+import com.databricks.labs.gbx.rasterx.expressions.vector.RST_Polygonize
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Band
@@ -46,6 +48,7 @@ import com.databricks.labs.gbx.rasterx.tile.TileMath
 import com.databricks.labs.gbx.util.NodeFilePathUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.gdal.gdal.Dataset
 
 import java.nio.file.Files
@@ -60,12 +63,17 @@ object BenchDispatch {
   // string in the stringly-typed bench args map; falls back to `d` when absent.
   private def argIntArray(a: Map[String, String], k: String, d: Array[Int]): Array[Int] =
     a.get(k).map(_.split("[,\\s]+").filter(_.nonEmpty).map(_.trim.toInt)).getOrElse(d)
+  // ARRAY<DOUBLE> arg (e.g. contour levels) ridden as a comma/space-separated
+  // string in the stringly-typed bench args map; falls back to `d` when absent.
+  private def argDoubleArray(a: Map[String, String], k: String, d: Array[Double]): Array[Double] =
+    a.get(k).map(_.split("[,\\s]+").filter(_.nonEmpty).map(_.trim.toDouble)).getOrElse(d)
 
   private val ACC = "accessor"; private val TER = "terrain"
   private val BM = "band-math"; private val WARP = "warp"
   private val EDIT = "edit"; private val FEAT = "features"
   private val FOCAL = "focal"; private val FMT = "format"; private val RES = "resample"
   private val ANALYSIS = "analysis"; private val DGGS = "dggs"
+  private val VECTOR = "vector"
 
   // Functions that need a >=2-band source even though they are not band-math
   // (rst_band selects band 2; rst_evi/savi/index read a second band on the
@@ -158,7 +166,9 @@ object BenchDispatch {
     "rst_h3_rastertogridmin" -> DGGS,
     "rst_quadbin_rastertogridavg" -> DGGS, "rst_quadbin_rastertogridcount" -> DGGS,
     "rst_quadbin_rastertogridmax" -> DGGS, "rst_quadbin_rastertogridmedian" -> DGGS,
-    "rst_quadbin_rastertogridmin" -> DGGS
+    "rst_quadbin_rastertogridmin" -> DGGS,
+    // bucket B, group B-vec: vector-out fns (contour LINES, polygonize POLYGONS)
+    "rst_contour" -> VECTOR, "rst_polygonize" -> VECTOR
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -441,8 +451,37 @@ object BenchDispatch {
         if (resDs != null) RasterDriver.releaseDataset(resDs)
       }
       BenchFingerprint.ofDggsGridIds(ids.toSeq)
+    // bucket B, group B-vec: vector-out fns. RST_Contour / RST_Polygonize each
+    // return an ArrayData of struct(geom_wkb BINARY, value DOUBLE); fpVector
+    // decodes the WKB -> JTS and fingerprints (feature count + total measure
+    // [line length for contour lines, polygon area for polygonize] + agg over
+    // the per-feature value). The heavy runner passes an EMPTY args map, so the
+    // defaults here ARE the cross-engine-compared values and MUST match the pyrx
+    // spec: contour FIXED_LEVELS [0.2, 0.4, 0.6, 0.8] (interval/base unused with
+    // non-empty levels), attr_field "elev"; polygonize band 1, connectedness 4.
+    case "rst_contour" =>
+      fpVector(RST_Contour.execute(
+        ds, argDoubleArray(a, "levels", Array(0.2, 0.4, 0.6, 0.8)),
+        argD(a, "interval", 0.0), argD(a, "base", 0.0), argS(a, "attr_field", "elev")))
+    case "rst_polygonize" =>
+      fpVector(RST_Polygonize.execute(
+        ds, argI(a, "band", 1), argI(a, "connectedness", 4)))
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
+  }
+
+  /** Decode a vector-feature ArrayData (struct(geom_wkb BINARY, value DOUBLE))
+    * into (JTS Geometry, attr) pairs and fingerprint via ofVector (feature count
+    * + total measure [line length / polygon area] + agg over the attrs). The
+    * WKB -> JTS parse mirrors the light side's shapely.wkb.loads. */
+  private def fpVector(arr: ArrayData): String = {
+    val features = (0 until arr.numElements()).map { i =>
+      val row = arr.getStruct(i, 2)
+      val wkb = row.getBinary(0)
+      val v = row.getDouble(1)
+      (JTS.fromWKB(wkb), v)
+    }
+    BenchFingerprint.ofVector(features)
   }
 
   /** Clone an open Dataset into an in-memory (MEM driver) copy. The tiling
@@ -767,6 +806,17 @@ object BenchDispatch {
       case "rst_quadbin_rastertogridmax"   => rst_quadbin_rastertogridmax(tile, argI(a, "resolution", 15))
       case "rst_quadbin_rastertogridmedian" => rst_quadbin_rastertogridmedian(tile, argI(a, "resolution", 15))
       case "rst_quadbin_rastertogridmin"   => rst_quadbin_rastertogridmin(tile, argI(a, "resolution", 15))
+      // bucket B, group B-vec: vector-out fns -> ARRAY<struct> column (spark-path
+      // is timing-only, not fingerprint-compared, so the args only need to be
+      // valid). contour rides FIXED_LEVELS [0.2, 0.4, 0.6, 0.8] as an
+      // ARRAY<DOUBLE> column; polygonize rides band 1 + connectedness 4.
+      case "rst_contour" =>
+        val levels = argDoubleArray(a, "levels", Array(0.2, 0.4, 0.6, 0.8))
+        rst_contour(tile, org.apache.spark.sql.functions.array(
+          levels.map(org.apache.spark.sql.functions.lit): _*))
+      case "rst_polygonize" =>
+        rst_polygonize(tile, org.apache.spark.sql.functions.lit(argI(a, "band", 1)),
+          org.apache.spark.sql.functions.lit(argI(a, "connectedness", 4)))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

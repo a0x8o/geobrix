@@ -446,7 +446,7 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_ninety_five():
+def test_full_set_count_is_ninety_seven():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
     # + 3 bucket-C group C3 (multi-tile: frombands/combineavg/merge)
@@ -454,7 +454,8 @@ def test_full_set_count_is_ninety_five():
     #   separatebands/xyzpyramid -> raster_collection fingerprint)
     # + 11 bucket-B group B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
     #   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
-    assert len(s.select(set="full")) == 95
+    # + 2 bucket-B group B-vec (contour, polygonize -> vector fingerprint)
+    assert len(s.select(set="full")) == 97
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -748,6 +749,66 @@ def test_dggs_resolution_args_valid():
 def test_dggs_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not (_DGGS & core)
+
+
+# --- bucket B, group B-vec: vector-out functions (2) -------------------------
+# rst_contour (contour LINES) + rst_polygonize (POLYGONS) emit a set of vector
+# features (geometry + a per-feature value), NOT bytes / scalars / a grid -- so
+# they declare fingerprint_kind == "vector" to route the output through
+# fingerprint_vector (feature COUNT + total measure [line length for lines,
+# polygon area for polygons, chosen by geometry type] + order-independent agg
+# over the per-feature attribute). The two engines may emit features in any
+# order and still agree; count is compared exactly.
+#
+# Heavy arg defaults matched exactly: rst_contour uses FIXED_LEVELS, so the
+# bench rides explicit fixed levels [0.2, 0.4, 0.6, 0.8] (the float32 corpus
+# band is ~[0,1], so these span its range and trace a handful of contours);
+# rst_polygonize uses band 1 + connectedness 4 (the heavy builder's defaults).
+_BVEC = {"rst_contour", "rst_polygonize"}
+_BVEC_CONTOUR_LEVELS = [0.2, 0.4, 0.6, 0.8]
+_BVEC_POLYGONIZE_CONNECTEDNESS = 4
+
+
+def test_bvec_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _BVEC - full
+    assert not missing, f"registry missing B-vec fns: {sorted(missing)}"
+
+
+def test_bvec_count_is_two():
+    assert len(_BVEC) == 2
+
+
+def test_bvec_wellformed_vector_fingerprint():
+    for name in _BVEC:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.category == "vector"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert fs.input_kind == "tile", name
+        assert fs.fingerprint is True, name
+        assert fs.fingerprint_kind == "vector", name
+        assert fs.sources, name
+
+
+def test_bvec_both_modes():
+    for name in _BVEC:
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_bvec_args_match_heavy_defaults():
+    contour = s.REGISTRY["rst_contour"]
+    assert contour.args["levels"] == _BVEC_CONTOUR_LEVELS
+    poly = s.REGISTRY["rst_polygonize"]
+    assert poly.args["band"] == 1
+    assert poly.args["connectedness"] == _BVEC_POLYGONIZE_CONNECTEDNESS
+
+
+def test_bvec_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_BVEC & core)
 
 
 def test_fnspec_fingerprint_kind_defaults_auto():

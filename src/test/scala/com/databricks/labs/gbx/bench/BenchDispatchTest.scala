@@ -28,9 +28,12 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     //   separatebands/xyzpyramid -> raster_collection fingerprint)
     // + 11 bucket-B B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
     //   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
-    assert(BenchDispatch.all.size == 95)
+    // + 2 bucket-B B-vec (contour, polygonize -> vector fingerprint)
+    assert(BenchDispatch.all.size == 97)
     assert(BenchDispatch.category("rst_h3_tessellate") == "dggs")
     assert(BenchDispatch.category("rst_quadbin_rastertogridavg") == "dggs")
+    assert(BenchDispatch.category("rst_contour") == "vector")
+    assert(BenchDispatch.category("rst_polygonize") == "vector")
     assert(BenchDispatch.category("rst_xyzpyramid") == "format")
     assert(BenchDispatch.category("rst_separatebands") == "format")
     assert(BenchDispatch.minBands("rst_ndvi") == 2)

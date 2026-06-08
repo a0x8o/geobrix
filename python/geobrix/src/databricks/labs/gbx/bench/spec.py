@@ -1803,6 +1803,51 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
     ),
+    # --- bucket B, group B-vec: vector-out functions (2) ----------------------
+    # rst_contour (contour LINES) + rst_polygonize (POLYGONS) emit a set of
+    # vector features (geometry + per-feature value). Their core_fn returns a
+    # list of {"geom_wkb", "value"} (contour) / (geom_wkb, value) tuples
+    # (polygonize) -- neither bytes nor scalars -- so each declares
+    # fingerprint_kind == "vector" to route the output through fingerprint_vector
+    # (feature COUNT + total measure [line length for lines, polygon area for
+    # polygons, by geometry type] + order-independent agg over the attributes).
+    #
+    # Heavy arg defaults matched exactly: contour rides FIXED_LEVELS (the heavy
+    # ContourGenerateEx FIXED_LEVELS path), so the bench uses explicit fixed
+    # levels [0.2, 0.4, 0.6, 0.8] -- the float32 corpus band is ~[0, 1], so
+    # these span its value range and trace a handful of contour LineStrings.
+    # polygonize rides band 1 + connectedness 4 (the heavy RST_Polygonize
+    # builder's defaults: case 1 => Literal(1), Literal(4)). The contour
+    # `interval`/`base`/`attr_field` ride the binding defaults (0.0/0.0/"elev");
+    # with non-empty levels `interval`/`base` are ignored on both engines.
+    "rst_contour": FnSpec(
+        "rst_contour",
+        "gbx_rst_contour",
+        "vector",
+        _BOTH,
+        {"levels": [0.2, 0.4, 0.6, 0.8]},
+        core_fn=lambda ds, a: analysis_core.contour(ds, a["levels"], 0.0, 0.0, "elev"),
+        col_fn=lambda t, a: prx.rst_contour(
+            t, F.array(*[F.lit(float(v)) for v in a["levels"]])
+        ),
+        fingerprint_kind="vector",
+        sources=_ANALYSIS_LIGHT + (_HEAVY + "analysis/RST_Contour.scala",),
+        core=False,
+    ),
+    "rst_polygonize": FnSpec(
+        "rst_polygonize",
+        "gbx_rst_polygonize",
+        "vector",
+        _BOTH,
+        {"band": 1, "connectedness": 4},
+        core_fn=lambda ds, a: features.polygonize(ds, a["band"], a["connectedness"]),
+        col_fn=lambda t, a: prx.rst_polygonize(
+            t, F.lit(a["band"]), F.lit(a["connectedness"])
+        ),
+        fingerprint_kind="vector",
+        sources=_FEATURES_LIGHT + (_HEAVY + "vector/RST_Polygonize.scala",),
+        core=False,
+    ),
 }
 
 # Maps each tile_array FnSpec to its bench.synth recipe name. The runner uses this
