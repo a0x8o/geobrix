@@ -506,15 +506,19 @@ def test_rst_maketiles(spark):
     from rasterio.io import MemoryFile
     from rasterio.transform import from_origin
 
-    data = np.arange(100 * 100, dtype="float32").reshape(100, 100)
+    # 1024x1024 single-band float32 ~= 4 MiB encoded. Heavy keys on the encoded
+    # byte size and quad-splits power-of-4; at size_in_mb=1 that is k=2 -> 16
+    # tiles (a 4x4 grid of 256x256), matching heavy BalancedSubdivision.
+    side = 1024
+    data = np.arange(side * side, dtype="float32").reshape(side, side)
     profile = dict(
         driver="GTiff",
-        width=100,
-        height=100,
+        width=side,
+        height=side,
         count=1,
         dtype="float32",
         crs="EPSG:4326",
-        transform=from_origin(0, 100, 1, 1),
+        transform=from_origin(0, side, 1, 1),
         nodata=-9999.0,
     )
     with MemoryFile() as mf:
@@ -524,8 +528,8 @@ def test_rst_maketiles(spark):
     df = spark.createDataFrame([(src,)], ["raster"]).select(
         prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
-    parts = df.select(f.explode(prx.rst_maketiles("tile", 0.01)).alias("t"))
-    assert parts.count() > 1
+    parts = df.select(f.explode(prx.rst_maketiles("tile", 1)).alias("t"))
+    assert parts.count() == 16
     assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
 
 

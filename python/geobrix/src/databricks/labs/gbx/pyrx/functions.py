@@ -1731,18 +1731,22 @@ def _maketiles_udf(tile, size_in_mb):
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        parts = tiling.make_tiles(ds, float(size_in_mb))
+    raster = bytes(tile["raster"])
+    with _serde.open_tile(raster) as ds:
+        # Pass the encoded byte length so the power-of-4 split count matches
+        # heavy BalancedSubdivision (which keys on GDAL's in-memory file size).
+        parts = tiling.make_tiles(ds, float(size_in_mb), size_bytes=len(raster))
     return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
 
 
 def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
     """Split a raster into an array of tiles of approximately size_in_mb each.
 
-    Derives a square tile side from the target MB budget and the raster's
-    bytes-per-pixel, then partitions the raster into non-overlapping sub-tiles.
-    Returns ARRAY<tile struct>; explode the result to get one row per sub-tile.
-    Each output tile carries the correct windowed transform and CRS.
+    Quad-splits the raster into a power-of-4 grid (1, 4, 16, ... tiles) until
+    each tile's encoded size fits within the target MB budget, then partitions
+    it into non-overlapping sub-tiles.  Returns ARRAY<tile struct>; explode the
+    result to get one row per sub-tile.  Each output tile carries the correct
+    windowed transform and CRS.
     """
     return _maketiles_udf(_col(tile), _col(size_in_mb))
 

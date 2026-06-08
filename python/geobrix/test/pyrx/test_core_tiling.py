@@ -52,33 +52,73 @@ def test_overlapping_tiles():
     assert (2, 2) in set(_dims(parts))
 
 
-def test_make_tiles_splits_by_size():
+def _square_geotiff_bytes(side, count, dtype="float32"):
+    """Square multi-band GTiff with arange data (uncompressed, like the corpus)."""
     import numpy as np
     from rasterio.io import MemoryFile
     from rasterio.transform import from_origin
 
-    # 100x100 single-band float32 = 40000 bytes (~0.038 MB)
-    data = np.arange(100 * 100, dtype="float32").reshape(100, 100)
+    data = np.arange(side * side, dtype=dtype).reshape(side, side)
     profile = dict(
         driver="GTiff",
-        width=100,
-        height=100,
-        count=1,
-        dtype="float32",
+        width=side,
+        height=side,
+        count=count,
+        dtype=dtype,
         crs="EPSG:4326",
-        transform=from_origin(0, 100, 1, 1),
+        transform=from_origin(0, side, 1, 1),
         nodata=-9999.0,
     )
     with MemoryFile() as mf:
         with mf.open(**profile) as dst:
-            dst.write(data, 1)
-        src = mf.read()
+            for b in range(1, count + 1):
+                dst.write(data + (b - 1) * 100, b)
+        return mf.read()
+
+
+def _heavy_count(width, height, size_bytes, dest_mib):
+    """Reference port of BalancedSubdivision.getTileSize + ReTile tile count.
+
+    Power-of-4 split: smallest k (capped at 4^(k+1) <= 512) such that
+    size_bytes >> (2*k) <= limit; nx = ny = 2**k; tiles via ceil-div.
+    """
+    import math
+
+    limit = dest_mib * 1024 * 1024
+    k = 0
+    while k < 9 and (size_bytes >> (2 * k)) > limit and (1 << (2 * (k + 1))) <= 512:
+        k += 1
+    nx = 1 << k
+    tile_x = (width + nx - 1) // nx
+    tile_y = (height + nx - 1) // nx
+    return math.ceil(width / tile_x) * math.ceil(height / tile_y)
+
+
+def test_make_tiles_matches_heavy_power_of_4():
+    # Heavy keys on the encoded (vsimem) byte length, not raw pixel size, and
+    # splits power-of-4. For uncompressed arange GTiffs (encoded ~= raw):
+    #   512^2 x 2 float32 ~= 2 MiB, mib=1  -> k=1 -> 4 tiles
+    #   256^2 x 2 float32 ~= 0.5 MiB, mib=1 -> k=0 -> 1 tile
+    #   1024^2 x 2 float32 ~= 8 MiB, mib=1 -> k=2 -> 16 tiles (sqrt heuristic gave 9)
+    for side, mib in [(256, 1), (512, 1), (1024, 1), (512, 4), (1024, 4)]:
+        src = _square_geotiff_bytes(side, count=2)
+        expected = _heavy_count(side, side, len(src), mib)
+        with _serde.open_tile(src) as ds:
+            parts = tiling.make_tiles(ds, mib)
+        assert (
+            len(parts) == expected
+        ), f"side={side} mib={mib}: light={len(parts)} expected(heavy)={expected}"
+
+
+def test_make_tiles_tile_dims_are_power_of_2_grid():
+    # 512^2 x 2 @ mib=1 -> 2x2 grid of 256x256 tiles, CRS preserved.
+    src = _square_geotiff_bytes(512, count=2)
     with _serde.open_tile(src) as ds:
-        parts = tiling.make_tiles(ds, 0.01)  # ~10 KB budget -> side ~51 -> 4 tiles
-    assert len(parts) > 1
+        parts = tiling.make_tiles(ds, 1)
+    assert len(parts) == 4
     for b in parts:
         with _serde.open_tile(b) as o:
-            assert o.width <= 100 and o.height <= 100
+            assert (o.width, o.height) == (256, 256)
             assert o.crs.to_epsg() == 4326
 
 
