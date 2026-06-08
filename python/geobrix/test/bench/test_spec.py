@@ -978,7 +978,55 @@ def test_bucket_a_tile_synth_recipe_maps_to_known_recipe():
 def test_bucket_a_gridfrompoints_args():
     fs = s.REGISTRY["rst_gridfrompoints_agg"]
     assert fs.args["power"] == 2.0
-    assert fs.args["max_pts"] == 12
+    # max_pts is a large sentinel (>= any corpus point count) so BOTH tiers IDW
+    # over ALL points. gdal_grid `invdist` (no search radius) ignores max_points;
+    # feeding a small max_pts made the lightweight cKDTree pick only the nearest k,
+    # diverging from heavy's all-points grid by the neighbor-selection artifact.
+    assert fs.args["max_pts"] >= 64
+
+
+def test_gridfrompoints_uses_all_points_for_idw_parity():
+    """Both rst_gridfrompoints and its aggregator must feed an all-points max_pts.
+
+    Heavy gdal_grid `invdist` with no radius interpolates from every point and
+    ignores max_points; the lightweight idw_grid does a nearest-max_pts selection.
+    A small max_pts therefore compares DIFFERENT effective point sets. Asserting a
+    large sentinel locks in the arg-fix that keeps the two IDW grids comparable.
+    """
+    for name in ("rst_gridfrompoints", "rst_gridfrompoints_agg"):
+        fs = s.REGISTRY[name]
+        assert fs.args["max_pts"] >= 64, name
+        assert fs.args["power"] == 2.0, name
+
+
+def test_aggregators_are_spark_path_only():
+    """Every *_agg aggregator declares spark-path ONLY (no pure-core UDAF analogue).
+
+    gbx:bench:changed must run affected fns in their DECLARED modes. When it
+    hardcoded --modes pure-core, the runner's per-fn filter (`if "pure-core" not in
+    fs.modes: continue`) skipped all 7 aggregators on the lightweight side -> 0 rows
+    and no consistency captured. This locks in that aggregators are spark-path-only,
+    so a validation run MUST include spark-path (the fix runs --modes both).
+    """
+    for name in _BUCKET_A:
+        assert s.REGISTRY[name].modes == ("spark-path",), name
+
+
+def test_both_modes_select_each_fn_in_its_declared_mode():
+    """The runner's per-fn mode filter, exercised over a mixed affected set.
+
+    A change-aware run over a pure-core fn + a spark-path aggregator must, under
+    "both", run the pure-core fn pure-core-only and the aggregator spark-path-only
+    -- i.e. "both" is the UNION of the affected fns' modes, not every fn in every
+    mode. This is the behavior the gbx:bench:changed --modes both fix relies on.
+    """
+    mixed = s.select(functions=["rst_slope", "rst_combineavg_agg"])
+    pure = [f for f in mixed if "pure-core" in f.modes]
+    spark = [f for f in mixed if "spark-path" in f.modes]
+    assert {f.name for f in pure} == {"rst_slope"}
+    assert {f.name for f in spark} == {"rst_slope", "rst_combineavg_agg"}
+    # the aggregator is NOT in the pure-core leg (would be a skipped 0-row fn)
+    assert "rst_combineavg_agg" not in {f.name for f in pure}
 
 
 def test_bucket_a_dtmfromgeoms_tolerances_zero():

@@ -692,9 +692,14 @@ object BenchDispatch {
         val (wkb, value) = geom.boxPairs.head
         RST_Rasterize.execute(wkb, value, xmin, ymin, xmax, ymax, w, h, srid, encodedEmptyConf)
       // ARRAY of points: IDW grid over all corpus points (wkb, value pairs).
+      // max_pts default mirrors the pyrx FnSpec sentinel (>= any corpus point
+      // count). gdal_grid `invdist` with no search radius ignores max_points and
+      // uses ALL points; the lightweight idw_grid does a nearest-max_pts cKDTree
+      // selection, so the bench feeds a large max_pts to force the light tier to
+      // ALSO use all points -> the two tiers IDW over the identical point set.
       case "rst_gridfrompoints" =>
         RST_GridFromPoints.execute(geom.pointPairs, xmin, ymin, xmax, ymax, w, h, srid,
-          argD(a, "power", 2.0), argI(a, "max_pts", 12))
+          argD(a, "power", 2.0), argI(a, "max_pts", 1000000))
       // ARRAY of 3D points: Delaunay DTM over all corpus zpoints; breaklines empty,
       // tolerances 0.0 (no scipy analogue on the light side either).
       case "rst_dtmfromgeoms" =>
@@ -975,10 +980,13 @@ object BenchDispatch {
       case "rst_rasterize_agg" =>
         expr(s"gbx_rst_rasterize_agg(geom_wkb, value, " +
           s"$xmin, $ymin, $xmax, $ymax, $w, $h, $srid)")
+      // max_pts default mirrors the pyrx FnSpec sentinel: gdal_grid invdist (no
+      // radius) ignores max_points and uses ALL points, so the lightweight tier is
+      // fed a large max_pts to also use all points (parity over the same point set).
       case "rst_gridfrompoints_agg" =>
         rst_gridfrompoints_agg(col("geom_wkb"), col("value"),
           lit(xmin), lit(ymin), lit(xmax), lit(ymax), lit(w), lit(h), lit(srid),
-          lit(argD(a, "power", 2.0)), lit(argI(a, "max_pts", 12)))
+          lit(argD(a, "power", 2.0)), lit(argI(a, "max_pts", 1000000)))
       // dtmfromgeoms_agg: breaklines NULL ARRAY<BINARY>; tolerances 0.0 (unconstrained
       // Delaunay, mirrored on the light side); no_data -9999.
       case "rst_dtmfromgeoms_agg" =>

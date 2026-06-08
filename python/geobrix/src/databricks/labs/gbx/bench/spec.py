@@ -1938,12 +1938,23 @@ REGISTRY: Dict[str, FnSpec] = {
         sources=_FEATURES_LIGHT + (_HEAVY + "vector/RST_Rasterize.scala",),
         core=False,
     ),
+    # max_pts is a LARGE sentinel (>= any corpus point count) so the lightweight
+    # IDW uses ALL points -- NOT a nearest-k subset. This is required for parity:
+    # the heavy tier runs ``gdal_grid invdist:power=p:max_points=m`` with NO search
+    # radius, and gdal_grid's plain ``invdist`` ignores ``max_points`` unless a
+    # search radius is set (radius1=radius2=0 => interpolate from every point). The
+    # lightweight ``idw_grid`` instead does a true nearest-``max_pts`` cKDTree
+    # selection. Feeding max_pts=12 to both therefore fed DIFFERENT effective point
+    # sets (heavy: all 64; light: nearest 12) -> a ~13-27% grid divergence that is
+    # an artifact of mismatched neighbor selection, not an algorithm bug. Clamping
+    # max_pts to the full point set makes both tiers IDW over the same points with
+    # the identical Sum(v_i/d_i^p)/Sum(1/d_i^p) formula, so the grids agree.
     "rst_gridfrompoints": FnSpec(
         "rst_gridfrompoints",
         "gbx_rst_gridfrompoints",
         "vector",
         ("pure-core",),
-        {"power": 2.0, "max_pts": 12},
+        {"power": 2.0, "max_pts": 1000000},
         core_fn=lambda ds, a, g: tin.idw_grid(
             tin.points_xy_from_wkb([wkb for wkb, _ in g.points]),
             [v for _, v in g.points],
@@ -2127,12 +2138,16 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
     ),
+    # max_pts is the same large sentinel as the non-agg rst_gridfrompoints (see the
+    # comment there): heavy gdal_grid ``invdist`` with no radius uses ALL points, so
+    # the lightweight side must too, or the grids diverge by the neighbor-selection
+    # artifact rather than agreeing under identical IDW math.
     "rst_gridfrompoints_agg": FnSpec(
         "rst_gridfrompoints_agg",
         "gbx_rst_gridfrompoints_agg",
         "vector",
         ("spark-path",),
-        {"power": 2.0, "max_pts": 12},
+        {"power": 2.0, "max_pts": 1000000},
         col_fn=lambda g, v, ext, a: prx.rst_gridfrompoints_agg(
             g,
             v,
