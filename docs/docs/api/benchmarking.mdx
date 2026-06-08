@@ -125,11 +125,11 @@ The individual stages are also available as standalone commands — `gbx:bench:g
 The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table:
 
 ```text
-Consistency (38 compared cells): exact 12 - within-tol 26 - divergent 0
+Consistency (163 compared cells): exact 54 - within-tol 107 - divergent 2
 
 | fn | tile_px | hw_ms | lw_ms | hw_mpix/s | lw_mpix/s | speedup | consistency |
-| rst_ndvi | 256 | 588.929 | 0.683 | 0.2 | 195.9 | 861.85 | within_tol |
-| rst_slope | 256 | 6.285 | 1.742 | 20.9 | 75.2 | 3.61 | within_tol |
+| rst_ndvi | 256 | 654.881 | 0.714 | 0.2 | 187.4 | 917.55 | within_tol |
+| rst_slope | 256 | 8.719 | 1.948 | 15.0 | 67.3 | 4.47 | within_tol |
 | rst_width | 512 | 0.017 | 0.244 | 31224.3 | 2145.4 | 0.07 | exact |
 ```
 
@@ -141,62 +141,235 @@ A per-engine summary is also written for each tier (`heavyweight.summary.md`, `l
 
 ## Local results
 
-The table below is a representative **pure-core** local run, sorted by speedup (lightweight-faster at the top). It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable.
+The table below is the **complete** local run across all 107 raster functions, sorted by speedup (lightweight-faster at the top). It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable. One row per function and tile size; cells whose output cannot be fingerprinted for a direct comparison (readers, metadata accessors, and some Spark-path runs) are timed and labelled `timing-only`.
 
-> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · pure-core · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618).
+> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618); aggregators at 1024². Timings are pure-core except the `*_agg` aggregators and a few Spark-only operations, which are spark-path.
 >
-> **Consistency (full suite):** the tiers agree within tolerance on the large majority of functions; the one by-design exception is `rst_convolve`, which differs slightly at raster edges (a GDAL block-halo difference). The table below is a representative subset — a complete per-function table is being finalized.
+> **Consistency (full suite):** of the 107 functions, **106 agree within tolerance** (exact or within-tolerance on every compared statistic). The sole exception is **`rst_convolve`**, which differs slightly at raster edges — a by-design GDAL block-halo difference; interior values match. (Across all compared cells: 54 exact, 107 within-tolerance, 2 divergent — both the edge-difference cells of `rst_convolve`.)
 
 | Function | Tile | Heavy (ms) | Light (ms) | Speedup | Consistency |
 |---|---|---|---|---|---|
-| `rst_nbr` | 256² | 616.49 | 0.67 | 923.30× | within_tol |
-| `rst_ndwi` | 256² | 608.89 | 0.67 | 910.04× | within_tol |
-| `rst_ndvi` | 256² | 588.93 | 0.68 | 861.85× | within_tol |
-| `rst_nbr` | 512² | 657.79 | 1.79 | 368.59× | within_tol |
-| `rst_ndwi` | 512² | 644.56 | 1.80 | 359.02× | within_tol |
-| `rst_ndvi` | 512² | 646.27 | 1.84 | 350.61× | within_tol |
-| `rst_median` | 256² | 13.12 | 0.71 | 18.57× | within_tol |
-| `rst_median` | 512² | 49.17 | 3.44 | 14.28× | within_tol |
-| `rst_pixelcount` | 512² | 12.33 | 1.18 | 10.48× | exact |
-| `rst_pixelcount` | 256² | 3.63 | 0.36 | 10.04× | exact |
-| `rst_avg` | 256² | 3.51 | 0.37 | 9.53× | within_tol |
-| `rst_avg` | 512² | 12.50 | 1.34 | 9.33× | within_tol |
-| `rst_transform` | 512² | 77.54 | 8.79 | 8.82× | within_tol |
-| `rst_transform` | 256² | 18.58 | 2.57 | 7.22× | within_tol |
-| `rst_hillshade` | 512² | 35.03 | 5.71 | 6.13× | within_tol |
-| `rst_hillshade` | 256² | 8.23 | 1.64 | 5.03× | within_tol |
-| `rst_to_webmercator` | 512² | 81.17 | 18.06 | 4.49× | within_tol |
-| `rst_roughness` | 512² | 19.77 | 4.60 | 4.30× | within_tol |
-| `rst_tpi` | 512² | 17.98 | 4.20 | 4.28× | within_tol |
-| `rst_to_webmercator` | 256² | 28.78 | 6.79 | 4.24× | within_tol |
-| `rst_roughness` | 256² | 5.32 | 1.39 | 3.83× | within_tol |
-| `rst_slope` | 256² | 6.29 | 1.74 | 3.61× | within_tol |
-| `rst_tpi` | 256² | 4.60 | 1.32 | 3.49× | within_tol |
-| `rst_slope` | 512² | 20.20 | 5.88 | 3.44× | within_tol |
-| `rst_tri` | 512² | 18.54 | 5.72 | 3.24× | within_tol |
-| `rst_aspect` | 512² | 37.41 | 11.65 | 3.21× | within_tol |
-| `rst_tri` | 256² | 4.80 | 1.60 | 3.00× | within_tol |
-| `rst_aspect` | 256² | 8.75 | 3.08 | 2.84× | within_tol |
-| `rst_max` | 512² | 1.85 | 1.19 | 1.56× | exact |
-| `rst_min` | 512² | 1.84 | 1.19 | 1.55× | exact |
-| `rst_max` | 256² | 0.49 | 0.36 | 1.33× | exact |
-| `rst_min` | 256² | 0.48 | 0.37 | 1.29× | exact |
-| `rst_height` | 256² | 0.05 | 0.09 | 0.49× | exact |
-| `rst_numbands` | 256² | 0.03 | 0.09 | 0.31× | exact |
-| `rst_width` | 256² | 0.02 | 0.09 | 0.23× | exact |
-| `rst_height` | 512² | 0.04 | 0.24 | 0.17× | exact |
-| `rst_numbands` | 512² | 0.04 | 0.24 | 0.15× | exact |
-| `rst_width` | 512² | 0.02 | 0.24 | 0.07× | exact |
+| `rst_fromcontent` | 512² | 33.54 | 0.000166 | 202,029× | within_tol |
+| `rst_fromcontent` | 256² | 8.16 | 0.000166 | 49,176× | within_tol |
+| `rst_threshold` | 256² | 663 | 0.583 | 1,138× | timing-only |
+| `rst_nbr` | 256² | 669 | 0.685 | 977× | within_tol |
+| `rst_savi` | 256² | 672 | 0.702 | 959× | within_tol |
+| `rst_ndwi` | 256² | 633 | 0.685 | 924× | within_tol |
+| `rst_ndvi` | 256² | 655 | 0.714 | 918× | within_tol |
+| `rst_evi` | 256² | 646 | 0.815 | 792× | within_tol |
+| `rst_index` | 256² | 699 | 0.903 | 774× | within_tol |
+| `rst_mapalgebra` | 256² | 646 | 1.32 | 488× | within_tol |
+| `rst_threshold` | 512² | 712 | 1.53 | 464× | timing-only |
+| `rst_nbr` | 512² | 828 | 1.88 | 439× | within_tol |
+| `rst_ndwi` | 512² | 831 | 1.90 | 437× | within_tol |
+| `rst_savi` | 512² | 752 | 2.00 | 376× | within_tol |
+| `rst_index` | 512² | 735 | 2.00 | 368× | within_tol |
+| `rst_evi` | 512² | 765 | 2.32 | 329× | within_tol |
+| `rst_ndvi` | 512² | 713 | 2.27 | 314× | within_tol |
+| `rst_mapalgebra` | 512² | 728 | 2.99 | 243× | within_tol |
+| `rst_initnodata` | 512² | 105 | 1.21 | 87.35× | within_tol |
+| `rst_dtmfromgeoms` | 512² | 1190 | 15.09 | 78.89× | within_tol |
+| `rst_dtmfromgeoms` | 256² | 308 | 4.60 | 66.93× | within_tol |
+| `rst_derivedband` | 512² | 85.05 | 1.51 | 56.29× | within_tol |
+| `rst_setsrid` | 512² | 64.10 | 1.20 | 53.54× | within_tol |
+| `rst_separatebands` | 512² | 72.36 | 1.45 | 49.97× | within_tol |
+| `rst_maketiles` | 512² | 130 | 2.73 | 47.57× | within_tol |
+| `rst_rasterize` | 256² | 20.39 | 0.464 | 43.94× | within_tol |
+| `rst_setsrid` | 256² | 21.62 | 0.494 | 43.79× | within_tol |
+| `rst_initnodata` | 256² | 21.13 | 0.496 | 42.60× | within_tol |
+| `rst_derivedband` | 256² | 24.98 | 0.592 | 42.22× | within_tol |
+| `rst_convolve` | 256² | 63.64 | 1.51 | 42.15× | divergent |
+| `rst_updatetype` | 256² | 22.56 | 0.536 | 42.08× | within_tol |
+| `rst_retile` | 512² | 229 | 5.51 | 41.53× | within_tol |
+| `rst_tooverlappingtiles` | 512² | 448 | 11.72 | 38.21× | within_tol |
+| `rst_updatetype` | 512² | 74.03 | 2.02 | 36.71× | within_tol |
+| `rst_convolve` | 512² | 217 | 6.26 | 34.61× | divergent |
+| `rst_maketiles` | 256² | 27.59 | 0.832 | 33.15× | within_tol |
+| `rst_fillnodata` | 512² | 107 | 3.38 | 31.66× | within_tol |
+| `rst_rasterize` | 512² | 32.34 | 1.06 | 30.54× | within_tol |
+| `rst_separatebands` | 256² | 21.49 | 0.732 | 29.37× | within_tol |
+| `rst_fillnodata` | 256² | 30.38 | 1.17 | 26.02× | within_tol |
+| `rst_tooverlappingtiles` | 256² | 78.02 | 3.07 | 25.41× | within_tol |
+| `rst_retile` | 256² | 28.72 | 1.21 | 23.66× | within_tol |
+| `rst_asformat` | 512² | 28.48 | 1.32 | 21.62× | within_tol |
+| `rst_band` | 512² | 20.08 | 0.94 | 21.36× | within_tol |
+| `rst_frombands` | 512² | 76.00 | 3.74 | 20.32× | within_tol |
+| `rst_resample` | 256² | 45.22 | 2.36 | 19.19× | within_tol |
+| `rst_median` | 256² | 14.54 | 0.791 | 18.39× | within_tol |
+| `rst_h3_tessellate` | 256² | 112 | 6.39 | 17.57× | exact |
+| `rst_h3_tessellate` | 512² | 256 | 14.96 | 17.10× | exact |
+| `rst_resample` | 512² | 178 | 10.63 | 16.70× | within_tol |
+| `rst_clip` | 256² | 11.74 | 0.729 | 16.09× | timing-only |
+| `rst_resample_to_size` | 256² | 12.33 | 0.791 | 15.59× | within_tol |
+| `rst_resample_to_size` | 512² | 26.16 | 1.76 | 14.88× | within_tol |
+| `rst_clip` | 512² | 20.87 | 1.44 | 14.48× | timing-only |
+| `rst_band` | 256² | 6.28 | 0.446 | 14.06× | within_tol |
+| `rst_dtmfromgeoms_agg` | 1024² | 3133 | 223 | 14.03× | within_tol |
+| `rst_median` | 512² | 53.31 | 4.00 | 13.31× | within_tol |
+| `rst_buildoverviews` | 512² | 95.44 | 7.51 | 12.70× | within_tol |
+| `rst_asformat` | 256² | 6.91 | 0.572 | 12.07× | within_tol |
+| `rst_transform` | 512² | 116 | 10.11 | 11.49× | within_tol |
+| `rst_frombands` | 256² | 24.17 | 2.14 | 11.31× | within_tol |
+| `rst_transform` | 256² | 33.66 | 3.02 | 11.14× | within_tol |
+| `rst_pixelcount` | 512² | 13.74 | 1.26 | 10.89× | exact |
+| `rst_combineavg` | 512² | 97.50 | 9.09 | 10.73× | within_tol |
+| `rst_merge` | 512² | 107 | 10.03 | 10.63× | within_tol |
+| `rst_combineavg` | 256² | 29.94 | 3.01 | 9.95× | within_tol |
+| `rst_pixelcount` | 256² | 3.86 | 0.44 | 8.79× | exact |
+| `rst_avg` | 256² | 3.72 | 0.434 | 8.56× | within_tol |
+| `rst_avg` | 512² | 13.63 | 1.67 | 8.16× | within_tol |
+| `rst_resample_to_res` | 256² | 4.48 | 0.571 | 7.84× | timing-only |
+| `rst_tilexyz` | 512² | 15.13 | 2.39 | 6.34× | timing-only |
+| `rst_h3_rastertogridavg` | 256² | 502 | 82.35 | 6.09× | within_tol |
+| `rst_quadbin_rastertogridmedian` | 512² | 157 | 25.74 | 6.09× | within_tol |
+| `rst_merge` | 256² | 38.35 | 6.34 | 6.05× | within_tol |
+| `rst_h3_rastertogridavg` | 512² | 2152 | 362 | 5.94× | within_tol |
+| `rst_to_webmercator` | 512² | 108 | 18.37 | 5.90× | within_tol |
+| `rst_resample_to_res` | 512² | 61.87 | 10.75 | 5.76× | timing-only |
+| `rst_buildoverviews` | 256² | 23.80 | 4.39 | 5.42× | within_tol |
+| `rst_tpi` | 256² | 6.83 | 1.31 | 5.21× | within_tol |
+| `rst_to_webmercator` | 256² | 37.48 | 7.31 | 5.13× | within_tol |
+| `rst_hillshade` | 512² | 28.89 | 5.78 | 5.00× | within_tol |
+| `rst_slope` | 512² | 30.99 | 6.33 | 4.89× | within_tol |
+| `rst_h3_rastertogridmedian` | 256² | 488 | 100 | 4.87× | exact |
+| `rst_h3_rastertogridmedian` | 512² | 2162 | 447 | 4.84× | within_tol |
+| `rst_h3_rastertogridcount` | 256² | 476 | 99.53 | 4.78× | exact |
+| `rst_tpi` | 512² | 20.81 | 4.36 | 4.78× | within_tol |
+| `rst_h3_rastertogridmin` | 512² | 2076 | 435 | 4.77× | within_tol |
+| `rst_h3_rastertogridmin` | 256² | 482 | 102 | 4.72× | within_tol |
+| `rst_h3_rastertogridmax` | 256² | 459 | 100 | 4.58× | within_tol |
+| `rst_h3_rastertogridcount` | 512² | 1973 | 435 | 4.54× | within_tol |
+| `rst_h3_rastertogridmax` | 512² | 1974 | 437 | 4.52× | within_tol |
+| `rst_slope` | 256² | 8.72 | 1.95 | 4.47× | within_tol |
+| `rst_roughness` | 512² | 20.60 | 4.72 | 4.37× | within_tol |
+| `rst_hillshade` | 256² | 7.13 | 1.68 | 4.24× | within_tol |
+| `rst_roughness` | 256² | 5.61 | 1.38 | 4.05× | within_tol |
+| `rst_tri` | 512² | 24.07 | 6.07 | 3.97× | within_tol |
+| `rst_filter` | 256² | 122 | 31.18 | 3.91× | within_tol |
+| `rst_quadbin_rastertogridavg` | 256² | 26.35 | 6.78 | 3.89× | exact |
+| `rst_quadbin_rastertogridmedian` | 256² | 32.23 | 8.50 | 3.79× | exact |
+| `rst_tri` | 256² | 6.51 | 1.73 | 3.76× | within_tol |
+| `rst_proximity` | 512² | 34.55 | 11.82 | 2.92× | within_tol |
+| `rst_proximity` | 256² | 8.85 | 3.04 | 2.91× | within_tol |
+| `rst_combineavg_agg` | 1024² | 1354 | 490 | 2.76× | within_tol |
+| `rst_tryopen` | 512² | 0.709 | 0.258 | 2.75× | exact |
+| `rst_aspect` | 512² | 32.19 | 12.28 | 2.62× | within_tol |
+| `rst_tryopen` | 256² | 0.24 | 0.0918 | 2.61× | exact |
+| `rst_quadbin_rastertogridcount` | 256² | 15.26 | 6.20 | 2.46× | exact |
+| `rst_frombands_agg` | 1024² | 813 | 333 | 2.44× | within_tol |
+| `rst_tilexyz` | 256² | 5.27 | 2.32 | 2.27× | timing-only |
+| `rst_filter` | 512² | 268 | 119 | 2.24× | within_tol |
+| `rst_derivedband_agg` | 1024² | 525 | 238 | 2.20× | within_tol |
+| `rst_aspect` | 256² | 7.56 | 3.44 | 2.20× | within_tol |
+| `rst_quadbin_rastertogridmin` | 256² | 13.92 | 6.57 | 2.12× | exact |
+| `rst_quadbin_rastertogridmax` | 256² | 14.02 | 6.63 | 2.12× | within_tol |
+| `rst_merge_agg` | 1024² | 1384 | 660 | 2.10× | within_tol |
+| `rst_quadbin_rastertogridmax` | 512² | 47.79 | 23.57 | 2.03× | within_tol |
+| `rst_quadbin_rastertogridcount` | 512² | 45.56 | 22.87 | 1.99× | within_tol |
+| `rst_quadbin_rastertogridavg` | 512² | 49.66 | 25.19 | 1.97× | within_tol |
+| `rst_quadbin_rastertogridmin` | 512² | 46.27 | 23.61 | 1.96× | within_tol |
+| `rst_boundingbox` | 256² | 0.2 | 0.109 | 1.84× | timing-only |
+| `rst_metadata` | 256² | 0.18 | 0.101 | 1.79× | timing-only |
+| `rst_getsubdataset` | 256² | 0.185 | 0.109 | 1.69× | timing-only |
+| `rst_max` | 512² | 2.02 | 1.35 | 1.50× | exact |
+| `rst_min` | 512² | 2.05 | 1.38 | 1.48× | exact |
+| `rst_max` | 256² | 0.544 | 0.39 | 1.39× | exact |
+| `rst_min` | 256² | 0.52 | 0.392 | 1.33× | exact |
+| `rst_boundingbox` | 512² | 0.295 | 0.258 | 1.14× | timing-only |
+| `rst_cog_convert` | 256² | 18.22 | 21.29 | 0.86× | within_tol |
+| `rst_rasterize_agg` | 1024² | 189 | 222 | 0.85× | within_tol |
+| `rst_cog_convert` | 512² | 60.62 | 74.37 | 0.82× | within_tol |
+| `rst_color_relief` | 512² | 4.57 | 5.69 | 0.80× | timing-only |
+| `rst_xyzpyramid` | 512² | 88.80 | 118 | 0.75× | timing-only |
+| `rst_color_relief` | 256² | 1.46 | 2.01 | 0.73× | timing-only |
+| `rst_proximity` | 1024² | 498 | 740 | 0.67× | timing-only |
+| `rst_summary` | 256² | 0.334 | 0.502 | 0.66× | timing-only |
+| `rst_srid` | 256² | 0.056 | 0.098 | 0.57× | exact |
+| `rst_height` | 256² | 0.054 | 0.0971 | 0.56× | exact |
+| `rst_xyzpyramid` | 256² | 51.04 | 92.79 | 0.55× | timing-only |
+| `rst_width` | 256² | 0.051 | 0.0959 | 0.53× | exact |
+| `rst_getsubdataset` | 512² | 0.145 | 0.276 | 0.53× | timing-only |
+| `rst_bandmetadata` | 512² | 0.11 | 0.239 | 0.46× | timing-only |
+| `rst_bandmetadata` | 256² | 0.0399 | 0.0915 | 0.44× | timing-only |
+| `rst_numbands` | 256² | 0.0391 | 0.0923 | 0.42× | exact |
+| `rst_isempty` | 256² | 0.0365 | 0.0911 | 0.40× | exact |
+| `rst_polygonize` | 256² | 13.69 | 35.37 | 0.39× | within_tol |
+| `rst_metadata` | 512² | 0.0837 | 0.255 | 0.33× | timing-only |
+| `rst_rotation` | 512² | 0.0783 | 0.244 | 0.32× | exact |
+| `rst_pixelheight` | 256² | 0.0286 | 0.0908 | 0.31× | exact |
+| `rst_getnodata` | 256² | 0.0312 | 0.1 | 0.31× | exact |
+| `rst_srid` | 512² | 0.0788 | 0.255 | 0.31× | exact |
+| `rst_summary` | 512² | 0.451 | 1.54 | 0.29× | timing-only |
+| `rst_pixelwidth` | 256² | 0.0252 | 0.0914 | 0.28× | exact |
+| `rst_polygonize` | 512² | 37.76 | 146 | 0.26× | within_tol |
+| `rst_scaley` | 256² | 0.0225 | 0.0897 | 0.25× | exact |
+| `rst_scalex` | 256² | 0.0203 | 0.0895 | 0.23× | exact |
+| `rst_rotation` | 256² | 0.0207 | 0.0916 | 0.23× | exact |
+| `rst_upperlefty` | 256² | 0.0199 | 0.0919 | 0.22× | exact |
+| `rst_upperleftx` | 256² | 0.0191 | 0.0897 | 0.21× | exact |
+| `rst_width` | 512² | 0.0535 | 0.263 | 0.20× | exact |
+| `rst_skewy` | 256² | 0.0174 | 0.0912 | 0.19× | exact |
+| `rst_numbands` | 512² | 0.0475 | 0.253 | 0.19× | exact |
+| `rst_type` | 256² | 0.0165 | 0.0887 | 0.19× | timing-only |
+| `rst_subdatasets` | 256² | 0.0206 | 0.113 | 0.18× | timing-only |
+| `rst_gridfrompoints` | 256² | 18.32 | 103 | 0.18× | within_tol |
+| `rst_height` | 512² | 0.0463 | 0.261 | 0.18× | exact |
+| `rst_rastertoworldcoordy` | 256² | 0.0184 | 0.104 | 0.18× | exact |
+| `rst_rastertoworldcoord` | 256² | 0.0206 | 0.118 | 0.17× | exact |
+| `rst_rastertoworldcoordx` | 256² | 0.0197 | 0.117 | 0.17× | exact |
+| `rst_skewx` | 256² | 0.0168 | 0.1 | 0.17× | exact |
+| `rst_contour` | 256² | 15.29 | 91.65 | 0.17× | within_tol |
+| `rst_contour` | 512² | 64.15 | 390 | 0.16× | within_tol |
+| `rst_format` | 256² | 0.0146 | 0.0889 | 0.16× | exact |
+| `rst_georeference` | 256² | 0.0147 | 0.0909 | 0.16× | timing-only |
+| `rst_getnodata` | 512² | 0.0355 | 0.238 | 0.15× | exact |
+| `rst_pixelwidth` | 512² | 0.0334 | 0.242 | 0.14× | exact |
+| `rst_isempty` | 512² | 0.0327 | 0.248 | 0.13× | exact |
+| `rst_gridfrompoints` | 512² | 47.07 | 358 | 0.13× | within_tol |
+| `rst_upperlefty` | 512² | 0.0286 | 0.239 | 0.12× | exact |
+| `rst_skewy` | 512² | 0.0275 | 0.245 | 0.11× | exact |
+| `rst_worldtorastercoordx` | 256² | 0.0116 | 0.107 | 0.11× | timing-only |
+| `rst_worldtorastercoordy` | 256² | 0.0104 | 0.105 | 0.10× | timing-only |
+| `rst_pixelheight` | 512² | 0.0221 | 0.241 | 0.09× | exact |
+| `rst_rastertoworldcoordy` | 512² | 0.0234 | 0.261 | 0.09× | exact |
+| `rst_worldtorastercoord` | 256² | 0.0107 | 0.12 | 0.09× | timing-only |
+| `rst_sample` | 256² | 0.011 | 0.131 | 0.08× | timing-only |
+| `rst_scalex` | 512² | 0.0198 | 0.239 | 0.08× | exact |
+| `rst_upperleftx` | 512² | 0.0194 | 0.239 | 0.08× | exact |
+| `rst_memsize` | 256² | 0.0165 | 0.211 | 0.08× | timing-only |
+| `rst_format` | 512² | 0.0182 | 0.237 | 0.08× | exact |
+| `rst_rastertoworldcoordx` | 512² | 0.0193 | 0.254 | 0.08× | exact |
+| `rst_rastertoworldcoord` | 512² | 0.02 | 0.264 | 0.08× | exact |
+| `rst_scaley` | 512² | 0.0178 | 0.239 | 0.07× | exact |
+| `rst_subdatasets` | 512² | 0.0202 | 0.273 | 0.07× | timing-only |
+| `rst_skewx` | 512² | 0.0176 | 0.259 | 0.07× | exact |
+| `rst_histogram` | 256² | 0.0821 | 1.23 | 0.07× | timing-only |
+| `rst_type` | 512² | 0.0156 | 0.293 | 0.05× | timing-only |
+| `rst_georeference` | 512² | 0.0125 | 0.239 | 0.05× | timing-only |
+| `rst_viewshed` | 256² | 4.13 | 97.96 | 0.04× | timing-only |
+| `rst_worldtorastercoordy` | 512² | 0.0109 | 0.263 | 0.04× | timing-only |
+| `rst_worldtorastercoordx` | 512² | 0.0103 | 0.257 | 0.04× | timing-only |
+| `rst_worldtorastercoord` | 512² | 0.0101 | 0.267 | 0.04× | timing-only |
+| `rst_sample` | 512² | 0.00904 | 0.278 | 0.03× | timing-only |
+| `rst_histogram` | 512² | 0.123 | 4.39 | 0.03× | timing-only |
+| `rst_gridfrompoints_agg` | 1024² | 107 | 3893 | 0.03× | within_tol |
+| `rst_memsize` | 512² | 0.0165 | 0.605 | 0.03× | timing-only |
+| `rst_viewshed` | 512² | 7.21 | 635 | 0.01× | timing-only |
+| `rst_fromfile` | 256² | — | 0.1 | — | timing-only |
+| `rst_fromfile` | 512² | — | 0.141 | — | timing-only |
 
 ### How to read these numbers
 
-- **Band math (`rst_ndvi`/`ndwi`/`nbr`)** shows the largest lightweight wins (350–920×). The heavyweight tier computes these by shelling out to a `gdal_calc` subprocess per call, which dominates its time; the lightweight tier evaluates the expression in-process with NumPy.
-- **Reductions and warps (`rst_median`/`avg`/`transform`/`to_webmercator`)** favor the lightweight tier by roughly 4–18×.
-- **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~3–6× lightweight win, and all match within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
-- **Trivial metadata accessors (`rst_width`/`height`/`numbands`)** are sub-millisecond on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is fractions of a millisecond.
+- **Band math (`rst_ndvi`/`ndwi`/`nbr`/`evi`/`savi`/`index`/`mapalgebra`)** shows the largest lightweight wins (roughly 240–980×). The heavyweight tier computes these by shelling out to a `gdal_calc` subprocess per call, which dominates its time; the lightweight tier evaluates the expression in-process with NumPy.
+- **Reductions, warps, and tiling (`rst_median`/`avg`/`transform`/`to_webmercator`/`retile`/`maketiles`)** favor the lightweight tier by roughly 8–48×.
+- **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~2–5× lightweight win, and all match within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
+- **Discrete-grid aggregation (`rst_h3_*`/`rst_quadbin_*`)** is a ~2–6× lightweight win and matches within tolerance.
+- **Trivial metadata accessors (`rst_width`/`height`/`numbands` and the world↔raster coordinate helpers)** are sub-millisecond on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is fractions of a millisecond.
+- **Algorithm-bound outliers** — `rst_viewshed`, `rst_gridfrompoints`, `rst_contour`, and `rst_polygonize` — are slower on the lightweight tier (the heavyweight GDAL implementations are hard to beat), but remain well under a second on these tiles and produce results that match within tolerance.
+- **`rst_convolve`** is the single function whose outputs differ: the heavyweight tier applies a GDAL block-halo convolution that no single lightweight boundary mode reproduces exactly. Interior pixels match; only the one-pixel edge ring differs.
 
 ### Caveats
 
 - Absolute timings depend on the machine, the corpus, and the tier's install; treat the **relative** speedup and the **consistency** outcome as the durable signal, not the millisecond values.
-- Pure-core isolates the algorithm. The **spark-path** model — which you should run on a cluster across the row ladder — adds per-row UDF and serialization overhead and is the better predictor of end-to-end job cost.
+- Most rows above are **pure-core**, which isolates the algorithm; the `*_agg` aggregators and a few Spark-only operations are timed **spark-path**. The full spark-path model — which you should run on a cluster across the row ladder — adds per-row UDF and serialization overhead and is the better predictor of end-to-end job cost.
 - Consistency is checked on output statistics with tolerance, not byte-equality: GDAL and NumPy can differ in the last bits, and neighborhood operations legitimately differ on the one-pixel kernel border. The benchmark treats those as informational, not as divergences.
