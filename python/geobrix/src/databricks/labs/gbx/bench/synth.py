@@ -34,6 +34,8 @@ from typing import List
 import rasterio
 from rasterio.transform import Affine
 
+from databricks.labs.gbx.bench import manifest as _m
+
 # Recipes and their output filenames. The element ORDER is the band/merge order
 # the consuming function relies on (frombands element 0 -> band 1, etc.).
 _RECIPES = ("frombands", "combineavg", "merge")
@@ -136,3 +138,51 @@ def _synth_merge(src_path: str, out: Path) -> List[str]:
             profile.update(driver="GTiff", transform=tr)
             _write(profile, [data[b] for b in range(data.shape[0])], p)
     return paths
+
+
+def _synth_source_tiles(corpus) -> List[str]:
+    """Corpus-relative tile paths the C3 (tile_array) adapters synthesize from.
+
+    Mirrors what both runners feed to ``synth_dir``:
+      * pure-core path -> EVERY ``size_sweep`` tile (runner iterates ``te.path``);
+      * spark-path     -> the first ``row_pool`` tile (``_array_root``).
+    Materializing this exact set (deduped) means every path either engine later
+    computes is already on disk before the heavyweight leg runs.
+    """
+    rels = [te.path for te in corpus.size_sweep]
+    if corpus.row_pool.tiles:
+        rels.append(corpus.row_pool.tiles[0].path)
+    # dedupe while preserving order
+    seen = set()
+    ordered = []
+    for r in rels:
+        if r not in seen:
+            seen.add(r)
+            ordered.append(r)
+    return ordered
+
+
+def materialize_all(corpus_root, corpus=None) -> List[str]:
+    """Materialize ALL C3 synth tiles into the corpus, once, before any run.
+
+    The heavyweight leg of ``gbx:bench:all`` runs FIRST (before the pyrx leg), so
+    relying on the pyrx runner to lazily synthesize the multi-tile inputs is too
+    late: heavy ``rst_frombands``/``rst_combineavg``/``rst_merge`` would find no
+    files. Materializing here (at gen-data time) writes the synth tiles for every
+    corpus source tile x every C3 recipe, so BOTH engines just READ pre-existing,
+    byte-identical files via the deterministic ``synth_dir`` path math.
+
+    Idempotent: ``synthesize`` skips outputs that already exist, so re-running is
+    a no-op. ``corpus`` defaults to reading ``corpus.json`` under ``corpus_root``.
+    Returns the flat list of all written/existing synth file paths.
+    """
+    root = Path(corpus_root)
+    if corpus is None:
+        corpus = _m.Corpus.read(root / "corpus.json")
+    written: List[str] = []
+    for tile_rel in _synth_source_tiles(corpus):
+        src = str(root / tile_rel)
+        for recipe in _RECIPES:
+            out_dir = synth_dir(corpus_root, tile_rel, recipe)
+            written.extend(synthesize(src, recipe, out_dir))
+    return written

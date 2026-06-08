@@ -238,11 +238,20 @@ def main(argv=None):
         for p in problems:
             print("  -", p)
         raise SystemExit(1)
+    # Materialize the C3 (tile_array) synth tiles NOW, while still in the pyrx
+    # venv. gbx:bench:all runs the heavyweight leg first, so the pyrx runner's
+    # lazy synthesis would be too late; writing them here (at gen-data) means both
+    # engines later READ identical pre-existing files via the same path math, and
+    # a standalone gbx:bench:heavyweight run also finds them.
+    from databricks.labs.gbx.bench import synth as _synth
+
+    synth_files = _synth.materialize_all(a.out, corpus)
     print(
         json.dumps(
             {
                 "tiles_size_sweep": len(corpus.size_sweep),
                 "tiles_row_pool": len(corpus.row_pool.tiles),
+                "synth_files": len(synth_files),
                 "out": a.out,
             },
             indent=2,
