@@ -46,13 +46,13 @@ Choose **Heavyweight (rasterx)** in three cases:
 
 The reader and grid/vector surfaces (cases 2 and 3) are actively being ported to the lightweight tier, so heavyweight's unique surface is expected to keep narrowing.
 
-## Performance & consistency
+## Performance
 
-The one-line swap is safe to make. The lightweight tier is functionally complete for raster: it implements every `rst_*` function (all 107). Across the benchmark suite the two tiers produce **consistent output** — the tiers agree within tolerance, including on geographic rasters.
+The one-line swap keeps your code identical across tiers. The lightweight tier is functionally complete for raster — it implements every `rst_*` function (all 107).
 
 On per-operation timing the lightweight tier is **competitive-to-faster for the large majority** of functions. Band math is dramatically faster, because the heavyweight tier shells out to a subprocess there. Terrain, focal filters, and discrete-grid (H3/quadbin) aggregation are a few times faster following recent vectorization. A small number of algorithm-bound operations (for example viewshed) are slower on the lightweight tier but remain sub-second in absolute terms. Metadata accessors are sub-millisecond on both.
 
-See **[Benchmarking](./benchmarking)** for the full results table, the two timing models, and how to run the benchmark on a cluster or locally.
+The two tiers are continuously benchmarked for both speed and output consistency. See **[Benchmarking](./benchmarking)** for the latest per-function heavy-vs-light results and how to run the benchmark on a cluster or locally.
 
 ## Function availability
 
