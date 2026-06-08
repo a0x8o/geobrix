@@ -54,7 +54,7 @@ def _h3_cells(lon: np.ndarray, lat: np.ndarray, resolution: int) -> np.ndarray:
     """Per-valid-pixel H3 cell ids (uint64). Scalar lib call; no array API."""
     cells = [
         h3.str_to_int(h3.latlng_to_cell(float(la), float(lo), resolution))
-        for lo, la in zip(lon, lat)
+        for lo, la in zip(lon, lat)  # vectorscan: ok (h3 no array API)
     ]
     return np.array(cells, dtype="uint64")
 
@@ -200,7 +200,7 @@ def raster_to_grid(ds, resolution: int, grid: str, agg: str) -> list:
         out.append(
             [
                 {"cellID": int(cid), "measure": m}
-                for cid, m in zip(uniq.tolist(), measures)
+                for cid, m in zip(uniq.tolist(), measures)  # vectorscan: ok (per-cell)
             ]
         )
     return out
