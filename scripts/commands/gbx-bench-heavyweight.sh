@@ -74,9 +74,14 @@ if [[ -z "$FUNCTIONS" ]]; then
 fi
 
 # HeavyBenchSuite is tagged OnDemand and excluded from the default run (pom
-# tagsToExclude); clear the exclusion here so the on-demand suite actually runs.
+# tagsToExclude). Override the exclusion with a sentinel tag no suite carries so
+# the on-demand suite runs. NOTE: an empty -DtagsToExclude= does NOT work — the
+# scalatest-maven-plugin still emits `-l ''`, and ScalaTest rejects an empty
+# tag arg ("argument string must actually include some non-whitespace
+# characters"). A non-empty no-op tag excludes nothing and avoids the crash.
 MVN="mvn test -PskipScoverage -DskipTests=false \
-    -Dsuites='com.databricks.labs.gbx.bench.HeavyBenchSuite' -DtagsToExclude= \
+    -Dsuites='com.databricks.labs.gbx.bench.HeavyBenchSuite' \
+    -DtagsToExclude=com.databricks.labs.gbx.bench.NoOpExcludeSentinel \
     -Dgbx.bench.corpus='$CORPUS' -Dgbx.bench.out='$OUT' -Dgbx.bench.runId='$RUN_ID' \
     -Dgbx.bench.functions='$FUNCTIONS' -Dgbx.bench.modes='$MODES' \
     -Dgbx.bench.rowCounts='$ROW_COUNTS' -Dgbx.bench.warmup='$WARMUP' -Dgbx.bench.measured='$MEASURED'"

@@ -48,7 +48,10 @@
           `com.databricks.labs.gbx.bench.OnDemand` so it is NOT collected here
           (it only does useful work when gbx.bench.* sysprops are set, and would
           otherwise cancel itself and pollute CI output). The gbx:bench:* commands
-          run it on demand by clearing this property (`-DtagsToExclude=`).
+          run it on demand by overriding this property with a sentinel tag no
+          suite carries (`-DtagsToExclude=...NoOpExcludeSentinel`) — an EMPTY
+          override makes the scalatest plugin emit `-l ''`, which ScalaTest
+          rejects, so a non-empty no-op tag is used instead.
         -->
         <tagsToExclude>com.databricks.labs.gbx.bench.OnDemand</tagsToExclude>
         <gbx.bench.corpus></gbx.bench.corpus>
@@ -321,8 +324,9 @@
                     <!--
                       Exclude on-demand-only suites (HeavyBenchSuite, tagged
                       com.databricks.labs.gbx.bench.OnDemand) from the default /
-                      remote-CI run. Overridable via -DtagsToExclude= so the
-                      gbx:bench:* commands can run them on demand.
+                      remote-CI run. Overridable via -DtagsToExclude=<no-op tag>
+                      so the gbx:bench:* commands can run them on demand (a
+                      non-empty sentinel — empty makes ScalaTest reject `-l ''`).
                     -->
                     <tagsToExclude>${tagsToExclude}</tagsToExclude>
                     <!-- Quiet Spark/GDAL in tests; use log4j2-test.xml from test-classes -->
