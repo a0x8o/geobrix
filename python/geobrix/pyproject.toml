@@ -59,6 +59,10 @@ pyrx = [
     "pyarrow>=11.0.0",
     "scipy>=1.11.0",
     "numexpr>=2.8.0",
+    # rio-tiler 9 uses TypedDict(extra_items=...) (PEP 728), which needs a recent
+    # typing_extensions; DBR 17.3 ships an older one, so pin the floor explicitly
+    # or the [pyrx] import fails on-cluster (rio_tiler/types.py TypeError).
+    "typing_extensions>=4.13",
     "rio-tiler>=9.0,<10",
     "rio-cogeo>=7.0,<8",
     "h3>=4.0,<5",
@@ -100,6 +104,19 @@ requires = ["setuptools>=61.2", "wheel"]
 
 [tool.setuptools]
 include-package-data = false
+
+# databricks.labs.* must be PEP 420 namespace packages (no __init__.py at
+# databricks/ or databricks/labs/) so they coexist with databricks-sdk /
+# databricks-connect, which share the `databricks` namespace. find_namespace
+# discovery includes the gbx subpackages without those shadowing __init__ files.
+[tool.setuptools.packages.find]
+where = ["src"]
+# Only the gbx subtree is a real package; databricks/ and databricks/labs/ stay
+# pure PEP 420 namespace dirs (no __init__.py, not listed) so setuptools doesn't
+# synthesize empty __init__.py for them in the wheel (which would re-shadow
+# databricks-sdk). namespaces=true keeps PEP 420 discovery for the subtree.
+include = ["databricks.labs.gbx*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 geobrix = ["lib/*.jar", "resources/*.png"]
