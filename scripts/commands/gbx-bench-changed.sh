@@ -29,7 +29,7 @@ Options:
   --log <path>     Tee output under test-logs/
   --help, -h       Show help
 
-Outputs (non --list): test-logs/bench/changed-<epoch>/{heavyweight,lightweight}.jsonl,
+Outputs (non --list): test-logs/bench/changed-<yyyymmdd_hhmmss>-<set>/{heavyweight,lightweight}.jsonl,
 comparison.csv, summary.md, and one record per affected fn under
 test-logs/bench/authoritative/.
 EOF
@@ -101,7 +101,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
     COMMIT="dirty:$COMMIT"
 fi
 VALIDATED_AT=$(date -u +%FT%TZ)
-RUN_ID="changed-$(date +%s)"
+RUN_ID="changed-$(date +%Y%m%d_%H%M%S)-$SET"
 
 echo -e "${CYAN}▶ benchmarking affected functions (set=$SET, run-id=$RUN_ID)${NC}"
 bash "$SCRIPT_DIR/gbx-bench-all.sh" --set "$SET" --functions "$AFFECTED" \

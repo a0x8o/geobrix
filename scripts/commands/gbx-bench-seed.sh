@@ -25,7 +25,7 @@ Options:
   --log <path>      Tee output under test-logs/
   --help, -h        Show help
 
-Outputs: test-logs/bench/seed-<epoch>/{heavyweight,lightweight}.jsonl,
+Outputs: test-logs/bench/seed-<yyyymmdd_hhmmss>-<set>/{heavyweight,lightweight}.jsonl,
 comparison.csv, summary.md, and one record per selected fn under
 test-logs/bench/authoritative/ (tagged with the current commit — prefixed
 dirty: when the tree is dirty — the corpus seed, and the run's rows + cells).
@@ -68,7 +68,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
     COMMIT="dirty:$COMMIT"
 fi
 VALIDATED_AT=$(date -u +%FT%TZ)
-RUN_ID="seed-$(date +%s)"
+RUN_ID="seed-$(date +%Y%m%d_%H%M%S)-$SET"
 
 echo -e "${CYAN}▶ benchmarking the whole set (set=$SET, run-id=$RUN_ID)${NC}"
 # No --functions -> gbx:bench:all benchmarks the entire selected set.
