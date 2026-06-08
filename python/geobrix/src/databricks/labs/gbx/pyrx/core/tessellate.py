@@ -9,6 +9,7 @@ clip is empty / all-nodata are skipped.
 
 import h3
 import shapely.wkb
+from rasterio.features import geometry_mask
 from rasterio.warp import transform_bounds, transform_geom
 from shapely.geometry import Polygon, mapping, shape
 
@@ -67,6 +68,22 @@ def tessellate_h3(ds, resolution: int) -> list:
         if reproject:
             geom = transform_geom(_WGS84, ds.crs, mapping(cell_poly))
             cell_poly = shape(geom)
+        # Emptiness guard (parity with heavy RasterTessellate.getTile, which
+        # drops a cell when ClipToGeom + RasterAccessors.isEmpty find no valid
+        # pixels): the one-ring expansion adds fringe candidates whose bounding
+        # box clips the raster edge but whose hexagon covers ZERO pixel cells.
+        # gdalwarp -crop_to_cutline yields an all-nodata tile for those, which
+        # heavy's isEmpty rejects; without this guard the lightweight side keeps
+        # the degenerate zero-coverage cell and diverges (6 vs heavy's 5).
+        cover = geometry_mask(
+            [cell_poly],
+            out_shape=(ds.height, ds.width),
+            transform=ds.transform,
+            invert=True,
+            all_touched=True,
+        )
+        if not cover.any():
+            continue
         try:
             clipped = edit.clip_to_geom(ds, shapely.wkb.dumps(cell_poly))
         except ValueError:

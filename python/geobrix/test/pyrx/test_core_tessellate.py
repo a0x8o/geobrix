@@ -1,7 +1,10 @@
 """Pure-function tests for H3 raster tessellation (rst_h3_tessellate)."""
 
 import h3
+import numpy as np
 import pytest
+from rasterio.features import geometry_mask
+from shapely.geometry import Polygon
 
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx.core import tessellate
@@ -53,6 +56,62 @@ def test_tessellate_resolution_out_of_range_raises():
             tessellate.tessellate_h3(ds, 16)
         with pytest.raises(ValueError):
             tessellate.tessellate_h3(ds, -1)
+
+
+def _cell_covers_any_pixel(ds, cellid):
+    """True iff the H3 cell hexagon covers >=1 source pixel (all-touched)."""
+    u = cellid + 2**64 if cellid < 0 else cellid
+    boundary = h3.cell_to_boundary(h3.int_to_str(u))  # (lat, lng)
+    poly = Polygon([(lng, lat) for lat, lng in boundary])
+    cover = geometry_mask(
+        [poly],
+        out_shape=(ds.height, ds.width),
+        transform=ds.transform,
+        invert=True,
+        all_touched=True,
+    )
+    return bool(cover.any())
+
+
+def test_tessellate_drops_zero_coverage_fringe_cells():
+    # The one-ring candidate expansion adds fringe H3 cells whose bounding box
+    # clips the raster edge -- so rasterio.mask does NOT raise -- but whose
+    # hexagon covers ZERO source pixels. Heavy (ClipToGeom + isEmpty) drops
+    # these; the lightweight side must too via the emptiness guard, else it
+    # over-includes a degenerate zero-pixel sliver and diverges from heavy.
+    #
+    # 4x4 @ res 3 is the minimal reproduction: exactly one zero-coverage cell
+    # survives clip_to_geom, so the guard is the only thing that drops it.
+    src = make_geotiff_bytes(width=4, height=4, epsg=4326)
+    with _serde.open_tile(src) as ds:
+        tiles = tessellate.tessellate_h3(ds, 3)
+        # Every returned cell must genuinely cover at least one source pixel.
+        zero = [cid for cid, _ in tiles if not _cell_covers_any_pixel(ds, cid)]
+    assert not zero, f"tessellate returned zero-coverage fringe cells: {zero}"
+
+
+def test_tessellate_guard_drops_cell_a_disabled_guard_would_keep():
+    # TDD anchor for the emptiness guard: with the guard disabled (geometry_mask
+    # patched to claim full coverage) the 4x4 @ res 3 case yields one extra
+    # zero-coverage cell. The guard must remove exactly that cell.
+    src = make_geotiff_bytes(width=4, height=4, epsg=4326)
+    with _serde.open_tile(src) as ds:
+        n_guard = len(tessellate.tessellate_h3(ds, 3))
+
+    orig = tessellate.geometry_mask
+    tessellate.geometry_mask = lambda *a, **k: np.ones(
+        k.get("out_shape") or (1, 1), dtype=bool
+    )
+    try:
+        with _serde.open_tile(src) as ds:
+            n_noguard = len(tessellate.tessellate_h3(ds, 3))
+    finally:
+        tessellate.geometry_mask = orig
+
+    assert n_noguard == n_guard + 1, (
+        f"guard should drop exactly one zero-coverage cell; "
+        f"guard={n_guard} no-guard={n_noguard}"
+    )
 
 
 def test_tessellate_reprojects_cell_for_non_4326_raster():
