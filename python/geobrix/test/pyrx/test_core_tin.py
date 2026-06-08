@@ -79,6 +79,123 @@ def test_idw_grid_defaults_power_2_max_12():
     assert np.any(arr != -9999.0)
 
 
+def _idw_grid_kdtree_reference(
+    points_xy,
+    values,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    power=2.0,
+    max_pts=12,
+):
+    """Reference IDW grid via the original cKDTree-k=npts path (pre-optimization).
+
+    A verbatim copy of the historical ``idw_grid`` interior so the identity test
+    can assert the new all-points fast path is numerically identical to what the
+    cKDTree path produced for ``k == npts``.
+    """
+    from scipy.spatial import cKDTree
+
+    from databricks.labs.gbx.pyrx.core.tin import (
+        _NODATA,
+        _cell_center_coords,
+        _write_float64_grid,
+    )
+
+    pts = np.asarray(points_xy, dtype="float64")
+    vals = np.asarray(values, dtype="float64")
+    width_px = int(width_px)
+    height_px = int(height_px)
+    power = float(power)
+    k = min(int(max_pts), pts.shape[0])
+    tree = cKDTree(pts)
+    centers = _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px)
+    dist, idx = tree.query(centers, k=k)
+    if k == 1:
+        dist = dist[:, None]
+        idx = idx[:, None]
+    neigh_vals = vals[idx]
+    out = np.full(centers.shape[0], _NODATA, dtype="float64")
+    exact = dist[:, 0] == 0.0
+    if np.any(exact):
+        out[exact] = neigh_vals[exact, 0]
+    interp_mask = ~exact
+    if np.any(interp_mask):
+        d = dist[interp_mask]
+        nv = neigh_vals[interp_mask]
+        w = 1.0 / np.power(d, power)
+        wsum = w.sum(axis=1)
+        vsum = (w * nv).sum(axis=1)
+        good = np.isfinite(wsum) & (wsum > 0)
+        res = np.full(d.shape[0], _NODATA, dtype="float64")
+        res[good] = vsum[good] / wsum[good]
+        out[interp_mask] = res
+    out = out.reshape(height_px, width_px)
+    return _write_float64_grid(
+        out, xmin, ymin, xmax, ymax, width_px, height_px, srid, _NODATA
+    )
+
+
+def test_idw_grid_all_points_matches_kdtree_reference():
+    # All-points mode (max_pts >= npts): the new cdist fast path must be
+    # numerically identical to the original cKDTree-k=npts path.
+    rng = np.random.default_rng(7)
+    pts = rng.uniform(0, 20, size=(40, 2))
+    vals = rng.uniform(-50, 150, size=40)
+    args = (pts, vals, 0.0, 0.0, 20.0, 20.0, 32, 32, 32633)
+    kw = dict(power=2.0, max_pts=10_000)  # >> npts => all-points mode
+
+    new_bytes = tin.idw_grid(*args, **kw)
+    ref_bytes = _idw_grid_kdtree_reference(*args, **kw)
+    with _serde.open_tile(new_bytes) as ds_new, _serde.open_tile(ref_bytes) as ds_ref:
+        a_new = ds_new.read(1)
+        a_ref = ds_ref.read(1)
+    assert a_new.shape == a_ref.shape
+    assert np.allclose(a_new, a_ref, atol=1e-9, rtol=0.0)
+
+
+def test_idw_grid_all_points_exact_hit_matches_reference():
+    # A point exactly on a cell center: all-points fast path must return that
+    # point's value, identical to the cKDTree reference.
+    # 2x2 grid over [0,4]x[0,4] => centers at (1,1),(3,1),(1,3),(3,3).
+    pts = np.array([[1.0, 1.0], [3.0, 3.0], [0.5, 2.0], [3.5, 0.5]])
+    vals = np.array([42.0, 99.0, 7.0, 13.0])
+    args = (pts, vals, 0.0, 0.0, 4.0, 4.0, 2, 2, 32633)
+    kw = dict(power=2.0, max_pts=1000)
+
+    new_bytes = tin.idw_grid(*args, **kw)
+    ref_bytes = _idw_grid_kdtree_reference(*args, **kw)
+    with _serde.open_tile(new_bytes) as ds_new, _serde.open_tile(ref_bytes) as ds_ref:
+        a_new = ds_new.read(1)
+        a_ref = ds_ref.read(1)
+    # cell (top-left) center (1,3)?? row-major: row0=top. Just assert identity +
+    # that the two exact-hit cells carry the coincident point's value.
+    assert np.allclose(a_new, a_ref, atol=1e-9, rtol=0.0)
+    assert 42.0 in a_new
+    assert 99.0 in a_new
+
+
+def test_idw_grid_nearest_k_path_unchanged():
+    # Nearest-k mode (small max_pts < npts) still uses the cKDTree path and must
+    # match the reference exactly (path is untouched by the optimization).
+    rng = np.random.default_rng(3)
+    pts = rng.uniform(0, 10, size=(50, 2))
+    vals = rng.uniform(0, 100, size=50)
+    args = (pts, vals, 0.0, 0.0, 10.0, 10.0, 16, 16, 32633)
+    kw = dict(power=2.0, max_pts=12)  # < npts => nearest-k cKDTree path
+
+    new_bytes = tin.idw_grid(*args, **kw)
+    ref_bytes = _idw_grid_kdtree_reference(*args, **kw)
+    with _serde.open_tile(new_bytes) as ds_new, _serde.open_tile(ref_bytes) as ds_ref:
+        a_new = ds_new.read(1)
+        a_ref = ds_ref.read(1)
+    assert np.array_equal(a_new, a_ref)
+
+
 # --- delaunay_dtm -----------------------------------------------------------
 def _plane(x, y):
     # z = 2x + 3y + 1

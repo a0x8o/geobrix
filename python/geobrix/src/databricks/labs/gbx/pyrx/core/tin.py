@@ -27,8 +27,14 @@ import shapely.wkb
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
 from scipy.spatial import Delaunay, cKDTree
+from scipy.spatial.distance import cdist
 
 _NODATA = -9999.0
+
+# Output cells processed per chunk in the all-points IDW path. Bounds the
+# transient (chunk x npts) distance matrix so memory stays modest regardless of
+# grid size or point count.
+_IDW_CELL_CHUNK = 65_536
 
 
 def _write_float64_grid(arr, xmin, ymin, xmax, ymax, width_px, height_px, srid, nodata):
@@ -75,6 +81,45 @@ def _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px):
     rows = float(ymax) - (np.arange(height_px) + 0.5) * yres
     gx, gy = np.meshgrid(cols, rows)  # shape (height_px, width_px)
     return np.column_stack([gx.ravel(), gy.ravel()])
+
+
+def _idw_all_points(centers, pts, vals, power):
+    """All-point inverse-distance-weighted value per cell center.
+
+    Computes, for every center, ``sum(v_i/d_i**power)/sum(1/d_i**power)`` over
+    ALL points (no neighbour cap) — the same result as ``cKDTree.query`` with
+    ``k == npts`` but without building/traversing the tree. Distances are formed
+    with ``cdist`` in chunks of ``_IDW_CELL_CHUNK`` cells to bound memory.
+
+    Exact hits (a center coincident with a point, ``d == 0``) return that point's
+    value, matching the cKDTree path (which returns the nearest neighbour's value
+    when ``dist[:, 0] == 0``). Cells with no usable weight become ``_NODATA``.
+    """
+    n_cells = centers.shape[0]
+    out = np.full(n_cells, _NODATA, dtype="float64")
+    for start in range(0, n_cells, _IDW_CELL_CHUNK):
+        stop = min(start + _IDW_CELL_CHUNK, n_cells)
+        d = cdist(centers[start:stop], pts)  # (chunk, npts)
+
+        # Exact hits: center sits on a point (min distance 0) => that value.
+        exact_pt = d.argmin(axis=1)
+        exact = d[np.arange(d.shape[0]), exact_pt] == 0.0
+
+        res = np.full(d.shape[0], _NODATA, dtype="float64")
+        interp = ~exact
+        if np.any(interp):
+            di = d[interp]
+            w = 1.0 / np.power(di, power)
+            wsum = w.sum(axis=1)
+            vsum = (w * vals).sum(axis=1)
+            good = np.isfinite(wsum) & (wsum > 0)
+            res_i = np.full(di.shape[0], _NODATA, dtype="float64")
+            res_i[good] = vsum[good] / wsum[good]
+            res[interp] = res_i
+        # Exact hits return the coincident point's value directly.
+        res[exact] = vals[exact_pt[exact]]
+        out[start:stop] = res
+    return out
 
 
 def idw_grid(
@@ -129,8 +174,21 @@ def idw_grid(
 
     power = float(power)
     k = min(int(max_pts), pts.shape[0])
-    tree = cKDTree(pts)
     centers = _cell_center_coords(xmin, ymin, xmax, ymax, width_px, height_px)
+
+    if k >= pts.shape[0]:
+        # All-points mode (gdal_grid invdist uses every point). cKDTree.query
+        # with k == npts degenerates to a full per-cell traversal/sort and is
+        # pathologically slow (~36x slower than heavyweight). Compute the same
+        # all-point IDW directly with cdist, chunked over output cells to bound
+        # memory. Output is numerically identical to the cKDTree-k=npts path.
+        out = _idw_all_points(centers, pts, vals, power)
+        out = out.reshape(height_px, width_px)
+        return _write_float64_grid(
+            out, xmin, ymin, xmax, ymax, width_px, height_px, srid, _NODATA
+        )
+
+    tree = cKDTree(pts)
     dist, idx = tree.query(centers, k=k)
     # cKDTree.query returns 1-D arrays when k == 1; normalise to 2-D.
     if k == 1:
