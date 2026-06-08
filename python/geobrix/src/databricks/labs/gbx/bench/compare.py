@@ -121,11 +121,14 @@ def _pairs_for_kind(kind, hw, lw):
         ha, la = hw.get("agg") or {}, lw.get("agg") or {}
         return [(ha.get(k), la.get(k)) for k in _STATS], 0, None
     if kind == "vector":
-        # Feature COUNT must match exactly. Then compare the total measure (line
-        # length / polygon area) and the order-independent attr_agg in tolerance.
-        hc, lc = hw.get("count"), lw.get("count")
-        if hc != lc:
-            return None, 0, f"feature count {hc} vs {lc}"
+        # GATE on the total measure (line length / polygon area) and the
+        # order-independent attr_agg in tolerance. Feature COUNT is INFORMATIONAL
+        # only: two contouring engines (gdal.ContourGenerateEx vs skimage
+        # marching-squares) trace the SAME iso-surfaces at the same levels but
+        # split them into a different number of features (~8-10% count delta on
+        # identical geometry). Count is an arbitrary segmentation artifact, not a
+        # divergence signal — the caller folds the count delta into the note and
+        # demotes a bitwise-exact stat match to within_tol when count differs.
         ha, la = hw.get("attr_agg") or {}, lw.get("attr_agg") or {}
         pairs = [(hw.get("measure"), lw.get("measure"))]
         pairs += [(ha.get(k), la.get(k)) for k in _STATS]
@@ -191,6 +194,23 @@ def compare_fingerprints(
             if cls != "divergent":
                 jac = _jaccard(hw.get("cell_ids"), lw.get("cell_ids"))
                 note = f"cell ids differ; Jaccard overlap {jac:.2f}"
+        return (cls, max_delta, 0, note)
+    if kind == "vector":
+        # measure + attr_agg gate (computed above). Feature COUNT is informational:
+        # the two engines legitimately segment identical iso-surfaces into a
+        # different number of features. When count differs, demote a bitwise-exact
+        # stat match to within_tol (the geometry agrees but the segmentation does
+        # not) and always fold the count delta into the note.
+        hc, lc = hw.get("count"), lw.get("count")
+        if hc != lc:
+            if cls == "exact":
+                cls = "within_tol"
+            base = lc if (isinstance(lc, (int, float)) and lc) else None
+            pct = f" ({(hc - lc) / base:+.1%})" if base else ""
+            note = (
+                f"feature count {hc} vs {lc}{pct} — informational "
+                "(segmentation artifact; measure+attr gate)"
+            )
         return (cls, max_delta, 0, note)
     if ndc_delta != 0:
         if cls == "divergent":

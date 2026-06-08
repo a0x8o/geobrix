@@ -717,9 +717,13 @@ def test_dggs_grid_reports_jaccard_when_hash_differs():
 
 
 # --- bucket B: vector fingerprint (contour, polygonize) ----------------------
-# vector output is a set of features. The comparator requires the feature COUNT
-# to match EXACTLY, then compares the total `measure` (line length / polygon area)
-# and the order-independent `attr_agg` with the raster float tolerance.
+# vector output is a set of features. Two contouring engines (gdal.ContourGenerateEx
+# vs skimage marching-squares) trace the SAME iso-surfaces at the same levels but
+# split them into a different number of features (a segmentation artifact, ~8-10%
+# count delta on identical geometry). So the comparator GATES on the total `measure`
+# (line length / polygon area) and the order-independent `attr_agg` with the raster
+# float tolerance; the feature COUNT is INFORMATIONAL only (reported in the note,
+# never divergent on its own) — same philosophy as raster_collection's pooled agg.
 def _vec(count, measure, mn, mx, mean, std):
     return _json.dumps(
         {
@@ -739,15 +743,38 @@ def test_vector_equal_count_close_measure_within_tol():
     assert c.compare_fingerprints(hw, lw)[0] == "within_tol"
 
 
-def test_vector_count_mismatch_is_divergent():
+def test_vector_equal_count_equal_measure_is_exact():
+    # polygonize-after-fix case: GDAL-integer grouping makes count + measure + attr
+    # all match exactly -> exact must be preserved.
+    hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
+    assert c.compare_fingerprints(hw, hw)[0] == "exact"
+
+
+def test_vector_count_differs_measure_matches_is_within_tol_informational():
+    # contour case: two engines segment the SAME iso-lines into a different feature
+    # count (~10% delta) while total length agrees within tolerance. measure + attr
+    # within tol -> within_tol (NOT divergent); the note records the count delta.
+    hw = _vec(3025, 1.76660, 0.0, 100.0, 50.0, 30.0)
+    lw = _vec(3334, 1.76665, 0.0, 100.0, 50.0, 30.0)
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol", (cls, note)
+    # count delta surfaced as informational (both counts + the % delta named)
+    assert "3025" in note and "3334" in note
+    assert "informational" in note.lower()
+
+
+def test_vector_count_mismatch_alone_is_not_divergent():
+    # count differs but measure + attr agree exactly -> NOT divergent; count is
+    # an arbitrary segmentation artifact, not a divergence signal.
     hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
     lw = _vec(8, 100.0, 1.0, 9.0, 5.0, 2.0)
     cls, _, _, note = c.compare_fingerprints(hw, lw)
-    assert cls == "divergent"
-    assert "feature count" in note and "5" in note and "8" in note
+    assert cls != "divergent"
+    assert "5" in note and "8" in note and "informational" in note.lower()
 
 
 def test_vector_measure_divergence():
+    # measure is the real signal: a measure beyond tol stays divergent.
     hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
     lw = _vec(5, 250.0, 1.0, 9.0, 5.0, 2.0)
     assert c.compare_fingerprints(hw, lw)[0] == "divergent"
