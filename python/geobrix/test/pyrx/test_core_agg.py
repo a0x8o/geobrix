@@ -73,9 +73,9 @@ def test_merge_tiles_overlap_last_wins():
 
 def test_merge_tiles_overlap_winner_order_invariant():
     # A Spark groupBy().agg() gives no row-arrival-order guarantee, so a last-wins
-    # mosaic must not depend on the order tiles are passed. merge_tiles sorts by
-    # geotransform origin, so the highest-origin tile (right, origin x=2) wins the
-    # overlap whether it is listed first or last.
+    # mosaic must not depend on the order tiles are passed. merge_tiles sorts by the
+    # raw GTiff bytes, so one tile reliably wins the overlap whether it is listed
+    # first or last.
     left = _ras(np.full((4, 4), 10.0), ulx=0.0, uly=4.0, px=1.0)
     right = _ras(np.full((4, 4), 20.0), ulx=2.0, uly=4.0, px=1.0)
     out_lr = agg.merge_tiles([left, right])
@@ -84,8 +84,32 @@ def test_merge_tiles_overlap_winner_order_invariant():
     assert out_lr == out_rl
     with _serde.open_tile(out_lr) as ds:
         arr = ds.read(1)
-        # Overlap cols (2,3) take the higher-origin (right) tile -> 20.
-        assert np.all(arr[:, 2:4] == 20.0)
+        # Overlap cols (2,3) resolve to a single canonical winner regardless of order.
+        overlap = arr[:, 2:4]
+        winner = overlap.flat[0]
+        assert winner in (10.0, 20.0)
+        assert np.all(overlap == winner)
+
+
+def test_merge_tiles_same_origin_overlap_winner_order_invariant():
+    # The residual nondeterminism hole the content-byte sort closes: two tiles with
+    # the SAME geotransform origin but different content fully overlap. A geotransform
+    # -origin key cannot separate them (they tie on origin), so the old key fell back
+    # to a per-open /vsimem/<uuid> description -- random, so the winner varied run to
+    # run and the two tiers disagreed. Sorting on raw GTiff bytes is a total order with
+    # no tie, so the winner is fixed and identical regardless of input order.
+    a = _ras(np.full((4, 4), 10.0), ulx=0.0, uly=4.0, px=1.0)
+    b = _ras(np.full((4, 4), 20.0), ulx=0.0, uly=4.0, px=1.0)
+    out_ab = agg.merge_tiles([a, b])
+    out_ba = agg.merge_tiles([b, a])
+    # Bitwise-identical regardless of order -- this is the case the origin key failed.
+    assert out_ab == out_ba
+    with _serde.open_tile(out_ab) as ds:
+        arr = ds.read(1)
+    # Fully overlapping tiles -> one constant wins everywhere (10.0 or 20.0).
+    winner = arr.flat[0]
+    assert winner in (10.0, 20.0)
+    assert np.all(arr == winner)
 
 
 # --- combineavg_tiles -------------------------------------------------------

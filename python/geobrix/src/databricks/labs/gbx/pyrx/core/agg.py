@@ -59,22 +59,25 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
     DETERMINISM: a Spark ``groupBy().agg()`` does not guarantee the order rows
     reach the reducer, so a last-wins mosaic would otherwise pick a different
     overlap winner from run to run (and from the heavyweight). To make the fold
-    order-invariant we sort the inputs by their geotransform origin
-    ``(origin_x, origin_y)`` -- a stable key intrinsic to each tile's georef --
-    before merging. The heavyweight applies the analogous deterministic ordering
-    by sorting on the tile's source path; for the abutting/offset mosaic tiles
-    both keys agree (lowest origin folds first, highest-origin tile wins the
-    overlap), so the two tiers pick the same winner.
+    order-invariant we sort the inputs by their raw GTiff byte content -- a total
+    order intrinsic to each tile that has NO ties for distinct content -- before
+    merging; the highest-bytes tile folds last and wins the overlap. The
+    heavyweight RST_MergeAgg sorts on the identical key (the same serialized tile
+    bytes each row carries), so the two tiers pick the same winner for ALL inputs
+    -- including same-origin overlapping tiles, which a geotransform-origin key
+    could not separate (it tied on origin and fell back to a per-open
+    ``/vsimem/<uuid>`` description, i.e. random). Raw bytes are bitwise-identical
+    across tiers, so no cross-tier hash agreement is required.
     """
     if not rasters:
         return None
     if len(rasters) == 1:
         return bytes(rasters[0])
+    # Sort by raw GTiff bytes so the last-wins overlap winner is deterministic
+    # (and tier-agreeing) regardless of caller/row-arrival order.
+    rasters = sorted((bytes(r) for r in rasters))
     memfiles, datasets = _open_all(rasters)
     try:
-        # Sort by geotransform origin so the last-wins overlap winner is
-        # deterministic regardless of caller/row-arrival order.
-        datasets.sort(key=lambda d: (d.transform.c, d.transform.f))
         ref = datasets[0]
         mosaic, out_transform = _rio_merge(datasets, method="last")
         profile = ref.profile.copy()
