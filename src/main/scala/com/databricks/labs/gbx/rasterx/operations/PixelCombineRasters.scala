@@ -143,10 +143,26 @@ object PixelCombineRasters {
                 val rasterBands = child.collect {
                     case el @ Elem(_, "VRTRasterBand", _, _, _*) => el.asInstanceOf[Elem]
                 }
+                // Gather a band's source elements, STRIPPING any `<NODATA>` child that
+                // `gdalbuildvrt` emits for inputs that declare a NoData value. That
+                // element makes GDAL pre-mask the source's NoData pixels to the band
+                // fill (0) BEFORE the Python pixel function runs, so the function would
+                // see 0 instead of the raw sentinel and could not exclude those pixels
+                // from its divisor (combineavg). The pixel function is the single
+                // authority on NoData here (its baked-in NODATA literal), so it must
+                // receive raw values, sentinels included.
+                def stripNoData(source: scala.xml.Node): scala.xml.Node = source match {
+                    case el: Elem =>
+                        el.copy(child = el.child.filterNot {
+                            case Elem(_, "NODATA", _, _, _*) => true
+                            case _                           => false
+                        })
+                    case other => other
+                }
                 def sourcesOf(band: Elem): Seq[scala.xml.Node] =
-                    band.child.filter {
-                        case Elem(_, label, _, _, _*) => sourceLabels.contains(label)
-                        case _                        => false
+                    band.child.collect {
+                        case el @ Elem(_, label, _, _, _*) if sourceLabels.contains(label) =>
+                            stripNoData(el)
                     }
                 val baseBand = rasterBands.headOption.getOrElse(
                     <VRTRasterBand dataType="Float64" band="1"/>
