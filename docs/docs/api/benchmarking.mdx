@@ -143,7 +143,9 @@ A per-engine summary is also written for each tier (`heavyweight.summary.md`, `l
 
 The table below is a representative **pure-core** local run, sorted by speedup (lightweight-faster at the top). It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable.
 
-> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · pure-core · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618). **Consistency: 12 exact, 26 within-tol, 0 divergent.**
+> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · pure-core · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618).
+>
+> **Consistency (full suite):** the tiers agree within tolerance on the large majority of functions; the one by-design exception is `rst_convolve`, which differs slightly at raster edges (a GDAL block-halo difference). The table below is a representative subset — a complete per-function table is being finalized.
 
 | Function | Tile | Heavy (ms) | Light (ms) | Speedup | Consistency |
 |---|---|---|---|---|---|
