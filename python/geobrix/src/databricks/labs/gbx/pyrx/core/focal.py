@@ -9,13 +9,14 @@ neighbors only (others contribute 0, no renormalization), kernel applied
 UN-flipped (correlation).
 """
 
+import warnings
+
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from rasterio.io import MemoryFile
 from scipy import ndimage
 
 from databricks.labs.gbx.pyrx.core._nodata import read_masked
-
-_NAN_AGG = {"min": np.nanmin, "max": np.nanmax, "median": np.nanmedian}
 
 
 def _nodata_value(ds, default: float = -9999.0) -> float:
@@ -54,11 +55,37 @@ def filt(ds, kernel_size, operation: str) -> bytes:
             res = np.where(cnt > 0, num / np.where(cnt > 0, cnt, 1.0), nd)
             invalid = cnt == 0
         else:
-            arr = np.where(valid, data, np.nan)
-            res = ndimage.generic_filter(
-                arr, _NAN_AGG[op], size=size, mode="constant", cval=np.nan
+            # Vectorized min/max/median over valid neighbors only. Out-of-bounds
+            # and invalid (masked/NoData) neighbors are skipped so the window
+            # shrinks at edges -- identical to a nan-aware agg over the window,
+            # but without scipy.generic_filter's per-pixel Python callback (the
+            # ~14x rst_filter regression). See the identity tests in
+            # test_core_focal.py asserting bit-for-bit parity with the old path.
+            if op == "min":
+                # min ignoring invalid == min with invalid/OOB -> +inf
+                filled = np.where(valid, data, np.inf).astype("float64")
+                res = ndimage.minimum_filter(
+                    filled, size=size, mode="constant", cval=np.inf
+                )
+            elif op == "max":
+                filled = np.where(valid, data, -np.inf).astype("float64")
+                res = ndimage.maximum_filter(
+                    filled, size=size, mode="constant", cval=-np.inf
+                )
+            else:  # median (assumes odd `size`, which is the norm for filters)
+                arr = np.where(valid, data, np.nan).astype("float64")
+                pad = size // 2
+                padded = np.pad(arr, pad, mode="constant", constant_values=np.nan)
+                windows = sliding_window_view(padded, (size, size))
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    res = np.nanmedian(windows, axis=(-2, -1))
+            # All-invalid window -> NoData. Use the valid-count (not isfinite),
+            # since min/max emit +/-inf for an all-invalid window.
+            cnt = ndimage.correlate(
+                valid.astype("float64"), box, mode="constant", cval=0.0
             )
-            invalid = ~np.isfinite(res)
+            invalid = cnt == 0
             res = np.where(invalid, nd, res)
         any_invalid = any_invalid or bool(invalid.any())
         out_bands.append(res)

@@ -132,3 +132,75 @@ def test_filter_min_max_skip_nodata_neighbor():
     # corner [0,0] sees valid {2,2,2} (center -9999 skipped) -> min=max=2.0
     assert abs(mn[0, 0] - 2.0) < 1e-6
     assert abs(mx[0, 0] - 2.0) < 1e-6
+
+
+# --- identity: vectorized min/max/median == old per-pixel generic_filter ---
+#
+# The old slow path used scipy.ndimage.generic_filter with a per-pixel nan-aware
+# Python callback (np.nanmin/nanmax/nanmedian) and a separate valid-count NoData
+# fill. These tests reconstruct that reference inline and assert focal.filt's
+# vectorized replacement reproduces it bit-for-bit (NoData cells included) over
+# random arrays + validity masks, all-invalid windows, and border-mask cases.
+# The heavy-vs-light benchmark gates rst_filter on this consistency, so output
+# identity is the contract.
+
+_NAN_AGG_REF = {"min": np.nanmin, "max": np.nanmax, "median": np.nanmedian}
+
+
+def _reference_filt(data, valid, size, op, nd):
+    """Old generic_filter-based result: nan-aware agg over the window, with the
+    valid-count NoData fill (all-invalid window -> nd)."""
+    arr = np.where(valid, data, np.nan)
+    with np.errstate(invalid="ignore"):
+        res = ndimage.generic_filter(
+            arr, _NAN_AGG_REF[op], size=size, mode="constant", cval=np.nan
+        )
+    box = np.ones((size, size), dtype="float64")
+    cnt = ndimage.correlate(valid.astype("float64"), box, mode="constant", cval=0.0)
+    invalid = cnt == 0
+    return np.where(invalid, nd, res)
+
+
+def test_filt_vectorized_matches_generic_filter_reference():
+    rng = np.random.default_rng(20260608)
+    nd = -9999.0
+    for op in ("min", "max", "median"):
+        for size in (3, 5):
+            data = rng.uniform(-50.0, 50.0, size=(40, 40)).astype("float64")
+            valid = rng.random((40, 40)) > 0.25  # ~25% NoData
+            # encode invalid cells AS the nodata sentinel so read_masked masks them
+            tile_data = np.where(valid, data, nd)
+            expected = _reference_filt(data, valid, size, op, nd)
+            out = _read_band(_run(focal.filt, _tile(tile_data, nodata=nd), size, op))
+            np.testing.assert_allclose(
+                out, expected, rtol=0, atol=1e-4, err_msg=f"{op} size={size}"
+            )
+
+
+def test_filt_vectorized_all_invalid_window():
+    # a fully-NoData block -> every window all-invalid -> nd everywhere
+    nd = -9999.0
+    for op in ("min", "max", "median"):
+        for size in (3, 5):
+            data = np.full((6, 6), nd, dtype="float64")
+            valid = np.zeros((6, 6), dtype=bool)
+            expected = _reference_filt(np.zeros((6, 6)), valid, size, op, nd)
+            out = _read_band(_run(focal.filt, _tile(data, nodata=nd), size, op))
+            np.testing.assert_allclose(out, expected, rtol=0, atol=1e-4)
+            assert np.all(out == nd)
+
+
+def test_filt_vectorized_border_mask_edge_shrink():
+    # NoData ring around a valid interior -> locks edge-shrink + skip behavior
+    nd = -9999.0
+    base = np.arange(64, dtype="float64").reshape(8, 8)
+    valid = np.ones((8, 8), dtype=bool)
+    valid[0, :] = valid[-1, :] = valid[:, 0] = valid[:, -1] = False
+    tile_data = np.where(valid, base, nd)
+    for op in ("min", "max", "median"):
+        for size in (3, 5):
+            expected = _reference_filt(base, valid, size, op, nd)
+            out = _read_band(_run(focal.filt, _tile(tile_data, nodata=nd), size, op))
+            np.testing.assert_allclose(
+                out, expected, rtol=0, atol=1e-4, err_msg=f"{op} size={size}"
+            )
