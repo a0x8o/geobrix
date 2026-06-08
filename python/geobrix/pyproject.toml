@@ -64,6 +64,11 @@ pyrx = [
     # or the [pyrx] import fails on-cluster (rio_tiler/types.py TypeError).
     "typing_extensions>=4.13",
     "rio-tiler>=9.0,<10",
+    # rio-tiler -> httpx -> httpcore (which needs h11>=0.16). DBR ships an older
+    # httpcore 1.0.2 (pinned h11<0.15) that %pip leaves in place, so it conflicts
+    # with the h11>=0.16 the stack pulls. Force httpcore>=1.0.9 so the on-cluster
+    # install resolves cleanly (no h11 conflict warning).
+    "httpcore>=1.0.9",
     "rio-cogeo>=7.0,<8",
     "h3>=4.0,<5",
     "quadbin>=0.2,<0.3",
