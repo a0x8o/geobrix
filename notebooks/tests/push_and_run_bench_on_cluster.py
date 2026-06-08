@@ -104,15 +104,57 @@ def _count_run_rows(w, warehouse_id: str, table: str, run_id: str) -> int:
     """COUNT(*) of this run's rows currently in the table; -1 on any error.
     Interim rows stream in as each function finishes, so this climbs during the run."""
     try:
+        # count(*) over a small filtered table returns well under this; the wait_timeout
+        # is just the cap before execute_statement would return PENDING. Keep it modest
+        # so a tight poll loop isn't blocked behind a long wait.
         res = w.statement_execution.execute_statement(
             warehouse_id=warehouse_id,
             statement=f"SELECT count(*) FROM {table} WHERE run_id = '{run_id}'",
-            wait_timeout="30s",
+            wait_timeout="10s",
         )
         data = res.result.data_array if res and res.result else None
         return int(data[0][0]) if data else 0
     except Exception:
         return -1
+
+
+def _local_size_sweep_count() -> int:
+    """# of size-sweep tiles in the locally-staged corpus (for pure-core expected rows).
+    None if the local corpus.json can't be read."""
+    try:
+        local = TESTS_DIR.parent.parent / "sample-data" / "Volumes" / "main" / "default" / "bench-corpus" / "corpus.json"
+        if not local.exists():
+            return None
+        with open(local) as fh:
+            c = json.load(fh)
+        return len(c.get("size_sweep", []))
+    except Exception:
+        return None
+
+
+def _expected_rows(functions: str, sel: str, modes: str, row_counts: str, lightweight: bool) -> int:
+    """Best-effort total lightweight rows this run will stream, for an 'N of EXPECTED'
+    progress display. Exact for spark-path (#fns-with-spark-path x #row_counts); pure-core
+    needs the corpus size-sweep count. Returns None when it can't be determined (then no
+    denominator is shown rather than a misleading one)."""
+    if not lightweight:
+        return None
+    try:
+        sys.path.insert(0, "python/geobrix/src")
+        from databricks.labs.gbx.bench import spec as _spec
+        fns = _spec.select(functions=[x for x in functions.split(",") if x] or None, set=sel)
+    except Exception:
+        return None
+    rc = [int(x) for x in row_counts.split(",") if x]
+    total = 0
+    if modes in ("spark-path", "both"):
+        total += sum(1 for f in fns if "spark-path" in f.modes) * max(1, len(rc))
+    if modes in ("pure-core", "both"):
+        n_size = _local_size_sweep_count()
+        if n_size is None:
+            return None  # can't be exact -> don't show a misleading denominator
+        total += sum(1 for f in fns if "pure-core" in f.modes) * n_size
+    return total or None
 
 
 def main() -> int:
@@ -301,25 +343,35 @@ def main() -> int:
         print("Run submitted (--no-wait). Poll the table above, or the Databricks UI.")
         return 0
 
-    # Poll: heartbeat run state + the live row count as interim rows land in the table.
-    # Live counts need a SQL warehouse (auto-discovered, or GBX_BENCH_SQL_WAREHOUSE_ID);
-    # without one we still heartbeat the run state -- the table is queryable regardless.
+    # Poll the live row count as interim rows land in the table (each function appends
+    # as it finishes). Use a TIGHT interval so the displayed count tracks the table
+    # closely -- a coarse sleep makes the count lag far behind during the fast middle of
+    # a run. Print only when it advances, plus a periodic heartbeat so a slow function
+    # doesn't look like a stall. Live counts need a SQL warehouse (auto-discovered, or
+    # GBX_BENCH_SQL_WAREHOUSE_ID); without one we heartbeat run state -- the table is
+    # queryable regardless.
     import time
 
+    POLL_SECS = 5
+    expected = _expected_rows(functions, sel, modes, row_counts, lightweight)
+    # "27 (of 83)" when we know the total this run will stream, else just "27".
+    of = f" (of {expected})" if expected else ""
     warehouse_id = _strip_invisible(os.environ.get("GBX_BENCH_SQL_WAREHOUSE_ID") or "") or _discover_warehouse(w)
     if warehouse_id:
-        print(f"Waiting; polling live row count via SQL warehouse {warehouse_id} (~20s)...")
+        tot = f" (expecting {expected} rows)" if expected else ""
+        print(f"Waiting; polling live row count via SQL warehouse {warehouse_id} every {POLL_SECS}s{tot}...")
     else:
         print("Waiting; no SQL warehouse for live counts (set GBX_BENCH_SQL_WAREHOUSE_ID "
               "for them) -- heartbeating run state. The table above is queryable now.")
     run = None
     last_count = -1
+    stale_polls = 0
     while True:
         try:
             run = w.jobs.get_run(remote_run_id)
         except Exception as e:  # transient -> keep polling
             print(f"  (poll error: {e})", file=sys.stderr)
-            time.sleep(20)
+            time.sleep(POLL_SECS)
             continue
         st = run.state
         lc = (
@@ -331,14 +383,15 @@ def main() -> int:
             break
         if warehouse_id:
             c = _count_run_rows(w, warehouse_id, table, run_id)
-            if c >= 0 and c != last_count:
-                print(f"  [{lc}] {c} rows streamed to table so far")
+            if c > last_count:
+                print(f"  [{lc}] {c}{of} rows streamed to table so far")
                 last_count = c
+                stale_polls = 0
             else:
-                print(f"  [{lc}] running...")
-        else:
-            print(f"  [{lc}] running...")
-        time.sleep(20)
+                stale_polls += 1
+                if stale_polls % 6 == 0:  # ~30s with no new rows -> show we're alive
+                    print(f"  [{lc}] still {max(last_count, 0)}{of} rows (current fn taking a while)")
+        time.sleep(POLL_SECS)
 
     run_id_remote = remote_run_id
     state = run.state
