@@ -93,7 +93,14 @@ object HeavyRunner {
     // geometry.json written alongside corpus.json (write-once-read-both; the SAME
     // base64 WKB the pyrx tier reads). Loaded once; None for older corpora.
     val geomCorpus = BenchManifest.readGeometry(Paths.get(corpusRoot, "geometry.json").toString)
-    for (fn <- fns; te <- corpus.size_sweep) {
+    // The *_agg aggregators are spark-path-only (no single-row pure-core UDAF
+    // analogue); BenchDispatch.pureCore throws "unknown bench fn" for them. Skip
+    // them here so pure-core stays SYMMETRIC with the lightweight run_pure_core
+    // (which skips any fn whose FnSpec.modes lack "pure-core"). Without this, a
+    // pure-core run over a set that includes aggregators emitted heavy error rows
+    // the lightweight side never produced -> unmatched comparison rows.
+    val pureCoreFns = fns.filterNot(f => BenchDispatch.inputKind(f).endsWith("aggregate"))
+    for (fn <- pureCoreFns; te <- corpus.size_sweep) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       if (te.bands < BenchDispatch.minBands(fn)) {
         emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,

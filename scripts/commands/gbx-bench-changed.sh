@@ -118,8 +118,16 @@ VALIDATED_AT=$(date -u +%FT%TZ)
 RUN_ID="changed-$(date +%Y%m%d_%H%M%S)-$SET"
 
 echo -e "${CYAN}▶ benchmarking affected functions (set=$SET, run-id=$RUN_ID)${NC}"
+# Run BOTH modes so each affected function is exercised in ITS declared modes:
+# ds-in / geometry-in fns run pure-core; the *_agg aggregators are spark-path-only
+# (no single-row UDAF analogue) and ONLY produce rows under spark-path. Each
+# runner's per-fn mode filter (FnSpec.modes / BenchDispatch) skips a function in a
+# mode it does not declare, so "both" is the union of the affected fns' modes --
+# NOT every fn in every mode. Hardcoding "pure-core" here silently dropped all 7
+# aggregators on the lightweight side (0 rows) while the heavy runner still emitted
+# error rows for them, so their consistency was never captured.
 bash "$SCRIPT_DIR/gbx-bench-all.sh" --set "$SET" --functions "$AFFECTED" \
-    --modes "pure-core" --run-id "$RUN_ID"
+    --modes "both" --run-id "$RUN_ID"
 BENCH_RC=$?
 if [[ $BENCH_RC -ne 0 ]]; then
     echo -e "${RED}❌ benchmark run failed (rc=$BENCH_RC) — no store records written${NC}"

@@ -289,6 +289,67 @@ def test_write_records_from_run(tmp_path):
     assert rec["light_rows"][0]["median_ms"] == 5.0
 
 
+def test_write_records_from_run_includes_spark_path_aggregate_cell(tmp_path):
+    """A spark-path aggregate consistency cell must flow into the store record.
+
+    Regression for Problem B: when gbx:bench:changed ran the aggregators (under the
+    --modes both fix), the lightweight side emits a spark-path aggregate row with a
+    raster fingerprint and compare.py writes a spark-path comparison row. The store
+    reads comparison rows by fn (mode-agnostic), so the aggregate consistency cell
+    must be captured -- not just pure-core cells.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    results.write_jsonl(
+        [_row("rst_combineavg_agg", "heavyweight", mode="spark-path", rows=2)],
+        run_dir / "heavyweight.jsonl",
+    )
+    results.write_jsonl(
+        [_row("rst_combineavg_agg", "lightweight", mode="spark-path", rows=2)],
+        run_dir / "lightweight.jsonl",
+    )
+    _write_comparison_csv(
+        run_dir / "comparison.csv",
+        [
+            {
+                "fn": "rst_combineavg_agg",
+                "mode": "spark-path",
+                "tile_px": 256,
+                "bands": 2,
+                "dtype": "float32",
+                "srid": 0,
+                "nodata_frac": 0.0,
+                "rows": 2,
+                "hw_median_ms": 12.0,
+                "lw_median_ms": 8.0,
+                "speedup": 1.5,
+                "consistency": "exact",
+                "max_rel_delta": 0.0,
+                "nodata_count_delta": 0,
+                "note": "",
+                "hw_mpix_s": 1.0,
+                "lw_mpix_s": 1.5,
+                "hw_rows_s": 10.0,
+                "lw_rows_s": 15.0,
+            }
+        ],
+    )
+    store.write_records_from_run(
+        run_dir,
+        ["rst_combineavg_agg"],
+        commit="c",
+        validated_at="t",
+        which="full",
+        corpus="seed=11",
+        specs_by_name={"rst_combineavg_agg": _spec("rst_combineavg_agg", ("agg.py",))},
+        root=tmp_path,
+    )
+    rec = store.read_record("rst_combineavg_agg", root=tmp_path)
+    assert len(rec["cells"]) == 1
+    assert rec["cells"][0]["mode"] == "spark-path"
+    assert rec["cells"][0]["consistency"] == "exact"
+
+
 def test_write_records_from_run_missing_comparison(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
