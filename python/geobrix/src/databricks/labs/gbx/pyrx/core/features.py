@@ -57,18 +57,21 @@ def polygonize(ds, band: int = 1, connectedness: int = 4):
     excluded via the band mask. ``connectedness`` is 4 or 8.
 
     Mirrors heavyweight ``gbx_rst_polygonize`` (GDAL ``GDALPolygonize``), which
-    is the *integer* polygonize: pixel values are truncated toward zero to
-    int32 before contiguous equal-value regions are grouped. Grouping on raw
-    float equality (as ``rasterio.features.shapes`` does natively) would emit
-    one polygon per pixel on any continuous band -- both wrong vs the GDAL
-    contract and ~100x slower. We cast to int32 first to match GDAL exactly.
+    is the *integer* polygonize: it reads the band as ``Int32``, so a float
+    band is ROUNDED to the nearest integer (GDAL's float->int RasterIO uses
+    round-to-nearest, not truncation) before contiguous equal-value regions are
+    grouped. Grouping on raw float equality (as ``rasterio.features.shapes``
+    does natively) would emit one polygon per pixel on any continuous band --
+    both wrong vs the GDAL contract and ~100x slower. We round to int32 first to
+    match GDAL exactly (a bare truncating cast collapses a [0,1] field to a
+    single 0-region and diverges from heavy's 1664/6835 regions).
     """
     b = int(band)
     arr = ds.read(b)
     msk = ds.read_masks(b)  # 0 where NoData -> excluded from shapes
-    # GDALPolygonize truncates pixel values toward zero to int32 before
-    # grouping. numpy's float->int32 cast truncates toward zero, matching GDAL.
-    arr = arr.astype("int32")
+    # GDALPolygonize reads the band as Int32: GDAL's float->int RasterIO rounds
+    # to nearest, so np.round (round-half-to-even) reproduces it bit-for-bit.
+    arr = np.round(arr).astype("int32")
     out = []
     for geom_dict, value in _shapes(
         arr, mask=msk, connectivity=int(connectedness), transform=ds.transform

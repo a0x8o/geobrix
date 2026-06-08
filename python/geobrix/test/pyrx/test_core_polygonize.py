@@ -29,10 +29,12 @@ def _raster_with_block():
 
 def _continuous_ramp_raster(n=32):
     # n x n float32 ramp with a distinct value per pixel in [0, 1).
-    # Truncated to int32 (GDALPolygonize semantics) every pixel -> class 0,
-    # so it must collapse to a single region, NOT one polygon per pixel.
+    # GDALPolygonize reads the band as Int32 (round-to-nearest), so every pixel
+    # collapses to {0, 1} (values < 0.5 -> 0, >= 0.5 -> 1), grouping into a
+    # handful of contiguous regions -- NOT one polygon per pixel (float-equality
+    # bug) and NOT a single class-0 region (the truncation bug).
     idx = np.arange(n * n, dtype="float32").reshape(n, n)
-    data = (idx / (n * n)).astype("float32")  # all values in [0, 1) -> int 0
+    data = (idx / (n * n)).astype("float32")  # values in [0, 1)
     profile = dict(
         driver="GTiff",
         width=n,
@@ -50,16 +52,16 @@ def _continuous_ramp_raster(n=32):
 
 
 def test_polygonize_groups_integer_regions_on_continuous_band():
-    # GDALPolygonize truncates pixel values to int before grouping contiguous
-    # equal-value regions. A [0, 1) ramp must collapse to a single class-0
-    # region -- NOT one polygon per pixel (the float-equality bug).
+    # GDALPolygonize reads the band as Int32 (round-to-nearest) before grouping
+    # contiguous equal-value regions. A [0, 1) ramp must round to {0, 1} and
+    # group into a handful of regions -- NOT one polygon per pixel (the
+    # float-equality bug) and NOT a single class-0 region (the truncation bug).
     n = 32
     with _serde.open_tile(_continuous_ramp_raster(n)) as ds:
         results = features.polygonize(ds, band=1, connectedness=4)
-    assert len(results) <= 4, f"expected a handful of regions, got {len(results)}"
     assert len(results) < n * n  # definitely not one-per-pixel
-    # all pixels truncate to int 0
-    assert {v for _, v in results} == {0.0}
+    # round-to-nearest puts pixels in {0, 1}; no float classes survive
+    assert {v for _, v in results} == {0.0, 1.0}
 
 
 def test_polygonize_returns_geom_value_excluding_nodata():
