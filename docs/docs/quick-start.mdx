@@ -13,14 +13,16 @@ This guide will help you get started with GeoBrix quickly after installation. Al
 
 ## Choose your execution tier
 
-GeoBrix offers two interchangeable execution tiers with the same `rst_*` function names — pick one and the rest of this guide is the same (both alias the module as `rx`):
+GeoBrix offers two interchangeable raster tiers with the same `rst_*` function names — pick one and the rest of this guide is the same (both alias the module as `rx`). **Start with the lightweight tier (pyrx)**: it installs as a single wheel, runs everywhere, and covers the full raster set.
 
 <Tabs groupId="gbx-tier" queryString="tier">
-<TabItem value="lightweight" label="Lightweight (pyrx)">
+<TabItem value="lightweight" label="Lightweight (pyrx) — recommended">
 
-Pure-Python, no JAR — installs from a Volume-staged wheel and runs on serverless, standard/shared, and ARM clusters. Covers **RasterX** (`rst_*`) today.
+Pure-Python (rasterio + NumPy), no JAR and no GDAL to install. A single wheel via `%pip` or as a cluster library, and it runs on serverless, standard/shared, ARM, and Lakeflow declarative pipelines. Covers the full **RasterX** raster set — every `rst_*` function.
 
 ```python
+%pip install geobrix                       # single wheel — no JAR, no GDAL
+
 from databricks.labs.gbx.pyrx import functions as rx
 rx.register(spark)   # installs the gbx_rst_* SQL names, pyspark-backed
 ```
@@ -28,7 +30,7 @@ rx.register(spark)   # installs the gbx_rst_* SQL names, pyspark-backed
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
-JVM-native (Scala + GDAL), installed via the JAR + init script. Covers **RasterX, GridX, and VectorX**.
+JVM-native (Scala + GDAL), installed via the JAR + init script. Choose this tier when your environment is already JVM/GDAL-based, when you need the GDAL/OGR readers (`gtiff_gdal`, `gdal`, `shapefile_ogr`, …), or when you need the **GridX** or **VectorX** packages. Covers **RasterX, GridX, and VectorX**.
 
 ```python
 from databricks.labs.gbx.rasterx import functions as rx
@@ -38,7 +40,7 @@ rx.register(spark)
 </TabItem>
 </Tabs>
 
-See [Installation](./installation) for the two install paths and [Choosing an Execution Tier](./api/execution-tiers) for the full comparison. The **GridX** and **VectorX** sections below are heavyweight-only.
+See [Installation](./installation) for the two install paths and [Choosing an Execution Tier](./api/execution-tiers) for the full comparison. The **GridX** and **VectorX** sections below use the heavyweight tier.
 
 :::tip Set up sample data first
 The examples on this page use **sample data paths** (e.g. `/Volumes/.../geobrix-examples/nyc/...`). To run them as-is, set up sample data first: **[Sample Data Guide](./sample-data/overview)** — then use the same paths or volume in your notebook.

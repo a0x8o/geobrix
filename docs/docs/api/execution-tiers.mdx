@@ -31,18 +31,26 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 | Execution model | JVM-native (Scala + GDAL JNI) | Python-worker UDFs (rasterio + NumPy) |
 | Driver coverage | Full custom GDAL build | rasterio's bundled build (narrower) |
 | SQL default arguments | Supported | Pass all arguments explicitly |
-| Function coverage | Full raster set | Growing subset |
-| Readers / Writers | `gtiff_gdal`, `gdal`, OGR readers | `binaryFile` + `rst_fromcontent` today; `*_pyrx` Python Data Source readers planned |
+| Function coverage | Full raster set | Full raster set — every `rst_*` function |
+| Readers / Writers | `gtiff_gdal`, `gdal`, OGR readers | `binaryFile` + `rst_fromcontent` today; native Python Data Source readers planned |
 
 ## How to choose
 
-Choose **Lightweight (pyrx)** for a fast, dependency-light start, or when your compute cannot load the JAR or init script — serverless clusters, standard/shared clusters, ARM instances, and Lakeflow declarative pipelines all fall into this category.
+**Start with Lightweight (pyrx).** It installs as a single wheel (`%pip` or cluster library) with no GDAL and no JAR, runs everywhere — serverless, standard/shared clusters, ARM, and Lakeflow declarative pipelines — and covers the full raster set: every `rst_*` function. For most raster work it is the recommended default.
 
-Choose **Heavyweight (rasterx)** when you need the JVM-side performance on a dedicated cluster via the init script configuration.
+Choose **Heavyweight (rasterx)** in three cases:
+
+1. **Your environment is already JVM/GDAL-based** — you have the init script and JAR in place, or you specifically want JVM-native execution on a dedicated cluster.
+2. **You need the GDAL/OGR readers** — `gtiff_gdal`, `gdal`, and the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …). The lightweight tier reads via `binaryFile` + `rst_fromcontent` today; native lightweight Python Data Source readers are not yet available.
+3. **You need GridX or VectorX** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`) or the vector-tile / TIN / legacy-geometry APIs (`gbx_st_*`). Those packages have a heavyweight tier only.
+
+The reader and grid/vector surfaces (cases 2 and 3) are actively being ported to the lightweight tier, so heavyweight's unique surface is expected to keep narrowing.
 
 ## Performance & consistency
 
-The one-line swap is safe to make: across the benchmark suite the two tiers produce **consistent output** (0 divergent cells — every function agrees within tolerance, including on geographic rasters). On per-operation timing the lightweight tier is competitive-to-faster in pure-core measurements — dramatically so for band math (hundreds of times faster, since the heavyweight tier shells out to a subprocess there) and a steady few-times faster for terrain and reductions; trivial metadata accessors are sub-millisecond on both.
+The one-line swap is safe to make. The lightweight tier is functionally complete for raster: it implements every `rst_*` function (all 107). Across the benchmark suite the two tiers produce **consistent output** — the tiers agree within tolerance, including on geographic rasters.
+
+On per-operation timing the lightweight tier is **competitive-to-faster for the large majority** of functions. Band math is dramatically faster, because the heavyweight tier shells out to a subprocess there. Terrain, focal filters, and discrete-grid (H3/quadbin) aggregation are a few times faster following recent vectorization. A small number of algorithm-bound operations (for example viewshed) are slower on the lightweight tier but remain sub-second in absolute terms. Metadata accessors are sub-millisecond on both.
 
 See **[Benchmarking](./benchmarking)** for the full results table, the two timing models, and how to run the benchmark on a cluster or locally.
 

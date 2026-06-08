@@ -15,8 +15,8 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs/intro">
-            Get Started →
+            to="/docs/quick-start?tier=lightweight">
+            Get Started — Lightweight →
           </Link>
         </div>
       </div>
@@ -47,7 +47,7 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Runs lightweight (pure-Python) or heavyweight (Scala/GDAL)."
+            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Recommended lightweight tier (pyrx) — a single wheel, runs everywhere, full raster coverage — with a heavyweight Scala/GDAL tier for specialized cases."
             link="/docs/api/raster-functions"
           />
           <Feature
@@ -97,10 +97,12 @@ export default function Home() {
           <div className="container">
             <div className="row">
               <div className="col col--8 col--offset-2 text--center">
-                <h2>New in 0.4.0 — a lightweight execution tier</h2>
+                <h2>Start lightweight — the recommended raster tier</h2>
                 <p>
-                  Run the GeoBrix raster API on pure Python + rasterio: no JAR, no init script,
-                  works on serverless, shared clusters, and ARM.
+                  The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
+                  a single wheel, no JAR and no init script, and it works everywhere — serverless,
+                  standard/shared clusters, ARM, and Lakeflow declarative pipelines. The heavyweight
+                  Scala/GDAL tier is there when you need the GDAL/OGR readers or the GridX/VectorX packages.
                 </p>
                 <Link
                   className="button button--primary button--md"
@@ -120,12 +122,16 @@ export default function Home() {
                 <p>Get up and running with GeoBrix in minutes:</p>
                 <pre>
                   <code>
-{`# Import and register functions
-from databricks.labs.gbx.rasterx import functions as rx
+{`# Install the lightweight wheel (single library, no JAR, no GDAL)
+%pip install geobrix
+
+# Import and register functions
+from databricks.labs.gbx.pyrx import functions as rx
 rx.register(spark)
 
 # Read and process geospatial data
-rasters = spark.read.format("gdal").load("/data/rasters")
+rasters = (spark.read.format("binaryFile").load("/data/rasters")
+           .select(rx.rst_fromcontent("content").alias("tile")))
 metadata = rasters.select(
     rx.rst_boundingbox("tile").alias("bbox"),
     rx.rst_metadata("tile").alias("metadata")
