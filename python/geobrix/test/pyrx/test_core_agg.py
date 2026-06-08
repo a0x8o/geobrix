@@ -52,6 +52,25 @@ def test_merge_tiles_single_passthrough():
     assert agg.merge_tiles([one]) == one
 
 
+def test_merge_tiles_overlap_last_wins():
+    # Two 4x4 tiles overlapping in x=[2,4]: union mosaic is 4x6, overlap = cols
+    # 2 and 3. Heavyweight MergeRasters builds a GDAL VRT (gdalbuildvrt), where
+    # overlapping pixels take the LAST listed source. The order passed here is
+    # [left, right], so the overlap must take the RIGHT tile's value (20), not
+    # the left's (10) -- pre-fix rasterio defaults to first-wins and returns 10.
+    left = _ras(np.full((4, 4), 10.0), ulx=0.0, uly=4.0, px=1.0)
+    right = _ras(np.full((4, 4), 20.0), ulx=2.0, uly=4.0, px=1.0)
+    out = agg.merge_tiles([left, right])
+    with _serde.open_tile(out) as ds:
+        arr = ds.read(1)
+        assert arr.shape == (4, 6)
+        # Non-overlap left cols (0,1) -> 10 ; overlap cols (2,3) -> 20 (last wins)
+        assert np.all(arr[:, 0:2] == 10.0)
+        assert np.all(arr[:, 2:4] == 20.0)
+        # Non-overlap right cols (4,5) -> 20
+        assert np.all(arr[:, 4:6] == 20.0)
+
+
 # --- combineavg_tiles -------------------------------------------------------
 def test_combineavg_tiles_mean():
     a = _ras(np.array([[2.0, 4.0], [6.0, 8.0]]))

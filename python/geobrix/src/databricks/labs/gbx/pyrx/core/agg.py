@@ -52,9 +52,12 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
     Each GTiff carries its own georef/CRS, so ``rasterio.merge.merge`` places
     them by extent and the output spans the union extent (mirrors the
     heavyweight RST_MergeAgg / MergeRasters ``gdalbuildvrt -resolution highest``
-    mosaic). On overlap the default rasterio behaviour is first-tile-wins; the
-    heavyweight sorts by parent path for determinism, which has no analogue on
-    in-memory bytes, so we merge in the order given.
+    mosaic). On overlap we use ``method="last"`` so the LAST source in the input
+    order wins, matching the heavyweight: ``gdalbuildvrt`` stacks sources in
+    list order and overlapping pixels take the last-listed source. The
+    heavyweight first sorts tiles by parent path (``GetDescription``) for
+    determinism; that ordering has no analogue on in-memory bytes, so the
+    last-wins tie-break here is resolved against the caller-supplied order.
     """
     if not rasters:
         return None
@@ -63,7 +66,7 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
     memfiles, datasets = _open_all(rasters)
     try:
         ref = datasets[0]
-        mosaic, out_transform = _rio_merge(datasets)
+        mosaic, out_transform = _rio_merge(datasets, method="last")
         profile = ref.profile.copy()
         profile.update(
             driver="GTiff",
