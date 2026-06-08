@@ -1,9 +1,9 @@
 package com.databricks.labs.gbx.bench
 
+import com.databricks.labs.gbx.expressions.ExpressionConfig
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.test.SilentSparkSession
-import org.gdal.gdal.gdal
 
 class HeavyBenchSuite extends PlanTest with SilentSparkSession {
 
@@ -23,9 +23,17 @@ class HeavyBenchSuite extends PlanTest with SilentSparkSession {
     val fns = if (fnsProp.isEmpty) BenchDispatch.all
               else fnsProp.split(",").filter(_.nonEmpty).map(_.trim).toSeq
 
-    GDALManager.loadSharedObjects(Iterable.empty[String])
-    GDALManager.configureGDAL("/tmp", "/tmp", logCPL = true, CPL_DEBUG = "OFF")
-    gdal.AllRegister()
+    // Drive GDAL init through the PRODUCT'S locked, idempotent GDALManager.init so
+    // GDALManager.isEnabled is flipped true on the driver BEFORE any Spark task runs.
+    // The spark-path's raster work executes inside expression eval (RST_*.eval ->
+    // RST_ExpressionUtil.init -> GDALManager.init) on multiple local[N] task threads
+    // in this same JVM. If the driver only ran a raw gdal.AllRegister() (leaving
+    // isEnabled=false), every first-touch task thread would re-enter AllRegister();
+    // GDAL's GDALDriverManager::AutoSkipDrivers() mutates a process-global, non-
+    // thread-safe driver list and SIGSEGVs when called concurrently. Routing through
+    // GDALManager.init means tasks see isEnabled=true and short-circuit -> the
+    // driver list is registered exactly once, never concurrently.
+    GDALManager.init(ExpressionConfig(spark))
 
     val corpus = BenchManifest.read(s"$corpusRoot/corpus.json")
     // Stream each row to disk (truncate-on-open, fsync per row) so a later native

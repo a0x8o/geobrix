@@ -174,6 +174,20 @@ object HeavyRunner {
                    argsByFn: Map[String, Map[String, String]],
                    sink: BenchRow => Unit = _ => ()): Seq[BenchRow] = {
     functions.register(spark)
+    // The *_agg aggregators hold whole rasters in memory while aggregating: the
+    // ObjectHash aggregate map buffers per-group state and the raster UDAFs decode
+    // every input tile (a 1024x1024x4 float32 tile is ~16MB, plus GDAL dataset
+    // overhead) before producing the group's output tile. Two knobs keep the forked
+    // 4G test JVM from OOMing as the row ladder grows, while preserving a real
+    // distributed groupBy().agg():
+    //   1. fallbackThreshold=1 forces the spilling sort-based aggregate immediately,
+    //      so at most one group's raster state is buffered per task at a time.
+    //   2. shuffle.partitions=2 caps how many heavy groups aggregate concurrently
+    //      (8 simultaneous GDAL-decoding tasks each holding multi-MB rasters
+    //      overruns the heap regardless of spill). Fewer tasks process keys
+    //      sequentially, bounding peak in-flight raster memory.
+    spark.conf.set("spark.sql.objectHashAggregate.sortBased.fallbackThreshold", "1")
+    spark.conf.set("spark.sql.shuffle.partitions", "2")
     val e = env("docker")
     val pool = corpus.row_pool
     val maxRows = rowCounts.max
@@ -342,8 +356,20 @@ object HeavyRunner {
       // PERF: time the scaled groupBy (the fixed group replicated across N keys).
       sorted.foreach { n =>
         try {
-          val keys = spark.range(n).select(col("id").alias("key"))
-          val scaled = cached.crossJoin(org.apache.spark.sql.functions.broadcast(keys))
+          // Drive the fan-out from the KEYS side, partitioned across tasks, so the
+          // replicated raster payload spreads over partitions instead of piling into
+          // one. The group DataFrame is tiny (2-N rows) and lives in a single
+          // partition; broadcasting the SMALL group onto a key-partitioned range
+          // makes the crossJoin output inherit the keys' partitioning. A plain
+          // cached.crossJoin(broadcast(keys)) instead keeps the group's single
+          // partition, so all n copies of the multi-MB tiles (a 1024x1024xB float32
+          // tile is ~16MB) land in ONE task and OOM the local[N] heap as n grows --
+          // the map-side ObjectHashAggregate buffers every group's raster bytes at
+          // once. Partitioning by key keeps a real distributed groupBy().agg() while
+          // bounding each task to a slice of the groups.
+          val keyParts = math.min(n, spark.conf.get("spark.sql.shuffle.partitions").toInt)
+          val keys = spark.range(n).select(col("id").alias("key")).repartition(keyParts)
+          val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
           val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
           val (median, mn, p90) = timeIters(() => {
             scaled.groupBy("key").agg(aggCol.alias("out"))
