@@ -88,6 +88,10 @@ object HeavyRunner {
     val e = env("docker")
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
     def emit(r: BenchRow): Unit = { out += r; sink(r) }
+    // Geometry corpus: geometry-in fns read the tile's GeometrySet from the
+    // geometry.json written alongside corpus.json (write-once-read-both; the SAME
+    // base64 WKB the pyrx tier reads). Loaded once; None for older corpora.
+    val geomCorpus = BenchManifest.readGeometry(Paths.get(corpusRoot, "geometry.json").toString)
     for (fn <- fns; te <- corpus.size_sweep) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       if (te.bands < BenchDispatch.minBands(fn)) {
@@ -122,6 +126,18 @@ object HeavyRunner {
                 finally arr.foreach(d => if (d != null) d.delete())
               }
               (callArr(), () => callArr())
+            case "geometry" =>
+              // Open the tile (for extent/size/srid) and resolve its GeometrySet
+              // from the geometry corpus (by source_tile path, else by srid). Both
+              // engines read identical WKB bytes -> byte-identical geometry input.
+              ds = gdal.Open(path)
+              val gset = geomCorpus
+                .flatMap(_.setFor(te.path, te.srid))
+                .getOrElse(throw new IllegalStateException(
+                  s"no geometry set for tile ${te.path} (srid ${te.srid}); " +
+                    "geometry.json missing or stale"))
+              (BenchDispatch.pureCoreGeometry(fn, ds, a, gset),
+                () => BenchDispatch.pureCoreGeometry(fn, ds, a, gset))
             case _ =>
               ds = gdal.Open(path)
               (BenchDispatch.pureCore(fn, ds, a),
@@ -184,7 +200,11 @@ object HeavyRunner {
     }
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
     def emit(r: BenchRow): Unit = { out += r; sink(r) }
-    for (fn <- fns; n <- rowCounts.sorted) {
+    // Geometry-in fns (input_kind == "geometry") are pure-core-only: the tile
+    // DataFrame carries no geometry column, so there is no spark-path column form.
+    // Skip them here (mirrors the pyrx runner filtering by `"spark-path" in modes`).
+    val sparkFns = fns.filterNot(f => BenchDispatch.inputKind(f) == "geometry")
+    for (fn <- sparkFns; n <- rowCounts.sorted) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       try {
         val df = dfAll.limit(n)

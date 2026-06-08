@@ -69,6 +69,55 @@ def test_run_pure_core_produces_ok_rows(tmp_path):
     assert len(rows) == 2 * len(corpus.size_sweep)
 
 
+def test_run_pure_core_geometry_in_fns_produce_raster_fingerprints(tmp_path):
+    # bucket D: the 3 geometry-in constructors burn/interpolate the tile's
+    # GeometrySet (boxes/points/zpoints) into a NEW raster at the tile's own
+    # extent/size/srid. They run via input_kind == "geometry" (core_fn(ds, args,
+    # geom)) and emit a comparable raster fingerprint.
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=9,
+        tile_px=[32, 64],
+        bands=[1],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=1,
+        row_tile_px=32,
+        row_bands=1,
+        row_dtype="float32",
+    )
+    fns = s.select(
+        functions=["rst_rasterize", "rst_gridfrompoints", "rst_dtmfromgeoms"]
+    )
+    rows = rn.run_pure_core(
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows, "expected result rows"
+    assert all(r.status == "ok" for r in rows), [
+        (r.fn, r.status, r.note) for r in rows if r.status != "ok"
+    ]
+    assert {r.fn for r in rows} == {
+        "rst_rasterize",
+        "rst_gridfrompoints",
+        "rst_dtmfromgeoms",
+    }
+    # raster output -> a non-empty fingerprint classified as "raster"
+    import json
+
+    for r in rows:
+        assert r.output_fingerprint, r.fn
+        fp = json.loads(r.output_fingerprint)
+        assert fp["kind"] == "raster", (r.fn, fp.get("kind"))
+    assert len(rows) == 3 * len(corpus.size_sweep)
+
+
 @pytest.fixture(scope="module")
 def spark():
     import os

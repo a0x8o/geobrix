@@ -39,6 +39,7 @@ from databricks.labs.gbx.pyrx.core import (
     terrain,
     tessellate,
     tiling,
+    tin,
     warp,
     xyz,
 )
@@ -153,6 +154,29 @@ def _ds_to_gtiff_bytes(ds) -> bytes:
         return mf.read()
 
 
+def _tile_extent_size_srid(ds) -> tuple:
+    """(xmin, ymin, xmax, ymax, width_px, height_px, srid) from an open tile.
+
+    The geometry-input constructors (rst_rasterize / rst_gridfrompoints /
+    rst_dtmfromgeoms) burn/interpolate into a NEW raster whose extent, size, and
+    CRS must match the tile the geometry was derived from so the output grid
+    aligns on every corpus CRS (the heavy tier reads the SAME extent from the same
+    tile, so the two grids are pixel-comparable). ``srid`` falls back to 0 when the
+    tile carries no EPSG (none of the corpus tiles do, but stay defensive).
+    """
+    left, bottom, right, top = ds.bounds
+    epsg = ds.crs.to_epsg() if ds.crs is not None else None
+    return (
+        float(left),
+        float(bottom),
+        float(right),
+        float(top),
+        int(ds.width),
+        int(ds.height),
+        int(epsg) if epsg is not None else 0,
+    )
+
+
 def _color_table_path() -> str:
     """Write the synthetic gdaldem color ramp to a temp file and return its path.
 
@@ -261,6 +285,9 @@ _INDICES_LIGHT = (_PYRX + "indices.py", _NODATA)
 _EDIT_LIGHT = (_PYRX + "edit.py", _NODATA)
 _FOCAL_LIGHT = (_PYRX + "focal.py", _NODATA)
 _FEATURES_LIGHT = (_PYRX + "features.py", _NODATA)
+# TIN / IDW constructors (gridfrompoints -> idw_grid, dtmfromgeoms ->
+# delaunay_dtm) live in core/tin.py; it does NOT import _nodata (grep-confirmed).
+_TIN_LIGHT = (_PYRX + "tin.py",)
 _MAPALGEBRA_LIGHT = (_PYRX + "mapalgebra.py", _NODATA)
 # these core modules do NOT import _nodata (grep-confirmed)
 _WARP_LIGHT = (_PYRX + "warp.py",)
@@ -1867,6 +1894,110 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         fingerprint_kind="vector",
         sources=_FEATURES_LIGHT + (_HEAVY + "vector/RST_Polygonize.scala",),
+        core=False,
+    ),
+    # --- bucket D: geometry-in constructors (3) -------------------------------
+    # rst_rasterize / rst_gridfrompoints / rst_dtmfromgeoms take GEOMETRY input and
+    # PRODUCE a raster. No single literal geometry is in-extent across the multi-CRS
+    # corpus, so they ride input_kind == "geometry": the runner hands core_fn(ds,
+    # args, geom) the tile's GeometrySet (boxes / points / zpoints as WKB + burn
+    # values, in the tile CRS, deterministic + identical across both engines via
+    # geometry.json). The extent / size / srid come from the SAME tile ds the
+    # geometry was derived from, so the burn grid aligns with the source tile on
+    # every CRS and the heavy tier (reading identical geometry + the same extent
+    # from the same tile) produces a pixel-comparable raster. Pure-core-only: the
+    # spark-path tile DataFrame carries no geometry column.
+    #
+    # rst_rasterize is SINGLE-geometry (the binding + heavy execute both take ONE
+    # geom_wkb + value), so the bench burns the FIRST corpus box. gridfrompoints /
+    # dtmfromgeoms take an ARRAY of points, so the bench feeds the whole point set.
+    "rst_rasterize": FnSpec(
+        "rst_rasterize",
+        "gbx_rst_rasterize",
+        "vector",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a, g: features.rasterize_geom(
+            g.boxes[0][0], g.boxes[0][1], *_tile_extent_size_srid(ds)
+        ),
+        # spark-path is mode-filtered out (geometry-in, pure-core only); the col_fn
+        # is here only for the FnSpec contract (callable). The static box / value
+        # are unused at runtime.
+        col_fn=lambda t, a: prx.rst_rasterize(
+            F.lit(b""),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(1.0),
+            F.lit(1.0),
+            F.lit(1),
+            F.lit(1),
+            F.lit(4326),
+        ),
+        input_kind="geometry",
+        sources=_FEATURES_LIGHT + (_HEAVY + "vector/RST_Rasterize.scala",),
+        core=False,
+    ),
+    "rst_gridfrompoints": FnSpec(
+        "rst_gridfrompoints",
+        "gbx_rst_gridfrompoints",
+        "vector",
+        ("pure-core",),
+        {"power": 2.0, "max_pts": 12},
+        core_fn=lambda ds, a, g: tin.idw_grid(
+            tin.points_xy_from_wkb([wkb for wkb, _ in g.points]),
+            [v for _, v in g.points],
+            *_tile_extent_size_srid(ds),
+            power=a["power"],
+            max_pts=a["max_pts"],
+        ),
+        col_fn=lambda t, a: prx.rst_gridfrompoints(
+            F.array(),
+            F.array(),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(1.0),
+            F.lit(1.0),
+            F.lit(1),
+            F.lit(1),
+            F.lit(4326),
+            a["power"],
+            a["max_pts"],
+        ),
+        input_kind="geometry",
+        sources=_TIN_LIGHT + (_HEAVY + "grid/RST_GridFromPoints.scala",),
+        core=False,
+    ),
+    "rst_dtmfromgeoms": FnSpec(
+        "rst_dtmfromgeoms",
+        "gbx_rst_dtmfromgeoms",
+        "vector",
+        ("pure-core",),
+        # breaklines=None + tolerances=0.0 (scipy Delaunay is unconstrained, so
+        # tolerances have no analogue; mirrored on the heavy side as 0.0).
+        {"no_data": -9999.0},
+        core_fn=lambda ds, a, g: tin.delaunay_dtm(
+            tin.points_xyz_from_wkb(g.zpoints),
+            None,
+            *_tile_extent_size_srid(ds),
+            no_data=a["no_data"],
+        ),
+        col_fn=lambda t, a: prx.rst_dtmfromgeoms(
+            F.array(),
+            F.array(),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(0.0),
+            F.lit(1.0),
+            F.lit(1.0),
+            F.lit(1),
+            F.lit(1),
+            F.lit(4326),
+            a["no_data"],
+        ),
+        input_kind="geometry",
+        sources=_TIN_LIGHT + (_HEAVY + "RST_DTMFromGeoms.scala",),
         core=False,
     ),
 }

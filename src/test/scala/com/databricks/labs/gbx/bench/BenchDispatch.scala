@@ -27,6 +27,9 @@ import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Contour
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Proximity
 import com.databricks.labs.gbx.rasterx.expressions.analysis.RST_Viewshed
 import com.databricks.labs.gbx.rasterx.expressions.vector.RST_Polygonize
+import com.databricks.labs.gbx.rasterx.expressions.vector.RST_Rasterize
+import com.databricks.labs.gbx.rasterx.expressions.grid.RST_GridFromPoints
+import com.databricks.labs.gbx.rasterx.expressions.RST_DTMFromGeoms
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Band
@@ -49,7 +52,9 @@ import com.databricks.labs.gbx.util.NodeFilePathUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.util.ArrayData
+import org.apache.spark.unsafe.types.UTF8String
 import org.gdal.gdal.Dataset
+import org.locationtech.jts.geom.{Geometry, LineString}
 
 import java.nio.file.Files
 
@@ -168,7 +173,11 @@ object BenchDispatch {
     "rst_quadbin_rastertogridmax" -> DGGS, "rst_quadbin_rastertogridmedian" -> DGGS,
     "rst_quadbin_rastertogridmin" -> DGGS,
     // bucket B, group B-vec: vector-out fns (contour LINES, polygonize POLYGONS)
-    "rst_contour" -> VECTOR, "rst_polygonize" -> VECTOR
+    "rst_contour" -> VECTOR, "rst_polygonize" -> VECTOR,
+    // bucket D: geometry-in constructors (burn/interpolate a geometry set into a
+    // new raster). Categorized vector (they bridge vector geometry -> raster).
+    "rst_rasterize" -> VECTOR, "rst_gridfrompoints" -> VECTOR,
+    "rst_dtmfromgeoms" -> VECTOR
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -182,10 +191,16 @@ object BenchDispatch {
   // synthesizes the multi-tile input from the corpus tile and writes it ONCE
   // (write-once-read-both); the heavy runner reads the SAME synthesized files.
   private val tileArrayInput: Set[String] = Set("rst_frombands", "rst_combineavg", "rst_merge")
+  // bucket D: geometry-in fns are handed the open tile PLUS the tile's
+  // GeometrySet (boxes/points/zpoints WKB, in the tile CRS) read from
+  // geometry.json -- the SAME bytes the pyrx tier reads (write-once-read-both).
+  private val geometryInput: Set[String] =
+    Set("rst_rasterize", "rst_gridfrompoints", "rst_dtmfromgeoms")
   def inputKind(fn: String): String =
     if (byteInput.contains(fn)) "bytes"
     else if (pathInput.contains(fn)) "path"
     else if (tileArrayInput.contains(fn)) "tile_array"
+    else if (geometryInput.contains(fn)) "geometry"
     else "tile"
 
   // bench.synth recipe name for a tile_array fn (mirrors spec.synth_recipe).
@@ -598,6 +613,73 @@ object BenchDispatch {
     }
   }
 
+  // The b64-encoded empty ExpressionConfig RST_Rasterize.execute needs (it only
+  // calls RST_ExpressionUtil.init; an empty config suffices, same as the
+  // RST_RasterizeTest direct-execute helper). Built once.
+  private lazy val encodedEmptyConf: UTF8String = {
+    import com.databricks.labs.gbx.expressions.ExpressionConfig
+    import org.apache.hadoop.conf.Configuration
+    import org.apache.spark.util.SerializableConfiguration
+    val cfg = new ExpressionConfig(Map.empty[String, String],
+      new SerializableConfiguration(new Configuration()))
+    val baos = new java.io.ByteArrayOutputStream()
+    val oos = new java.io.ObjectOutputStream(baos)
+    oos.writeObject(cfg); oos.close()
+    UTF8String.fromString(java.util.Base64.getEncoder.encodeToString(baos.toByteArray))
+  }
+
+  // (xmin, ymin, xmax, ymax, widthPx, heightPx, srid) from an open Dataset --
+  // the heavy analogue of the pyrx _tile_extent_size_srid(ds). Extent is the
+  // dataset bounds (geotransform + size, rotation terms 0 for the corpus); srid
+  // via RST_SRID.execute. The geometry-in constructors burn/interpolate into a
+  // NEW raster at the SAME extent/size/srid as the tile the geometry was derived
+  // from, so the heavy + light grids are pixel-comparable on every CRS.
+  private def tileExtentSizeSrid(ds: Dataset): (Double, Double, Double, Double, Int, Int, Int) = {
+    val gt = ds.GetGeoTransform()
+    val w = ds.GetRasterXSize(); val h = ds.GetRasterYSize()
+    val x0 = gt(0); val y0 = gt(3)
+    val x1 = gt(0) + w * gt(1); val y1 = gt(3) + h * gt(5)
+    val (xmin, xmax) = (math.min(x0, x1), math.max(x0, x1))
+    val (ymin, ymax) = (math.min(y0, y1), math.max(y0, y1))
+    (xmin, ymin, xmax, ymax, w, h, RST_SRID.execute(ds))
+  }
+
+  /** Pure-core dispatch for `input_kind == "geometry"` constructor fns: the open
+    * tile PLUS the tile's GeometrySet (boxes/points/zpoints WKB, in the tile CRS,
+    * read from geometry.json -- the SAME bytes the pyrx tier reads). Each fn burns
+    * / interpolates the geometry into a NEW raster at the tile's own extent/size/
+    * srid, so the heavy + light output grids are pixel-comparable. The expressions
+    * return a tile InternalRow (cellid, raster bytes, metadata); we open the bytes
+    * and fingerprint the dataset (same raster fp the pyrx GTiff bytes yield). */
+  def pureCoreGeometry(fn: String, ds: Dataset, a: Map[String, String],
+                       geom: GeometrySet): String = {
+    Files.createDirectories(NodeFilePathUtil.rootPath)
+    val (xmin, ymin, xmax, ymax, w, h, srid) = tileExtentSizeSrid(ds)
+    val row: org.apache.spark.sql.catalyst.InternalRow = fn match {
+      // SINGLE geometry: burn the FIRST corpus box (wkb, value) -- mirrors the
+      // pyrx core_fn (features.rasterize_geom on g.boxes[0]).
+      case "rst_rasterize" =>
+        val (wkb, value) = geom.boxPairs.head
+        RST_Rasterize.execute(wkb, value, xmin, ymin, xmax, ymax, w, h, srid, encodedEmptyConf)
+      // ARRAY of points: IDW grid over all corpus points (wkb, value pairs).
+      case "rst_gridfrompoints" =>
+        RST_GridFromPoints.execute(geom.pointPairs, xmin, ymin, xmax, ymax, w, h, srid,
+          argD(a, "power", 2.0), argI(a, "max_pts", 12))
+      // ARRAY of 3D points: Delaunay DTM over all corpus zpoints; breaklines empty,
+      // tolerances 0.0 (no scipy analogue on the light side either).
+      case "rst_dtmfromgeoms" =>
+        val pts: Seq[Geometry] = geom.zpointWkbs.map(JTS.fromWKB)
+        RST_DTMFromGeoms.execute(pts, Seq.empty[LineString], 0.0, 0.0,
+          xmin, ymin, xmax, ymax, w, h, srid, argD(a, "no_data", -9999.0))
+      case other => throw new IllegalArgumentException(s"unknown bench geometry fn: $other")
+    }
+    if (row == null) return BenchFingerprint.empty
+    val bytes = row.getBinary(1)
+    val out = RasterDriver.readFromBytes(bytes, Map.empty)
+    try BenchFingerprint.ofDataset(out)
+    finally RasterDriver.releaseDataset(out)
+  }
+
   private def fpDerived(res: (Dataset, Map[String, String])): String = {
     val out = res._1
     try BenchFingerprint.ofDataset(out)
@@ -817,6 +899,14 @@ object BenchDispatch {
       case "rst_polygonize" =>
         rst_polygonize(tile, org.apache.spark.sql.functions.lit(argI(a, "band", 1)),
           org.apache.spark.sql.functions.lit(argI(a, "connectedness", 4)))
+      // bucket D: geometry-in constructors are pure-core-only (the spark-path tile
+      // DataFrame carries no geometry column, and they are fingerprinted via the
+      // geometry adapter, not the column path). The spark-path runner filters by
+      // modes, so column() is never invoked for them; guard explicitly rather than
+      // synthesize a meaningless geometry Column.
+      case "rst_rasterize" | "rst_gridfrompoints" | "rst_dtmfromgeoms" =>
+        throw new IllegalArgumentException(
+          s"$fn is geometry-in / pure-core-only; no spark-path column form")
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

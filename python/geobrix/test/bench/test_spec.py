@@ -455,7 +455,8 @@ def test_full_set_count_is_ninety_seven():
     # + 11 bucket-B group B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
     #   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
     # + 2 bucket-B group B-vec (contour, polygonize -> vector fingerprint)
-    assert len(s.select(set="full")) == 97
+    # + 3 bucket-D geometry-in (rasterize/gridfrompoints/dtmfromgeoms)
+    assert len(s.select(set="full")) == 100
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -814,6 +815,64 @@ def test_bvec_not_in_core_set():
 def test_fnspec_fingerprint_kind_defaults_auto():
     fs = s.FnSpec("x", "gbx_x", "accessor", ("pure-core",))
     assert fs.fingerprint_kind == "auto"
+
+
+# --- bucket D: geometry-in functions (3) -------------------------------------
+# rst_rasterize / rst_gridfrompoints / rst_dtmfromgeoms each take GEOMETRY input
+# (a polygon to burn, an array of POINTs to interpolate, an array of 3D POINTs to
+# triangulate) and PRODUCE a raster tile. No single literal geometry is in-extent
+# across the multi-CRS corpus, so they ride input_kind == "geometry": the runner
+# hands core_fn(ds, args, geom) the tile's GeometrySet (boxes / points / zpoints
+# as WKB + burn values, in the tile CRS, deterministic + identical across both
+# engines via geometry.json). The output is a raster, compared via the raster
+# fingerprint. The extent/size/srid come from the tile ds the geometry was derived
+# from (ds.bounds, ds.width/height, ds CRS -> srid), so the burn grid aligns with
+# the source tile on every CRS. Pure-core-only: the spark-path tile DataFrame
+# carries no geometry column.
+_BUCKET_D = {"rst_rasterize", "rst_gridfrompoints", "rst_dtmfromgeoms"}
+
+
+def test_bucket_d_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _BUCKET_D - full
+    assert not missing, f"registry missing bucket-D fns: {sorted(missing)}"
+
+
+def test_bucket_d_count_is_three():
+    assert len(_BUCKET_D) == 3
+
+
+def test_bucket_d_wellformed_geometry_input_kind():
+    for name in _BUCKET_D:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}", name
+        assert fs.core is False, name
+        assert callable(fs.core_fn) and callable(fs.col_fn), name
+        assert fs.input_kind == "geometry", name
+        assert fs.fingerprint is True, name
+        # raster output -> the auto fingerprint detector classifies the GTiff bytes
+        assert fs.fingerprint_kind == "auto", name
+        assert fs.sources, name
+
+
+def test_bucket_d_pure_core_only():
+    # spark-path tile DataFrame has no geometry column -> pure-core only.
+    for name in _BUCKET_D:
+        assert s.REGISTRY[name].modes == ("pure-core",), name
+
+
+def test_bucket_d_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_BUCKET_D & core)
+
+
+def test_bucket_d_core_fn_takes_three_args():
+    # input_kind == "geometry" core_fn signature is (ds, args, geom).
+    import inspect
+
+    for name in _BUCKET_D:
+        sig = inspect.signature(s.REGISTRY[name].core_fn)
+        assert len(sig.parameters) == 3, name
 
 
 def test_every_fnspec_declares_existing_sources():
