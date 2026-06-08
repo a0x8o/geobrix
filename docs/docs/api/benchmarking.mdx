@@ -276,6 +276,7 @@ The table below is the **complete** local run across all 107 raster functions, s
 | `rst_max` | 256² | 0.544 | 0.39 | 1.39× | exact |
 | `rst_min` | 256² | 0.52 | 0.392 | 1.33× | exact |
 | `rst_boundingbox` | 512² | 0.295 | 0.258 | 1.14× | timing-only |
+| `rst_gridfrompoints` | 256² | 16.28 | 16.63 | 0.98× | within_tol |
 | `rst_cog_convert` | 256² | 18.22 | 21.29 | 0.86× | within_tol |
 | `rst_rasterize_agg` | 1024² | 189 | 222 | 0.85× | within_tol |
 | `rst_cog_convert` | 512² | 60.62 | 74.37 | 0.82× | within_tol |
@@ -289,6 +290,8 @@ The table below is the **complete** local run across all 107 raster functions, s
 | `rst_xyzpyramid` | 256² | 51.04 | 92.79 | 0.55× | timing-only |
 | `rst_width` | 256² | 0.051 | 0.0959 | 0.53× | exact |
 | `rst_getsubdataset` | 512² | 0.145 | 0.276 | 0.53× | timing-only |
+| `rst_gridfrompoints` | 512² | 31.91 | 64.84 | 0.49× | within_tol |
+| `rst_gridfrompoints_agg` | 1024² | 383 | 809 | 0.47× | within_tol |
 | `rst_bandmetadata` | 512² | 0.11 | 0.239 | 0.46× | timing-only |
 | `rst_bandmetadata` | 256² | 0.0399 | 0.0915 | 0.44× | timing-only |
 | `rst_numbands` | 256² | 0.0391 | 0.0923 | 0.42× | exact |
@@ -312,7 +315,6 @@ The table below is the **complete** local run across all 107 raster functions, s
 | `rst_numbands` | 512² | 0.0475 | 0.253 | 0.19× | exact |
 | `rst_type` | 256² | 0.0165 | 0.0887 | 0.19× | timing-only |
 | `rst_subdatasets` | 256² | 0.0206 | 0.113 | 0.18× | timing-only |
-| `rst_gridfrompoints` | 256² | 18.32 | 103 | 0.18× | within_tol |
 | `rst_height` | 512² | 0.0463 | 0.261 | 0.18× | exact |
 | `rst_rastertoworldcoordy` | 256² | 0.0184 | 0.104 | 0.18× | exact |
 | `rst_rastertoworldcoord` | 256² | 0.0206 | 0.118 | 0.17× | exact |
@@ -325,7 +327,6 @@ The table below is the **complete** local run across all 107 raster functions, s
 | `rst_getnodata` | 512² | 0.0355 | 0.238 | 0.15× | exact |
 | `rst_pixelwidth` | 512² | 0.0334 | 0.242 | 0.14× | exact |
 | `rst_isempty` | 512² | 0.0327 | 0.248 | 0.13× | exact |
-| `rst_gridfrompoints` | 512² | 47.07 | 358 | 0.13× | within_tol |
 | `rst_upperlefty` | 512² | 0.0286 | 0.239 | 0.12× | exact |
 | `rst_skewy` | 512² | 0.0275 | 0.245 | 0.11× | exact |
 | `rst_worldtorastercoordx` | 256² | 0.0116 | 0.107 | 0.11× | timing-only |
@@ -352,7 +353,6 @@ The table below is the **complete** local run across all 107 raster functions, s
 | `rst_worldtorastercoord` | 512² | 0.0101 | 0.267 | 0.04× | timing-only |
 | `rst_sample` | 512² | 0.00904 | 0.278 | 0.03× | timing-only |
 | `rst_histogram` | 512² | 0.123 | 4.39 | 0.03× | timing-only |
-| `rst_gridfrompoints_agg` | 1024² | 107 | 3893 | 0.03× | within_tol |
 | `rst_memsize` | 512² | 0.0165 | 0.605 | 0.03× | timing-only |
 | `rst_viewshed` | 512² | 7.21 | 635 | 0.01× | timing-only |
 | `rst_fromfile` | 256² | — | 0.1 | — | timing-only |
@@ -365,7 +365,7 @@ The table below is the **complete** local run across all 107 raster functions, s
 - **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~2–5× lightweight win, and all match within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
 - **Discrete-grid aggregation (`rst_h3_*`/`rst_quadbin_*`)** is a ~2–6× lightweight win and matches within tolerance.
 - **Trivial metadata accessors (`rst_width`/`height`/`numbands` and the world↔raster coordinate helpers)** are sub-millisecond on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is fractions of a millisecond.
-- **Algorithm-bound outliers** — `rst_viewshed`, `rst_gridfrompoints`, `rst_contour`, and `rst_polygonize` — are slower on the lightweight tier (the heavyweight GDAL implementations are hard to beat), but remain well under a second on these tiles and produce results that match within tolerance.
+- **Algorithm-bound outliers** — chiefly `rst_viewshed`, and to a lesser degree `rst_contour` and `rst_polygonize` — are slower on the lightweight tier (the heavyweight GDAL implementations are hard to beat), but remain well under a second on these tiles and match within tolerance. A few others (e.g. `rst_gridfrompoints`) sit at or near parity, slightly slower only at the largest tiles.
 - **`rst_convolve`** is the single function whose outputs differ: the heavyweight tier applies a GDAL block-halo convolution that no single lightweight boundary mode reproduces exactly. Interior pixels match; only the one-pixel edge ring differs.
 
 ### Caveats
