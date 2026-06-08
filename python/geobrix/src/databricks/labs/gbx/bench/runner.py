@@ -351,6 +351,225 @@ def run_pure_core(
     return out
 
 
+def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
+    """A spark-path ResultRow for an aggregate cell (shared ok/error builder)."""
+    ms = stats["median_ms"] if stats else 0.0
+    measured = stats["measured_iters"] if stats else 0
+    warmup = stats["warmup_iters"] if stats else 0
+    return ResultRow(
+        run_id=run_id,
+        api="lightweight",
+        fn=fs.name,
+        category=fs.category,
+        mode="spark-path",
+        tile_px=pool.tile_px,
+        bands=pool.bands,
+        dtype=pool.dtype,
+        srid=0,
+        rows=n,
+        nodata_frac=0.0,
+        warmup_iters=warmup,
+        measured_iters=measured,
+        median_ms=ms,
+        min_ms=stats["min_ms"] if stats else 0.0,
+        p90_ms=stats["p90_ms"] if stats else 0.0,
+        throughput_mpix_s=(
+            (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0)) if ms else 0.0
+        ),
+        throughput_rows_s=(n / (ms / 1000.0)) if ms else 0.0,
+        peak_rss_mb=peak_rss_mb(),
+        status=status,
+        note=note,
+        output_fingerprint=fingerprint,
+        **env,
+    )
+
+
+def _tile_aggregate_df(spark, root, corpus, fs):
+    """Build the (tile[, band_index]) DataFrame for a tile aggregator's group.
+
+    The fixed CONSISTENCY group is the synthesized tiles for the function's recipe
+    (write-once-read-both: the SAME bytes both engines read). combineavg over the
+    aligned copies, merge over the offset copies, frombands/derivedband over the
+    per-band split. Each synthesized tile becomes ONE group row; frombands rows
+    additionally carry a 0-based ``band_index`` (the ascending-sort key both tiers
+    rely on). Returns ``(df, has_band_index)`` -- df has columns tile[, band_index].
+    """
+    from pyspark.sql import functions as F
+
+    recipe = _spec.agg_synth_recipe(fs.name)
+    array_root = corpus.row_pool.tiles[0].path
+    out_dir = _synth.synth_dir(root, array_root, recipe)
+    paths = _synth.synthesize(str(root / array_root), recipe, out_dir)
+    rows = []
+    for i, p in enumerate(paths):
+        d = _serde.build_tile(Path(p).read_bytes(), "GTiff", 0)
+        rows.append((d["cellid"], d["raster"], d["metadata"], i))
+    from pyspark.sql.types import (
+        BinaryType,
+        IntegerType,
+        LongType,
+        MapType,
+        StringType,
+        StructField,
+        StructType,
+    )
+
+    schema = StructType(
+        [
+            StructField("cellid", LongType(), False),
+            StructField("raster", BinaryType(), False),
+            StructField("metadata", MapType(StringType(), StringType()), True),
+            StructField("band_index", IntegerType(), False),
+        ]
+    )
+    base = spark.createDataFrame(rows, schema=schema)
+    df = base.select(
+        F.struct("cellid", "raster", "metadata").alias("tile"),
+        F.col("band_index"),
+    )
+    return df, (fs.name == "rst_frombands_agg")
+
+
+def _geometry_aggregate_df(spark, root, corpus, fs):
+    """Build the (geom_wkb, value) DataFrame + extent constants for a geom aggregator.
+
+    The fixed CONSISTENCY group is a slice of the source tile's GeometrySet (boxes
+    for rasterize_agg, points for gridfrompoints_agg, zpoints for dtmfromgeoms_agg)
+    -- the SAME WKB both engines read via geometry.json. The extent/size/srid are
+    per-group constants read from the SAME source tile (so the burn/interp grid
+    aligns with the heavy tier). Returns ``(df, extent_tuple)`` where df has columns
+    (geom_wkb BINARY, value DOUBLE) and extent is (xmin,ymin,xmax,ymax,w,h,srid).
+    """
+    import rasterio
+    from pyspark.sql.types import BinaryType, DoubleType, StructField, StructType
+
+    geom_corpus = _load_geometry_corpus(root)
+    if geom_corpus is None:
+        raise RuntimeError("geometry.json absent; cannot run geometry aggregator")
+    # The representative source tile (first row_pool tile) supplies extent + geom.
+    src_rel = corpus.row_pool.tiles[0].path
+    gset = None
+    for g in geom_corpus.sets.values():
+        if g.source_tile == src_rel:
+            gset = g
+            break
+    if gset is None:
+        gset = next(iter(geom_corpus.sets.values()))
+    with rasterio.open(root / src_rel) as ds:
+        left, bottom, right, top = ds.bounds
+        epsg = ds.crs.to_epsg() if ds.crs is not None else None
+        extent = (
+            float(left),
+            float(bottom),
+            float(right),
+            float(top),
+            int(ds.width),
+            int(ds.height),
+            int(epsg) if epsg is not None else 0,
+        )
+    if fs.name == "rst_dtmfromgeoms_agg":
+        pairs = [(bytes(wkb), 0.0) for wkb in gset.zpoints]
+    elif fs.name == "rst_gridfrompoints_agg":
+        pairs = [(bytes(wkb), float(v)) for wkb, v in gset.points]
+    else:  # rst_rasterize_agg
+        pairs = [(bytes(wkb), float(v)) for wkb, v in gset.boxes]
+    schema = StructType(
+        [
+            StructField("geom_wkb", BinaryType(), False),
+            StructField("value", DoubleType(), False),
+        ]
+    )
+    df = spark.createDataFrame(pairs, schema=schema)
+    return df, extent
+
+
+def _run_aggregate(
+    spark, root, corpus, fs, run_id, row_counts, warmup, measured, env
+) -> List[ResultRow]:
+    """Run a *_agg aggregator: consistency fingerprint + perf timing over groupBy.
+
+    CONSISTENCY: build the fixed group, key every row into ONE group, run
+    df.groupBy("key").agg(col_fn(...).alias("out")), COLLECT the single out tile and
+    fingerprint its raster bytes. Emitted on the smallest-N row only.
+    PERF: for each N in row_counts, broadcast the fixed group into N*group_size rows
+    spread over a few keys and time the grouped aggregate via the noop write.
+    """
+    from pyspark.sql import functions as F
+
+    pool = corpus.row_pool
+    kind = fs.input_kind
+    try:
+        if kind == "tile_aggregate":
+            group_df, has_band_index = _tile_aggregate_df(spark, root, corpus, fs)
+            extent = None
+        else:
+            has_band_index = False
+            group_df, extent = _geometry_aggregate_df(spark, root, corpus, fs)
+    except Exception as e:  # noqa: BLE001 — surface a clean error row, don't crash
+        return [
+            _agg_result_row(fs, run_id, pool, n, env, None, "", "error", str(e)[:300])
+            for n in sorted(row_counts)
+        ]
+
+    def _agg_col(df):
+        """The aggregate Column for this fn over the (already-keyed) DataFrame df."""
+        if kind == "tile_aggregate":
+            if has_band_index:
+                return fs.col_fn(df["tile"], fs.args, df["band_index"])
+            return fs.col_fn(df["tile"], fs.args)
+        # geometry aggregate: (geom_wkb, value, extent_tuple, args)
+        return fs.col_fn(df["geom_wkb"], df["value"], extent, fs.args)
+
+    out: List[ResultRow] = []
+    sorted_counts = sorted(row_counts)
+
+    # --- consistency: ONE group -> ONE out tile -> raster fingerprint -----------
+    fingerprint = ""
+    try:
+        one = group_df.withColumn("key", F.lit(0))
+        collected = one.groupBy("key").agg(_agg_col(one).alias("out")).collect()
+        if collected:
+            tile = collected[0]["out"]
+            raster = tile["raster"] if tile is not None else None
+            if raster:
+                fingerprint = _fingerprint_for(fs, bytes(raster))
+    except Exception as e:  # noqa: BLE001
+        return [
+            _agg_result_row(fs, run_id, pool, n, env, None, "", "error", str(e)[:300])
+            for n in sorted_counts
+        ]
+
+    # --- perf: time the scaled groupBy via the noop write -----------------------
+    group_df = group_df.cache()
+    group_df.count()
+    for n in sorted_counts:
+        # Replicate the fixed group N times across N distinct keys (one group per
+        # key), so the aggregate runs N times -- the scaled distributed-aggregation
+        # timing. crossJoin a tiny keys DataFrame to broadcast the group per key.
+        keys = spark.range(n).select(F.col("id").alias("key"))
+        scaled = group_df.crossJoin(F.broadcast(keys))
+        try:
+
+            def job(_df=scaled):
+                _df.groupBy("key").agg(_agg_col(_df).alias("out")).write.format(
+                    "noop"
+                ).mode("overwrite").save()
+
+            stats = time_iters(job, warmup, measured)
+            # Emit the consistency fingerprint on the smallest-N row only.
+            fp = fingerprint if n == sorted_counts[0] else ""
+            out.append(_agg_result_row(fs, run_id, pool, n, env, stats, fp, "ok", ""))
+        except Exception as e:  # noqa: BLE001
+            out.append(
+                _agg_result_row(
+                    fs, run_id, pool, n, env, None, "", "error", str(e)[:300]
+                )
+            )
+    group_df.unpersist()
+    return out
+
+
 def run_spark_path(
     spark,
     corpus_root,
@@ -417,7 +636,14 @@ def run_spark_path(
     # Spark warm-up: one throwaway job so JVM/Spark spin-up isn't charged to the first
     # timed cell. Band-aware (mirrors the Scala HeavyRunner warm-up) + guarded so a
     # warm-up failure can never abort timing.
-    _spark_fns = [f for f in fnspecs if "spark-path" in f.modes]
+    # Exclude aggregate fns from the column warm-up (they have no _input_col form).
+    _spark_fns = [
+        f
+        for f in fnspecs
+        if "spark-path" in f.modes
+        and getattr(f, "input_kind", "tile")
+        not in ("tile_aggregate", "geometry_aggregate")
+    ]
     _warm = next(
         (f for f in _spark_fns if getattr(f, "min_bands", 1) <= pool.bands), None
     )
@@ -436,8 +662,27 @@ def run_spark_path(
             pass
 
     out: List[ResultRow] = []
+    # bucket A: the *_agg aggregators reduce a GROUP of rows to ONE tile via a real
+    # df.groupBy(key).agg(col_fn(...)). They ride input_kind in {"tile_aggregate",
+    # "geometry_aggregate"} and are handled by a dedicated aggregate harness (below)
+    # that emits BOTH a consistency fingerprint (a fixed deterministic single group
+    # -> one out tile -> raster fingerprint) and the perf timing (scaled groupBy).
+    _agg_kinds = ("tile_aggregate", "geometry_aggregate")
     for fs in fnspecs:
         if "spark-path" not in fs.modes:
+            continue
+        if getattr(fs, "input_kind", "tile") in _agg_kinds:
+            out += _run_aggregate(
+                spark,
+                root,
+                corpus,
+                fs,
+                run_id,
+                row_counts,
+                warmup,
+                measured,
+                env,
+            )
             continue
         _kind = getattr(fs, "input_kind", "tile")
         for n in sorted(row_counts):

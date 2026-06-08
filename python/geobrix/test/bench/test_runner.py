@@ -250,6 +250,126 @@ def test_spark_path_runs_a_warmup_before_timing(tmp_path, spark, monkeypatch):
     assert rows and all(r.status == "ok" for r in rows)
 
 
+def test_run_spark_path_tile_aggregators_produce_raster_fingerprints(tmp_path, spark):
+    # bucket A (tile aggregators): combineavg/merge/frombands/derivedband each reduce
+    # a fixed deterministic group (the synthesized tiles for the recipe) to ONE output
+    # tile via df.groupBy(key).agg(col_fn(...)). The harness collects the single out
+    # tile and fingerprints its raster bytes (consistency), and times the scaled
+    # groupBy (perf). Both signals are exercised here on local[2].
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=8,
+        tile_px=[32],
+        bands=[2],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=4,
+        row_tile_px=32,
+        row_bands=2,
+        row_dtype="float32",
+    )
+    fns = s.select(
+        functions=[
+            "rst_combineavg_agg",
+            "rst_merge_agg",
+            "rst_frombands_agg",
+            "rst_derivedband_agg",
+        ]
+    )
+    rows = rn.run_spark_path(
+        spark=spark,
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        row_counts=[2, 4],
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows, "expected aggregate rows"
+    assert all(r.status == "ok" for r in rows), [
+        (r.fn, r.status, r.note) for r in rows if r.status != "ok"
+    ]
+    assert {r.fn for r in rows} == {
+        "rst_combineavg_agg",
+        "rst_merge_agg",
+        "rst_frombands_agg",
+        "rst_derivedband_agg",
+    }
+    assert all(r.mode == "spark-path" for r in rows)
+    # consistency: the smallest-N row carries a raster fingerprint (the single
+    # aggregated output tile); larger-N rows are timing-only (empty fingerprint).
+    import json
+
+    for name in ("rst_combineavg_agg", "rst_merge_agg", "rst_frombands_agg"):
+        fp = {r.rows: r.output_fingerprint for r in rows if r.fn == name}
+        assert fp.get(2), f"{name} has no consistency fingerprint at N=2"
+        parsed = json.loads(fp[2])
+        assert parsed["kind"] == "raster", (name, parsed.get("kind"))
+
+
+def test_run_spark_path_geometry_aggregators_produce_raster_fingerprints(
+    tmp_path, spark
+):
+    # bucket A (geometry aggregators): rasterize/gridfrompoints/dtmfromgeoms each
+    # reduce a fixed group of (geom_wkb, value[, ...]) rows from the tile's
+    # GeometrySet to ONE tile via df.groupBy(key).agg(col_fn(...)). Consistency =
+    # the single out tile's raster fingerprint; perf = the scaled groupBy timing.
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=8,
+        tile_px=[32],
+        bands=[1],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=4,
+        row_tile_px=32,
+        row_bands=1,
+        row_dtype="float32",
+    )
+    fns = s.select(
+        functions=[
+            "rst_rasterize_agg",
+            "rst_gridfrompoints_agg",
+            "rst_dtmfromgeoms_agg",
+        ]
+    )
+    rows = rn.run_spark_path(
+        spark=spark,
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        row_counts=[2, 4],
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows, "expected aggregate rows"
+    assert all(r.status == "ok" for r in rows), [
+        (r.fn, r.status, r.note) for r in rows if r.status != "ok"
+    ]
+    assert {r.fn for r in rows} == {
+        "rst_rasterize_agg",
+        "rst_gridfrompoints_agg",
+        "rst_dtmfromgeoms_agg",
+    }
+    import json
+
+    for name in (
+        "rst_rasterize_agg",
+        "rst_gridfrompoints_agg",
+        "rst_dtmfromgeoms_agg",
+    ):
+        fp = {r.rows: r.output_fingerprint for r in rows if r.fn == name}
+        assert fp.get(2), f"{name} has no consistency fingerprint at N=2"
+        parsed = json.loads(fp[2])
+        assert parsed["kind"] == "raster", (name, parsed.get("kind"))
+
+
 def test_pure_core_emits_na_by_design_for_low_band_count(tmp_path):
     corpus = dg.generate_corpus(
         out_dir=tmp_path,

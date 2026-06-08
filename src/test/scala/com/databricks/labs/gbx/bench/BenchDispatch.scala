@@ -177,7 +177,14 @@ object BenchDispatch {
     // bucket D: geometry-in constructors (burn/interpolate a geometry set into a
     // new raster). Categorized vector (they bridge vector geometry -> raster).
     "rst_rasterize" -> VECTOR, "rst_gridfrompoints" -> VECTOR,
-    "rst_dtmfromgeoms" -> VECTOR
+    "rst_dtmfromgeoms" -> VECTOR,
+    // bucket A: the 7 *_agg aggregators (Spark groupBy aggregate harness). The 4
+    // tile aggregators reduce a group of tiles -> one tile (format); the 3 geometry
+    // aggregators reduce a group of (geom, value) rows -> one tile (vector bridge).
+    "rst_combineavg_agg" -> FMT, "rst_merge_agg" -> FMT,
+    "rst_frombands_agg" -> FMT, "rst_derivedband_agg" -> FMT,
+    "rst_rasterize_agg" -> VECTOR, "rst_gridfrompoints_agg" -> VECTOR,
+    "rst_dtmfromgeoms_agg" -> VECTOR
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -196,11 +203,23 @@ object BenchDispatch {
   // geometry.json -- the SAME bytes the pyrx tier reads (write-once-read-both).
   private val geometryInput: Set[String] =
     Set("rst_rasterize", "rst_gridfrompoints", "rst_dtmfromgeoms")
+  // bucket A: the 7 *_agg aggregators reduce a GROUP of rows to ONE tile via a real
+  // df.groupBy(key).agg(...). The 4 tile aggregators build their fixed consistency
+  // group from synthesized tiles (write-once-read-both); the 3 geometry aggregators
+  // build it from the per-tile GeometrySet (geometry.json). Both are spark-path-only
+  // (no single-row pure-core analogue of a UDAF) -- the heavy runner handles them in
+  // a dedicated aggregate branch, not the column/pure-core paths.
+  private val tileAggregate: Set[String] =
+    Set("rst_combineavg_agg", "rst_merge_agg", "rst_frombands_agg", "rst_derivedband_agg")
+  private val geometryAggregate: Set[String] =
+    Set("rst_rasterize_agg", "rst_gridfrompoints_agg", "rst_dtmfromgeoms_agg")
   def inputKind(fn: String): String =
     if (byteInput.contains(fn)) "bytes"
     else if (pathInput.contains(fn)) "path"
     else if (tileArrayInput.contains(fn)) "tile_array"
     else if (geometryInput.contains(fn)) "geometry"
+    else if (tileAggregate.contains(fn)) "tile_aggregate"
+    else if (geometryAggregate.contains(fn)) "geometry_aggregate"
     else "tile"
 
   // bench.synth recipe name for a tile_array fn (mirrors spec.synth_recipe).
@@ -209,6 +228,17 @@ object BenchDispatch {
     case "rst_combineavg" => "combineavg"
     case "rst_merge"      => "merge"
     case other            => throw new IllegalArgumentException(s"no synth recipe for: $other")
+  }
+
+  // bench.synth recipe whose tiles form a tile aggregator's fixed consistency group
+  // (mirrors spec.agg_synth_recipe). combineavg over aligned copies, merge over
+  // offset copies, frombands/derivedband over the per-band split.
+  def aggSynthRecipe(fn: String): String = fn match {
+    case "rst_combineavg_agg" => "combineavg"
+    case "rst_merge_agg"      => "merge"
+    case "rst_frombands_agg"  => "frombands"
+    case "rst_derivedband_agg" => "frombands"
+    case other => throw new IllegalArgumentException(s"no agg synth recipe for: $other")
   }
 
   def all: Seq[String] = cats.keys.toSeq.sorted
@@ -907,7 +937,55 @@ object BenchDispatch {
       case "rst_rasterize" | "rst_gridfrompoints" | "rst_dtmfromgeoms" =>
         throw new IllegalArgumentException(
           s"$fn is geometry-in / pure-core-only; no spark-path column form")
+      // bucket A aggregators have no scalar column form; they are aggregate
+      // expressions handled by aggregateColumn (the spark-path runner routes them
+      // through the aggregate branch, not column()).
+      case f if inputKind(f) == "tile_aggregate" || inputKind(f) == "geometry_aggregate" =>
+        throw new IllegalArgumentException(
+          s"$f is an aggregator; use aggregateColumn, not column")
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
+    }
+  }
+
+  // bucket A: the aggregate Column for a *_agg fn over an already-keyed DataFrame.
+  // The 4 tile aggregators consume the `tile` struct column (frombands also a
+  // per-row `band_index` INT -- the ascending-sort key, supplied identically to the
+  // pyrx side). The 3 geometry aggregators consume (geom_wkb BINARY, value DOUBLE)
+  // plus the per-group extent constants (xmin,ymin,xmax,ymax,w,h,srid). derivedband
+  // rides the SAME fixed mean-bands pyfunc as the non-agg rst_derivedband. dtmfrom-
+  // geoms rides breaklines=NULL + tolerances 0.0 (unconstrained Delaunay, mirrored
+  // on the light side). The result is a tile struct; the runner collects it and
+  // fingerprints the raster bytes via BenchFingerprint.ofDataset.
+  def aggregateColumn(fn: String, df: org.apache.spark.sql.DataFrame,
+                      ext: (Double, Double, Double, Double, Int, Int, Int),
+                      a: Map[String, String]): Column = {
+    import functions._
+    import org.apache.spark.sql.functions.{col, expr, lit}
+    val (xmin, ymin, xmax, ymax, w, h, srid) = ext
+    fn match {
+      case "rst_combineavg_agg" => rst_combineavg_agg(col("tile"))
+      case "rst_merge_agg"      => rst_merge_agg(col("tile"))
+      // No Scala wrapper for the 2-arg frombands_agg; call the registered UDAF.
+      // band_index is the per-row ascending-sort key (0,1,... supplied by both tiers).
+      case "rst_frombands_agg"  => expr("gbx_rst_frombands_agg(tile, band_index)")
+      case "rst_derivedband_agg" =>
+        rst_derivedband_agg(col("tile"), derivedBandPyFunc, derivedBandFuncName)
+      // Geometry aggregators: the extent/size/srid are per-group constants baked in
+      // as SQL literals; geom_wkb/value are the streamed per-row columns.
+      case "rst_rasterize_agg" =>
+        expr(s"gbx_rst_rasterize_agg(geom_wkb, value, " +
+          s"$xmin, $ymin, $xmax, $ymax, $w, $h, $srid)")
+      case "rst_gridfrompoints_agg" =>
+        rst_gridfrompoints_agg(col("geom_wkb"), col("value"),
+          lit(xmin), lit(ymin), lit(xmax), lit(ymax), lit(w), lit(h), lit(srid),
+          lit(argD(a, "power", 2.0)), lit(argI(a, "max_pts", 12)))
+      // dtmfromgeoms_agg: breaklines NULL ARRAY<BINARY>; tolerances 0.0 (unconstrained
+      // Delaunay, mirrored on the light side); no_data -9999.
+      case "rst_dtmfromgeoms_agg" =>
+        expr(s"gbx_rst_dtmfromgeoms_agg(geom_wkb, CAST(NULL AS ARRAY<BINARY>), " +
+          s"${argD(a, "merge_tolerance", 0.0)}, ${argD(a, "snap_tolerance", 0.0)}, " +
+          s"$xmin, $ymin, $xmax, $ymax, $w, $h, $srid, ${argD(a, "no_data", -9999.0)})")
+      case other => throw new IllegalArgumentException(s"not an aggregator: $other")
     }
   }
 }

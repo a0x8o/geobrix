@@ -2000,7 +2000,212 @@ REGISTRY: Dict[str, FnSpec] = {
         sources=_TIN_LIGHT + (_HEAVY + "RST_DTMFromGeoms.scala",),
         core=False,
     ),
+    # --- bucket A: the 7 *_agg aggregators (Spark groupBy aggregate harness) ----
+    # Each reduces a GROUP of rows to ONE output tile via a real Spark
+    # df.groupBy(key).agg(col_fn(...)). There is no single-row pure-core analogue of
+    # a UDAF, so these are spark-path ONLY. The runner's aggregate branch builds the
+    # input DataFrame + a `key`, runs the grouped aggregate, and yields TWO signals:
+    #   CONSISTENCY: a FIXED deterministic group (single key, small N) aggregates to
+    #     ONE out tile -> raster fingerprint (heavy vs light compared in P4.4). The
+    #     group is byte-identical across tiers (the tile aggregators reuse the SAME
+    #     synthesized tiles the C3 fns read; the geometry aggregators reuse the SAME
+    #     per-tile GeometrySet -- write-once-read-both via _synth / geometry.json).
+    #   PERF: the scaled groupBy timed via the existing noop-write timing.
+    #
+    # The four TILE aggregators ride input_kind == "tile_aggregate": the harness
+    # builds a (tile[, band_index]) DataFrame from the synth recipe's tiles, keys
+    # them into one group, and aggregates. combineavg over ALIGNED copies (synth
+    # combineavg), merge over OFFSET copies (synth merge), frombands/derivedband
+    # over the per-band split (synth frombands; each band tile is one group row).
+    # frombands_agg REQUIRES a per-row band_index INT (0,1,...) so both tiers' agg
+    # sorts ascending; derivedband_agg rides the same fixed mean-bands pyfunc as the
+    # non-agg rst_derivedband (_DERIVEDBAND_PYFUNC / _DERIVEDBAND_FUNC_NAME).
+    #
+    # The three GEOMETRY aggregators ride input_kind == "geometry_aggregate": the
+    # harness builds rows of (geom_wkb, value[, ...]) from the tile's GeometrySet
+    # (boxes for rasterize_agg, points for gridfrompoints_agg, zpoints + NULL
+    # breaklines for dtmfromgeoms_agg), keys them into one group, and supplies the
+    # extent/size/srid as per-group constants read from the source tile. gridfrom-
+    # points_agg power=2.0/max_pts=12; dtmfromgeoms_agg tolerances=0.0 (unconstrained
+    # Delaunay; breaklines NULL on both tiers).
+    "rst_combineavg_agg": FnSpec(
+        "rst_combineavg_agg",
+        "gbx_rst_combineavg_agg",
+        "format",
+        ("spark-path",),
+        {},
+        # col_fn receives the tile struct column; the harness wires the groupBy.
+        col_fn=lambda t, a: prx.rst_combineavg_agg(t),
+        core_fn=lambda t, a: t,  # spark-path-only; no pure-core analogue
+        input_kind="tile_aggregate",
+        sources=_AGG_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "RST_CombineAvg.scala",
+            _HEAVY + "agg/RST_CombineAvgAgg.scala",
+            _OPS + "CombineAVG.scala",
+        ),
+        core=False,
+    ),
+    "rst_merge_agg": FnSpec(
+        "rst_merge_agg",
+        "gbx_rst_merge_agg",
+        "format",
+        ("spark-path",),
+        {},
+        col_fn=lambda t, a: prx.rst_merge_agg(t),
+        core_fn=lambda t, a: t,
+        input_kind="tile_aggregate",
+        sources=_AGG_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "RST_Merge.scala",
+            _HEAVY + "agg/RST_MergeAgg.scala",
+            _OPS + "MergeRasters.scala",
+        ),
+        core=False,
+    ),
+    "rst_frombands_agg": FnSpec(
+        "rst_frombands_agg",
+        "gbx_rst_frombands_agg",
+        "format",
+        ("spark-path",),
+        {},
+        # col_fn takes (tile, band_index); the harness adds the band_index column.
+        col_fn=lambda t, a, bi: prx.rst_frombands_agg(t, bi),
+        core_fn=lambda t, a: t,
+        input_kind="tile_aggregate",
+        sources=_AGG_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "constructor/RST_FromBands.scala",
+            _HEAVY + "agg/RST_FromBandsAgg.scala",
+            _OPS + "MergeBands.scala",
+        ),
+        core=False,
+    ),
+    "rst_derivedband_agg": FnSpec(
+        "rst_derivedband_agg",
+        "gbx_rst_derivedband_agg",
+        "format",
+        ("spark-path",),
+        # the fixed mean-bands pyfunc (same body the non-agg rst_derivedband rides),
+        # hardcoded identically here and in the Scala dispatch.
+        {"python_func": _DERIVEDBAND_PYFUNC, "func_name": _DERIVEDBAND_FUNC_NAME},
+        col_fn=lambda t, a: prx.rst_derivedband_agg(
+            t, a["python_func"], a["func_name"]
+        ),
+        core_fn=lambda t, a: t,
+        input_kind="tile_aggregate",
+        sources=_DERIVEDBAND_LIGHT
+        + _AGG_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "RST_DerivedBand.scala",
+            _HEAVY + "agg/RST_DerivedBandAgg.scala",
+        ),
+        core=False,
+    ),
+    "rst_rasterize_agg": FnSpec(
+        "rst_rasterize_agg",
+        "gbx_rst_rasterize_agg",
+        "vector",
+        ("spark-path",),
+        {},
+        # col_fn takes (geom_wkb, value, xmin, ymin, xmax, ymax, w, h, srid); the
+        # harness supplies the geometry columns + the per-group extent constants.
+        col_fn=lambda g, v, ext, a: prx.rst_rasterize_agg(
+            g, v, ext[0], ext[1], ext[2], ext[3], ext[4], ext[5], ext[6]
+        ),
+        core_fn=lambda t, a: t,
+        input_kind="geometry_aggregate",
+        sources=_AGG_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "vector/RST_Rasterize.scala",
+            _HEAVY + "agg/RST_RasterizeAgg.scala",
+        ),
+        core=False,
+    ),
+    "rst_gridfrompoints_agg": FnSpec(
+        "rst_gridfrompoints_agg",
+        "gbx_rst_gridfrompoints_agg",
+        "vector",
+        ("spark-path",),
+        {"power": 2.0, "max_pts": 12},
+        col_fn=lambda g, v, ext, a: prx.rst_gridfrompoints_agg(
+            g,
+            v,
+            ext[0],
+            ext[1],
+            ext[2],
+            ext[3],
+            ext[4],
+            ext[5],
+            ext[6],
+            a["power"],
+            a["max_pts"],
+        ),
+        core_fn=lambda t, a: t,
+        input_kind="geometry_aggregate",
+        sources=_TIN_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "grid/RST_GridFromPoints.scala",
+            _HEAVY + "grid/RST_GridFromPointsAgg.scala",
+        ),
+        core=False,
+    ),
+    "rst_dtmfromgeoms_agg": FnSpec(
+        "rst_dtmfromgeoms_agg",
+        "gbx_rst_dtmfromgeoms_agg",
+        "vector",
+        ("spark-path",),
+        # breaklines NULL on both tiers; tolerances 0.0 (scipy Delaunay is
+        # unconstrained, so tolerances have no analogue -- mirrored heavy as 0.0).
+        {"merge_tolerance": 0.0, "snap_tolerance": 0.0, "no_data": -9999.0},
+        col_fn=lambda g, v, ext, a: prx.rst_dtmfromgeoms_agg(
+            g,
+            F.lit(None).cast("array<binary>"),
+            a["merge_tolerance"],
+            a["snap_tolerance"],
+            ext[0],
+            ext[1],
+            ext[2],
+            ext[3],
+            ext[4],
+            ext[5],
+            ext[6],
+            a["no_data"],
+        ),
+        core_fn=lambda t, a: t,
+        input_kind="geometry_aggregate",
+        sources=_TIN_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "RST_DTMFromGeoms.scala",
+            _HEAVY + "RST_DTMFromGeomsAgg.scala",
+        ),
+        core=False,
+    ),
 }
+
+# Maps each tile-aggregator FnSpec to the bench.synth recipe whose tiles form its
+# fixed CONSISTENCY group (write-once-read-both, identical bytes across tiers).
+# combineavg over aligned copies; merge over offset copies; frombands/derivedband
+# over the per-band split (each split band tile is one group row / one input band).
+_AGG_SYNTH_RECIPE: Dict[str, str] = {
+    "rst_combineavg_agg": "combineavg",
+    "rst_merge_agg": "merge",
+    "rst_frombands_agg": "frombands",
+    "rst_derivedband_agg": "frombands",
+}
+
+
+def agg_synth_recipe(fn: str) -> str:
+    """The bench.synth recipe for a tile aggregator's fixed group (KeyError if none)."""
+    return _AGG_SYNTH_RECIPE[fn]
+
 
 # Maps each tile_array FnSpec to its bench.synth recipe name. The runner uses this
 # to synthesize the multi-tile input deterministically (write-once-read-both).

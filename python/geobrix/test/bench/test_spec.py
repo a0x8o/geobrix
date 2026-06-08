@@ -446,7 +446,7 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_ninety_seven():
+def test_full_set_running_tally():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
     # + 3 bucket-C group C3 (multi-tile: frombands/combineavg/merge)
@@ -455,8 +455,9 @@ def test_full_set_count_is_ninety_seven():
     # + 11 bucket-B group B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
     #   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
     # + 2 bucket-B group B-vec (contour, polygonize -> vector fingerprint)
-    # + 3 bucket-D geometry-in (rasterize/gridfrompoints/dtmfromgeoms)
-    assert len(s.select(set="full")) == 100
+    # + 3 bucket-D geometry-in (rasterize/gridfrompoints/dtmfromgeoms)  = 100
+    # + 7 bucket-A aggregators (the 7 *_agg)                            = 107
+    assert len(s.select(set="full")) == 107
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -873,6 +874,127 @@ def test_bucket_d_core_fn_takes_three_args():
     for name in _BUCKET_D:
         sig = inspect.signature(s.REGISTRY[name].core_fn)
         assert len(sig.parameters) == 3, name
+
+
+# --- bucket A: the 7 *_agg aggregators (Spark groupBy aggregate harness) ------
+# rst_combineavg_agg / rst_merge_agg / rst_frombands_agg / rst_derivedband_agg
+# (tile aggregators) + rst_rasterize_agg / rst_gridfrompoints_agg /
+# rst_dtmfromgeoms_agg (geometry aggregators) each reduce a GROUP of rows to ONE
+# output tile via a real Spark df.groupBy(key).agg(col_fn(...)). They run ONLY in
+# the spark-path mode (there is no single-row pure-core analogue of a UDAF). The
+# four tile aggregators ride input_kind == "tile_aggregate" (the harness builds a
+# tile DataFrame + a key, and for consistency aggregates a FIXED deterministic
+# group of the synthesized tiles into ONE tile -> raster fingerprint). The three
+# geometry aggregators ride input_kind == "geometry_aggregate" (the harness builds
+# rows of (geom_wkb, value[, ...]) from the per-tile GeometrySet + a key, and
+# aggregates the fixed group into ONE tile -> raster fingerprint). The output tile
+# is fingerprinted as a raster (auto). All are core=False.
+_BUCKET_A = {
+    "rst_combineavg_agg",
+    "rst_merge_agg",
+    "rst_frombands_agg",
+    "rst_derivedband_agg",
+    "rst_rasterize_agg",
+    "rst_gridfrompoints_agg",
+    "rst_dtmfromgeoms_agg",
+}
+_BUCKET_A_TILE = {
+    "rst_combineavg_agg",
+    "rst_merge_agg",
+    "rst_frombands_agg",
+    "rst_derivedband_agg",
+}
+_BUCKET_A_GEOMETRY = {
+    "rst_rasterize_agg",
+    "rst_gridfrompoints_agg",
+    "rst_dtmfromgeoms_agg",
+}
+# the synth recipe each tile aggregator consumes for its fixed consistency group:
+# combineavg over aligned copies, merge over offset copies, frombands/derivedband
+# over the per-band split (each band tile is one group row / one band input).
+_BUCKET_A_SYNTH = {
+    "rst_combineavg_agg": "combineavg",
+    "rst_merge_agg": "merge",
+    "rst_frombands_agg": "frombands",
+    "rst_derivedband_agg": "frombands",
+}
+
+
+def test_bucket_a_partition_is_total():
+    assert _BUCKET_A_TILE | _BUCKET_A_GEOMETRY == _BUCKET_A
+    assert not (_BUCKET_A_TILE & _BUCKET_A_GEOMETRY)
+    assert len(_BUCKET_A) == 7
+    assert len(_BUCKET_A_TILE) == 4
+    assert len(_BUCKET_A_GEOMETRY) == 3
+
+
+def test_bucket_a_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _BUCKET_A - full
+    assert not missing, f"registry missing bucket-A aggregators: {sorted(missing)}"
+
+
+def test_bucket_a_wellformed_aggregate_input_kind():
+    for name in _BUCKET_A:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}", name
+        assert fs.core is False, name
+        assert callable(fs.core_fn) and callable(fs.col_fn), name
+        assert fs.fingerprint is True, name
+        # raster output -> the auto fingerprint detector classifies the GTiff bytes
+        assert fs.fingerprint_kind == "auto", name
+        assert fs.sources, name
+
+
+def test_bucket_a_tile_aggregators_input_kind():
+    for name in _BUCKET_A_TILE:
+        assert s.REGISTRY[name].input_kind == "tile_aggregate", name
+
+
+def test_bucket_a_geometry_aggregators_input_kind():
+    for name in _BUCKET_A_GEOMETRY:
+        assert s.REGISTRY[name].input_kind == "geometry_aggregate", name
+
+
+def test_bucket_a_spark_path_only():
+    # there is no single-row pure-core analogue of a UDAF: aggregate-only.
+    for name in _BUCKET_A:
+        assert s.REGISTRY[name].modes == ("spark-path",), name
+
+
+def test_bucket_a_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_BUCKET_A & core)
+
+
+def test_bucket_a_tile_synth_recipe_maps_to_known_recipe():
+    from databricks.labs.gbx.bench import synth
+
+    for name, recipe in _BUCKET_A_SYNTH.items():
+        assert s.agg_synth_recipe(name) == recipe, name
+        assert recipe in synth._RECIPES
+
+
+def test_bucket_a_gridfrompoints_args():
+    fs = s.REGISTRY["rst_gridfrompoints_agg"]
+    assert fs.args["power"] == 2.0
+    assert fs.args["max_pts"] == 12
+
+
+def test_bucket_a_dtmfromgeoms_tolerances_zero():
+    fs = s.REGISTRY["rst_dtmfromgeoms_agg"]
+    assert fs.args["merge_tolerance"] == 0.0
+    assert fs.args["snap_tolerance"] == 0.0
+
+
+def test_bucket_a_derivedband_func_name_present():
+    fs = s.REGISTRY["rst_derivedband_agg"]
+    assert fs.args["func_name"] == "mean_bands"
+
+
+def test_full_set_count_is_one_hundred_seven():
+    # 100 (P4.2) + 7 bucket-A aggregators -> 107 == the canonical registered rst_ set
+    assert len(s.select(set="full")) == 107
 
 
 def test_every_fnspec_declares_existing_sources():

@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.bench
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.gdal.gdal.{Dataset, gdal}
@@ -200,10 +201,20 @@ object HeavyRunner {
     }
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
     def emit(r: BenchRow): Unit = { out += r; sink(r) }
+    // bucket A: the 7 *_agg aggregators run a real df.groupBy(key).agg(...). They are
+    // spark-path-only (no single-row pure-core UDAF analogue). Handle them in the
+    // dedicated aggregate branch (consistency fingerprint + scaled perf timing).
+    val geomCorpusSp = BenchManifest.readGeometry(
+      Paths.get(corpusRoot, "geometry.json").toString)
+    for (fn <- fns if BenchDispatch.inputKind(fn).endsWith("aggregate"))
+      runAggregate(spark, corpusRoot, corpus, fn, runId, rowCounts, warmup, measured,
+        argsByFn.getOrElse(fn, Map.empty), e, geomCorpusSp, emit)
     // Geometry-in fns (input_kind == "geometry") are pure-core-only: the tile
     // DataFrame carries no geometry column, so there is no spark-path column form.
-    // Skip them here (mirrors the pyrx runner filtering by `"spark-path" in modes`).
-    val sparkFns = fns.filterNot(f => BenchDispatch.inputKind(f) == "geometry")
+    // Skip them + the aggregators (handled above) here.
+    val sparkFns = fns.filterNot(f =>
+      BenchDispatch.inputKind(f) == "geometry" ||
+        BenchDispatch.inputKind(f).endsWith("aggregate"))
     for (fn <- sparkFns; n <- rowCounts.sorted) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       try {
@@ -224,5 +235,128 @@ object HeavyRunner {
     }
     dfAll.unpersist()
     out.toSeq
+  }
+
+  // (xmin, ymin, xmax, ymax, widthPx, heightPx, srid) from an open Dataset -- the
+  // per-group extent constants a geometry aggregator burns/interpolates into. Mirrors
+  // the pyrx _tile_extent_size_srid: dataset bounds + size + EPSG.
+  private def extentOf(ds: Dataset): (Double, Double, Double, Double, Int, Int, Int) = {
+    val gt = ds.GetGeoTransform()
+    val w = ds.GetRasterXSize(); val h = ds.GetRasterYSize()
+    val x0 = gt(0); val y0 = gt(3)
+    val x1 = gt(0) + w * gt(1); val y1 = gt(3) + h * gt(5)
+    val (xmin, xmax) = (math.min(x0, x1), math.max(x0, x1))
+    val (ymin, ymax) = (math.min(y0, y1), math.max(y0, y1))
+    val srid = try {
+      val sr = ds.GetSpatialRef()
+      if (sr != null && sr.GetAuthorityCode(null) != null) sr.GetAuthorityCode(null).toInt else 0
+    } catch { case _: Throwable => 0 }
+    (xmin, ymin, xmax, ymax, w, h, srid)
+  }
+
+  /** bucket A: run a *_agg aggregator as a real df.groupBy(key).agg(...). Emits a
+    * CONSISTENCY row (a fixed deterministic single group -> ONE out tile ->
+    * BenchFingerprint.ofDataset, on the smallest-N row) and the PERF timing (the
+    * scaled groupBy, one fixed group replicated per key). The fixed group is
+    * byte-identical to the pyrx tier (the tile aggregators read the SAME synthesized
+    * tiles; the geometry aggregators read the SAME geometry.json WKB). */
+  private def runAggregate(spark: SparkSession, corpusRoot: String, corpus: Corpus,
+                           fn: String, runId: String, rowCounts: Seq[Int],
+                           warmup: Int, measured: Int, a: Map[String, String],
+                           e: Map[String, String], geomCorpus: Option[GeometryCorpus],
+                           emit: BenchRow => Unit): Unit = {
+    import org.apache.spark.sql.functions.{col, lit, struct}
+    val pool = corpus.row_pool
+    val sorted = rowCounts.sorted
+    val arrayRoot = pool.tiles.headOption.map(_.path).getOrElse("")
+    def errAll(msg: String): Unit = sorted.foreach { n =>
+      emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+        0.0, warmup, 0, 0, 0, 0, 0, 0, "error", msg.take(300), ""))
+    }
+    try {
+      val kind = BenchDispatch.inputKind(fn)
+      // Build the fixed group DataFrame + (for geometry aggregators) extent.
+      var ext: (Double, Double, Double, Double, Int, Int, Int) = (0, 0, 0, 0, 0, 0, 0)
+      val groupDf: org.apache.spark.sql.DataFrame = if (kind == "tile_aggregate") {
+        val recipe = BenchDispatch.aggSynthRecipe(fn)
+        val dir = synthDir(corpusRoot, arrayRoot, recipe)
+        val src = resolve(corpusRoot, arrayRoot)
+        val srcDs = gdal.Open(src)
+        val names = recipe match {
+          case "frombands" =>
+            val n = if (srcDs != null) srcDs.GetRasterCount() else 0
+            (1 to n).map(b => f"band_$b%02d.tif")
+          case "combineavg" => Seq("copy_0.tif", "copy_1.tif")
+          case "merge"      => Seq("part_0.tif", "part_1.tif")
+        }
+        if (srcDs != null) srcDs.delete()
+        val rows = names.zipWithIndex.map { case (nm, i) =>
+          val bytes = Files.readAllBytes(dir.resolve(nm))
+          (0L, bytes, i)
+        }
+        import spark.implicits._
+        spark.createDataFrame(rows).toDF("cellid", "rasterBytes", "band_index")
+          .withColumn("tile", functions.rst_fromcontent(col("rasterBytes"), lit("GTiff")))
+          .select(col("tile"), col("band_index"))
+      } else {
+        // geometry aggregate: rows of (geom_wkb, value) from the per-tile GeometrySet.
+        val gset = geomCorpus.flatMap(_.setFor(arrayRoot, pool.tiles.headOption.map(_.srid).getOrElse(0)))
+          .getOrElse(throw new IllegalStateException(
+            s"no geometry set for $arrayRoot; geometry.json missing or stale"))
+        val srcDs = gdal.Open(resolve(corpusRoot, arrayRoot))
+        try ext = extentOf(srcDs) finally if (srcDs != null) srcDs.delete()
+        val pairs: Seq[(Array[Byte], Double)] = fn match {
+          case "rst_dtmfromgeoms_agg"   => gset.zpointWkbs.map(b => (b, 0.0))
+          case "rst_gridfrompoints_agg" => gset.pointPairs
+          case _                        => gset.boxPairs  // rst_rasterize_agg
+        }
+        import spark.implicits._
+        spark.createDataFrame(pairs).toDF("geom_wkb", "value")
+      }
+      val cached = groupDf.cache()
+      cached.count()
+      // CONSISTENCY: one group -> one out tile -> raster fingerprint.
+      val fp = {
+        val one = cached.withColumn("key", lit(0))
+        val aggCol = BenchDispatch.aggregateColumn(fn, one, ext, a)
+        val collected = one.groupBy("key").agg(aggCol.alias("out")).collect()
+        if (collected.isEmpty || collected(0).isNullAt(collected(0).fieldIndex("out")))
+          BenchFingerprint.empty
+        else {
+          val tile = collected(0).getStruct(collected(0).fieldIndex("out"))
+          val rasterBytes = tile.getAs[Array[Byte]]("raster")
+          if (rasterBytes == null || rasterBytes.isEmpty) BenchFingerprint.empty
+          else {
+            val ds = RasterDriver.readFromBytes(rasterBytes, Map.empty)
+            try BenchFingerprint.ofDataset(ds) finally RasterDriver.releaseDataset(ds)
+          }
+        }
+      }
+      // PERF: time the scaled groupBy (the fixed group replicated across N keys).
+      sorted.foreach { n =>
+        try {
+          val keys = spark.range(n).select(col("id").alias("key"))
+          val scaled = cached.crossJoin(org.apache.spark.sql.functions.broadcast(keys))
+          val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
+          val (median, mn, p90) = timeIters(() => {
+            scaled.groupBy("key").agg(aggCol.alias("out"))
+              .write.format("noop").mode("overwrite").save()
+          }, warmup, measured)
+          val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
+          val emitFp = if (n == sorted.head) fp else ""
+          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+            0.0, warmup, measured, median, mn, p90, mpixS,
+            if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", emitFp))
+        } catch {
+          case ex: Throwable =>
+            emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+              0.0, warmup, 0, 0, 0, 0, 0, 0, "error",
+              Option(ex.getMessage).getOrElse(ex.toString).take(300), ""))
+        }
+      }
+      cached.unpersist()
+    } catch {
+      case ex: Throwable => errAll(Option(ex.getMessage).getOrElse(ex.toString))
+    }
   }
 }
