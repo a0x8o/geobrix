@@ -55,19 +55,20 @@ def polygonize(ds, band: int = 1, connectedness: int = 4):
 
     Returns a list of (geom_wkb: bytes, value: float). NoData pixels are
     excluded via the band mask. ``connectedness`` is 4 or 8.
+
+    Mirrors heavyweight ``gbx_rst_polygonize`` (GDAL ``GDALPolygonize``), which
+    is the *integer* polygonize: pixel values are truncated toward zero to
+    int32 before contiguous equal-value regions are grouped. Grouping on raw
+    float equality (as ``rasterio.features.shapes`` does natively) would emit
+    one polygon per pixel on any continuous band -- both wrong vs the GDAL
+    contract and ~100x slower. We cast to int32 first to match GDAL exactly.
     """
     b = int(band)
     arr = ds.read(b)
     msk = ds.read_masks(b)  # 0 where NoData -> excluded from shapes
-    # rasterio.features.shapes requires int16, int32, uint8, or float32.
-    # Upcast float64 (or other types) to float32; other supported dtypes pass through.
-    if arr.dtype not in (
-        np.dtype("int16"),
-        np.dtype("int32"),
-        np.dtype("uint8"),
-        np.dtype("float32"),
-    ):
-        arr = arr.astype("float32")
+    # GDALPolygonize truncates pixel values toward zero to int32 before
+    # grouping. numpy's float->int32 cast truncates toward zero, matching GDAL.
+    arr = arr.astype("int32")
     out = []
     for geom_dict, value in _shapes(
         arr, mask=msk, connectivity=int(connectedness), transform=ds.transform
