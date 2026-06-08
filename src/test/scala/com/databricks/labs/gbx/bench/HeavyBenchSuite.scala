@@ -7,7 +7,7 @@ import org.gdal.gdal.gdal
 
 class HeavyBenchSuite extends PlanTest with SilentSparkSession {
 
-  test("run heavyweight benchmark from system properties") {
+  test("run heavyweight benchmark from system properties", OnDemand) {
     val corpusRoot = sys.props.getOrElse("gbx.bench.corpus", "")
     val outPath = sys.props.getOrElse("gbx.bench.out", "")
     assume(corpusRoot.nonEmpty && outPath.nonEmpty,

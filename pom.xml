@@ -42,6 +42,15 @@
           scala_build action's `suite_pattern` input.
         -->
         <suites></suites>
+        <!--
+          ScalaTest tags excluded from the default / remote-CI test run. The
+          on-demand benchmark suite (HeavyBenchSuite) is tagged
+          `com.databricks.labs.gbx.bench.OnDemand` so it is NOT collected here
+          (it only does useful work when gbx.bench.* sysprops are set, and would
+          otherwise cancel itself and pollute CI output). The gbx:bench:* commands
+          run it on demand by clearing this property (`-DtagsToExclude=`).
+        -->
+        <tagsToExclude>com.databricks.labs.gbx.bench.OnDemand</tagsToExclude>
         <gbx.bench.corpus></gbx.bench.corpus>
         <gbx.bench.out></gbx.bench.out>
         <gbx.bench.functions></gbx.bench.functions>
@@ -309,6 +318,13 @@
                     <forkMode>once</forkMode>
                     <logForkedProcessCommand>true</logForkedProcessCommand>
                     <reportsDirectory>${project.build.directory}/test-reports</reportsDirectory>
+                    <!--
+                      Exclude on-demand-only suites (HeavyBenchSuite, tagged
+                      com.databricks.labs.gbx.bench.OnDemand) from the default /
+                      remote-CI run. Overridable via -DtagsToExclude= so the
+                      gbx:bench:* commands can run them on demand.
+                    -->
+                    <tagsToExclude>${tagsToExclude}</tagsToExclude>
                     <!-- Quiet Spark/GDAL in tests; use log4j2-test.xml from test-classes -->
                     <argLine>
                         -Dlog4j.configurationFile=log4j2-test.xml

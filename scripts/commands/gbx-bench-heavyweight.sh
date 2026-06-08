@@ -73,8 +73,10 @@ if [[ -z "$FUNCTIONS" ]]; then
     fi
 fi
 
+# HeavyBenchSuite is tagged OnDemand and excluded from the default run (pom
+# tagsToExclude); clear the exclusion here so the on-demand suite actually runs.
 MVN="mvn test -PskipScoverage -DskipTests=false \
-    -Dsuites='com.databricks.labs.gbx.bench.HeavyBenchSuite' \
+    -Dsuites='com.databricks.labs.gbx.bench.HeavyBenchSuite' -DtagsToExclude= \
     -Dgbx.bench.corpus='$CORPUS' -Dgbx.bench.out='$OUT' -Dgbx.bench.runId='$RUN_ID' \
     -Dgbx.bench.functions='$FUNCTIONS' -Dgbx.bench.modes='$MODES' \
     -Dgbx.bench.rowCounts='$ROW_COUNTS' -Dgbx.bench.warmup='$WARMUP' -Dgbx.bench.measured='$MEASURED'"
