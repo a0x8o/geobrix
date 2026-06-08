@@ -102,5 +102,7 @@ def test_main_exit_codes(tmp_path, capsys):
 
 
 def test_main_clean_returns_zero(tmp_path):
-    _write(tmp_path, "def a(ds):\n    for bi in range(1, ds.count + 1):\n        pass\n")
+    _write(
+        tmp_path, "def a(ds):\n    for bi in range(1, ds.count + 1):\n        pass\n"
+    )
     assert vs.main(["--root", str(tmp_path), "--strict"]) == 0
