@@ -635,3 +635,125 @@ def test_write_csv_with_delta_fields(tmp_path):
     rows = list(_csv.DictReader(p.open()))
     assert abs(float(rows[0]["hw_minus_lw_ms"]) - 8.0) < 1e-9
     assert abs(float(rows[0]["delta_pct"]) - 80.0) < 1e-9
+
+
+# --- bucket B: dggs_grid fingerprint (grid fns) ------------------------------
+# dggs_grid output is a set of cells (cell id + measure). The comparator requires
+# the cell COUNT to match EXACTLY, compares the order-independent agg stats with
+# the raster float tolerance, and — since H3/quadbin cell ids are PARITY-comparable
+# across engines — treats an identical cells_hash as `exact`. When the hash differs
+# but count + agg agree, it reports the cell-set Jaccard overlap and passes on
+# count + agg.
+import json as _json  # noqa: E402
+
+
+def _dggs(count, cells_hash, mn, mx, mean, std):
+    return _json.dumps(
+        {
+            "kind": "dggs_grid",
+            "count": count,
+            "cells_hash": cells_hash,
+            "agg": {"min": mn, "max": mx, "mean": mean, "std": std},
+        },
+        sort_keys=True,
+    )
+
+
+def test_dggs_grid_identical_hash_is_exact():
+    fp = _dggs(3, "abc123", 1.0, 3.0, 2.0, 0.8)
+    assert c.compare_fingerprints(fp, fp)[0] == "exact"
+
+
+def test_dggs_grid_equal_count_close_agg_within_tol():
+    hw = _dggs(3, "hashA", 1.0, 3.0, 2.0, 0.8)
+    # Different hash (different cell ids) but equal count + close agg -> within_tol.
+    lw = _dggs(3, "hashB", 1.0, 3.00005, 2.00005, 0.8)
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol", (cls, note)
+
+
+def test_dggs_grid_count_mismatch_is_divergent():
+    hw = _dggs(3, "hashA", 1.0, 3.0, 2.0, 0.8)
+    lw = _dggs(7, "hashB", 1.0, 3.0, 2.0, 0.8)
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "divergent"
+    assert "cell count" in note and "3" in note and "7" in note
+
+
+def test_dggs_grid_agg_divergence():
+    hw = _dggs(3, "hashA", 0.0, 90.0, 45.0, 10.0)
+    lw = _dggs(3, "hashB", 0.0, 1.0, 0.5, 0.25)
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
+def test_dggs_grid_reports_jaccard_when_hash_differs():
+    # Same count + close agg but different ids -> within_tol AND the note reports
+    # the Jaccard cell-set overlap so a partial-overlap divergence is diagnosable.
+    hw = _json.dumps(
+        {
+            "kind": "dggs_grid",
+            "count": 4,
+            "cells_hash": "h1",
+            "cell_ids": [1, 2, 3, 4],
+            "agg": {"min": 1.0, "max": 4.0, "mean": 2.5, "std": 1.1},
+        },
+        sort_keys=True,
+    )
+    lw = _json.dumps(
+        {
+            "kind": "dggs_grid",
+            "count": 4,
+            "cells_hash": "h2",
+            "cell_ids": [3, 4, 5, 6],
+            "agg": {"min": 1.0, "max": 4.0, "mean": 2.5, "std": 1.1},
+        },
+        sort_keys=True,
+    )
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "within_tol"
+    # intersection {3,4} / union {1..6} = 2/6 = 0.333
+    assert "jaccard" in note.lower()
+    assert "0.33" in note
+
+
+# --- bucket B: vector fingerprint (contour, polygonize) ----------------------
+# vector output is a set of features. The comparator requires the feature COUNT
+# to match EXACTLY, then compares the total `measure` (line length / polygon area)
+# and the order-independent `attr_agg` with the raster float tolerance.
+def _vec(count, measure, mn, mx, mean, std):
+    return _json.dumps(
+        {
+            "kind": "vector",
+            "count": count,
+            "measure": measure,
+            "attr_agg": {"min": mn, "max": mx, "mean": mean, "std": std},
+        },
+        sort_keys=True,
+    )
+
+
+def test_vector_equal_count_close_measure_within_tol():
+    hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
+    assert c.compare_fingerprints(hw, hw)[0] == "exact"
+    lw = _vec(5, 100.00005, 1.0, 9.00005, 5.0, 2.0)
+    assert c.compare_fingerprints(hw, lw)[0] == "within_tol"
+
+
+def test_vector_count_mismatch_is_divergent():
+    hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
+    lw = _vec(8, 100.0, 1.0, 9.0, 5.0, 2.0)
+    cls, _, _, note = c.compare_fingerprints(hw, lw)
+    assert cls == "divergent"
+    assert "feature count" in note and "5" in note and "8" in note
+
+
+def test_vector_measure_divergence():
+    hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
+    lw = _vec(5, 250.0, 1.0, 9.0, 5.0, 2.0)
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"
+
+
+def test_vector_attr_agg_divergence():
+    hw = _vec(5, 100.0, 1.0, 9.0, 5.0, 2.0)
+    lw = _vec(5, 100.0, 1.0, 90.0, 45.0, 20.0)
+    assert c.compare_fingerprints(hw, lw)[0] == "divergent"

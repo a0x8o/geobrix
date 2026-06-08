@@ -4,6 +4,9 @@ import com.databricks.labs.gbx.rasterx.operations.BandAccessors
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.{ArrayNode, ObjectNode}
 import org.gdal.gdal.Dataset
+import org.locationtech.jts.geom.Geometry
+
+import java.security.MessageDigest
 
 /** Output fingerprint matching python bench/fingerprint.py for cross-API consistency. */
 object BenchFingerprint {
@@ -71,6 +74,70 @@ object BenchFingerprint {
       agg.put("mean", mean)
       agg.put("std", math.sqrt(variance))
     }
+    mapper.writeValueAsString(n)
+  }
+
+  /** Write min/max/mean/std (population) of `vals` into `node`; nulls when empty.
+    * Shared by every stats-bearing kind so the JSON shape matches python `_stat`. */
+  private def putStats(node: ObjectNode, vals: Seq[Double]): Unit = {
+    if (vals.isEmpty) {
+      node.putNull("min"); node.putNull("max"); node.putNull("mean"); node.putNull("std")
+    } else {
+      val mean = vals.sum / vals.length
+      val variance = vals.map(x => (x - mean) * (x - mean)).sum / vals.length
+      node.put("min", vals.min)
+      node.put("max", vals.max)
+      node.put("mean", mean)
+      node.put("std", math.sqrt(variance))
+    }
+  }
+
+  /** Fingerprint a discrete-global-grid output (bucket B grid fns).
+    *
+    * Mirrors python `fingerprint_dggs_grid`: `cells` is the per-band grid output
+    * (`RST_{H3,Quadbin}_RasterToGrid*.execute` returns `Array[Array[(Long, T)]]`).
+    * Records the cell COUNT, a sha256 over the SORTED (signed-int64) cell ids, the
+    * sorted ids themselves, and order-independent agg stats over the measures.
+    * H3/quadbin ids are signed Longs here and parity-comparable with light. */
+  def ofDggsGrid(cells: Seq[Array[(Long, Double)]]): String = {
+    val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
+    val vals = scala.collection.mutable.ArrayBuffer.empty[Double]
+    cells.foreach(_.foreach { case (cid, measure) => ids += cid; vals += measure })
+    val sorted = ids.sorted
+    val joined = sorted.map(_.toString).mkString("\n")
+    val digest = MessageDigest.getInstance("SHA-256").digest(joined.getBytes("UTF-8"))
+    val hashHex = digest.map(b => f"${b & 0xff}%02x").mkString
+    val n = mapper.createObjectNode()
+    n.put("kind", "dggs_grid")
+    n.put("count", sorted.length)
+    n.put("cells_hash", hashHex)
+    val idArr: ArrayNode = n.putArray("cell_ids")
+    sorted.foreach(idArr.add)
+    val agg: ObjectNode = n.putObject("agg")
+    putStats(agg, vals.toSeq)
+    mapper.writeValueAsString(n)
+  }
+
+  /** Fingerprint a vector-feature output (bucket B vector fns: contour, polygonize).
+    *
+    * Mirrors python `fingerprint_vector`: `features` is a set of `(geometry, attr)`
+    * pairs. Records the feature COUNT, the total `measure` (JTS `getLength` for line
+    * geometries, else `getArea` for polygons), and order-independent agg stats over
+    * the attributes. Summing the per-feature measure is ORDER-INDEPENDENT. */
+  def ofVector(features: Seq[(Geometry, Double)]): String = {
+    val geoms = features.map(_._1)
+    val attrs = features.map(_._2)
+    val isLines = geoms.exists { g =>
+      val t = g.getGeometryType
+      t == "LineString" || t == "MultiLineString"
+    }
+    val measure = if (isLines) geoms.map(_.getLength).sum else geoms.map(_.getArea).sum
+    val n = mapper.createObjectNode()
+    n.put("kind", "vector")
+    n.put("count", geoms.length)
+    n.put("measure", measure)
+    val agg: ObjectNode = n.putObject("attr_agg")
+    putStats(agg, attrs)
     mapper.writeValueAsString(n)
   }
 

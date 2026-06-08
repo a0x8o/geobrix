@@ -110,7 +110,36 @@ def _pairs_for_kind(kind, hw, lw):
             return None, 0, f"tile count {hc} vs {lc}"
         ha, la = hw.get("agg") or {}, lw.get("agg") or {}
         return [(ha.get(k), la.get(k)) for k in _STATS], 0, None
+    if kind == "dggs_grid":
+        # Cell COUNT must match exactly. Then compare the order-independent agg
+        # stats over per-cell measures with the same float tolerance as `raster`.
+        # (cells_hash / Jaccard handled by the caller: H3/quadbin ids are
+        # parity-comparable, so an identical hash means an exact cell-set match.)
+        hc, lc = hw.get("count"), lw.get("count")
+        if hc != lc:
+            return None, 0, f"cell count {hc} vs {lc}"
+        ha, la = hw.get("agg") or {}, lw.get("agg") or {}
+        return [(ha.get(k), la.get(k)) for k in _STATS], 0, None
+    if kind == "vector":
+        # Feature COUNT must match exactly. Then compare the total measure (line
+        # length / polygon area) and the order-independent attr_agg in tolerance.
+        hc, lc = hw.get("count"), lw.get("count")
+        if hc != lc:
+            return None, 0, f"feature count {hc} vs {lc}"
+        ha, la = hw.get("attr_agg") or {}, lw.get("attr_agg") or {}
+        pairs = [(hw.get("measure"), lw.get("measure"))]
+        pairs += [(ha.get(k), la.get(k)) for k in _STATS]
+        return pairs, 0, None
     return None, 0, f"unknown kind {kind}"
+
+
+def _jaccard(a_ids, b_ids):
+    """Jaccard overlap |A ∩ B| / |A ∪ B| of two cell-id sets (0.0..1.0)."""
+    sa, sb = set(a_ids or []), set(b_ids or [])
+    union = sa | sb
+    if not union:
+        return 1.0
+    return len(sa & sb) / len(union)
 
 
 def compare_fingerprints(
@@ -151,6 +180,18 @@ def compare_fingerprints(
     else:
         cls = "divergent"
     note = ""
+    if kind == "dggs_grid":
+        # H3/quadbin cell ids are parity-comparable: an identical cells_hash is an
+        # exact cell-set match, so `exact` requires both the hash AND the agg to
+        # agree bitwise. When the hash differs but count + agg agree within
+        # tolerance, demote to within_tol and report the cell-set Jaccard overlap.
+        if hw.get("cells_hash") != lw.get("cells_hash"):
+            if cls == "exact":
+                cls = "within_tol"
+            if cls != "divergent":
+                jac = _jaccard(hw.get("cell_ids"), lw.get("cell_ids"))
+                note = f"cell ids differ; Jaccard overlap {jac:.2f}"
+        return (cls, max_delta, 0, note)
     if ndc_delta != 0:
         if cls == "divergent":
             note = (
