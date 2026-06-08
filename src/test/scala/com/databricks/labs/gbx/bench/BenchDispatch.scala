@@ -376,10 +376,15 @@ object BenchDispatch {
     case "rst_retile" =>
       collectAndFingerprint(
         ReTile.reTileIter(cloneDs(ds), Map.empty, argI(a, "tile_width", 128), argI(a, "tile_height", 128)))
+    // overlap default 25 mirrors the authoritative pyrx FnSpec (bench/spec.py:
+    // rst_tooverlappingtiles args {overlap: 25}). The heavy runner passes an empty
+    // args map, so this default IS the value compared cross-engine; a mismatched
+    // default (was 32) produced different window positions -> a ~3% pooled-pixel
+    // divergence even though the tile COUNT matched.
     case "rst_tooverlappingtiles" =>
       collectAndFingerprint(
         OverlappingTiles.reTileIter(cloneDs(ds), Map.empty,
-          argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 32)))
+          argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 25)))
     case "rst_separatebands" =>
       collectAndFingerprint(SeparateBands.separateIter(cloneDs(ds), Map.empty))
     case "rst_xyzpyramid" =>
@@ -694,7 +699,7 @@ object BenchDispatch {
       case "rst_maketiles"   => rst_maketiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128))
       case "rst_retile"      => rst_retile(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128))
       case "rst_tooverlappingtiles" =>
-        rst_tooverlappingtiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 32))
+        rst_tooverlappingtiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 25))
       case "rst_separatebands" => rst_separatebands(tile)
       case "rst_xyzpyramid"  => rst_xyzpyramid(tile, argI(a, "min_z", 10), argI(a, "max_z", 11))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")

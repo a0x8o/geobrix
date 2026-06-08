@@ -46,4 +46,21 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     val sfp = new ObjectMapper().readTree(BenchDispatch.pureCore("rst_slope", ds, Map.empty))
     assert(sfp.get("kind").asText() == "raster")
   }
+
+  // The heavy runner passes an empty args map, so the default in BenchDispatch IS the
+  // value compared cross-engine. It must equal the authoritative pyrx FnSpec default
+  // (bench/spec.py rst_tooverlappingtiles overlap=25). A mismatched default (was 32)
+  // produced different overlapping-window positions and a ~3% pooled-pixel divergence.
+  test("tooverlappingtiles default overlap matches the pyrx spec (25, not 32)") {
+    val mapper = new ObjectMapper()
+    val deflt = mapper.readTree(BenchDispatch.pureCore("rst_tooverlappingtiles", ds, Map.empty))
+    val ov25 = mapper.readTree(
+      BenchDispatch.pureCore("rst_tooverlappingtiles", ds, Map("overlap" -> "25")))
+    val ov32 = mapper.readTree(
+      BenchDispatch.pureCore("rst_tooverlappingtiles", ds, Map("overlap" -> "32")))
+    // Default must agree with the spec value (25) and differ from the old default (32).
+    assert(deflt.get("agg").get("mean").asDouble() == ov25.get("agg").get("mean").asDouble())
+    assert(deflt.get("agg").get("std").asDouble() == ov25.get("agg").get("std").asDouble())
+    assert(deflt.get("agg").get("mean").asDouble() != ov32.get("agg").get("mean").asDouble())
+  }
 }
