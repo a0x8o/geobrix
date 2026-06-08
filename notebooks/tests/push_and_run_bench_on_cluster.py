@@ -82,7 +82,49 @@ def _arg(flag: str, default: str) -> str:
     return default
 
 
+def _discover_warehouse(w):
+    """First RUNNING SQL warehouse (else any) for live progress counts; None if none.
+    Used only for the host-side progress heartbeat -- never required for the run."""
+    try:
+        whs = list(w.warehouses.list())
+    except Exception:
+        return None
+    if not whs:
+        return None
+
+    def _st(x):
+        s = getattr(x, "state", None)
+        return s.value if s is not None and hasattr(s, "value") else str(s)
+
+    running = [x for x in whs if _st(x) == "RUNNING"]
+    return (running or whs)[0].id
+
+
+def _count_run_rows(w, warehouse_id: str, table: str, run_id: str) -> int:
+    """COUNT(*) of this run's rows currently in the table; -1 on any error.
+    Interim rows stream in as each function finishes, so this climbs during the run."""
+    try:
+        res = w.statement_execution.execute_statement(
+            warehouse_id=warehouse_id,
+            statement=f"SELECT count(*) FROM {table} WHERE run_id = '{run_id}'",
+            wait_timeout="30s",
+        )
+        data = res.result.data_array if res and res.result else None
+        return int(data[0][0]) if data else 0
+    except Exception:
+        return -1
+
+
 def main() -> int:
+    # Force line-buffered stdout so the run URL + interim progress heartbeats appear
+    # LIVE, not all at once at exit. Python block-buffers stdout when it isn't a TTY
+    # (piped to a file, a log, or a background task), which otherwise hides every
+    # interim print until the process ends.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     do_wait = "--no-wait" not in sys.argv
     heavyweight = "--lightweight-only" not in sys.argv
     lightweight = "--heavyweight-only" not in sys.argv
@@ -236,15 +278,69 @@ def main() -> int:
         ],
     )
 
+    remote_run_id = submit_waiter.run_id
+
+    # Results stream into the table as each function finishes -> queryable immediately.
+    # Surface the run URL + the exact query right after submit (don't make the operator
+    # wait until the end or hunt for it).
+    print("=" * 64)
+    print(f"Run submitted: run_id={remote_run_id}")
+    try:
+        _r0 = w.jobs.get_run(remote_run_id)
+        if getattr(_r0, "run_page_url", None):
+            print(f"  run URL : {_r0.run_page_url}")
+    except Exception:
+        pass
+    print(f"  results : {table}  (streaming; filter run_id = '{run_id}')")
+    print(f"  query   : SELECT fn, mode, rows, median_ms, status "
+          f"FROM {table} WHERE run_id = '{run_id}' ORDER BY fn")
+    print("=" * 64)
+
     if not do_wait:
         # Fire-and-forget: submit returns a waiter; we don't call .result().
-        print("Run submitted. Use the Databricks UI to check status, "
-              "or run without --no-wait to wait here.")
+        print("Run submitted (--no-wait). Poll the table above, or the Databricks UI.")
         return 0
 
-    print("Waiting for run to finish...")
-    run = submit_waiter.result()
-    run_id_remote = run.run_id
+    # Poll: heartbeat run state + the live row count as interim rows land in the table.
+    # Live counts need a SQL warehouse (auto-discovered, or GBX_BENCH_SQL_WAREHOUSE_ID);
+    # without one we still heartbeat the run state -- the table is queryable regardless.
+    import time
+
+    warehouse_id = _strip_invisible(os.environ.get("GBX_BENCH_SQL_WAREHOUSE_ID") or "") or _discover_warehouse(w)
+    if warehouse_id:
+        print(f"Waiting; polling live row count via SQL warehouse {warehouse_id} (~20s)...")
+    else:
+        print("Waiting; no SQL warehouse for live counts (set GBX_BENCH_SQL_WAREHOUSE_ID "
+              "for them) -- heartbeating run state. The table above is queryable now.")
+    run = None
+    last_count = -1
+    while True:
+        try:
+            run = w.jobs.get_run(remote_run_id)
+        except Exception as e:  # transient -> keep polling
+            print(f"  (poll error: {e})", file=sys.stderr)
+            time.sleep(20)
+            continue
+        st = run.state
+        lc = (
+            st.life_cycle_state.value
+            if st and st.life_cycle_state and hasattr(st.life_cycle_state, "value")
+            else str(st.life_cycle_state if st else "?")
+        )
+        if lc in ("TERMINATED", "SKIPPED", "INTERNAL_ERROR"):
+            break
+        if warehouse_id:
+            c = _count_run_rows(w, warehouse_id, table, run_id)
+            if c >= 0 and c != last_count:
+                print(f"  [{lc}] {c} rows streamed to table so far")
+                last_count = c
+            else:
+                print(f"  [{lc}] running...")
+        else:
+            print(f"  [{lc}] running...")
+        time.sleep(20)
+
+    run_id_remote = remote_run_id
     state = run.state
     if state and getattr(state, "life_cycle_state", None):
         lc = state.life_cycle_state.value if hasattr(state.life_cycle_state, "value") else str(state.life_cycle_state)

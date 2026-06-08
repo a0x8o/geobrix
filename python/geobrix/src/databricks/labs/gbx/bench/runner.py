@@ -217,7 +217,11 @@ def run_pure_core(
     warmup: int,
     measured: int,
     where: str,
+    sink=None,
 ) -> List[ResultRow]:
+    """sink: optional callable(List[ResultRow]) invoked with each function's rows as
+    soon as that function finishes, so a long run is observable in real time (the
+    cluster harness uses it to append rows to the Delta table incrementally)."""
     root = Path(corpus_root)
     env = capture_env(where)
     # Loaded lazily-once: geometry-input fns read the tile's GeometrySet from the
@@ -227,6 +231,7 @@ def run_pure_core(
     for fs in fnspecs:
         if "pure-core" not in fs.modes:
             continue
+        _mark = len(out)
         for te in corpus.size_sweep:
             if te.bands < getattr(fs, "min_bands", 1):
                 out.append(
@@ -348,6 +353,12 @@ def run_pure_core(
                         **env,
                     )
                 )
+        # Flush this function's rows now so the run is observable in real time.
+        if sink is not None and len(out) > _mark:
+            try:
+                sink(out[_mark:])
+            except Exception:  # noqa: BLE001 — a sink failure must never abort timing
+                pass
     return out
 
 
@@ -580,8 +591,13 @@ def run_spark_path(
     warmup: int,
     measured: int,
     where: str,
+    sink=None,
 ) -> List[ResultRow]:
-    """Time each fn as a Spark Column over N tile rows (serialization + UDF overhead)."""
+    """Time each fn as a Spark Column over N tile rows (serialization + UDF overhead).
+
+    sink: optional callable(List[ResultRow]) invoked with each function's rows the
+    moment that function finishes (the cluster harness uses it to append rows to the
+    Delta table incrementally, so a long run can be polled/queried in real time)."""
     from pyspark.sql import functions as F
 
     root = Path(corpus_root)
@@ -677,6 +693,7 @@ def run_spark_path(
     for fs in fnspecs:
         if "spark-path" not in fs.modes:
             continue
+        _mark = len(out)
         if getattr(fs, "input_kind", "tile") in _agg_kinds:
             out += _run_aggregate(
                 spark,
@@ -689,6 +706,12 @@ def run_spark_path(
                 measured,
                 env,
             )
+            # Flush this aggregator's rows now so the run is observable in real time.
+            if sink is not None and len(out) > _mark:
+                try:
+                    sink(out[_mark:])
+                except Exception:  # noqa: BLE001 — sink must never abort timing
+                    pass
             continue
         _kind = getattr(fs, "input_kind", "tile")
         for n in sorted(row_counts):
@@ -762,6 +785,12 @@ def run_spark_path(
                         **env,
                     )
                 )
+        # Flush this function's rows now so the run is observable in real time.
+        if sink is not None and len(out) > _mark:
+            try:
+                sink(out[_mark:])
+            except Exception:  # noqa: BLE001 — a sink failure must never abort timing
+                pass
     df_all.unpersist()
     return out
 

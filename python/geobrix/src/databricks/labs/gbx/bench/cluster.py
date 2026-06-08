@@ -60,11 +60,32 @@ fnspecs = _s.select(functions=[x for x in FUNCTIONS.split(",") if x] or None, se
 lw, hw, all_rows = [], [], []
 """
 
+# Truncate up-front + define the incremental Delta sink. Kept OUT of _PREAMBLE (which
+# is .format()-processed) so the runtime f-strings here use single braces. The sink
+# appends each function's rows the moment that function finishes, so the run can be
+# polled / queried in real time via SELECT ... WHERE run_id = RUN_ID. (With incremental
+# flushing the table is truncated up-front, NOT at the end -- a late truncate would wipe
+# the rows we just streamed in.)
+_SINK = """
+if TRUNCATE:
+    try:
+        spark.sql(f"TRUNCATE TABLE {TABLE}")
+        print(f"truncated {TABLE} -- only this run's rows will remain")
+    except Exception as _e:  # table doesn't exist yet -> the first append creates it
+        print(f"truncate skipped ({TABLE} not found): {_e}")
+
+_delta = [0]
+
+
+def _sink(batch):
+    _delta[0] += _cl.to_delta(batch, spark, TABLE, where="cluster")
+"""
+
 _LIGHT = """
 if MODES in ("pure-core", "both"):
-    lw += runner.run_pure_core(CORPUS, corpus, fnspecs, RUN_ID, WARMUP, MEASURED, "cluster")
+    lw += runner.run_pure_core(CORPUS, corpus, fnspecs, RUN_ID, WARMUP, MEASURED, "cluster", sink=_sink)
 if MODES in ("spark-path", "both"):
-    lw += runner.run_spark_path(spark, CORPUS, corpus, fnspecs, RUN_ID, ROW_COUNTS, WARMUP, MEASURED, "cluster")
+    lw += runner.run_spark_path(spark, CORPUS, corpus, fnspecs, RUN_ID, ROW_COUNTS, WARMUP, MEASURED, "cluster", sink=_sink)
 results.write_jsonl(lw, f"{OUT}/lightweight.jsonl")
 # Always write a per-tier summary so every run (incl. lightweight-only, which
 # has no heavy-vs-light comparison summary.md) leaves a readable summary file.
@@ -79,17 +100,14 @@ spark._jvm.com.databricks.labs.gbx.bench.HeavyBenchMain.run(
     spark._jsparkSession, CORPUS, hw_out, FUNCTIONS, MODES,
     ",".join(str(x) for x in ROW_COUNTS), WARMUP, MEASURED, RUN_ID)
 hw = results.read_jsonl(hw_out)
+_sink(hw)  # heavy rows append through the same sink (one batch; the Scala leg is opaque)
 all_rows += hw
 """
 
 _EPILOGUE = """
-if TRUNCATE:
-    try:
-        spark.sql(f"TRUNCATE TABLE {TABLE}")
-        print(f"truncated {TABLE} -- only this run's rows will remain")
-    except Exception as _e:  # table doesn't exist yet -> the append creates it
-        print(f"truncate skipped ({TABLE} not found): {_e}")
-delta_rows = _cl.to_delta(all_rows, spark, TABLE, where="cluster")
+# Rows were appended incrementally by _sink as each function finished, so there is no
+# bulk append here -- delta_rows is the running count the sink accumulated.
+delta_rows = _delta[0]
 
 # Status-led result payload. Lead with a human status + counts; only surface
 # `compared` (the heavy-vs-light comparison cell count) when BOTH tiers ran, so a
@@ -141,6 +159,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         measured=cfg["measured"],
         truncate=cfg.get("truncate_results", False),
     )
+    body += _SINK  # truncate up-front + define the incremental Delta sink
     if cfg.get("lightweight"):
         body += _LIGHT
     if cfg.get("heavyweight"):
