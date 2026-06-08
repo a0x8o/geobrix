@@ -8,6 +8,7 @@ BASE=""
 SET="full"
 LIST=0
 LOG_PATH=""
+FUNCS_OVERRIDE=""
 HOST_CORPUS="sample-data/Volumes/main/default/bench-corpus"
 
 show_help() {
@@ -22,6 +23,9 @@ Usage: bash scripts/commands/gbx-bench-changed.sh [options]
 Options:
   --base <ref>     Diff vs <ref> (git diff --name-only <ref>); default: working
                    tree vs HEAD + untracked files.
+  --functions <csv> Explicit comma-separated function list; bypasses diff
+                   resolution. Use to re-validate a known set or when a bench
+                   infra change (e.g. compare.py) maps to no function's sources.
   --set <core|full> Registry tier consulted when mapping changes -> functions
                    (default full: any changed registered function is caught).
   --list           Dry-run: print affected functions + unmapped-path warnings and
@@ -38,6 +42,7 @@ EOF
 while [[ $# -gt 0 ]]; do case $1 in
     --base) BASE="$2"; shift 2 ;;
     --set) SET="$2"; shift 2 ;;
+    --functions) FUNCS_OVERRIDE="$2"; shift 2 ;;
     --list) LIST=1; shift ;;
     --log) LOG_PATH=$(resolve_log_path "$2"); shift 2 ;;
     --help|-h) show_help; exit 0 ;;
@@ -49,9 +54,17 @@ show_banner "gbx:bench:changed"
 validate_set "$SET" || exit 1
 setup_log_file "$LOG_PATH"
 
-# Resolve affected functions in the venv. Emit a machine-readable AFFECTED= /
-# UNMAPPED= / CHANGED= triple plus a human summary, so the shell can branch on it.
-RESOLVE_PY="
+if [[ -n "$FUNCS_OVERRIDE" ]]; then
+    # Explicit function list — bypass diff-resolution (e.g. re-validating a
+    # known set, or a change in bench infra like compare.py that maps to no
+    # function's sources but still affects a function's comparison).
+    AFFECTED="$FUNCS_OVERRIDE"
+    CHANGED="$FUNCS_OVERRIDE"
+    UNMAPPED=""
+else
+    # Resolve affected functions in the venv. Emit a machine-readable AFFECTED= /
+    # UNMAPPED= / CHANGED= triple plus a human summary, so the shell can branch on it.
+    RESOLVE_PY="
 import sys
 from databricks.labs.gbx.bench import spec as S, store
 base = sys.argv[1] or None
@@ -63,17 +76,18 @@ print('AFFECTED=' + ','.join(affected))
 print('UNMAPPED=' + ','.join(unmapped))
 "
 
-RESOLVE_OUT=$(run_in_pyrx_venv "python -c \"$RESOLVE_PY\" '$BASE' '$SET'")
-RESOLVE_RC=$?
-if [[ $RESOLVE_RC -ne 0 ]]; then
-    echo -e "${RED}❌ change resolution failed${NC}"
-    echo "$RESOLVE_OUT"
-    exit $RESOLVE_RC
-fi
+    RESOLVE_OUT=$(run_in_pyrx_venv "python -c \"$RESOLVE_PY\" '$BASE' '$SET'")
+    RESOLVE_RC=$?
+    if [[ $RESOLVE_RC -ne 0 ]]; then
+        echo -e "${RED}❌ change resolution failed${NC}"
+        echo "$RESOLVE_OUT"
+        exit $RESOLVE_RC
+    fi
 
-CHANGED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^CHANGED=//p')
-AFFECTED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^AFFECTED=//p')
-UNMAPPED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^UNMAPPED=//p')
+    CHANGED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^CHANGED=//p')
+    AFFECTED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^AFFECTED=//p')
+    UNMAPPED=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^UNMAPPED=//p')
+fi
 
 echo ""
 echo -e "${CYAN}Changed paths:${NC} ${CHANGED:-(none)}"
