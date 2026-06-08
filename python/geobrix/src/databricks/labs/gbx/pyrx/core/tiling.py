@@ -1,6 +1,8 @@
 """Spark-free tiling ops. Each returns a list of GTiff byte strings (one per
 output tile); the Spark layer wraps each into a tile struct."""
 
+import math
+
 import numpy as np
 from rasterio.io import MemoryFile
 from rasterio.windows import Window
@@ -53,8 +55,13 @@ def retile(ds, tile_width, tile_height) -> list:
 
 
 def to_overlapping_tiles(ds, tile_width, tile_height, overlap) -> list:
+    # ``overlap`` is a percentage of tile size, matching heavy
+    # OverlappingTiles.generateWindows: overlap_px = ceil(tile_dim * overlap / 100),
+    # step = tile_dim - overlap_px. (Heavy is the v0.3.0-released contract.)
     tw, th, ov = int(tile_width), int(tile_height), int(overlap)
-    return _window_tiles(ds, tw, th, max(1, tw - ov), max(1, th - ov))
+    overlap_w = math.ceil(tw * ov / 100.0)
+    overlap_h = math.ceil(th * ov / 100.0)
+    return _window_tiles(ds, tw, th, max(1, tw - overlap_w), max(1, th - overlap_h))
 
 
 def _get_tile_size(width, height, size_bytes, size_in_mb):

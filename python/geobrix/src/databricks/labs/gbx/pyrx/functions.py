@@ -1684,8 +1684,9 @@ def rst_tooverlappingtiles(
 ) -> Column:
     """Partition a tile into overlapping sub-tiles.
 
-    Each tile is tile_width x tile_height pixels; neighboring tiles share
-    *overlap* pixels on each shared edge (step = tile_width - overlap).
+    Each tile is tile_width x tile_height pixels.  *overlap* is a **percentage**
+    of the tile size: the per-edge overlap is ``ceil(tile_width * overlap / 100)``
+    pixels and the stride is ``tile_width - overlap_px`` (likewise for height).
     Edge tiles are clamped to the raster boundary.  Returns ARRAY<tile struct>;
     explode the result to get one row per sub-tile.
     """

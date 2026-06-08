@@ -1478,7 +1478,8 @@ REGISTRY: Dict[str, FnSpec] = {
         "gbx_rst_tooverlappingtiles",
         "format",
         _BOTH,
-        {"tile_width": 128, "tile_height": 128, "overlap": 32},
+        # overlap is a percentage (matches heavy); 25% -> step 96 on 128px tiles
+        {"tile_width": 128, "tile_height": 128, "overlap": 25},
         core_fn=lambda ds, a: tiling.to_overlapping_tiles(
             ds, a["tile_width"], a["tile_height"], a["overlap"]
         ),

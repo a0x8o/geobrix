@@ -52,6 +52,45 @@ def test_overlapping_tiles():
     assert (2, 2) in set(_dims(parts))
 
 
+def _heavy_overlap_windows(size, tile_dim, overlap_pct):
+    """Reference port of heavy OverlappingTiles.generateWindows (one axis).
+
+    overlapWidth = ceil(tile_dim * overlap_pct / 100); step = tile_dim - overlap;
+    starts enumerated as Scala ``0 until size by step``.
+    """
+    import math
+
+    overlap_px = math.ceil(tile_dim * overlap_pct / 100.0)
+    step = tile_dim - overlap_px
+    return list(range(0, size, step))
+
+
+def test_overlapping_tiles_percentage_matches_heavy():
+    # 256x256, tile 128x128, overlap=25 (PERCENT, matching heavy):
+    #   overlapWidth = ceil(128*25/100) = 32 -> step 96
+    #   starts per axis = [0, 96, 192] -> 3x3 = 9 windows
+    side, tile_dim, overlap = 256, 128, 25
+    starts = _heavy_overlap_windows(side, tile_dim, overlap)
+    assert starts == [0, 96, 192]  # guards the formula itself
+    expected_count = len(starts) ** 2
+
+    with _serde.open_tile(_square_geotiff_bytes(side, count=1)) as ds:
+        parts = tiling.to_overlapping_tiles(ds, tile_dim, tile_dim, overlap)
+    assert len(parts) == expected_count
+
+    # Recover each window's (col, row) origin from its transform. Source origin
+    # is (0, side) with 1px size, so window at (col, row) -> origin (col, side-row).
+    got = set()
+    for b in parts:
+        with _serde.open_tile(b) as o:
+            t = o.transform
+            col = round(t.c)
+            row = round(side - t.f)
+            got.add((col, row))
+    expected = {(x, y) for y in starts for x in starts}
+    assert got == expected
+
+
 def _square_geotiff_bytes(side, count, dtype="float32"):
     """Square multi-band GTiff with arange data (uncompressed, like the corpus)."""
     import numpy as np
