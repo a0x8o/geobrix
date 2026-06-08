@@ -25,17 +25,7 @@ object RasterTessellate {
     ): Iterator[(Long, Dataset, Map[String, String])] = {
         val bbox = BoundingBox.bbox(ds, GDAL.WSG84)
         val bufR = H3.getBufferRadius(bbox, resolution)
-        // Polyfill is centroid-containment based: a fringe cell whose centroid lies
-        // outside the buffered bbox is never returned even though its hexagon clips
-        // the raster edge. Expand each covering cell by a one-ring (kRing of 1) to
-        // capture those fringe cells; the per-cell empty-clip drop in getTile then
-        // removes any candidate whose hexagon does not actually overlap the raster.
-        // Sorted for deterministic, reproducible cell ordering.
-        val cells = H3
-            .polyfill(bbox.buffer(bufR), resolution)
-            .flatMap(c => H3.kRing(c, 1))
-            .distinct
-            .sorted
+        val cells = H3.polyfill(bbox.buffer(bufR), resolution)
 
         new Iterator[(Long, Dataset, Map[String, String])] with AutoCloseable {
             private var closed = false
