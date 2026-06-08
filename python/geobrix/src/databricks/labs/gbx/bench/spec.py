@@ -193,6 +193,13 @@ class FnSpec:
     #   "path":  the corpus tile's FILE PATH -- core_fn(path, args); the heavy
     #            dispatch opens the path itself (rst_fromfile). pure-core only,
     #            since the spark-path tile DataFrame carries no path column.
+    #   "geometry": the opened raster tile PLUS the tile's geometry set from the
+    #            geometry corpus -- core_fn(ds, args, geom) where ``geom`` is the
+    #            tile's ``manifest.GeometrySet`` (boxes/points/zpoints as WKB +
+    #            burn values, in the tile CRS). Used by geometry-input functions
+    #            (rst_clip / rst_rasterize / rst_dtmfromgeoms) and geometry
+    #            aggregators. Geometry is in-extent for the tile and identical
+    #            across both engines (write-once-read-both via geometry.json).
     input_kind: str = "tile"
     # How the runner fingerprints this function's output. The default ``"auto"``
     # preserves every pre-existing function: the runner inspects the output value

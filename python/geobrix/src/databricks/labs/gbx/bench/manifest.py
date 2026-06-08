@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
 
 
 @dataclass(frozen=True)
@@ -50,4 +51,91 @@ class Corpus:
                 dtype=d["row_pool"]["dtype"],
                 tiles=[TileEntry(**t) for t in d["row_pool"]["tiles"]],
             ),
+        )
+
+
+# --- geometry corpus --------------------------------------------------------
+# Geometry-input raster functions (rst_clip / rst_rasterize / rst_dtmfromgeoms /
+# the geometry aggregators) need a deterministic, CRS-correct geometry set that
+# BOTH benchmark engines read identically. WKB carries no CRS, so the srid is
+# recorded on the set; geometry coordinates are in that CRS. WKB bytes are
+# base64-encoded for JSON transport (JSON has no byte type), so the manifest
+# round-trips byte-identically across the heavy/light process boundary.
+
+
+def _enc(b: bytes) -> str:
+    return base64.b64encode(b).decode("ascii")
+
+
+def _dec(s: str) -> bytes:
+    return base64.b64decode(s.encode("ascii"))
+
+
+@dataclass(frozen=True)
+class GeometrySet:
+    """One tile's geometry corpus: boxes + points (with burn values) + z-points.
+
+    ``boxes`` / ``points`` are lists of ``(wkb_bytes, value)``; ``zpoints`` are
+    bare WKB bytes of 3-D points (Z sampled from the source tile). All geometry
+    is in the tile's CRS (``srid``); ``source_tile`` is the corpus-relative path
+    of the tile the geometry was derived from.
+    """
+
+    srid: int
+    source_tile: str
+    boxes: List[Tuple[bytes, float]]
+    points: List[Tuple[bytes, float]]
+    zpoints: List[bytes]
+
+    def to_json(self) -> dict:
+        return {
+            "srid": self.srid,
+            "source_tile": self.source_tile,
+            "boxes": [[_enc(wkb), v] for wkb, v in self.boxes],
+            "points": [[_enc(wkb), v] for wkb, v in self.points],
+            "zpoints": [_enc(wkb) for wkb in self.zpoints],
+        }
+
+    @classmethod
+    def from_json(cls, d: dict) -> "GeometrySet":
+        return cls(
+            srid=d["srid"],
+            source_tile=d["source_tile"],
+            boxes=[(_dec(s), float(v)) for s, v in d["boxes"]],
+            points=[(_dec(s), float(v)) for s, v in d["points"]],
+            zpoints=[_dec(s) for s in d["zpoints"]],
+        )
+
+
+@dataclass(frozen=True)
+class GeometryCorpus:
+    """Container of named ``GeometrySet``s persisted as ``geometry.json``.
+
+    ``source_tile`` / ``srid`` are the manifest-level provenance (the
+    representative tile + CRS); per-set ``GeometrySet`` carries its own copy so a
+    consumer can read a single set without the container.
+    """
+
+    seed: int
+    srid: int
+    source_tile: str
+    sets: Dict[str, GeometrySet] = field(default_factory=dict)
+
+    def write(self, path) -> None:
+        d = {
+            "seed": self.seed,
+            "srid": self.srid,
+            "source_tile": self.source_tile,
+            "sets": {k: v.to_json() for k, v in self.sets.items()},
+        }
+        Path(path).write_text(json.dumps(d, indent=2))
+
+    @classmethod
+    def read(cls, path) -> "GeometryCorpus":
+        d = json.loads(Path(path).read_text())
+        return cls(
+            seed=d["seed"],
+            srid=d["srid"],
+            source_tile=d["source_tile"],
+            sets={k: GeometrySet.from_json(v) for k, v in d["sets"].items()},
         )

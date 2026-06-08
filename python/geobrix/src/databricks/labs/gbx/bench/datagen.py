@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import shapely.geometry
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 
@@ -107,6 +108,103 @@ def make_tile_bytes(
         return bytes(mf.read())
 
 
+def _bounds_and_z_sampler(tile_meta_or_bounds):
+    """Resolve (left, bottom, right, top) bounds + a z-sampler from the input.
+
+    Accepts either an open rasterio ``DatasetReader`` (preferred: z-points sample
+    the actual tile band so Z is realistic) or a plain ``(left, bottom, right,
+    top)`` bounds tuple (z-points fall back to a seeded surface). Returns the
+    bounds tuple and a ``sample(xs, ys, rng) -> z_array`` callable.
+    """
+    if hasattr(tile_meta_or_bounds, "bounds") and hasattr(tile_meta_or_bounds, "read"):
+        ds = tile_meta_or_bounds
+        left, bottom, right, top = tuple(ds.bounds)
+        band1 = ds.read(1).astype("float64")
+        transform = ds.transform
+
+        def sample(xs, ys, rng):
+            # world -> pixel (row, col) via the inverse affine, clamped in-range.
+            cols, rows = ~transform * (np.asarray(xs), np.asarray(ys))
+            rows = np.clip(rows.astype(int), 0, band1.shape[0] - 1)
+            cols = np.clip(cols.astype(int), 0, band1.shape[1] - 1)
+            return band1[rows, cols]
+
+        return (left, bottom, right, top), sample
+
+    left, bottom, right, top = tuple(tile_meta_or_bounds)
+
+    def sample(xs, ys, rng):
+        # No tile to read: a deterministic seeded surface over the bounds.
+        nx = (np.asarray(xs) - left) / max(right - left, 1e-9)
+        ny = (np.asarray(ys) - bottom) / max(top - bottom, 1e-9)
+        return 0.5 * (nx + ny)
+
+    return (left, bottom, right, top), sample
+
+
+def generate_geometry_corpus(
+    tile_meta_or_bounds,
+    srid: int,
+    seed: int,
+    *,
+    n_boxes: int = 16,
+    n_points: int = 64,
+) -> m.GeometrySet:
+    """Derive a deterministic geometry set from a tile's bounds + CRS.
+
+    Every box/point lies WITHIN the tile bounds (so it is in-extent on the tile's
+    own CRS), each carries a deterministic burn value, and z-points sample the
+    actual tile band (realistic elevation) when an open dataset is passed, else a
+    seeded surface. WKB carries no CRS -- the recorded ``srid`` is the contract.
+
+    ``tile_meta_or_bounds`` is an open rasterio ``DatasetReader`` (preferred) or a
+    ``(left, bottom, right, top)`` bounds tuple. Returns a ``manifest.GeometrySet``.
+    """
+    (left, bottom, right, top), z_sample = _bounds_and_z_sampler(tile_meta_or_bounds)
+    rng = np.random.default_rng(seed)
+    w = right - left
+    h = top - bottom
+
+    # Boxes: axis-aligned, each shrunk to a random 5-15% of the extent and offset
+    # so it stays fully inside the bounds. Burn value in [0, 1).
+    boxes = []
+    bw = w * (0.05 + 0.10 * rng.random(n_boxes))
+    bh = h * (0.05 + 0.10 * rng.random(n_boxes))
+    bx = left + (w - bw) * rng.random(n_boxes)
+    by = bottom + (h - bh) * rng.random(n_boxes)
+    bvals = rng.random(n_boxes)
+    for i in range(n_boxes):
+        geom = shapely.geometry.box(bx[i], by[i], bx[i] + bw[i], by[i] + bh[i])
+        boxes.append((geom.wkb, float(bvals[i])))
+
+    # Points: scattered strictly inside the bounds; burn value in [0, 1).
+    px = left + w * rng.random(n_points)
+    py = bottom + h * rng.random(n_points)
+    pvals = rng.random(n_points)
+    points = [
+        (shapely.geometry.Point(float(px[i]), float(py[i])).wkb, float(pvals[i]))
+        for i in range(n_points)
+    ]
+
+    # Z-points: same XY scatter, Z sampled from the source tile (or seeded surface).
+    zx = left + w * rng.random(n_points)
+    zy = bottom + h * rng.random(n_points)
+    zz = z_sample(zx, zy, rng)
+    zpoints = [
+        shapely.geometry.Point(float(zx[i]), float(zy[i]), float(zz[i])).wkb
+        for i in range(n_points)
+    ]
+
+    source_tile = getattr(tile_meta_or_bounds, "name", "") or ""
+    return m.GeometrySet(
+        srid=int(srid),
+        source_tile=str(source_tile),
+        boxes=boxes,
+        points=points,
+        zpoints=zpoints,
+    )
+
+
 def generate_corpus(
     out_dir,
     seed,
@@ -157,7 +255,47 @@ def generate_corpus(
         row_pool=m.RowPool(row_tile_px, row_bands, row_dtype, row_tiles),
     )
     corpus.write(out_dir / "corpus.json")
+    _write_geometry_corpus(out_dir, corpus, seed)
     return corpus
+
+
+# Geometry is derived from the FIRST size-sweep tile of each distinct CRS, so the
+# geometry corpus stays cheap (one set per CRS) yet covers every projection the
+# tile sweep uses. Each set's geometry is in-extent for its source tile; z-points
+# sample that tile's band 1. The representative manifest provenance is the first
+# size-sweep tile. Deterministic: the geometry seed is derived from the corpus
+# seed + the tile cellid, so re-running gen-data reproduces byte-identical WKB.
+def _write_geometry_corpus(out_dir, corpus: m.Corpus, seed: int) -> m.GeometryCorpus:
+    out_dir = Path(out_dir)
+    sets: dict = {}
+    seen_srid = set()
+    rep = None
+    for te in corpus.size_sweep:
+        if te.srid in seen_srid:
+            continue
+        seen_srid.add(te.srid)
+        with rasterio.open(out_dir / te.path) as ds:
+            gset = generate_geometry_corpus(ds, te.srid, seed + te.cellid)
+        # Record the corpus-relative tile path (not the absolute ds.name) so the
+        # heavy tier resolves it under the same corpus root.
+        gset = m.GeometrySet(
+            srid=gset.srid,
+            source_tile=te.path,
+            boxes=gset.boxes,
+            points=gset.points,
+            zpoints=gset.zpoints,
+        )
+        sets[f"srid_{te.srid}"] = gset
+        if rep is None:
+            rep = te
+    gc = m.GeometryCorpus(
+        seed=seed,
+        srid=(rep.srid if rep else 0),
+        source_tile=(rep.path if rep else ""),
+        sets=sets,
+    )
+    gc.write(out_dir / "geometry.json")
+    return gc
 
 
 def validity_gate(root, corpus: m.Corpus, nodata_warn_threshold: float = 0.9):

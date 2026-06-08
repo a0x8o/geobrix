@@ -105,16 +105,57 @@ def _open_ds_list(paths):
     return stack, dss
 
 
-def _capture_and_call(fs, input_kind, raster, tile_path, synth_paths):
+def _load_geometry_corpus(corpus_root):
+    """Load the geometry corpus (geometry.json) under the corpus root, or None.
+
+    The geometry corpus is written alongside corpus.json at gen-data time; both
+    engines read these identical WKB bytes (write-once-read-both). Returns None if
+    absent so non-geometry runs over an older corpus still work.
+    """
+    p = Path(corpus_root) / "geometry.json"
+    if not p.exists():
+        return None
+    return m.GeometryCorpus.read(p)
+
+
+def _geometry_set_for(geom_corpus, te):
+    """The GeometrySet for a tile: by source_tile path, else by matching srid.
+
+    Geometry is generated per distinct CRS from a representative tile, so a tile
+    whose own path is not a geometry source still gets the in-extent set for its
+    srid (same projection, so the bounds-derived geometry is in-extent).
+    """
+    if geom_corpus is None:
+        return None
+    for gset in geom_corpus.sets.values():
+        if gset.source_tile == te.path:
+            return gset
+    for gset in geom_corpus.sets.values():
+        if gset.srid == te.srid:
+            return gset
+    return None
+
+
+def _capture_and_call(fs, input_kind, raster, tile_path, synth_paths, geom=None):
     """Build (fingerprint, call) for a pure-core function via its input_kind adapter.
 
     The fingerprint is the untimed output summary (empty for timing-only fns); the
     `call` closure runs the core_fn once per timed iteration. Both branch on the
     same input_kind: "bytes" (raw raster bytes), "path" (corpus file path),
     "tile_array" (a list of open datasets from the synthesized multi-tile input),
-    or "tile" (the default: a single opened DatasetReader).
+    "geometry" (the open tile PLUS the tile's GeometrySet from the geometry
+    corpus, as core_fn(ds, args, geom)), or "tile" (the default: a single opened
+    DatasetReader).
     """
-    if input_kind == "bytes":
+    if input_kind == "geometry":
+
+        def _run_geometry(_fs=fs, _b=raster, _g=geom):
+            with _serde.open_tile(_b) as ds:
+                return _fs.core_fn(ds, _fs.args, _g)
+
+        feed = None
+        call = _run_geometry
+    elif input_kind == "bytes":
         feed = lambda: raster  # noqa: E731
         call = lambda _b=raster, _fs=fs: _fs.core_fn(_b, _fs.args)  # noqa: E731
     elif input_kind == "path":
@@ -179,6 +220,9 @@ def run_pure_core(
 ) -> List[ResultRow]:
     root = Path(corpus_root)
     env = capture_env(where)
+    # Loaded lazily-once: geometry-input fns read the tile's GeometrySet from the
+    # geometry corpus written alongside corpus.json (write-once-read-both).
+    geom_corpus = _load_geometry_corpus(root)
     out: List[ResultRow] = []
     for fs in fnspecs:
         if "pure-core" not in fs.modes:
@@ -233,12 +277,15 @@ def run_pure_core(
                 if input_kind == "tile_array"
                 else None
             )
+            geom = (
+                _geometry_set_for(geom_corpus, te) if input_kind == "geometry" else None
+            )
 
             try:
                 # Capture the untimed output fingerprint (consistency) and build the
                 # timed `call` closure, both keyed off the input_kind adapter.
                 fingerprint, call = _capture_and_call(
-                    fs, input_kind, raster, tile_path, synth_paths
+                    fs, input_kind, raster, tile_path, synth_paths, geom
                 )
                 stats = time_iters(call, warmup, measured)
                 ms = stats["median_ms"]
