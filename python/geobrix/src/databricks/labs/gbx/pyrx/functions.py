@@ -857,10 +857,12 @@ def rst_proximity(
 
     Args:
         tile:          Tile struct column.
-        target_values: Optional comma-separated string of source pixel values.
-                       When given, source pixels are those whose value is in the
-                       set. When None, the GDAL default applies: source = pixels
-                       with value != 0.
+        target_values: Optional comma-separated string of source pixel values,
+                       matched in GDAL's integer domain (each pixel is rounded to
+                       the nearest integer before the comparison). When given,
+                       source pixels are those whose rounded value is in the set.
+                       When None, the GDAL default applies: source = pixels whose
+                       rounded value is != 0.
         distunits:     ``"GEO"`` (default; CRS ground units, scaled by pixel
                        size) or ``"PIXEL"`` (pixel counts).
         max_distance:  Optional positive distance cap; pixels beyond it become

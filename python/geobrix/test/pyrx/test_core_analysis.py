@@ -193,6 +193,96 @@ def test_proximity_target_values_comma_separated():
         assert list(arr[0]) == pytest.approx([1.0, 0.0, 1.0, 0.0, 1.0])
 
 
+def test_proximity_target_match_rounds_to_int_like_gdal():
+    # GDAL ComputeProximity compares VALUES against the pixel value cast to int
+    # via round-half-up (it copies the source scanline to a GInt32 buffer with
+    # rounding). So VALUES=1 must match every pixel that rounds to 1 -- i.e. any
+    # value in [0.5, 1.5) -- not only the pixel that is exactly 1.0. A continuous
+    # float band (e.g. 0.6) is a target for VALUES=1, the way it is in the
+    # heavyweight gbx_rst_proximity.
+    width, height = 4, 1
+    # col0=0.6 rounds->1 (target), col1=0.4 rounds->0 (not), col2=1.0 target,
+    # col3=0.49 rounds->0 (not).
+    data = np.array([[0.6, 0.4, 1.0, 0.49]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, "1", "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # Targets are col0 and col2 (both round to 1). Distances: col0=0,
+        # col1=1 (nearest target col0 or col2), col2=0, col3=1.
+        assert list(arr[0]) == pytest.approx([0.0, 1.0, 0.0, 1.0])
+
+
+def test_proximity_geo_units_with_rounded_target_and_nonunit_pixel():
+    # End-to-end of the bug: a fractional band + non-unit (10 m) pixel size, GEO
+    # units, VALUES=1. The single rounds-to-1 pixel is the only target; distances
+    # must be Euclidean pixel distance * 10 (ground units), and the rounding rule
+    # must make the 0.6 pixel -- not just an exact 1.0 -- the target.
+    height, width = 1, 3
+    data = np.array([[0.6, 0.1, 0.2]], dtype="float32")  # only col0 rounds to 1
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 10.0, 10.0),  # 10 m pixels
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, "1", "GEO", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # target at col0: pixel distances [0,1,2] -> ground units * 10 = [0,10,20]
+        assert list(arr[0]) == pytest.approx([0.0, 10.0, 20.0])
+
+
+def test_proximity_default_source_rounds_to_int_like_gdal():
+    # Default (no target_values): GDAL's source = pixels whose rounded value != 0.
+    # A 0.6 pixel rounds to 1 (source); a 0.3 pixel rounds to 0 (not a source).
+    width, height = 3, 1
+    data = np.array([[0.3, 0.6, 0.3]], dtype="float32")
+    profile = dict(
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32633",
+        transform=from_origin(0, height, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(data, 1)
+        src = mf.read()
+    with _serde.open_tile(src) as ds:
+        out = analysis.proximity(ds, None, "PIXEL", None)
+    with _serde.open_tile(out) as o:
+        arr = o.read(1)
+        # only col1 (0.6 -> 1) is a source: distances [1, 0, 1]
+        assert list(arr[0]) == pytest.approx([1.0, 0.0, 1.0])
+
+
 def test_proximity_bad_distunits_raises():
     with _serde.open_tile(_single_source_bytes()) as ds:
         with pytest.raises(ValueError):

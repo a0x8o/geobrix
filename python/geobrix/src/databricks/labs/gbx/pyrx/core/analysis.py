@@ -35,9 +35,11 @@ def proximity(ds, target_values, distunits, max_distance):
     Mirrors the heavyweight ``gbx_rst_proximity`` semantics:
 
       * ``target_values``: optional comma-separated string of source pixel
-        values. When given, source pixels are those whose value is in that set.
-        When None/empty, the GDAL default applies: source = pixels with value
-        ``!= 0``.
+        values, matched in GDAL's integer domain (each pixel is rounded to the
+        nearest integer, half away from zero, before the comparison). When given,
+        source pixels are those whose rounded value is in that set. When
+        None/empty, the GDAL default applies: source = pixels whose rounded value
+        is ``!= 0``.
       * ``distunits``: ``"GEO"`` (default) measures distance in CRS ground units
         (scaled by the pixel size from the GeoTransform); ``"PIXEL"`` measures in
         pixel counts. Any other value raises ``ValueError``.
@@ -77,13 +79,27 @@ def proximity(ds, target_values, distunits, max_distance):
 
     band1 = ds.read(1)
 
-    # Build the source mask.
+    # GDAL ComputeProximity compares targets in the INTEGER domain: it copies the
+    # source scanline into a GInt32 buffer (GDALCopyWords rounds float->int half
+    # away from zero), so VALUES are matched against the *rounded* pixel value and
+    # the default "non-zero" rule is "rounded value != 0". A continuous float band
+    # therefore has many targets (e.g. every pixel in [0.5, 1.5) matches VALUES=1),
+    # not only pixels exactly equal to an integer. Round the same way for parity.
+    band1_int = np.floor(np.abs(band1) + 0.5).astype(np.int64) * np.where(
+        band1 < 0, -1, 1
+    )
+
+    # Build the source mask in the integer domain.
     if target_values is not None and str(target_values).strip() != "":
-        vals = [float(v) for v in str(target_values).split(",") if v.strip() != ""]
-        source_mask = np.isin(band1, np.array(vals, dtype=band1.dtype))
+        vals = [
+            int(round(float(v)))
+            for v in str(target_values).split(",")
+            if v.strip() != ""
+        ]
+        source_mask = np.isin(band1_int, np.array(vals, dtype=np.int64))
     else:
-        # GDAL default: any non-zero pixel is a source/target.
-        source_mask = band1 != 0
+        # GDAL default: any pixel whose rounded value is non-zero is a source.
+        source_mask = band1_int != 0
 
     # distance_transform_edt computes, for every True (non-zero) cell of its
     # input, the distance to the nearest False (zero) cell. We want the distance
