@@ -55,17 +55,24 @@ def test_numpy_scalar_fingerprint_serializes():
 # standard cell id for a point. These pins fail loudly if either side's cell-id
 # convention drifts (which would silently invalidate the `cells_hash` pass signal).
 def test_h3_cell_id_pinned_for_known_point():
+    import numpy as np
+
     from databricks.labs.gbx.pyrx.core import gridagg
 
     # POINT(-73.99 40.75) (lower Manhattan) @ H3 res 7 -> standard addr 872a100d2ffffff.
-    assert gridagg._h3_cell(-73.99, 40.75, 7) == 608725924560502783
+    # Vectorized cell-id API (single-element arrays); pin guards the convention.
+    cell = gridagg._h3_cells(np.array([-73.99]), np.array([40.75]), 7)[0]
+    assert int(cell) == 608725924560502783
 
 
 def test_quadbin_cell_id_pinned_for_known_point():
+    import numpy as np
+
     from databricks.labs.gbx.pyrx.core import gridagg
 
     # Same point @ quadbin res 10 -> standard CARTO quadbin cell id.
-    assert gridagg._quadbin_cell(-73.99, 40.75, 10) == 5234172679656833023
+    cell = gridagg._quadbin_cells(np.array([-73.99]), np.array([40.75]), 10)[0]
+    assert int(cell) == 5234172679656833023
 
 
 # --- dggs_grid fingerprint (bucket B, grid fns) ------------------------------
