@@ -591,6 +591,24 @@ _C4 = {
     "rst_xyzpyramid",
 }
 
+# rst_xyzpyramid is a tile-in / collection-out function like the rest of C4, but
+# its emitted tiles are slippy-map XYZ renders: each is one rst_tilexyz render
+# (the pyramid just loops RST_TileXYZ.execute over the intersecting (z,x,y) set).
+# Like rst_tilexyz, the rendered bytes are render-engine-specific (heavy GDAL
+# gdal_translate -of PNG vs light rio-tiler/PIL RGBA), so they cannot be made
+# pooled-pixel-identical cross-engine. The intersecting tile COUNT already agrees,
+# so the cell is TIMED but never pixel-compared: timing-only (pure-core,
+# fingerprint=False), exactly like rst_tilexyz.
+#
+# Canonical-render note (follow-up, not fixed here): "XYZ pyramid" is the
+# web-mercator slippy-map DISPLAY convention -> a rescaled RGBA PNG (0-255) is the
+# canonical output, which is what the lightweight rio-tiler tier emits. The
+# heavyweight RST_TileXYZ pipes raw source values through gdal_translate -of PNG
+# (no rescale to RGBA), which is the NON-canonical render. A heavy-tier fix to
+# emit a true RGBA web-map tile is deferred (Scala change; tracked separately).
+_C4_TIMING_ONLY = {"rst_xyzpyramid"}
+_C4_COMPARED = _C4 - _C4_TIMING_ONLY
+
 _C4_ARGS = {
     "rst_maketiles": {"size_in_mb"},
     "rst_retile": {"tile_width", "tile_height"},
@@ -614,12 +632,26 @@ def test_c4_wellformed_tile_in_collection_out():
         assert callable(fs.core_fn) and callable(fs.col_fn)
         # C4 takes a single open dataset (default input_kind), not a tile_array.
         assert fs.input_kind == "tile", name
-        assert fs.fingerprint is True, name
         assert fs.sources, name
 
 
-def test_c4_both_modes():
-    for name in _C4:
+def test_c4_compared_fns_fingerprint_true():
+    for name in _C4_COMPARED:
+        fs = s.REGISTRY[name]
+        assert fs.fingerprint is True, name
+
+
+def test_c4_xyzpyramid_is_timing_only():
+    # Render-engine-specific bytes (GDAL vs rio-tiler/PIL) -> count agrees,
+    # pixels cannot match; timed but not compared, like rst_tilexyz.
+    for name in _C4_TIMING_ONLY:
+        fs = s.REGISTRY[name]
+        assert fs.modes == ("pure-core",), name
+        assert fs.fingerprint is False, name
+
+
+def test_c4_compared_both_modes():
+    for name in _C4_COMPARED:
         fs = s.REGISTRY[name]
         assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
 

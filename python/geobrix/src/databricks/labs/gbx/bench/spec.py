@@ -1509,19 +1509,33 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
     ),
+    # rst_xyzpyramid is a tile-in / collection-out generator, but every emitted
+    # tile is one rst_tilexyz render — the pyramid just loops RST_TileXYZ.execute
+    # over the intersecting (z,x,y) set. Like rst_tilexyz, the rendered bytes are
+    # render-engine-specific: the heavyweight pipes raw source values through
+    # gdal_translate -of PNG, while the lightweight tier emits a rescaled RGBA
+    # web-map tile via rio-tiler/PIL. The slippy-map / web-mercator convention
+    # (this whole section is "Web-Mercator Tile Output") makes the RGBA display
+    # tile the canonical output, so the lightweight render is the correct one;
+    # the heavy gdal_translate path is non-canonical (deferred Scala follow-up:
+    # heavy RST_TileXYZ should rescale to RGBA before encoding). Either way the
+    # two stacks cannot be made pooled-pixel-identical, so — exactly as
+    # rst_tilexyz already is — this runs pure-core-only with its fingerprint
+    # suppressed. The intersecting tile COUNT already agrees across tiers; the
+    # render bytes are timed but never compared.
     "rst_xyzpyramid": FnSpec(
         "rst_xyzpyramid",
         "gbx_rst_xyzpyramid",
         "format",
-        _BOTH,
+        ("pure-core",),
         # zoom 10-11 (not 0-1): the corpus tiles are a small NYC extent, so at low
         # zoom the single whole-world (0,0,0) tile forces an enormous warp that
         # stalls in native GDAL. At z10-11 the extent maps to a handful of small,
         # cheap tiles (matches rst_tilexyz's high-zoom bench args).
         {"min_z": 10, "max_z": 11},
         # pyramid returns [{"z","x","y","bytes"}, ...]; project to the tile bytes
-        # so the runner produces a raster_collection fingerprint. The PNG tiles
-        # are RGBA web-mercator renders; pooled pixel agg + tile count compare.
+        # (raster_collection shape). Timing-only: fingerprint suppressed, so the
+        # runner emits an empty fingerprint on both engines and the cell is `na`.
         core_fn=lambda ds, a: [
             d["bytes"] for d in xyz.pyramid(ds, a["min_z"], a["max_z"])
         ],
@@ -1533,6 +1547,7 @@ REGISTRY: Dict[str, FnSpec] = {
             "src/main/scala/com/databricks/labs/gbx/rasterx/tile/TileMath.scala",
         ),
         core=False,
+        fingerprint=False,
     ),
 }
 
