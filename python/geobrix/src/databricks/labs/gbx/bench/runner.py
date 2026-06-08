@@ -12,7 +12,12 @@ from typing import Callable, Dict, List
 from databricks.labs.gbx.bench import manifest as m
 from databricks.labs.gbx.bench import spec as _spec
 from databricks.labs.gbx.bench import synth as _synth
-from databricks.labs.gbx.bench.fingerprint import fingerprint_output
+from databricks.labs.gbx.bench.fingerprint import (
+    fingerprint_collection,
+    fingerprint_dggs_grid,
+    fingerprint_output,
+    fingerprint_vector,
+)
 from databricks.labs.gbx.bench.results import ResultRow
 from databricks.labs.gbx.bench.spec import FnSpec
 from databricks.labs.gbx.pyrx import _serde
@@ -140,7 +145,27 @@ def _capture_and_call(fs, input_kind, raster, tile_path, synth_paths):
     # bytes/path feed a value; tile/tile_array reuse the timed `call` (which
     # returns the output) for the one untimed fingerprint pass.
     out = fs.core_fn(feed(), fs.args) if feed is not None else call()
-    return fingerprint_output(out), call
+    return _fingerprint_for(fs, out), call
+
+
+def _fingerprint_for(fs, out):
+    """Fingerprint a core_fn output, honoring the FnSpec's fingerprint_kind.
+
+    Most functions use ``"auto"`` -- ``fingerprint_output`` inspects the value
+    (bytes -> raster, list-of-bytes -> raster_collection, list-of-scalars ->
+    scalar_list, else scalar). Functions whose output shape the auto-detector
+    cannot classify declare an explicit kind: ``"dggs_grid"`` (a per-band list of
+    cell records the auto path would mis-read as a scalar_list), ``"vector"``, or
+    ``"collection"``.
+    """
+    kind = getattr(fs, "fingerprint_kind", "auto")
+    if kind == "dggs_grid":
+        return fingerprint_dggs_grid(out)
+    if kind == "vector":
+        return fingerprint_vector(out)
+    if kind == "collection":
+        return fingerprint_collection(out)
+    return fingerprint_output(out)
 
 
 def run_pure_core(

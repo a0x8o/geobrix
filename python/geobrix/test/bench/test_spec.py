@@ -446,13 +446,15 @@ def test_complex_arg_band_index_specs_require_two_bands():
         assert s.REGISTRY[name].min_bands == 2, name
 
 
-def test_full_set_count_is_eighty_four():
+def test_full_set_count_is_ninety_five():
     # 19 representative + 15 Task2 + 7 Task3 + 6 Task4 + 13 Task5 + 10 Task6
     # + 6 bucket-C group C1/C2 (4 readers/overviews + 2 subdataset)
     # + 3 bucket-C group C3 (multi-tile: frombands/combineavg/merge)
     # + 5 bucket-C group C4 (tiling: maketiles/retile/tooverlappingtiles/
     #   separatebands/xyzpyramid -> raster_collection fingerprint)
-    assert len(s.select(set="full")) == 84
+    # + 11 bucket-B group B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
+    #   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
+    assert len(s.select(set="full")) == 95
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -665,6 +667,92 @@ def test_c4_args_present():
 def test_c4_not_in_core_set():
     core = {f.name for f in s.select(set="core")}
     assert not (_C4 & core)
+
+
+# --- bucket B, group B-grid: DGGS functions (11) -----------------------------
+# rst_h3_tessellate + the 10 rst_{h3,quadbin}_rastertogrid{avg,count,max,median,
+# min} functions each map a raster into discrete-global-grid cells. Their core_fn
+# returns a per-band list of cell records (gridagg.raster_to_grid) -- which is a
+# list-of-lists, NOT bytes and NOT scalars -- so the runner's auto fingerprint
+# detection would mis-classify it. They declare fingerprint_kind == "dggs_grid"
+# so the runner routes the output through fingerprint_dggs_grid (cell count +
+# sorted signed-int64 cell-id hash + order-independent agg over measures).
+# H3/quadbin cell ids are PARITY-comparable across the heavy/light tiers.
+#
+# Resolutions are chosen for the small-extent corpus tiles (EPSG:4326 NYC,
+# 256/512 px at 0.0001-deg): H3 res 7 (~1.2 km edge) lands a handful of cells
+# (~5/band on a 256px tile); quadbin res 15 (~0.011-deg cell) lands ~12/band.
+# (Non-4326 corpus tiles feed their projected origins to h3/quadbin as raw
+# lon/lat -- exactly as the heavy tier does, no reprojection -- so the two
+# engines stay consistent; out-of-range tiles surface identically on both.)
+_DGGS = {
+    "rst_h3_tessellate",
+    "rst_h3_rastertogridavg",
+    "rst_h3_rastertogridcount",
+    "rst_h3_rastertogridmax",
+    "rst_h3_rastertogridmedian",
+    "rst_h3_rastertogridmin",
+    "rst_quadbin_rastertogridavg",
+    "rst_quadbin_rastertogridcount",
+    "rst_quadbin_rastertogridmax",
+    "rst_quadbin_rastertogridmedian",
+    "rst_quadbin_rastertogridmin",
+}
+
+_DGGS_H3_RES = 7
+_DGGS_QUADBIN_RES = 15
+
+
+def test_dggs_registered_in_full():
+    full = {f.name for f in s.select(set="full")}
+    missing = _DGGS - full
+    assert not missing, f"registry missing DGGS fns: {sorted(missing)}"
+
+
+def test_dggs_count_is_eleven():
+    assert len(_DGGS) == 11
+
+
+def test_dggs_wellformed_dggs_grid_fingerprint():
+    for name in _DGGS:
+        fs = s.REGISTRY[name]
+        assert fs.sql_name == f"gbx_{name}"
+        assert fs.category == "dggs"
+        assert fs.core is False
+        assert callable(fs.core_fn) and callable(fs.col_fn)
+        assert fs.input_kind == "tile", name
+        assert fs.fingerprint is True, name
+        assert fs.fingerprint_kind == "dggs_grid", name
+        assert fs.sources, name
+
+
+def test_dggs_both_modes():
+    for name in _DGGS:
+        fs = s.REGISTRY[name]
+        assert "pure-core" in fs.modes and "spark-path" in fs.modes, name
+
+
+def test_dggs_resolution_args_valid():
+    # H3 resolutions in [0, 15]; quadbin in [0, 20]. tessellate + the h3 grid fns
+    # carry the H3 res; the quadbin grid fns carry the quadbin res.
+    for name in _DGGS:
+        fs = s.REGISTRY[name]
+        assert "resolution" in fs.args, name
+        res = fs.args["resolution"]
+        if name.startswith("rst_quadbin_"):
+            assert res == _DGGS_QUADBIN_RES and 0 <= res <= 20, name
+        else:
+            assert res == _DGGS_H3_RES and 0 <= res <= 15, name
+
+
+def test_dggs_not_in_core_set():
+    core = {f.name for f in s.select(set="core")}
+    assert not (_DGGS & core)
+
+
+def test_fnspec_fingerprint_kind_defaults_auto():
+    fs = s.FnSpec("x", "gbx_x", "accessor", ("pure-core",))
+    assert fs.fingerprint_kind == "auto"
 
 
 def test_every_fnspec_declares_existing_sources():

@@ -26,7 +26,11 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     // + 3 bucket-C C3 (multi-tile: frombands/combineavg/merge)
     // + 5 bucket-C C4 (tiling: maketiles/retile/tooverlappingtiles/
     //   separatebands/xyzpyramid -> raster_collection fingerprint)
-    assert(BenchDispatch.all.size == 84)
+    // + 11 bucket-B B-grid (DGGS: h3_tessellate + 10 {h3,quadbin}
+    //   rastertogrid{avg,count,max,median,min} -> dggs_grid fingerprint)
+    assert(BenchDispatch.all.size == 95)
+    assert(BenchDispatch.category("rst_h3_tessellate") == "dggs")
+    assert(BenchDispatch.category("rst_quadbin_rastertogridavg") == "dggs")
     assert(BenchDispatch.category("rst_xyzpyramid") == "format")
     assert(BenchDispatch.category("rst_separatebands") == "format")
     assert(BenchDispatch.minBands("rst_ndvi") == 2)

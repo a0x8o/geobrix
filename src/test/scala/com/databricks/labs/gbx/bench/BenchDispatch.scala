@@ -38,9 +38,10 @@ import com.databricks.labs.gbx.rasterx.expressions.resample.RST_ResampleToRes
 import com.databricks.labs.gbx.rasterx.expressions.resample.RST_ResampleToSize
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_TileXYZ
 import com.databricks.labs.gbx.rasterx.expressions.web.RST_ToWebMercator
+import com.databricks.labs.gbx.rasterx.expressions.grid._
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.{GDAL, RasterDriver}
-import com.databricks.labs.gbx.rasterx.operations.{BalancedSubdivision, BoundingBox, OverlappingTiles, ReTile, SeparateBands}
+import com.databricks.labs.gbx.rasterx.operations.{BalancedSubdivision, BoundingBox, OverlappingTiles, RasterTessellate, ReTile, SeparateBands}
 import com.databricks.labs.gbx.rasterx.tile.TileMath
 import com.databricks.labs.gbx.util.NodeFilePathUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
@@ -64,7 +65,7 @@ object BenchDispatch {
   private val BM = "band-math"; private val WARP = "warp"
   private val EDIT = "edit"; private val FEAT = "features"
   private val FOCAL = "focal"; private val FMT = "format"; private val RES = "resample"
-  private val ANALYSIS = "analysis"
+  private val ANALYSIS = "analysis"; private val DGGS = "dggs"
 
   // Functions that need a >=2-band source even though they are not band-math
   // (rst_band selects band 2; rst_evi/savi/index read a second band on the
@@ -149,7 +150,15 @@ object BenchDispatch {
     "rst_frombands" -> FMT, "rst_combineavg" -> FMT, "rst_merge" -> FMT,
     // bucket C, group C4: tiling fns -> a COLLECTION of tiles -> format.
     "rst_maketiles" -> FMT, "rst_retile" -> FMT, "rst_tooverlappingtiles" -> FMT,
-    "rst_separatebands" -> FMT, "rst_xyzpyramid" -> FMT
+    "rst_separatebands" -> FMT, "rst_xyzpyramid" -> FMT,
+    // bucket B, group B-grid: DGGS fns -> a set of grid cells (dggs_grid fp).
+    "rst_h3_tessellate" -> DGGS,
+    "rst_h3_rastertogridavg" -> DGGS, "rst_h3_rastertogridcount" -> DGGS,
+    "rst_h3_rastertogridmax" -> DGGS, "rst_h3_rastertogridmedian" -> DGGS,
+    "rst_h3_rastertogridmin" -> DGGS,
+    "rst_quadbin_rastertogridavg" -> DGGS, "rst_quadbin_rastertogridcount" -> DGGS,
+    "rst_quadbin_rastertogridmax" -> DGGS, "rst_quadbin_rastertogridmedian" -> DGGS,
+    "rst_quadbin_rastertogridmin" -> DGGS
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -390,6 +399,48 @@ object BenchDispatch {
     case "rst_xyzpyramid" =>
       fpXyzPyramid(ds, argI(a, "min_z", 10), argI(a, "max_z", 11),
         argS(a, "format", "PNG"), argI(a, "size", 256), argS(a, "resampling", "bilinear"))
+    // bucket B, group B-grid: DGGS fns. raster->grid emits one (cellId, measure)
+    // set per band (Array[Array[(Long, T)]]) -> ofDggsGrid (count + sorted-id hash
+    // + agg over the measures). Count returns an integral measure (H3 Int /
+    // Quadbin Long), widened to Double so the agg matches the light float stats.
+    // H3/quadbin cell ids are signed Longs here and parity-comparable with light.
+    case "rst_h3_rastertogridavg" =>
+      BenchFingerprint.ofDggsGrid(RST_H3_RasterToGridAvg.execute(ds, argI(a, "resolution", 7)).toSeq)
+    case "rst_h3_rastertogridcount" =>
+      BenchFingerprint.ofDggsGrid(
+        RST_H3_RasterToGridCount.execute(ds, argI(a, "resolution", 7))
+          .map(_.map { case (c, m) => (c, m.toDouble) }).toSeq)
+    case "rst_h3_rastertogridmax" =>
+      BenchFingerprint.ofDggsGrid(RST_H3_RasterToGridMax.execute(ds, argI(a, "resolution", 7)).toSeq)
+    case "rst_h3_rastertogridmedian" =>
+      BenchFingerprint.ofDggsGrid(RST_H3_RasterToGridMedian.execute(ds, argI(a, "resolution", 7)).toSeq)
+    case "rst_h3_rastertogridmin" =>
+      BenchFingerprint.ofDggsGrid(RST_H3_RasterToGridMin.execute(ds, argI(a, "resolution", 7)).toSeq)
+    case "rst_quadbin_rastertogridavg" =>
+      BenchFingerprint.ofDggsGrid(RST_Quadbin_RasterToGridAvg.execute(ds, argI(a, "resolution", 15)).toSeq)
+    case "rst_quadbin_rastertogridcount" =>
+      BenchFingerprint.ofDggsGrid(
+        RST_Quadbin_RasterToGridCount.execute(ds, argI(a, "resolution", 15))
+          .map(_.map { case (c, m) => (c, m.toDouble) }).toSeq)
+    case "rst_quadbin_rastertogridmax" =>
+      BenchFingerprint.ofDggsGrid(RST_Quadbin_RasterToGridMax.execute(ds, argI(a, "resolution", 15)).toSeq)
+    case "rst_quadbin_rastertogridmedian" =>
+      BenchFingerprint.ofDggsGrid(RST_Quadbin_RasterToGridMedian.execute(ds, argI(a, "resolution", 15)).toSeq)
+    case "rst_quadbin_rastertogridmin" =>
+      BenchFingerprint.ofDggsGrid(RST_Quadbin_RasterToGridMin.execute(ds, argI(a, "resolution", 15)).toSeq)
+    // tessellate: one tile per overlapping H3 cell, NO scalar measure. Drain the
+    // iterator (a CLONE of the shared input ds, since the iterator closes its
+    // source on exhaustion), collect the cell ids, RELEASE each output tile, and
+    // fingerprint the id-only dggs_grid (count + hash, empty agg) -- mirroring the
+    // light tessellate path that emits agg == {}.
+    case "rst_h3_tessellate" =>
+      val iter = RasterTessellate.tessellateH3Iter(cloneDs(ds), Map.empty, argI(a, "resolution", 7))
+      val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
+      iter.foreach { case (cell, resDs, _) =>
+        ids += cell
+        if (resDs != null) RasterDriver.releaseDataset(resDs)
+      }
+      BenchFingerprint.ofDggsGridIds(ids.toSeq)
     case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }
@@ -702,6 +753,20 @@ object BenchDispatch {
         rst_tooverlappingtiles(tile, argI(a, "tile_width", 128), argI(a, "tile_height", 128), argI(a, "overlap", 25))
       case "rst_separatebands" => rst_separatebands(tile)
       case "rst_xyzpyramid"  => rst_xyzpyramid(tile, argI(a, "min_z", 10), argI(a, "max_z", 11))
+      // bucket B, group B-grid: DGGS fns -> ARRAY<...> column (spark-path is
+      // timing-only, not fingerprint-compared, so the args only need to be valid).
+      // The Scala wrappers take an Int resolution overload.
+      case "rst_h3_tessellate"             => rst_h3_tessellate(tile, argI(a, "resolution", 7))
+      case "rst_h3_rastertogridavg"        => rst_h3_rastertogridavg(tile, argI(a, "resolution", 7))
+      case "rst_h3_rastertogridcount"      => rst_h3_rastertogridcount(tile, argI(a, "resolution", 7))
+      case "rst_h3_rastertogridmax"        => rst_h3_rastertogridmax(tile, argI(a, "resolution", 7))
+      case "rst_h3_rastertogridmedian"     => rst_h3_rastertogridmedian(tile, argI(a, "resolution", 7))
+      case "rst_h3_rastertogridmin"        => rst_h3_rastertogridmin(tile, argI(a, "resolution", 7))
+      case "rst_quadbin_rastertogridavg"   => rst_quadbin_rastertogridavg(tile, argI(a, "resolution", 15))
+      case "rst_quadbin_rastertogridcount" => rst_quadbin_rastertogridcount(tile, argI(a, "resolution", 15))
+      case "rst_quadbin_rastertogridmax"   => rst_quadbin_rastertogridmax(tile, argI(a, "resolution", 15))
+      case "rst_quadbin_rastertogridmedian" => rst_quadbin_rastertogridmedian(tile, argI(a, "resolution", 15))
+      case "rst_quadbin_rastertogridmin"   => rst_quadbin_rastertogridmin(tile, argI(a, "resolution", 15))
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
     }
   }

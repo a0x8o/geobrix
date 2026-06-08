@@ -103,6 +103,24 @@ object BenchFingerprint {
     val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
     val vals = scala.collection.mutable.ArrayBuffer.empty[Double]
     cells.foreach(_.foreach { case (cid, measure) => ids += cid; vals += measure })
+    dggsGridJson(ids.toSeq, Some(vals.toSeq))
+  }
+
+  /** Count-only dggs_grid fingerprint for tessellation (no per-cell measure).
+    *
+    * `RST_H3_Tessellate` yields one Dataset per cell with NO scalar measure, so
+    * the fingerprint records only the cell COUNT + sorted-id hash and emits an
+    * EMPTY `agg` object -- matching the python tessellate path, which fingerprints
+    * `[(cellid, bytes)]` and produces `agg == {}` (no measures). Passing 0.0
+    * measures instead would yield a non-empty heavy agg ({min:0,...}) that
+    * disagrees with the light `{}`, so tessellation must use this id-only form. */
+  def ofDggsGridIds(ids: Seq[Long]): String = dggsGridJson(ids, None)
+
+  /** Shared dggs_grid JSON builder: cell COUNT, sha256 over SORTED signed-int64
+    * cell ids, the sorted ids, and the agg. `vals == None` (tessellation) emits an
+    * EMPTY agg object to mirror python's `agg == {}` when there are no measures;
+    * `Some(vals)` runs `putStats` (which itself emits nulls only when vals empty). */
+  private def dggsGridJson(ids: Seq[Long], vals: Option[Seq[Double]]): String = {
     val sorted = ids.sorted
     val joined = sorted.map(_.toString).mkString("\n")
     val digest = MessageDigest.getInstance("SHA-256").digest(joined.getBytes("UTF-8"))
@@ -114,7 +132,7 @@ object BenchFingerprint {
     val idArr: ArrayNode = n.putArray("cell_ids")
     sorted.foreach(idArr.add)
     val agg: ObjectNode = n.putObject("agg")
-    putStats(agg, vals.toSeq)
+    vals.foreach(v => putStats(agg, v))
     mapper.writeValueAsString(n)
   }
 

@@ -31,11 +31,13 @@ from databricks.labs.gbx.pyrx.core import (
     edit,
     features,
     focal,
+    gridagg,
     indices,
     mapalgebra,
     ops,
     resample,
     terrain,
+    tessellate,
     tiling,
     warp,
     xyz,
@@ -192,6 +194,23 @@ class FnSpec:
     #            dispatch opens the path itself (rst_fromfile). pure-core only,
     #            since the spark-path tile DataFrame carries no path column.
     input_kind: str = "tile"
+    # How the runner fingerprints this function's output. The default ``"auto"``
+    # preserves every pre-existing function: the runner inspects the output value
+    # (bytes -> raster, list-of-bytes -> raster_collection, list-of-scalars ->
+    # scalar_list, else scalar). Functions whose output shape the auto-detector
+    # cannot classify declare an explicit kind:
+    #   "dggs_grid":  a discrete-global-grid output (the bucket-B grid fns). The
+    #                 core_fn returns a per-band list of cell records
+    #                 (``gridagg.raster_to_grid``) or, for tessellation, a single
+    #                 band wrapping ``[(cellid, bytes)]`` -- a list-of-lists that
+    #                 the auto-detector would mis-read as a scalar_list. The runner
+    #                 routes it through ``fingerprint_dggs_grid``.
+    #   "vector":     a vector-feature output (the bucket-B vector fns) routed
+    #                 through ``fingerprint_vector``.
+    #   "collection": force the raster_collection fingerprint.
+    # Honored only by the pure-core fingerprint pass (the spark-path mode never
+    # fingerprints its output).
+    fingerprint_kind: str = "auto"
     # Repo-relative file paths whose CONTENT defines this function's heavy+light
     # behavior (the pyrx core module(s) the core_fn calls, plus the heavy Scala
     # RST_<Name> expression and any shared heavy helper it delegates to). This
@@ -240,6 +259,15 @@ _DERIVEDBAND_LIGHT = (_PYRX + "derivedband.py",)
 # multi-tile reducers (bucket C, group C3) live in core/agg.py; it does NOT
 # import _nodata (grep-confirmed).
 _AGG_LIGHT = (_PYRX + "agg.py",)
+# bucket B, group B-grid (DGGS). raster->grid lives in core/gridagg.py; H3
+# tessellation in core/tessellate.py (which delegates the per-cell clip to
+# core/edit.py). The shared GridX index helpers the heavy expressions call are
+# gridx/grid/{H3,Quadbin}.scala (RST_H3_RasterToGrid -> H3.pointToCellID;
+# RST_Quadbin_RasterToGrid -> Quadbin; RST_H3_Tessellate -> RasterTessellate ->
+# H3). Neither light module imports _nodata (grep-confirmed).
+_GRIDX = "src/main/scala/com/databricks/labs/gbx/gridx/grid/"
+_GRIDAGG_LIGHT = (_PYRX + "gridagg.py",)
+_TESSELLATE_LIGHT = (_PYRX + "tessellate.py", _PYRX + "edit.py")
 
 REGISTRY: Dict[str, FnSpec] = {
     "rst_width": FnSpec(
@@ -1548,6 +1576,232 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
         fingerprint=False,
+    ),
+    # --- bucket B, group B-grid: DGGS functions (11) --------------------------
+    # rst_h3_tessellate + the 10 rst_{h3,quadbin}_rastertogrid{avg,count,max,
+    # median,min} functions map a raster into discrete-global-grid cells. They
+    # ride the default input_kind == "tile" (a single open dataset) but their
+    # core_fn returns a per-band list of cell records (not bytes, not scalars),
+    # so each declares fingerprint_kind == "dggs_grid" to route the output through
+    # fingerprint_dggs_grid (cell count + sorted signed-int64 cell-id hash +
+    # order-independent agg over the per-cell measures). H3/quadbin cell ids are
+    # PARITY-comparable across tiers (confirmed by the test_fingerprint parity
+    # gate), so an identical cell-set hashes identically on both engines.
+    #
+    # Resolutions are sized for the small-extent corpus tiles (EPSG:4326 NYC,
+    # 256/512 px at 0.0001 deg ~= 0.0256-deg extent on a 256px tile): H3 res 7
+    # (~1.2 km hex edge) -> ~5 cells/band; quadbin res 15 (~0.011-deg cell) ->
+    # ~12 cells/band. Both land a sane handful so the cell-set + agg compare
+    # meaningfully. The raster is interpreted as EPSG:4326 lon/lat with NO
+    # reprojection on BOTH tiers, so non-4326 corpus tiles feed their projected
+    # origins as raw lon/lat identically across engines (consistent, by design).
+    # --- H3 tessellation (tessellate.py): one tile per overlapping H3 cell ---
+    # tessellate_h3 returns a FLAT list of (cellid, bytes); wrap it as a single
+    # "band" ([result]) so _grid_records' per-band iteration sees the tuples.
+    # The bytes carry no measure, so the dggs_grid fingerprint is count + hash
+    # only (empty agg) -- still a full cell-set comparison.
+    "rst_h3_tessellate": FnSpec(
+        "rst_h3_tessellate",
+        "gbx_rst_h3_tessellate",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: [tessellate.tessellate_h3(ds, a["resolution"])],
+        col_fn=lambda t, a: prx.rst_h3_tessellate(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_TESSELLATE_LIGHT
+        + (
+            _HEAVY + "generators/RST_H3_Tessellate.scala",
+            _OPS + "RasterTessellate.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    # --- H3 raster->grid aggregates (gridagg.py): {avg,count,max,median,min} ---
+    "rst_h3_rastertogridavg": FnSpec(
+        "rst_h3_rastertogridavg",
+        "gbx_rst_h3_rastertogridavg",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "avg"),
+        col_fn=lambda t, a: prx.rst_h3_rastertogridavg(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_H3_RasterToGridAvg.scala",
+            _HEAVY + "grid/RST_H3_RasterToGrid.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    "rst_h3_rastertogridcount": FnSpec(
+        "rst_h3_rastertogridcount",
+        "gbx_rst_h3_rastertogridcount",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "count"
+        ),
+        col_fn=lambda t, a: prx.rst_h3_rastertogridcount(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_H3_RasterToGridCount.scala",
+            _HEAVY + "grid/RST_H3_RasterToGrid.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    "rst_h3_rastertogridmax": FnSpec(
+        "rst_h3_rastertogridmax",
+        "gbx_rst_h3_rastertogridmax",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "max"),
+        col_fn=lambda t, a: prx.rst_h3_rastertogridmax(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_H3_RasterToGridMax.scala",
+            _HEAVY + "grid/RST_H3_RasterToGrid.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    "rst_h3_rastertogridmedian": FnSpec(
+        "rst_h3_rastertogridmedian",
+        "gbx_rst_h3_rastertogridmedian",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "median"
+        ),
+        col_fn=lambda t, a: prx.rst_h3_rastertogridmedian(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_H3_RasterToGridMedian.scala",
+            _HEAVY + "grid/RST_H3_RasterToGrid.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    "rst_h3_rastertogridmin": FnSpec(
+        "rst_h3_rastertogridmin",
+        "gbx_rst_h3_rastertogridmin",
+        "dggs",
+        _BOTH,
+        {"resolution": 7},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "min"),
+        col_fn=lambda t, a: prx.rst_h3_rastertogridmin(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_H3_RasterToGridMin.scala",
+            _HEAVY + "grid/RST_H3_RasterToGrid.scala",
+            _GRIDX + "H3.scala",
+        ),
+        core=False,
+    ),
+    # --- quadbin raster->grid aggregates (gridagg.py) -------------------------
+    "rst_quadbin_rastertogridavg": FnSpec(
+        "rst_quadbin_rastertogridavg",
+        "gbx_rst_quadbin_rastertogridavg",
+        "dggs",
+        _BOTH,
+        {"resolution": 15},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "quadbin", "avg"
+        ),
+        col_fn=lambda t, a: prx.rst_quadbin_rastertogridavg(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Quadbin_RasterToGridAvg.scala",
+            _HEAVY + "grid/RST_Quadbin_RasterToGrid.scala",
+            _GRIDX + "Quadbin.scala",
+        ),
+        core=False,
+    ),
+    "rst_quadbin_rastertogridcount": FnSpec(
+        "rst_quadbin_rastertogridcount",
+        "gbx_rst_quadbin_rastertogridcount",
+        "dggs",
+        _BOTH,
+        {"resolution": 15},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "quadbin", "count"
+        ),
+        col_fn=lambda t, a: prx.rst_quadbin_rastertogridcount(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Quadbin_RasterToGridCount.scala",
+            _HEAVY + "grid/RST_Quadbin_RasterToGrid.scala",
+            _GRIDX + "Quadbin.scala",
+        ),
+        core=False,
+    ),
+    "rst_quadbin_rastertogridmax": FnSpec(
+        "rst_quadbin_rastertogridmax",
+        "gbx_rst_quadbin_rastertogridmax",
+        "dggs",
+        _BOTH,
+        {"resolution": 15},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "quadbin", "max"
+        ),
+        col_fn=lambda t, a: prx.rst_quadbin_rastertogridmax(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Quadbin_RasterToGridMax.scala",
+            _HEAVY + "grid/RST_Quadbin_RasterToGrid.scala",
+            _GRIDX + "Quadbin.scala",
+        ),
+        core=False,
+    ),
+    "rst_quadbin_rastertogridmedian": FnSpec(
+        "rst_quadbin_rastertogridmedian",
+        "gbx_rst_quadbin_rastertogridmedian",
+        "dggs",
+        _BOTH,
+        {"resolution": 15},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "quadbin", "median"
+        ),
+        col_fn=lambda t, a: prx.rst_quadbin_rastertogridmedian(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Quadbin_RasterToGridMedian.scala",
+            _HEAVY + "grid/RST_Quadbin_RasterToGrid.scala",
+            _GRIDX + "Quadbin.scala",
+        ),
+        core=False,
+    ),
+    "rst_quadbin_rastertogridmin": FnSpec(
+        "rst_quadbin_rastertogridmin",
+        "gbx_rst_quadbin_rastertogridmin",
+        "dggs",
+        _BOTH,
+        {"resolution": 15},
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "quadbin", "min"
+        ),
+        col_fn=lambda t, a: prx.rst_quadbin_rastertogridmin(t, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Quadbin_RasterToGridMin.scala",
+            _HEAVY + "grid/RST_Quadbin_RasterToGrid.scala",
+            _GRIDX + "Quadbin.scala",
+        ),
+        core=False,
     ),
 }
 
