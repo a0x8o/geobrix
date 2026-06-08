@@ -971,7 +971,10 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"new_type": "Float64"},
         core_fn=lambda ds, a: edit.update_type(ds, a["new_type"]),
-        col_fn=lambda t, a: prx.rst_updatetype(t, a["new_type"]),
+        # F.lit the STRING arg: prx _col passes bare str through as a column NAME
+        # (auto-lit covers only numeric scalars), so an unwrapped "Float64" resolves
+        # as a column in spark-path. Numeric args may stay raw.
+        col_fn=lambda t, a: prx.rst_updatetype(t, F.lit(a["new_type"])),
         sources=_EDIT_LIGHT + (_HEAVY + "RST_UpdateType.scala",),
         core=False,
     ),
@@ -1003,7 +1006,8 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"kernel_size": 3, "operation": "median"},
         core_fn=lambda ds, a: focal.filt(ds, a["kernel_size"], a["operation"]),
-        col_fn=lambda t, a: prx.rst_filter(t, a["kernel_size"], a["operation"]),
+        # F.lit the STRING operation arg (kernel_size is numeric -> auto-lit).
+        col_fn=lambda t, a: prx.rst_filter(t, a["kernel_size"], F.lit(a["operation"])),
         sources=_FOCAL_LIGHT
         + (_HEAVY + "RST_Filter.scala", _OPS + "KernelFilter.scala", _GDAL_BLOCK),
         core=False,
@@ -1357,7 +1361,8 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"driver": "GTiff"},
         core_fn=lambda b, a: bytes(b),
-        col_fn=lambda t, a: prx.rst_fromcontent(t["raster"], a["driver"]),
+        # F.lit the STRING driver arg (else prx _col reads "GTiff" as a column name).
+        col_fn=lambda t, a: prx.rst_fromcontent(t["raster"], F.lit(a["driver"])),
         sources=(_PYRX_SERDE, _HEAVY + "constructor/RST_FromContent.scala"),
         core=False,
         input_kind="bytes",
