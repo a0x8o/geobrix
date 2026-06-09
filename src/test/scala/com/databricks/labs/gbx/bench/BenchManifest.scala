@@ -2,7 +2,6 @@ package com.databricks.labs.gbx.bench
 
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import java.nio.file.{Files, Paths}
 
 case class TileEntry(path: String, cellid: Long, srid: Int, dtype: String,
                      bands: Int, tile_px: Int, nodata_frac: Double)
@@ -41,15 +40,17 @@ object BenchManifest {
     .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
 
   def read(path: String): Corpus = {
-    val bytes = Files.readAllBytes(Paths.get(path))
-    mapper.readValue(bytes, classOf[Corpus])
+    // BenchIO.readBytes is FUSE-safe; corpus.json lives on a dbfs /Volumes mount
+    // that rejects java.nio Files.readAllBytes ("Operation not permitted").
+    mapper.readValue(BenchIO.readBytes(path), classOf[Corpus])
   }
 
   /** Read the geometry corpus written alongside corpus.json, or None if absent
-    * (older corpora have no geometry.json, so non-geometry runs still work). */
+    * (older corpora have no geometry.json, so non-geometry runs still work). The read
+    * goes through Spark (BenchIO.readBytes); a missing path surfaces as a load failure,
+    * which we treat as "absent". */
   def readGeometry(path: String): Option[GeometryCorpus] = {
-    val p = Paths.get(path)
-    if (!Files.exists(p)) None
-    else Some(mapper.readValue(Files.readAllBytes(p), classOf[GeometryCorpus]))
+    try Some(mapper.readValue(BenchIO.readBytes(path), classOf[GeometryCorpus]))
+    catch { case _: Exception => None }
   }
 }

@@ -13,6 +13,19 @@ object HeavyRunner {
   private def resolve(corpusRoot: String, path: String): String =
     if (Paths.get(path).isAbsolute) path else Paths.get(corpusRoot, path).toString
 
+  // GDAL needs random access; UC Volumes (cloud object storage) don't support it, so the
+  // JVM can't gdal.Open a /Volumes tile directly. Stage it to a LOCAL temp via the
+  // Volume-native Hadoop read (BenchIO.readBytes), open that, then clean up. Same reason
+  // BenchIO.readBytes reads through the Hadoop FileSystem rather than java.io.
+  private def withVolumeDataset[T](path: String)(f: Dataset => T): T = {
+    val tmp = java.io.File.createTempFile("heavy_gdal_", ".tif")
+    try {
+      Files.write(tmp.toPath, BenchIO.readBytes(path))
+      val ds = gdal.Open(tmp.getAbsolutePath)
+      try f(ds) finally if (ds != null) ds.delete()
+    } finally tmp.delete()
+  }
+
   // Deterministic synth output dir, mirroring bench.synth.synth_dir on the pyrx
   // side EXACTLY (sha1(tile_rel_path)[:12]) so the heavy runner reads the SAME
   // files the pyrx runner wrote (write-once-read-both cross-engine identity).
@@ -32,9 +45,7 @@ object HeavyRunner {
       case "frombands" =>
         // one single-band tile per source band; determined by opening the source.
         val src = resolve(corpusRoot, tileRelPath)
-        val ds = gdal.Open(src)
-        val n = if (ds != null) ds.GetRasterCount() else 0
-        if (ds != null) ds.delete()
+        val n = withVolumeDataset(src)(ds => if (ds != null) ds.GetRasterCount() else 0)
         (1 to n).map(b => f"band_$b%02d.tif")
       case "combineavg" => Seq("copy_0.tif", "copy_1.tif")
       case "merge"      => Seq("part_0.tif", "part_1.tif")
@@ -116,7 +127,7 @@ object HeavyRunner {
         try {
           val (fp, body): (String, () => Unit) = kind match {
             case "bytes" =>
-              val bytes = Files.readAllBytes(Paths.get(path))
+              val bytes = BenchIO.readBytes(path)  // FUSE-safe (Volume tile bytes)
               (BenchDispatch.pureCoreBytes(fn, bytes, a),
                 () => BenchDispatch.pureCoreBytes(fn, bytes, a))
             case "path" =>
@@ -190,6 +201,10 @@ object HeavyRunner {
     spark.conf.set("spark.sql.shuffle.partitions", "2")
     val e = env("docker")
     val pool = corpus.row_pool
+    // Record the row tiles' real srid (they share one CRS) so heavy spark-path rows
+    // match the lightweight rows in compare_cells. Hardcoding 0 here made every cell
+    // mismatch the light side's real srid -> compared=0.
+    val poolSrid = pool.tiles.headOption.map(_.srid).getOrElse(0)
     val maxRows = rowCounts.max
     val paths = pool.tiles.take(maxRows).map(t => resolve(corpusRoot, t.path))
     // coalesce(1): the rst_fromcontent map (and every downstream spark-path job) opens
@@ -214,7 +229,7 @@ object HeavyRunner {
     val arrayRoot = pool.tiles.headOption.map(_.path).getOrElse("")
     def synthArrayCol(fn: String): Column = {
       val tileCols = synthPaths(corpusRoot, arrayRoot, fn).map { p =>
-        functions.rst_fromcontent(lit(Files.readAllBytes(Paths.get(p))), lit("GTiff"))
+        functions.rst_fromcontent(lit(BenchIO.readBytes(p)), lit("GTiff"))  // FUSE-safe
       }
       array(tileCols: _*)
     }
@@ -254,12 +269,12 @@ object HeavyRunner {
             .write.format("noop").mode("overwrite").save()
         }, warmup, measured)
         val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
-        emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
+        emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n, 0.0,
           warmup, measured, median, mn, p90, mpixS,
           if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", ""))
       } catch {
         case ex: Throwable =>
-          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n, 0.0,
+          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n, 0.0,
             warmup, 0, 0, 0, 0, 0, 0, "error", Option(ex.getMessage).getOrElse(ex.toString).take(300), ""))
       }
     }
@@ -297,10 +312,12 @@ object HeavyRunner {
                            emit: BenchRow => Unit): Unit = {
     import org.apache.spark.sql.functions.{col, lit, struct}
     val pool = corpus.row_pool
+    // Real srid of the row tiles (see runSparkPath) so agg rows match the light side.
+    val poolSrid = pool.tiles.headOption.map(_.srid).getOrElse(0)
     val sorted = rowCounts.sorted
     val arrayRoot = pool.tiles.headOption.map(_.path).getOrElse("")
     def errAll(msg: String): Unit = sorted.foreach { n =>
-      emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+      emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
         0.0, warmup, 0, 0, 0, 0, 0, 0, "error", msg.take(300), ""))
     }
     // Serialize the heavy aggregate spark-path to a SINGLE partition so GDAL is
@@ -323,17 +340,15 @@ object HeavyRunner {
         val recipe = BenchDispatch.aggSynthRecipe(fn)
         val dir = synthDir(corpusRoot, arrayRoot, recipe)
         val src = resolve(corpusRoot, arrayRoot)
-        val srcDs = gdal.Open(src)
         val names = recipe match {
           case "frombands" =>
-            val n = if (srcDs != null) srcDs.GetRasterCount() else 0
+            val n = withVolumeDataset(src)(ds => if (ds != null) ds.GetRasterCount() else 0)
             (1 to n).map(b => f"band_$b%02d.tif")
           case "combineavg" => Seq("copy_0.tif", "copy_1.tif")
           case "merge"      => Seq("part_0.tif", "part_1.tif")
         }
-        if (srcDs != null) srcDs.delete()
         val rows = names.zipWithIndex.map { case (nm, i) =>
-          val bytes = Files.readAllBytes(dir.resolve(nm))
+          val bytes = BenchIO.readBytes(dir.resolve(nm).toString)  // FUSE-safe
           (0L, bytes, i)
         }
         import spark.implicits._
@@ -345,8 +360,7 @@ object HeavyRunner {
         val gset = geomCorpus.flatMap(_.setFor(arrayRoot, pool.tiles.headOption.map(_.srid).getOrElse(0)))
           .getOrElse(throw new IllegalStateException(
             s"no geometry set for $arrayRoot; geometry.json missing or stale"))
-        val srcDs = gdal.Open(resolve(corpusRoot, arrayRoot))
-        try ext = extentOf(srcDs) finally if (srcDs != null) srcDs.delete()
+        ext = withVolumeDataset(resolve(corpusRoot, arrayRoot))(extentOf)
         val pairs: Seq[(Array[Byte], Double)] = fn match {
           case "rst_dtmfromgeoms_agg"   => gset.zpointWkbs.map(b => (b, 0.0))
           case "rst_gridfrompoints_agg" => gset.pointPairs
@@ -396,12 +410,12 @@ object HeavyRunner {
           }, warmup, measured)
           val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
           val emitFp = if (n == sorted.head) fp else ""
-          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+          emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
             0.0, warmup, measured, median, mn, p90, mpixS,
             if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", emitFp))
         } catch {
           case ex: Throwable =>
-            emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, 0, n,
+            emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
               0.0, warmup, 0, 0, 0, 0, 0, 0, "error",
               Option(ex.getMessage).getOrElse(ex.toString).take(300), ""))
         }

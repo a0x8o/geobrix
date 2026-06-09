@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import java.io.{FileOutputStream, OutputStreamWriter}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
+import org.apache.spark.sql.SparkSession
 
 /** Mirrors the Python ResultRow (results.py) field-for-field (snake_case = JSON keys). */
 case class BenchRow(
@@ -45,6 +46,18 @@ object BenchIO {
 
   def toJson(row: BenchRow): String = mapper.writeValueAsString(row)
 
+  /** Volume-native byte read for the JVM. UC Volumes are cloud object storage: the JVM
+    * cannot read a `/Volumes` file via java.io / java.nio (EPERM -- no random access) NOR
+    * via the Hadoop FileSystem directly (UC_VOLUMES_NOT_SUPPORTED). The only UC-aware
+    * reader available to the JVM is Spark itself, so read the file's bytes through the
+    * binaryFile data source (the same path the row-tile reader uses). This is the JVM
+    * equivalent of Python's `Path.read_bytes()` on a Volume. Works on-cluster (UC
+    * Volume) and in local tests (local file) alike. */
+  def readBytes(path: String): Array[Byte] = {
+    val df = SparkSession.active.read.format("binaryFile").load(path)
+    df.select("content").head().getAs[Array[Byte]](0)
+  }
+
   def writeJsonl(rows: Seq[BenchRow], path: String): Unit = {
     val p = Paths.get(path)
     Option(p.getParent).foreach(Files.createDirectories(_))
@@ -67,7 +80,11 @@ object BenchIO {
       writer.write(toJson(row))
       writer.write("\n")
       writer.flush()       // push out of the JVM writer buffer
-      fos.getFD.sync()     // fsync so completed rows survive a native crash
+      // fsync so completed rows survive a native crash. Best-effort: the dbfs
+      // /Volumes FUSE mount can reject fsync ("Operation not permitted"); the row
+      // is already flushed to the OS, so skip durability rather than abort the run.
+      try fos.getFD.sync()
+      catch { case _: java.io.IOException => () }
     }
 
     override def close(): Unit = {
