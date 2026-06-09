@@ -105,6 +105,13 @@ object RST_FillNodata extends WithExpressionInfo {
 
         val nBands = outDs.GetRasterCount
         val gdalOpts = new JVector[String]()
+        // Route GDAL's scratch X/Y index work files to the in-memory MEM driver instead of
+        // the default GTiff temp file. The default writes a temp GTiff via
+        // CPLGenerateTempFilename (CPL_TMPDIR/TMPDIR), which on some executors (e.g. a
+        // Databricks cluster) fails with "Could not create Y index work file. Check driver
+        // capabilities." MEM needs no filesystem and matches the /vsimem output. (GDAL >=
+        // 3.7; harmlessly ignored on older builds.)
+        gdalOpts.add("TEMP_FILE_DRIVER=MEM")
         var b = 1
         while (b <= nBands) {
             val band = outDs.GetRasterBand(b)
