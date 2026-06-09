@@ -53,6 +53,8 @@ MODES = {modes!r}
 ROW_COUNTS = [int(x) for x in {row_counts!r}.split(",") if x]
 WARMUP, MEASURED = {warmup}, {measured}
 TRUNCATE = {truncate!r}
+TRUNCATE_ALL = {truncate_all!r}
+LIGHTWEIGHT, HEAVYWEIGHT = {lightweight!r}, {heavyweight!r}
 
 os.makedirs(OUT, exist_ok=True)
 corpus = _m.Corpus.read(f"{{CORPUS}}/corpus.json")
@@ -67,18 +69,60 @@ lw, hw, all_rows = [], [], []
 # flushing the table is truncated up-front, NOT at the end -- a late truncate would wipe
 # the rows we just streamed in.)
 _SINK = """
-if TRUNCATE:
+if TRUNCATE_ALL:
+    # Whole-table reset: only THIS run's rows remain afterwards. Use for a clean table;
+    # NOT for coexisting light+heavy run separately (the 2nd invocation would wipe the
+    # 1st) -- use --truncate-results for that.
     try:
         spark.sql(f"TRUNCATE TABLE {TABLE}")
-        print(f"truncated {TABLE} -- only this run's rows will remain")
+        print(f"TRUNCATED {TABLE} (whole table) -- only this run's rows will remain")
     except Exception as _e:  # table doesn't exist yet -> the first append creates it
-        print(f"truncate skipped ({TABLE} not found): {_e}")
+        print(f"truncate-all skipped ({TABLE} absent): {_e}")
+elif TRUNCATE:
+    # Scope the clear to THIS run_id + the tier(s) this invocation writes, so the paired
+    # tier of the same benchmark run is NOT wiped: a --heavyweight-only run clears only
+    # its heavyweight rows for run_id and leaves the lightweight rows a separate
+    # --lightweight-only run wrote (and vice versa); --modes both clears both. Other
+    # run_ids are untouched. (Whole-table TRUNCATE would clobber the paired tier.)
+    _apis = [a for a, on in (("lightweight", LIGHTWEIGHT), ("heavyweight", HEAVYWEIGHT)) if on]
+    _in = ", ".join(f"'{a}'" for a in _apis)
+    try:
+        spark.sql(f"DELETE FROM {TABLE} WHERE run_id = '{RUN_ID}' AND api IN ({_in})")
+        print(f"cleared prior rows: run_id={RUN_ID} api in [{_in}] (other runs/tiers kept)")
+    except Exception as _e:  # table doesn't exist yet -> the first append creates it
+        print(f"truncate skipped ({TABLE} absent/empty): {_e}")
 
 _delta = [0]
 
 
 def _sink(batch):
     _delta[0] += _cl.to_delta(batch, spark, TABLE, where="cluster")
+
+
+def _show_md(title, text):
+    # Render a generated summary inline in the run notebook (visible in the Databricks
+    # run UI) the moment its tier finishes. displayHTML keeps the md pipe-tables aligned
+    # in a monospace block; falls back to print if displayHTML isn't available.
+    try:
+        import html as _h
+        displayHTML(
+            "<h3 style='font-family:sans-serif;margin:8px 0'>" + _h.escape(title) + "</h3>"
+            "<pre style='font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+            "font-size:12px;line-height:1.4;white-space:pre;overflow:auto;"
+            "background:#f6f8fa;padding:12px;border-radius:6px;border:1px solid #d0d7de'>"
+            + _h.escape(text) + "</pre>")
+    except Exception:
+        print("\\n===== " + title + " =====\\n" + text)
+
+
+def _show_table(api):
+    # Show this tier's streamed rows as an interactive table (display) right before its
+    # summary, so the run notebook surfaces the raw bench_results rows too.
+    _df = spark.sql(f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND api = '{api}'")
+    try:
+        display(_df)
+    except Exception:
+        _df.show(300, truncate=False)
 """
 
 _LIGHT = """
@@ -89,18 +133,72 @@ if MODES in ("spark-path", "both"):
 results.write_jsonl(lw, f"{OUT}/lightweight.jsonl")
 # Always write a per-tier summary so every run (incl. lightweight-only, which
 # has no heavy-vs-light comparison summary.md) leaves a readable summary file.
+_lw_md = results.summarize(lw)
 with open(f"{OUT}/lightweight.summary.md", "w") as fh:
-    fh.write(results.summarize(lw))
+    fh.write(_lw_md)
+_show_table("lightweight")  # raw rows, then the summary
+_show_md(f"Lightweight summary -- {RUN_ID}", _lw_md)  # (a) shown once light completes
 all_rows += lw
 """
 
 _HEAVY = """
-hw_out = f"{OUT}/heavyweight.jsonl"
-spark._jvm.com.databricks.labs.gbx.bench.HeavyBenchMain.run(
-    spark._jsparkSession, CORPUS, hw_out, FUNCTIONS, MODES,
-    ",".join(str(x) for x in ROW_COUNTS), WARMUP, MEASURED, RUN_ID)
-hw = results.read_jsonl(hw_out)
-_sink(hw)  # heavy rows append through the same sink (one batch; the Scala leg is opaque)
+# Heavy runs in the JVM (reads the Volume corpus via Spark; see HeavyRunner). It writes
+# its shard to a LOCAL path ONE ROW AT A TIME, fsync'd per row (BenchIO.JsonlAppender) --
+# the JVM can't write the /Volumes object-storage mount. To make the heavy run pollable
+# live (like the lightweight sink) WITHOUT changing the JVM, run HeavyBenchMain in a
+# thread and TAIL that shard: stream each newly-flushed row to the SAME Delta sink as it
+# lands. The jsonl shard stays the durable artifact; all Delta writes go through the
+# Python sink so heavy rows share the lightweight schema (safe for --modes both).
+import threading
+import time as _time
+
+_local_hw_out = "/local_disk0/heavyweight.jsonl"
+if os.path.exists(_local_hw_out):
+    os.remove(_local_hw_out)
+_hw_err = {}
+
+
+def _run_heavy():
+    try:
+        spark._jvm.com.databricks.labs.gbx.bench.HeavyBenchMain.run(
+            spark._jsparkSession, CORPUS, _local_hw_out, FUNCTIONS, MODES,
+            ",".join(str(x) for x in ROW_COUNTS), WARMUP, MEASURED, RUN_ID)
+    except Exception as _e:  # re-raised after the join
+        _hw_err["e"] = _e
+
+
+def _complete_lines(path):
+    # Only lines the JVM has fully written: each append is text + "\\n" + flush + fsync,
+    # so split("\\n")[:-1] drops a trailing partial line until it's complete.
+    if not os.path.exists(path):
+        return []
+    with open(path) as _fh:
+        return _fh.read().split("\\n")[:-1]
+
+
+_hw_thread = threading.Thread(target=_run_heavy, daemon=True)
+_hw_thread.start()
+_hw_seen = 0
+while True:
+    _alive = _hw_thread.is_alive()
+    _lines = _complete_lines(_local_hw_out)
+    if len(_lines) > _hw_seen:
+        _batch = [results.ResultRow(**json.loads(_l)) for _l in _lines[_hw_seen:] if _l.strip()]
+        _sink(_batch)          # interim Delta append -> pollable live
+        hw += _batch
+        _hw_seen = len(_lines)
+    if not _alive:             # thread done -> the read above already drained the tail
+        break
+    _time.sleep(2)
+_hw_thread.join()
+if _hw_err.get("e"):
+    raise _hw_err["e"]
+# Per-tier heavy summary (mirrors lightweight.summary.md) + show it once heavy completes.
+_hw_md = results.summarize(hw)
+with open(f"{OUT}/heavyweight.summary.md", "w") as fh:
+    fh.write(_hw_md)
+_show_table("heavyweight")  # raw rows, then the summary
+_show_md(f"Heavyweight summary -- {RUN_ID}", _hw_md)  # (b) shown once heavy completes
 all_rows += hw
 """
 
@@ -123,14 +221,16 @@ result = dict(
 if hw and lw:
     cells, unmatched = compare.compare_cells(hw, lw)
     compare.write_csv(cells, f"{OUT}/comparison.csv")
+    _cmp_md = compare.summarize_compare(cells, unmatched, hw, lw)
     with open(f"{OUT}/summary.md", "w") as fh:
-        fh.write(compare.summarize_compare(cells, unmatched, hw, lw))
+        fh.write(_cmp_md)
+    _show_md(f"Heavy vs light comparison -- {RUN_ID}", _cmp_md)  # (c) final, both tiers ran
     result["compared"] = len(cells)
     result["summary"] = f"{OUT}/summary.md"
 elif lw:
     result["summary"] = f"{OUT}/lightweight.summary.md"
 else:
-    result["summary"] = f"{OUT}/heavyweight.jsonl"
+    result["summary"] = f"{OUT}/heavyweight.summary.md"
 
 dbutils.notebook.exit(json.dumps(result))
 """
@@ -158,6 +258,9 @@ def build_bench_notebook(cfg: dict) -> dict:
         warmup=cfg["warmup"],
         measured=cfg["measured"],
         truncate=cfg.get("truncate_results", False),
+        truncate_all=cfg.get("truncate_all", False),
+        lightweight=bool(cfg.get("lightweight")),
+        heavyweight=bool(cfg.get("heavyweight")),
     )
     body += _SINK  # truncate up-front + define the incremental Delta sink
     if cfg.get("lightweight"):

@@ -24,7 +24,9 @@ Usage:
      GBX_BUNDLE_WHEEL_VOLUME_PATH.
   4. Run: python push_and_run_bench_on_cluster.py [options]
      Options: --no-wait, --heavyweight-only, --lightweight-only, --run-id, --functions,
-              --modes, --row-counts, --warmup, --measured
+              --modes, --row-counts, --warmup, --measured,
+              --truncate-results (clear only this run_id + this invocation's tier(s)),
+              --truncate-all (empty the whole table -> only the current run remains)
 """
 from __future__ import annotations
 
@@ -100,16 +102,21 @@ def _discover_warehouse(w):
     return (running or whs)[0].id
 
 
-def _count_run_rows(w, warehouse_id: str, table: str, run_id: str) -> int:
-    """COUNT(*) of this run's rows currently in the table; -1 on any error.
-    Interim rows stream in as each function finishes, so this climbs during the run."""
+def _count_run_rows(w, warehouse_id: str, table: str, run_id: str, apis=None) -> int:
+    """COUNT(*) of THIS run + THIS invocation's tier(s) in the table; -1 on any error.
+    Filters by run_id AND api so a live count is accurate even when light and heavy
+    share a run_id in the same table (else it would mix both tiers). Interim rows stream
+    in as each function finishes, so this climbs during the run."""
+    api_clause = ""
+    if apis:
+        api_clause = " AND api IN (" + ", ".join(f"'{a}'" for a in apis) + ")"
     try:
         # count(*) over a small filtered table returns well under this; the wait_timeout
         # is just the cap before execute_statement would return PENDING. Keep it modest
         # so a tight poll loop isn't blocked behind a long wait.
         res = w.statement_execution.execute_statement(
             warehouse_id=warehouse_id,
-            statement=f"SELECT count(*) FROM {table} WHERE run_id = '{run_id}'",
+            statement=f"SELECT count(*) FROM {table} WHERE run_id = '{run_id}'{api_clause}",
             wait_timeout="10s",
         )
         data = res.result.data_array if res and res.result else None
@@ -132,12 +139,14 @@ def _local_size_sweep_count() -> int:
         return None
 
 
-def _expected_rows(functions: str, sel: str, modes: str, row_counts: str, lightweight: bool) -> int:
-    """Best-effort total lightweight rows this run will stream, for an 'N of EXPECTED'
-    progress display. Exact for spark-path (#fns-with-spark-path x #row_counts); pure-core
-    needs the corpus size-sweep count. Returns None when it can't be determined (then no
-    denominator is shown rather than a misleading one)."""
-    if not lightweight:
+def _expected_rows(functions: str, sel: str, modes: str, row_counts: str,
+                   lightweight: bool, heavyweight: bool) -> int:
+    """Best-effort total rows this run will stream, for an 'N of EXPECTED' progress
+    display. Only reliable for a LIGHTWEIGHT-ONLY run: the lightweight fn set + corpus
+    are known host-side. The heavyweight fn count is decided in Scala (BenchDispatch),
+    not visible here, so any run that includes heavy returns None (count shown without a
+    denominator) rather than a misleading number."""
+    if not lightweight or heavyweight:
         return None
     try:
         sys.path.insert(0, "python/geobrix/src")
@@ -228,9 +237,13 @@ def main() -> int:
         measured=measured,
         heavyweight=heavyweight,
         lightweight=lightweight,
-        # --truncate-results: empty the bench_results table first so only THIS
-        # run's rows remain (otherwise runs accumulate/append).
+        # Two truncate modes (default: neither -> rows accumulate across runs):
+        #  --truncate-results: SCOPED -- clear only this run_id + the tier(s) this
+        #    invocation writes, so the paired tier / other runs survive (coexist).
+        #  --truncate-all: WHOLE TABLE -- empty bench_results so ONLY the current run's
+        #    rows remain. (Takes precedence if both are passed.)
         truncate_results=("--truncate-results" in sys.argv),
+        truncate_all=("--truncate-all" in sys.argv),
     )
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -353,7 +366,10 @@ def main() -> int:
     import time
 
     POLL_SECS = 5
-    expected = _expected_rows(functions, sel, modes, row_counts, lightweight)
+    # The tier(s) this invocation writes -> filter the live count by (run_id, api) so it
+    # stays accurate when light and heavy share a run_id in the same table.
+    poll_apis = [a for a, on in (("lightweight", lightweight), ("heavyweight", heavyweight)) if on]
+    expected = _expected_rows(functions, sel, modes, row_counts, lightweight, heavyweight)
     # "27 (of 83)" when we know the total this run will stream, else just "27".
     of = f" (of {expected})" if expected else ""
     warehouse_id = _strip_invisible(os.environ.get("GBX_BENCH_SQL_WAREHOUSE_ID") or "") or _discover_warehouse(w)
@@ -382,7 +398,7 @@ def main() -> int:
         if lc in ("TERMINATED", "SKIPPED", "INTERNAL_ERROR"):
             break
         if warehouse_id:
-            c = _count_run_rows(w, warehouse_id, table, run_id)
+            c = _count_run_rows(w, warehouse_id, table, run_id, poll_apis)
             if c > last_count:
                 print(f"  [{lc}] {c}{of} rows streamed to table so far")
                 last_count = c
