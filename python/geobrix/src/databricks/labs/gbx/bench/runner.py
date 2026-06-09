@@ -36,10 +36,23 @@ def _synthesized_paths(corpus_root, tile_rel_path: str, fn: str) -> List[str]:
     return _synth.synthesize(src, _spec.synth_recipe(fn), out_dir)
 
 
-def time_iters(fn: Callable[[], None], warmup: int, measured: int) -> Dict:
-    """Run fn warmup+measured times; return ms distribution over measured runs."""
+def time_iters(
+    fn: Callable[[], None],
+    warmup: int,
+    measured: int,
+    warmup_fn: Callable[[], None] = None,
+) -> Dict:
+    """Run fn warmup+measured times; return ms distribution over measured runs.
+
+    warmup_fn (optional): a cheaper stand-in run for the warm-up iterations only --
+    e.g. the spark-path warm-up exercises one tile per executor slot instead of the
+    full row count, so JVM/UDF/Python-worker spin-up isn't charged to the first
+    measured iteration without paying the full-N cost on every warm-up pass. The
+    MEASURED iterations always run fn.
+    """
+    _warm = warmup_fn or fn
     for _ in range(warmup):
-        fn()
+        _warm()
     samples = []
     for _ in range(measured):
         t0 = time.perf_counter()
@@ -47,12 +60,16 @@ def time_iters(fn: Callable[[], None], warmup: int, measured: int) -> Dict:
         samples.append((time.perf_counter() - t0) * 1000.0)
     samples.sort()
     p90_idx = max(0, min(len(samples) - 1, int(round(0.9 * (len(samples) - 1)))))
+    total = sum(samples)
     return {
         "warmup_iters": warmup,
         "measured_iters": measured,
-        "median_ms": statistics.median(samples),
-        "min_ms": samples[0],
-        "p90_ms": samples[p90_idx],
+        "iter_median_ms": statistics.median(samples),
+        "iter_min_ms": samples[0],
+        "iter_p90_ms": samples[p90_idx],
+        # total wall clock across the measured iterations + its mean (avg per iter).
+        "iter_total_wall_clock_ms": total,
+        "avg_wall_clock_ms": (total / len(samples)) if samples else 0.0,
     }
 
 
@@ -249,9 +266,9 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        median_ms=0.0,
-                        min_ms=0.0,
-                        p90_ms=0.0,
+                        iter_median_ms=0.0,
+                        iter_min_ms=0.0,
+                        iter_p90_ms=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,
@@ -293,7 +310,7 @@ def run_pure_core(
                     fs, input_kind, raster, tile_path, synth_paths, geom
                 )
                 stats = time_iters(call, warmup, measured)
-                ms = stats["median_ms"]
+                ms = stats["iter_median_ms"]
                 out.append(
                     ResultRow(
                         run_id=run_id,
@@ -309,9 +326,11 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=stats["warmup_iters"],
                         measured_iters=stats["measured_iters"],
-                        median_ms=ms,
-                        min_ms=stats["min_ms"],
-                        p90_ms=stats["p90_ms"],
+                        iter_median_ms=ms,
+                        iter_min_ms=stats["iter_min_ms"],
+                        iter_p90_ms=stats["iter_p90_ms"],
+                        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"],
+                        avg_wall_clock_ms=stats["avg_wall_clock_ms"],
                         throughput_mpix_s=(
                             (_mpix(te.tile_px, te.bands, 1) / (ms / 1000.0))
                             if ms
@@ -341,9 +360,9 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        median_ms=0.0,
-                        min_ms=0.0,
-                        p90_ms=0.0,
+                        iter_median_ms=0.0,
+                        iter_min_ms=0.0,
+                        iter_p90_ms=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,
@@ -364,7 +383,7 @@ def run_pure_core(
 
 def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
     """A spark-path ResultRow for an aggregate cell (shared ok/error builder)."""
-    ms = stats["median_ms"] if stats else 0.0
+    ms = stats["iter_median_ms"] if stats else 0.0
     measured = stats["measured_iters"] if stats else 0
     warmup = stats["warmup_iters"] if stats else 0
     return ResultRow(
@@ -381,9 +400,11 @@ def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
         nodata_frac=0.0,
         warmup_iters=warmup,
         measured_iters=measured,
-        median_ms=ms,
-        min_ms=stats["min_ms"] if stats else 0.0,
-        p90_ms=stats["p90_ms"] if stats else 0.0,
+        iter_median_ms=ms,
+        iter_min_ms=stats["iter_min_ms"] if stats else 0.0,
+        iter_p90_ms=stats["iter_p90_ms"] if stats else 0.0,
+        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"] if stats else 0.0,
+        avg_wall_clock_ms=stats["avg_wall_clock_ms"] if stats else 0.0,
         throughput_mpix_s=(
             (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0)) if ms else 0.0
         ),
@@ -495,8 +516,72 @@ def _geometry_aggregate_df(spark, root, corpus, fs):
     return df, extent
 
 
+def _emit_explain(label: str, df, explain_dir: str = "") -> None:
+    """Print a DataFrame's formatted physical plan under a labeled header and, when
+    explain_dir is set, also persist it to {explain_dir}/{label}.explain.txt so a run's
+    plans can be harvested off the Volume afterward instead of scraped from job logs.
+
+    PySpark's df.explain() prints a JVM-returned string via Python print(), so
+    redirect_stdout captures it -- we echo to the notebook AND tee to the file.
+    """
+    import contextlib
+    import io
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            df.explain(mode="formatted")
+    except Exception as e:  # noqa: BLE001 — a plan that won't build is itself a finding
+        buf.write(f"explain error: {e}\n")
+    plan = buf.getvalue()
+    header = f"===== EXPLAIN: {label} ====="
+    print(f"\n{header}\n{plan}")
+    if explain_dir:
+        import os
+
+        try:
+            os.makedirs(explain_dir, exist_ok=True)
+            safe = label.replace("/", "_").replace(" ", "_")
+            with open(os.path.join(explain_dir, f"{safe}.explain.txt"), "w") as fh:
+                fh.write(f"{header}\n{plan}")
+        except Exception as e:  # noqa: BLE001 — harvesting is best-effort, never fatal
+            print(f"  (could not write explain file for {label}: {e})")
+
+
+def _explain_aggregate(spark, fs, group_df, agg_col, n, parts, explain_dir):
+    """--explain-only for an aggregator: build the scaled groupBy plan for the largest
+    N and print/persist it -- no consistency collect, no timed write. Shows the
+    (non-partial) ArrowAggregatePython + the hash-partitioning Exchange + its task
+    count, so the *_agg staging can be read off the plan directly without re-running a
+    full timed cell.
+    """
+    from pyspark.sql import functions as F
+
+    try:
+        spark.conf.set("spark.sql.shuffle.partitions", str(parts))
+    except Exception:  # noqa: BLE001
+        pass
+    keys = spark.range(n).select(F.col("id").alias("key"))
+    scaled = group_df.crossJoin(F.broadcast(keys))
+    plan_df = scaled.groupBy("key").agg(agg_col(scaled).alias("out"))
+    _emit_explain(
+        f"{fs.name} (agg, n={n}, shuffle.partitions={parts})", plan_df, explain_dir
+    )
+
+
 def _run_aggregate(
-    spark, root, corpus, fs, run_id, row_counts, warmup, measured, env
+    spark,
+    root,
+    corpus,
+    fs,
+    run_id,
+    row_counts,
+    warmup,
+    measured,
+    env,
+    partition_size=0,
+    explain_only=False,
+    explain_dir="",
 ) -> List[ResultRow]:
     """Run a *_agg aggregator: consistency fingerprint + perf timing over groupBy.
 
@@ -535,6 +620,29 @@ def _run_aggregate(
     out: List[ResultRow] = []
     sorted_counts = sorted(row_counts)
 
+    def _agg_parts(n):
+        # Task count for the aggregate's post-shuffle stage. The groupBy injects a mandatory
+        # hash-partitioning shuffle on `key` whose width is spark.sql.shuffle.partitions; we
+        # set that (below) to _parts so the n keys spread over ~slots*4 tasks. A pre-groupBy
+        # repartition does NOT work here -- it is elided by the optimizer because the hash
+        # exchange supersedes it (confirmed via --explain-only).
+        import math as _math
+
+        _slots = max(1, spark.sparkContext.defaultParallelism)
+        _psize = (
+            partition_size
+            if (partition_size and partition_size > 0)
+            else max(1, n // (_slots * 4))
+        )
+        return max(1, _math.ceil(n / _psize))
+
+    # --explain-only: build the scaled groupBy plan for the largest N and print/persist it
+    # -- no consistency collect, no timed write (delegated to _explain_aggregate).
+    if explain_only:
+        n = sorted_counts[-1]
+        _explain_aggregate(spark, fs, group_df, _agg_col, n, _agg_parts(n), explain_dir)
+        return []
+
     # --- consistency: ONE group -> ONE out tile -> raster fingerprint -----------
     fingerprint = ""
     try:
@@ -555,9 +663,23 @@ def _run_aggregate(
     group_df = group_df.cache()
     group_df.count()
     for n in sorted_counts:
-        # Replicate the fixed group N times across N distinct keys (one group per
-        # key), so the aggregate runs N times -- the scaled distributed-aggregation
-        # timing. crossJoin a tiny keys DataFrame to broadcast the group per key.
+        # Replicate the fixed group N times across N distinct keys (one group per key), so
+        # the aggregate runs N times -- the scaled distributed-aggregation timing. crossJoin
+        # a tiny broadcast keys DataFrame to copy the group per key.
+        #
+        # PARALLELISM: the col_fn is a non-partial Python Arrow UDAF (no map-side partial
+        # aggregation -- the whole group per key lands in ONE post-shuffle stage). The groupBy
+        # injects a mandatory hash-partitioning shuffle on `key`; its width is
+        # spark.sql.shuffle.partitions, and a pre-groupBy .repartition() is ELIDED by the
+        # optimizer (the hash exchange supersedes it -- confirmed via --explain-only). So the
+        # ONLY lever on the agg stage's task count is shuffle.partitions: set it to _parts
+        # (~slots*4) so the n keys oversubscribe the slots instead of riding the default 200.
+        # AQE is off (preamble) so it's respected.
+        _parts = _agg_parts(n)
+        try:
+            spark.conf.set("spark.sql.shuffle.partitions", str(_parts))
+        except Exception:  # noqa: BLE001
+            pass
         keys = spark.range(n).select(F.col("id").alias("key"))
         scaled = group_df.crossJoin(F.broadcast(keys))
         try:
@@ -581,6 +703,99 @@ def _run_aggregate(
     return out
 
 
+def _explain_spark_path(
+    spark,
+    root,
+    corpus,
+    fnspecs,
+    run_id,
+    row_counts,
+    warmup,
+    measured,
+    env,
+    partition_size,
+    explain_dir,
+    df_all,
+    nparts,
+    input_col,
+):
+    """--explain-only for the spark-path: build each fn's spark-path DataFrame and PRINT
+    its physical plan, no timing / no Delta write. Reveals the exchanges, partial-agg
+    placement, and per-fn partition counts so plan issues can be read directly instead
+    of inferred from the UI.
+    """
+    import math
+
+    for _fs in fnspecs:
+        if "spark-path" not in _fs.modes:
+            continue
+        _k = getattr(_fs, "input_kind", "tile")
+        _n = max(row_counts)
+        try:
+            if _k in ("tile_aggregate", "geometry_aggregate"):
+                _run_aggregate(
+                    spark,
+                    root,
+                    corpus,
+                    _fs,
+                    run_id,
+                    [_n],
+                    warmup,
+                    measured,
+                    env,
+                    partition_size=partition_size,
+                    explain_only=True,
+                    explain_dir=explain_dir,
+                )
+            else:
+                _ps = (
+                    partition_size
+                    if (partition_size and partition_size > 0)
+                    else max(1, _n // (nparts * 4))
+                )
+                _parts = _n if _k == "tile_array" else max(1, math.ceil(_n / _ps))
+                _edf = df_all.limit(_n).repartition(max(1, _parts))
+                _ecol = _fs.col_fn(input_col(_fs.name, _k, _edf), _fs.args)
+                _emit_explain(
+                    f"{_fs.name} (kind={_k}, n={_n}, parts={_parts})",
+                    _edf.select(_ecol.alias("out")),
+                    explain_dir,
+                )
+        except Exception as _e:  # noqa: BLE001
+            print(f"  explain error for {_fs.name}: {_e}")
+
+
+def _spark_path_warmup(spark, fnspecs, pool, df_all, input_col):
+    """One throwaway Spark job so JVM/Spark spin-up isn't charged to the first timed
+    cell. Band-aware (mirrors the Scala HeavyRunner warm-up) + guarded so a warm-up
+    failure can never abort timing. Excludes aggregate fns from the column warm-up
+    (they have no _input_col form).
+    """
+    _spark_fns = [
+        f
+        for f in fnspecs
+        if "spark-path" in f.modes
+        and getattr(f, "input_kind", "tile")
+        not in ("tile_aggregate", "geometry_aggregate")
+    ]
+    _warm = next(
+        (f for f in _spark_fns if getattr(f, "min_bands", 1) <= pool.bands), None
+    )
+    if _warm is None and _spark_fns:
+        _warm = _spark_fns[0]
+    if _warm is not None:
+        try:
+            _wc = _warm.col_fn(
+                input_col(_warm.name, getattr(_warm, "input_kind", "tile")),
+                _warm.args,
+            )
+            df_all.limit(1).select(_wc.alias("warmup")).write.format("noop").mode(
+                "overwrite"
+            ).save()
+        except Exception:  # noqa: BLE001 — warm-up failures must never abort timing
+            pass
+
+
 def run_spark_path(
     spark,
     corpus_root,
@@ -592,12 +807,29 @@ def run_spark_path(
     measured: int,
     where: str,
     sink=None,
+    partition_size: int = 0,
+    explain_only: bool = False,
+    explain_dir: str = "",
 ) -> List[ResultRow]:
     """Time each fn as a Spark Column over N tile rows (serialization + UDF overhead).
 
+    explain_only: diagnostic mode -- build each fn's spark-path DataFrame and PRINT its
+    physical plan (df.explain) WITHOUT executing/timing or writing to Delta. Lets you read
+    where the exchanges / partial-agg stages sit + the partition counts for each function.
+    explain_dir: when set (a Volume path), each plan is also written to
+    {explain_dir}/{fn}.explain.txt so the plans can be harvested off the Volume afterward.
+
     sink: optional callable(List[ResultRow]) invoked with each function's rows the
     moment that function finishes (the cluster harness uses it to append rows to the
-    Delta table incrementally, so a long run can be polled/queried in real time)."""
+    Delta table incrementally, so a long run can be polled/queried in real time).
+
+    partition_size: tiles per partition for the row DataFrame. 0 (default) auto-sizes to
+    n / (slots * 4) -- i.e. ~4 tasks per slot, OVERSUBSCRIBING the slots so finished
+    slots pick up pending tasks instead of sitting idle while a straggler task runs
+    (matching partitions to slots wastes the cluster on the straggler tail). A positive
+    value pins tiles/partition explicitly (--override-partition-size)."""
+    import math
+
     from pyspark.sql import functions as F
 
     root = Path(corpus_root)
@@ -605,21 +837,41 @@ def run_spark_path(
     pool = corpus.row_pool
 
     # Build the tile DataFrame once at the max row count; subselect with limit(n).
+    # Read the tile bytes on the EXECUTORS via spark.read.binaryFile -- the UC-aware
+    # reader, the same approach the heavy tier uses (HeavyRunner.scala) -- rather than
+    # decoding every tile on the driver and handing Spark a local list. A driver-side
+    # createDataFrame(list-of-bytes) becomes a LocalRelation that Spark embeds in each
+    # task's serialized closure; at large row counts that blows spark.rpc.message.maxSize
+    # (1000 x ~4MB tiles -> a ~348MB task > the 256MB ceiling -> SparkException). Reading
+    # via binaryFile distributes the I/O so the bytes never transit the driver as one
+    # giant relation, and the harness scales to any row count.
     max_rows = max(row_counts)
     tiles = pool.tiles[:max_rows]
-    payload = []
-    for te in tiles:
-        d = _serde.build_tile((root / te.path).read_bytes(), "GTiff", te.cellid)
-        payload.append((d["cellid"], d["raster"], d["metadata"]))
-    # createDataFrame from a local list defaults to spark.sparkContext.defaultParallelism
-    # partitions (e.g. a 12-core cluster -> 12 partitions, so 12 Spark tasks for 10 rows,
-    # 2 of them empty). We deliberately DON'T coalesce: coalesce(N) can pack several tiles
-    # into one partition (and still leave empties), which would skew the per-row spark-path
-    # timing. A couple of empty no-op partitions are harmless; even one-tile-per-partition
-    # spread is preferred for clean per-row measurement.
-    base = spark.createDataFrame(payload, schema=_serde.TILE_SCHEMA)
-    # Wrap the 3 columns into the tile struct the prx.rst_* wrappers expect.
-    df_all = base.select(F.struct("cellid", "raster", "metadata").alias("tile")).cache()
+    paths = [str(root / te.path) for te in tiles]
+    # cellid keyed by file basename: binaryFile's "path" column is a fully-qualified URI
+    # (e.g. dbfs:/Volumes/...) that won't string-match the local path, but the basename is
+    # stable. Tiny dict (basename -> cellid), safe to capture in the UDF closure.
+    _cellid_by_base = {Path(te.path).name: int(te.cellid) for te in tiles}
+
+    @F.udf(returnType=_serde.TILE_SCHEMA)
+    def _to_tile(path, content):
+        import os
+
+        cid = _cellid_by_base.get(os.path.basename(path), 0)
+        d = _serde.build_tile(bytes(content), "GTiff", cid)
+        return (d["cellid"], d["raster"], d["metadata"])
+
+    raw = spark.read.format("binaryFile").load(paths)
+    # binaryFile partitions by maxPartitionBytes (packs many small tiles per partition);
+    # repartition to defaultParallelism to reproduce the previous createDataFrame layout
+    # (e.g. a 12-core cluster -> 12 partitions, so 12 Spark tasks for 10 rows, 2 empty),
+    # keeping per-row timing comparable to prior runs. We deliberately DON'T coalesce.
+    _nparts = max(1, spark.sparkContext.defaultParallelism)
+    df_all = (
+        raw.select(_to_tile(F.col("path"), F.col("content")).alias("tile"))
+        .repartition(_nparts)
+        .cache()
+    )
     df_all.count()  # materialize the cache so it isn't part of timing
 
     # tile_array adapter (spark-path): the multi-tile fns (rst_frombands/
@@ -651,37 +903,61 @@ def run_spark_path(
             )
         return F.array(*elems)
 
-    def _input_col(fn: str, kind: str):
-        """The column fed to col_fn: an array literal for tile_array, else the tile."""
-        return _synth_array_col(fn) if kind == "tile_array" else df_all["tile"]
+    def _input_col(fn: str, kind: str, df=None):
+        """The column fed to col_fn: an array literal for tile_array, else the tile.
+
+        ``df`` selects which DataFrame's ``tile`` column to reference -- the measured
+        pass uses df_all, the warm-up pass uses the one-row-per-partition warm DF (a
+        cross-DataFrame column ref would fail analysis, so each pass passes its own df).
+        The tile_array literal is DataFrame-independent.
+        """
+        _d = df_all if df is None else df
+        return _synth_array_col(fn) if kind == "tile_array" else _d["tile"]
+
+    # Warm-up DF: exactly one tile row per partition of df_all (mapPartitions -> take 1),
+    # so a warm-up pass exercises EVERY executor slot's Python worker / UDF once without
+    # paying the full row-count cost. (df.limit(N) would pull all N rows from the first
+    # couple of partitions, warming only a slot or two.) The measured iterations still run
+    # the full df_all.limit(n); only the warm-up uses this capped, slot-spread DF.
+    import itertools as _it
+
+    _warm_df = spark.createDataFrame(
+        df_all.rdd.mapPartitions(lambda _p: _it.islice(_p, 1)), df_all.schema
+    ).cache()
+    _warm_df.count()  # materialize so building it isn't charged to any fn's timing
+
+    # --explain-only: build each fn's spark-path DataFrame and PRINT its physical plan,
+    # no timing / no Delta write (delegated to _explain_spark_path).
+    if explain_only:
+        _explain_spark_path(
+            spark,
+            root,
+            corpus,
+            fnspecs,
+            run_id,
+            row_counts,
+            warmup,
+            measured,
+            env,
+            partition_size,
+            explain_dir,
+            df_all,
+            _nparts,
+            _input_col,
+        )
+        return []
 
     # Spark warm-up: one throwaway job so JVM/Spark spin-up isn't charged to the first
-    # timed cell. Band-aware (mirrors the Scala HeavyRunner warm-up) + guarded so a
-    # warm-up failure can never abort timing.
-    # Exclude aggregate fns from the column warm-up (they have no _input_col form).
-    _spark_fns = [
-        f
-        for f in fnspecs
-        if "spark-path" in f.modes
-        and getattr(f, "input_kind", "tile")
-        not in ("tile_aggregate", "geometry_aggregate")
-    ]
-    _warm = next(
-        (f for f in _spark_fns if getattr(f, "min_bands", 1) <= pool.bands), None
-    )
-    if _warm is None and _spark_fns:
-        _warm = _spark_fns[0]
-    if _warm is not None:
-        try:
-            _wc = _warm.col_fn(
-                _input_col(_warm.name, getattr(_warm, "input_kind", "tile")),
-                _warm.args,
-            )
-            df_all.limit(1).select(_wc.alias("warmup")).write.format("noop").mode(
-                "overwrite"
-            ).save()
-        except Exception:  # noqa: BLE001 — warm-up failures must never abort timing
-            pass
+    # timed cell (delegated to _spark_path_warmup).
+    _spark_path_warmup(spark, fnspecs, pool, df_all, _input_col)
+
+    def _flush(rows, mark):
+        # Flush a function's rows now so the run is observable in real time.
+        if sink is not None and len(rows) > mark:
+            try:
+                sink(rows[mark:])
+            except Exception:  # noqa: BLE001 — a sink failure must never abort timing
+                pass
 
     out: List[ResultRow] = []
     # bucket A: the *_agg aggregators reduce a GROUP of rows to ONE tile via a real
@@ -705,27 +981,46 @@ def run_spark_path(
                 warmup,
                 measured,
                 env,
+                partition_size=partition_size,
             )
-            # Flush this aggregator's rows now so the run is observable in real time.
-            if sink is not None and len(out) > _mark:
-                try:
-                    sink(out[_mark:])
-                except Exception:  # noqa: BLE001 — sink must never abort timing
-                    pass
+            _flush(out, _mark)
             continue
         _kind = getattr(fs, "input_kind", "tile")
         for n in sorted(row_counts):
-            df = df_all.limit(n)
+            # Force the partition (task) count via repartition. AQE is disabled for the run
+            # (notebook preamble) so it can't coalesce these back toward defaultParallelism
+            # (~slots) -- which would reintroduce the straggler idle. (Also handles
+            # limit(n<total), which GlobalLimit-collapses to ONE partition -> single-slot.)
+            #
+            # Partition count = ceil(n / tiles_per_partition). Default tiles/partition =
+            # n / (slots * 4) -> ~4 tasks per slot (oversubscribed) so finished slots grab
+            # pending tasks instead of idling through a straggler tail. --override-partition-size
+            # pins tiles/partition. tile_array fns (rst_merge/combineavg/frombands) emit one
+            # often-LARGER output per row from a constant broadcast array; >1 per task can OOM
+            # an executor (rst_merge did), so they're hard-pinned to ONE tile/partition.
+            if partition_size and partition_size > 0:
+                _psize = partition_size
+            else:
+                _psize = max(1, n // (_nparts * 4))
+            _parts = n if _kind == "tile_array" else max(1, math.ceil(n / _psize))
+            df = df_all.limit(n).repartition(max(1, _parts))
             try:
 
                 def job(_df=df, _fs=fs, _k=_kind):
-                    c = _fs.col_fn(_input_col(_fs.name, _k), _fs.args)
+                    c = _fs.col_fn(_input_col(_fs.name, _k, _df), _fs.args)
                     _df.select(c.alias("out")).write.format("noop").mode(
                         "overwrite"
                     ).save()
 
-                stats = time_iters(job, warmup, measured)
-                ms = stats["median_ms"]
+                # Warm-up runs over _warm_df (one row per slot), NOT the full n rows.
+                def warm(_wd=_warm_df, _fs=fs, _k=_kind):
+                    c = _fs.col_fn(_input_col(_fs.name, _k, _wd), _fs.args)
+                    _wd.select(c.alias("out")).write.format("noop").mode(
+                        "overwrite"
+                    ).save()
+
+                stats = time_iters(job, warmup, measured, warmup_fn=warm)
+                ms = stats["iter_median_ms"]
                 out.append(
                     ResultRow(
                         run_id=run_id,
@@ -741,9 +1036,13 @@ def run_spark_path(
                         nodata_frac=0.0,
                         warmup_iters=stats["warmup_iters"],
                         measured_iters=stats["measured_iters"],
-                        median_ms=ms,
-                        min_ms=stats["min_ms"],
-                        p90_ms=stats["p90_ms"],
+                        iter_median_ms=ms,
+                        iter_min_ms=stats["iter_min_ms"],
+                        iter_p90_ms=stats["iter_p90_ms"],
+                        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"],
+                        avg_wall_clock_ms=stats["avg_wall_clock_ms"],
+                        # Headline spark-path metric: amortized wall-clock per tile.
+                        per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
                         throughput_mpix_s=(
                             (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0))
                             if ms
@@ -773,9 +1072,9 @@ def run_spark_path(
                         nodata_frac=0.0,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        median_ms=0.0,
-                        min_ms=0.0,
-                        p90_ms=0.0,
+                        iter_median_ms=0.0,
+                        iter_min_ms=0.0,
+                        iter_p90_ms=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,
@@ -785,12 +1084,7 @@ def run_spark_path(
                         **env,
                     )
                 )
-        # Flush this function's rows now so the run is observable in real time.
-        if sink is not None and len(out) > _mark:
-            try:
-                sink(out[_mark:])
-            except Exception:  # noqa: BLE001 — a sink failure must never abort timing
-                pass
+        _flush(out, _mark)
     df_all.unpersist()
     return out
 

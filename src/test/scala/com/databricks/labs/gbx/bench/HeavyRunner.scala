@@ -67,7 +67,10 @@ object HeavyRunner {
   private def mpix(tilePx: Int, bands: Int, rows: Int): Double =
     (tilePx.toLong * tilePx.toLong * bands * rows) / 1e6
 
-  private def timeIters(body: () => Unit, warmup: Int, measured: Int): (Double, Double, Double) = {
+  // Returns (median, min, p90, total_wall_clock, avg_wall_clock) in ms over the measured
+  // iterations -- total is the sum, avg is the mean (total / measured).
+  private def timeIters(body: () => Unit, warmup: Int, measured: Int)
+      : (Double, Double, Double, Double, Double) = {
     var i = 0
     while (i < warmup) { body(); i += 1 }
     val samples = Array.ofDim[Double](measured)
@@ -79,17 +82,19 @@ object HeavyRunner {
     val median = if (sorted.length % 2 == 1) sorted(sorted.length / 2)
                  else (sorted(sorted.length / 2 - 1) + sorted(sorted.length / 2)) / 2.0
     val p90idx = math.min(sorted.length - 1, math.round(0.9 * (sorted.length - 1)).toInt)
-    (median, sorted.head, sorted(p90idx))
+    val total = samples.sum
+    (median, sorted.head, sorted(p90idx), total, if (measured > 0) total / measured else 0.0)
   }
 
   private def row(e: Map[String, String], runId: String, fn: String, mode: String,
                   tilePx: Int, bands: Int, dtype: String, srid: Int, rows: Int, ndf: Double,
                   warmup: Int, measured: Int, median: Double, mn: Double, p90: Double,
-                  mpixS: Double, rowsS: Double, status: String, note: String, fp: String): BenchRow =
+                  mpixS: Double, rowsS: Double, status: String, note: String, fp: String,
+                  total: Double = 0.0, avg: Double = 0.0): BenchRow =
     BenchRow(runId, "heavyweight", fn, BenchDispatch.category(fn), mode, tilePx, bands, dtype,
       srid, rows, ndf, warmup, measured, median, mn, p90, mpixS, rowsS, 0.0, status, note,
       e("env_arch"), e("env_cpu_model"), 0, e("env_os"), e("env_gbx_version"),
-      e("env_gdal_version"), e("env_runtime_version"), e("env_where"), fp)
+      e("env_gdal_version"), e("env_runtime_version"), e("env_where"), fp, total, avg)
 
   /** `sink` is invoked for every row as soon as it is produced, so a caller can
    *  flush each row to disk immediately (crash-resilient shard). Defaults to a
@@ -162,11 +167,11 @@ object HeavyRunner {
               (BenchDispatch.pureCore(fn, ds, a),
                 () => BenchDispatch.pureCore(fn, ds, a))
           }
-          val (median, mn, p90) = timeIters(body, warmup, measured)
+          val (median, mn, p90, _total, _avg) = timeIters(body, warmup, measured)
           val mpixS = if (median > 0) mpix(te.tile_px, te.bands, 1) / (median / 1000.0) else 0.0
           emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
             te.nodata_frac, warmup, measured, median, mn, p90, mpixS,
-            if (median > 0) 1.0 / (median / 1000.0) else 0.0, "ok", "", fp))
+            if (median > 0) 1.0 / (median / 1000.0) else 0.0, "ok", "", fp, _total, _avg))
         } catch {
           case ex: Throwable =>
             emit(row(e, runId, fn, "pure-core", te.tile_px, te.bands, te.dtype, te.srid, 1,
@@ -264,14 +269,14 @@ object HeavyRunner {
       val a = argsByFn.getOrElse(fn, Map.empty)
       try {
         val df = dfAll.limit(n)
-        val (median, mn, p90) = timeIters(() => {
+        val (median, mn, p90, _total, _avg) = timeIters(() => {
           df.select(BenchDispatch.column(fn, inputCol(fn), a).alias("o"))
             .write.format("noop").mode("overwrite").save()
         }, warmup, measured)
         val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
         emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n, 0.0,
           warmup, measured, median, mn, p90, mpixS,
-          if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", ""))
+          if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", "", _total, _avg))
       } catch {
         case ex: Throwable =>
           emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n, 0.0,
@@ -404,7 +409,7 @@ object HeavyRunner {
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
             .coalesce(1)
           val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
-          val (median, mn, p90) = timeIters(() => {
+          val (median, mn, p90, _total, _avg) = timeIters(() => {
             scaled.groupBy("key").agg(aggCol.alias("out"))
               .write.format("noop").mode("overwrite").save()
           }, warmup, measured)
@@ -412,7 +417,7 @@ object HeavyRunner {
           val emitFp = if (n == sorted.head) fp else ""
           emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
             0.0, warmup, measured, median, mn, p90, mpixS,
-            if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", emitFp))
+            if (median > 0) n / (median / 1000.0) else 0.0, "ok", "", emitFp, _total, _avg))
         } catch {
           case ex: Throwable =>
             emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,

@@ -19,9 +19,9 @@ def _rr(api, fn, mode, median, fp="", **kw):
         nodata_frac=0.0,
         warmup_iters=1,
         measured_iters=2,
-        median_ms=median,
-        min_ms=median,
-        p90_ms=median,
+        iter_median_ms=median,
+        iter_min_ms=median,
+        iter_p90_ms=median,
         throughput_mpix_s=1.0,
         throughput_rows_s=1.0,
         peak_rss_mb=0.0,
@@ -389,7 +389,7 @@ def test_compare_cells_populates_throughput():
 def test_summarize_compare_pure_core_header_has_throughput_columns():
     cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
     assert "hw_mpix/s" in header
     assert "lw_mpix/s" in header
 
@@ -422,6 +422,59 @@ def test_summarize_compare_has_tolerance_legend():
     assert "within_tol" in md
 
 
+def test_summarize_compare_hoists_constant_dims_and_rounds_ms():
+    cells = [
+        _cmp("rst_a", "pure-core", 20.0, 4.0, 5.0, "exact", "", tile_px=512, bands=4),
+        _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", tile_px=512, bands=4),
+    ]
+    md = c.summarize_compare(cells, [], [], [], pool_size=1000)
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    # constant dims hoisted out of the header
+    assert "tile_px" not in header
+    assert "bands" not in header
+    # context line carries them once, plus the pool token
+    assert "tile_px 512" in md
+    assert "4 bands" in md
+    assert "pool 1000 tiles" in md
+    # ms rounded to 1 decimal
+    row = [ln for ln in md.splitlines() if ln.startswith("| rst_a ")][0]
+    assert "20.0" in row
+    assert "20.000" not in row
+
+
+def test_summarize_compare_keeps_varying_dim_as_column():
+    cells = [
+        _cmp("rst_a", "pure-core", 20.0, 4.0, 5.0, "exact", "", tile_px=256),
+        _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", tile_px=4096),
+    ]
+    md = c.summarize_compare(cells, [], [], [])
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    assert "tile_px" in header
+
+
+def test_summarize_compare_keeps_varying_srid_as_column():
+    # Mixed srid (or any non-px dim that varies) must surface as a column, not be
+    # hoisted into the context line above the table.
+    cells = [
+        _cmp("rst_a", "pure-core", 20.0, 4.0, 5.0, "exact", "", srid=4326),
+        _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", srid=3857),
+    ]
+    md = c.summarize_compare(cells, [], [], [])
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    assert "srid" in header
+    # constant srid stays hoisted (context line), not a column
+    same = [
+        _cmp("rst_a", "pure-core", 20.0, 4.0, 5.0, "exact", "", srid=4326),
+        _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", srid=4326),
+    ]
+    md2 = c.summarize_compare(same, [], [], [])
+    header2 = [ln for ln in md2.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][
+        0
+    ]
+    assert "srid" not in header2
+    assert "srid 4326" in md2
+
+
 def test_summarize_compare_exact_label_is_bare():
     cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
@@ -449,7 +502,7 @@ def test_coverage_block_reports_coverage_parity_gap_and_uncovered():
     ]
     md = c.coverage_block(cells)
     # Coverage: distinct fn count across all cells = 5, out of 107
-    assert "Benchmarked" in md
+    assert "Benchmark coverage:" in md
     assert "/ 107" in md
     assert "5 / 107" in md
     # Parity counts among non-na cells (4 compared: exact 2, within_tol 1, divergent 1)
@@ -461,8 +514,8 @@ def test_coverage_block_reports_coverage_parity_gap_and_uncovered():
     assert "Functional parity gap:** 0" in md
     # timing-only count line
     assert "timing-only" in md
-    # Not yet covered: count + at least one known-missing name
-    assert "Not yet covered:" in md
+    # pure-core-only / timing-only fns: count + at least one known-missing name
+    assert "No comparison cell in this run:" in md
     assert "rst_merge" in md or "rst_rasterize" in md
 
 
@@ -476,7 +529,7 @@ def test_summarize_compare_includes_coverage_block():
     assert "Coverage & parity" in md
     assert "/ 107" in md
     assert "Functional parity gap:** 0" in md
-    assert "Not yet covered:" in md
+    assert "No comparison cell in this run:" in md
     # ordering: Insights before Coverage before the per-mode tables
     assert md.index("## Insights") < md.index("Coverage & parity")
     assert md.index("Coverage & parity") < md.index("## pure-core")
@@ -553,7 +606,7 @@ def test_raster_collection_agg_divergence():
 def test_summarize_compare_header_has_delta_columns():
     cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
     assert "Δms" in header
     assert "Δ%" in header
 
@@ -563,7 +616,7 @@ def test_summarize_compare_renders_positive_delta_heavy_slower():
     cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
     row = [ln for ln in md.splitlines() if ln.startswith("| rst_slope ")][0]
-    assert "+8.000" in row
+    assert "+8.0" in row
     assert "+80.0" in row
 
 
@@ -572,7 +625,7 @@ def test_summarize_compare_renders_negative_delta_heavy_faster():
     cells = [_cmp("rst_h", "pure-core", 1.0, 4.0, 0.25, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
     row = [ln for ln in md.splitlines() if ln.startswith("| rst_h ")][0]
-    assert "-3.000" in row
+    assert "-3.0" in row
     assert "-300.0" in row
 
 
@@ -587,9 +640,14 @@ def test_summarize_compare_zero_hw_delta_pct_guard():
 def test_summarize_compare_spark_path_header_has_delta_columns():
     cells = [_cmp("rst_w", "spark-path", 10.0, 2.0, 5.0, "na", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "lw_rows/s" in ln][0]
+    header = [
+        ln for ln in md.splitlines() if "| fn |" in ln and "lw_per_tile_ms" in ln
+    ][0]
     assert "Δms" in header
     assert "Δ%" in header
+    # spark-path reports per-tile (median_ms / rows), not rows/s
+    assert "hw_per_tile_ms" in header
+    assert "rows/s" not in header
 
 
 def test_summarize_compare_has_delta_legend():

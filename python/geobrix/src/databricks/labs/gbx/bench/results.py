@@ -24,9 +24,9 @@ class ResultRow:
     nodata_frac: float
     warmup_iters: int
     measured_iters: int
-    median_ms: float
-    min_ms: float
-    p90_ms: float
+    iter_median_ms: float
+    iter_min_ms: float
+    iter_p90_ms: float
     throughput_mpix_s: float
     throughput_rows_s: float
     peak_rss_mb: float
@@ -43,6 +43,20 @@ class ResultRow:
     output_fingerprint: str = (
         ""  # JSON summary of the output (pure-core only); "" when not captured
     )
+    # Wall clock over the measured iterations: total (sum) + avg (mean = total /
+    # measured_iters). Complements iter_median_ms/iter_min_ms/iter_p90_ms. Default 0.0
+    # so error/skip rows (no timing) stay valid; OK rows pass the real values from
+    # time_iters.
+    iter_total_wall_clock_ms: float = 0.0
+    avg_wall_clock_ms: float = 0.0
+    # Spark-path headline metric: amortized wall-clock per tile = iter_median_ms / rows.
+    # Stable across row counts and directly comparable light-vs-heavy (same row count
+    # both tiers). 0.0 for pure-core (single-tile) and error/skip rows.
+    per_tile_avg_ms: float = 0.0
+    # Monotonic per-run event index, assigned at WRITE time (Delta sink) in execution
+    # order so the table's first column shows what ran last + reveals per-event slowdown.
+    # 0 at construction; the cluster sink stamps the real value (continues across resume).
+    run_event_num: int = 0
 
 
 def write_jsonl(rows: List[ResultRow], path) -> None:
@@ -65,9 +79,9 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
     """Data-derived, human-readable observations. Each bullet is conditional on the data."""
     out: List[str] = []
     if pure:
-        s = max(pure, key=lambda r: r.median_ms)
+        s = max(pure, key=lambda r: r.iter_median_ms)
         out.append(
-            f"Slowest pure-core op: `{s.fn}` — {s.median_ms:.2f} ms "
+            f"Slowest pure-core op: `{s.fn}` — {s.iter_median_ms:.2f} ms "
             f"at {s.tile_px}²/{s.bands}-band ({s.dtype})."
         )
         tps = [r.throughput_mpix_s for r in pure if r.throughput_mpix_s]
@@ -83,8 +97,8 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
             if len({r.tile_px for r in rs}) >= 2:
                 small = min(rs, key=lambda r: r.tile_px)
                 large = max(rs, key=lambda r: r.tile_px)
-                if small.median_ms > 0 and small.tile_px > 0:
-                    t_ratio = large.median_ms / small.median_ms
+                if small.iter_median_ms > 0 and small.tile_px > 0:
+                    t_ratio = large.iter_median_ms / small.iter_median_ms
                     px_ratio = (large.tile_px**2) / (small.tile_px**2)
                     rel = t_ratio / px_ratio if px_ratio else 0
                     shape = (
@@ -106,8 +120,8 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
             sp = min((r for r in spark if r.fn == fn), key=lambda r: r.rows)
             pc = min((r for r in pure if r.fn == fn), key=lambda r: r.tile_px)
             out.append(
-                f"Spark-path carries Spark/UDF overhead: `{fn}` {sp.median_ms:.0f} ms for "
-                f"{sp.rows} rows (spark-path) vs {pc.median_ms:.3f} ms for one tile (pure-core)."
+                f"Spark-path carries Spark/UDF overhead: `{fn}` {sp.iter_median_ms:.0f} ms for "
+                f"{sp.rows} rows (spark-path) vs {pc.iter_median_ms:.3f} ms for one tile (pure-core)."
             )
     if errs:
         efns = sorted({r.fn for r in errs})
@@ -142,7 +156,57 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
     return out
 
 
-def summarize(rows: List[ResultRow]) -> str:
+def _hoist_dims(items, dims):
+    """Split run-constant dims out of a table into a one-line context preamble.
+
+    ``dims`` is a list of ``(label, getter, fmt)``. A dim with a single distinct
+    value across ``items`` is hoisted: its ``fmt(value)`` token goes into
+    ``const_tokens`` (rendered once above the table). A dim that varies stays a
+    column (returned in ``varying``).
+    """
+    const_tokens, varying = [], []
+    for label, getter, fmt in dims:
+        vals = {getter(it) for it in items}
+        if len(vals) == 1:
+            const_tokens.append(fmt(next(iter(vals))))
+        else:
+            varying.append((label, getter, fmt))
+    return const_tokens, varying
+
+
+def _context_line(const_tokens, items, pool_size):
+    """Italic context line of hoisted dim tokens + an optional pool token.
+
+    The pool token is appended whenever ``pool_size`` is known; if the pool is
+    smaller than the largest row count in the table it gets a visible warning
+    marker so a too-small corpus pool is obvious at a glance.
+    """
+    tokens = list(const_tokens)
+    if pool_size is not None:
+        # The corpus pool is the set of tiles AVAILABLE; "N tiles/iter" (the rows dim)
+        # is how many are processed each iteration. Normally pool >= tiles/iter (all
+        # of the per-iter set is drawn from the pool); flag the abnormal pool<rows case.
+        max_rows = max((it.rows for it in items), default=0)
+        if max_rows and pool_size < max_rows:
+            token = f"⚠ corpus pool {pool_size} < {max_rows} tiles/iter"
+        else:
+            token = f"corpus pool {pool_size} tiles available"
+        tokens.append(token)
+    if not tokens:
+        return None
+    return "_" + " · ".join(tokens) + "_"
+
+
+# Hoistable dimension descriptors: (label, getter, fmt). Metric columns
+# (iter_median_ms, throughput, note, …) are never hoisted — only these dims.
+_DIM_TILE_PX = ("tile_px", lambda r: r.tile_px, lambda v: f"tile_px {v}²")
+_DIM_BANDS = ("bands", lambda r: r.bands, lambda v: f"{v} bands")
+_DIM_DTYPE = ("dtype", lambda r: r.dtype, lambda v: f"{v}")
+_DIM_SRID = ("srid", lambda r: r.srid, lambda v: f"srid {v}")
+_DIM_ROWS = ("rows", lambda r: r.rows, lambda v: f"tile scale {v}")
+
+
+def summarize(rows: List[ResultRow], pool_size=None) -> str:
     """Human-friendly markdown summary: insights at the top, then status + tables."""
     if not rows:
         return "# Benchmark summary\n\n(no rows)\n"
@@ -157,7 +221,22 @@ def summarize(rows: List[ResultRow]) -> str:
     lines.append(
         f"_Env: {first.env_arch} · {first.env_os} · gbx {first.env_gbx_version} · "
         f"GDAL {first.env_gdal_version} · where={first.env_where} · "
-        f"{len({r.fn for r in rows})} functions · {len(rows)} rows_"
+        f"{len({r.fn for r in rows})} functions · {len(rows)} records_"
+    )
+    # Run config — state the spark-path tile count explicitly (don't make the reader
+    # infer it from the run_id), and make clear EVERY tile is processed each iteration.
+    _sp_rows = sorted({r.rows for r in rows if r.mode == "spark-path"})
+    if _sp_rows:
+        _rc = ", ".join(str(x) for x in _sp_rows)
+        lines.append(
+            f"_**Tile scale: {_rc} tiles/iteration** (spark-path) — every tile is "
+            f"processed on each timed iteration, not a sample. Pure-core = 1 tile/iter._"
+        )
+    # Metric legend: the two timing columns measure different things.
+    lines.append(
+        "_`iter_median_ms` = median wall-clock of ONE full iteration over all N tiles "
+        "(whole distributed job). `per_tile_avg_ms` = `iter_median_ms` / N "
+        "(amortized per tile) — the headline spark-path rate._"
     )
     lines += ["", "## Insights", ""]
     insights = _derive_insights(rows, ok, errs, na, pure, spark)
@@ -170,37 +249,59 @@ def summarize(rows: List[ResultRow]) -> str:
         "",
     ]
 
-    slow = sorted(pure, key=lambda r: r.median_ms, reverse=True)[:15]
+    def _emit_table(title, items, dims, metric_labels, metric_cells):
+        """Render one hoist-aware table: context line, then header + rows.
+
+        ``metric_cells(r)`` returns the list of always-column metric strings for
+        a row. Dimension columns are inserted between ``fn`` and the metrics only
+        when they vary across ``items``.
+        """
+        const_tokens, varying = _hoist_dims(items, dims)
+        lines.append(f"## {title}")
+        lines.append("")
+        ctx = _context_line(const_tokens, items, pool_size)
+        if ctx:
+            lines.extend([ctx, ""])
+        cols = ["fn"] + [lbl for lbl, _, _ in varying] + metric_labels
+        lines.extend(["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)])
+        for r in items:
+            cells = (
+                [r.fn]
+                + [str(getter(r)) for _, getter, _ in varying]
+                + list(metric_cells(r))
+            )
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
+    slow = sorted(pure, key=lambda r: r.iter_median_ms, reverse=True)[:15]
     if slow:
-        lines += ["## Slowest pure-core functions (by median_ms)", ""]
-        lines += [
-            "| fn | tile_px | bands | dtype | median_ms | mpix/s |",
-            "|---|---|---|---|---|---|",
-        ]
-        for r in slow:
-            lines.append(
-                f"| {r.fn} | {r.tile_px} | {r.bands} | {r.dtype} | "
-                f"{r.median_ms:.3f} | {r.throughput_mpix_s:.1f} |"
-            )
-        lines.append("")
+        _emit_table(
+            "Slowest pure-core functions (by iter_median_ms)",
+            slow,
+            [_DIM_TILE_PX, _DIM_BANDS, _DIM_DTYPE, _DIM_SRID],
+            ["iter_median_ms", "mpix/s"],
+            lambda r: [f"{r.iter_median_ms:.1f}", f"{r.throughput_mpix_s:.1f}"],
+        )
     if spark:
-        lines += ["## Spark-path (median_ms by rows)", ""]
-        lines += ["| fn | rows | median_ms | rows/s |", "|---|---|---|---|"]
-        for r in sorted(spark, key=lambda r: (r.fn, r.rows)):
-            lines.append(
-                f"| {r.fn} | {r.rows} | {r.median_ms:.3f} | {r.throughput_rows_s:.2f} |"
-            )
-        lines.append("")
+        _emit_table(
+            "Spark-path (per_tile_avg_ms = iter_median_ms / tiles)",
+            sorted(spark, key=lambda r: (r.fn, r.rows)),
+            [_DIM_TILE_PX, _DIM_BANDS, _DIM_DTYPE, _DIM_SRID, _DIM_ROWS],
+            ["iter_median_ms", "per_tile_avg_ms", "rows/s"],
+            lambda r: [
+                f"{r.iter_median_ms:.1f}",
+                f"{(r.iter_median_ms / r.rows if r.rows else 0.0):.3f}",
+                f"{r.throughput_rows_s:.1f}",
+            ],
+        )
     if errs:
-        lines += [
-            "## Errors",
-            "",
-            "| fn | tile_px | bands | note |",
-            "|---|---|---|---|",
-        ]
-        for r in errs[:30]:
-            lines.append(f"| {r.fn} | {r.tile_px} | {r.bands} | {r.note} |")
-        lines.append("")
+        _emit_table(
+            "Errors",
+            errs[:30],
+            [_DIM_TILE_PX, _DIM_BANDS, _DIM_SRID],
+            ["note"],
+            lambda r: [r.note],
+        )
     return "\n".join(lines)
 
 

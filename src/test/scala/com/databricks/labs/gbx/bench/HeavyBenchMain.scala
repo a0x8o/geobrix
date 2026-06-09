@@ -8,8 +8,13 @@ import org.gdal.gdal.gdal
  *  spark._jvm.com.databricks.labs.gbx.bench.HeavyBenchMain.run(spark._jsparkSession, ...).
  *  Writes a heavyweight JSONL shard (same schema as the lightweight runner). */
 object HeavyBenchMain {
-  def run(spark: SparkSession, corpusRoot: String, outPath: String, fnsCsv: String,
-          modes: String, rowCountsCsv: String, warmup: Int, measured: Int, runId: String): Unit = {
+  // localCorpusRoot: a LOCAL (driver-disk) copy of the corpus for the pure-core path,
+  // which opens tiles via GDAL (can't read a UC Volume). runSparkPath keeps corpusRoot
+  // (the Volume) because it reads tiles via Spark binaryFile (UC-aware) on executors.
+  // Pass localCorpusRoot == corpusRoot when not on a Volume (e.g. local Docker runs).
+  def run(spark: SparkSession, corpusRoot: String, localCorpusRoot: String, outPath: String,
+          fnsCsv: String, modes: String, rowCountsCsv: String, warmup: Int, measured: Int,
+          runId: String): Unit = {
     // Ensure the GDAL JNI is loaded + drivers registered on THIS JVM (idempotent).
     // Pure-core opens rasters directly (gdal.Open on the driver) without going through
     // functions.register, so registration must be guaranteed here. Deliberately do NOT
@@ -31,8 +36,9 @@ object HeavyBenchMain {
     val writer = BenchIO.appendWriter(outPath)
     try {
       if (modes == "pure-core" || modes == "both")
+        // pure-core opens tiles via GDAL on the driver -> read from the LOCAL corpus copy.
         HeavyRunner.runPureCore(
-          corpusRoot, corpus, fns, runId, warmup, measured, Map.empty, writer.append)
+          localCorpusRoot, corpus, fns, runId, warmup, measured, Map.empty, writer.append)
       if (modes == "spark-path" || modes == "both")
         HeavyRunner.runSparkPath(
           spark, corpusRoot, corpus, fns, runId, rowCounts, warmup, measured, Map.empty, writer.append)

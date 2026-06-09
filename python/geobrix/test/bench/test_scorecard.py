@@ -49,7 +49,7 @@ def _write(root, fn, *, sources, cells):
 
 def test_scorecard_empty_store(tmp_path):
     out = compare.scorecard_from_store(root=tmp_path)
-    assert "Benchmarked 0" in out
+    assert "Benchmark coverage:** 0" in out
     assert "/ 107" in out
     # nothing covered -> all 107 listed as not-yet-covered
     assert "Not yet covered" in out
@@ -83,7 +83,7 @@ def test_scorecard_aggregates_over_store(tmp_path):
     }
     out = compare.scorecard_from_store(root=tmp_path, specs_by_name=specs_by_name)
 
-    assert "Benchmarked 3 / 107" in out
+    assert "Benchmark coverage:** 3 / 107" in out
     # parity: 1 exact, 1 divergent, 1 timing-only (na)
     assert "exact 1" in out
     assert "rst_slope" in out  # divergent fn surfaced
@@ -110,7 +110,7 @@ def test_scorecard_default_specs_from_registry(tmp_path):
         cells=[_cell("exact", 0.0, 2.0)],
     )
     out = compare.scorecard_from_store(root=tmp_path)
-    assert "Benchmarked 1 / 107" in out
+    assert "Benchmark coverage:** 1 / 107" in out
     assert fn in out
 
 

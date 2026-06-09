@@ -17,8 +17,36 @@ def test_time_iters_returns_distribution():
     stats = rn.time_iters(fn, warmup=2, measured=5)
     assert calls["n"] == 7  # warmup + measured
     assert stats["measured_iters"] == 5
-    assert stats["median_ms"] >= 0.5
-    assert stats["min_ms"] <= stats["median_ms"] <= stats["p90_ms"] + 1e-6
+    assert stats["iter_median_ms"] >= 0.5
+    assert (
+        stats["iter_min_ms"] <= stats["iter_median_ms"] <= stats["iter_p90_ms"] + 1e-6
+    )
+
+
+def test_time_iters_warmup_fn_used_for_warmup_only():
+    # warm-up iters run warmup_fn (the cheap, slot-spread stand-in); measured iters run fn.
+    n = {"warm": 0, "meas": 0}
+
+    def fn():
+        n["meas"] += 1
+
+    def warm():
+        n["warm"] += 1
+
+    rn.time_iters(fn, warmup=2, measured=3, warmup_fn=warm)
+    assert n["warm"] == 2  # all warm-up iters used warmup_fn
+    assert n["meas"] == 3  # measured iters used fn only (not warmup_fn)
+
+
+def test_time_iters_defaults_warmup_to_fn():
+    # Without warmup_fn, warm-up falls back to fn (warmup + measured calls total).
+    n = {"c": 0}
+
+    def fn():
+        n["c"] += 1
+
+    rn.time_iters(fn, warmup=2, measured=3)
+    assert n["c"] == 5
 
 
 def test_capture_env_has_required_fields():
@@ -166,7 +194,62 @@ def test_run_spark_path_produces_ok_rows(tmp_path, spark):
     )
     assert rows and all(r.status == "ok" for r in rows)
     assert all(r.mode == "spark-path" and r.fn == "rst_width" for r in rows)
+    # per_tile_avg_ms is the amortized per-tile wall-clock (iter_median_ms / rows).
+    for r in rows:
+        assert r.per_tile_avg_ms == pytest.approx(r.iter_median_ms / r.rows, rel=1e-9)
     assert sorted({r.rows for r in rows}) == [2, 4]
+
+
+def test_emit_explain_prints_and_writes_file(tmp_path, spark, capsys):
+    # _emit_explain echoes a labeled formatted plan to stdout AND tees it to
+    # {explain_dir}/{label}.explain.txt so a run's plans can be harvested off a Volume.
+    df = spark.range(4).selectExpr("id", "id * 2 AS dbl")
+    rn._emit_explain("demo/label", df, str(tmp_path))
+    captured = capsys.readouterr().out
+    assert "EXPLAIN: demo/label" in captured
+    # label slug sanitizes the "/" so the filename is filesystem-safe
+    f = tmp_path / "demo_label.explain.txt"
+    assert f.exists()
+    body = f.read_text()
+    assert "EXPLAIN: demo/label" in body and "Physical Plan" in body
+
+
+def test_run_spark_path_explain_only_writes_plans_no_rows(tmp_path, spark):
+    # --explain-only builds each spark-path fn's plan, prints/persists it, and returns NO
+    # rows (no timing, no sink). Exercises the explain_only + partition_size params and the
+    # explain_dir tee.
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=7,
+        tile_px=[32],
+        bands=[1],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=4,
+        row_tile_px=32,
+        row_bands=1,
+        row_dtype="float32",
+    )
+    explain_dir = tmp_path / "explain"
+    rows = rn.run_spark_path(
+        spark=spark,
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=s.select(functions=["rst_width"]),
+        run_id="t",
+        row_counts=[2, 4],
+        warmup=1,
+        measured=1,
+        where="venv",
+        partition_size=1,
+        explain_only=True,
+        explain_dir=str(explain_dir),
+    )
+    assert rows == []  # explain-only produces no result rows
+    written = list(explain_dir.glob("rst_width*.explain.txt"))
+    assert written, "expected an explain file for rst_width"
+    assert "Physical Plan" in written[0].read_text()
 
 
 def test_runner_main_writes_shard(tmp_path):

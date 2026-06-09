@@ -283,7 +283,9 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
     cells: List[CellCompare] = []
     for k in sorted(set(hw_by) & set(lw_by)):
         h, lo = hw_by[k], lw_by[k]
-        speedup = (h.median_ms / lo.median_ms) if lo.median_ms > 0 else 0.0
+        speedup = (
+            (h.iter_median_ms / lo.iter_median_ms) if lo.iter_median_ms > 0 else 0.0
+        )
         if h.status == "ok" and lo.status == "ok":
             # A function may declare a looser per-fn rel_tol for an inherent
             # cross-engine algorithm spread (e.g. rst_contour's segmentation);
@@ -310,8 +312,8 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 srid=h.srid,
                 nodata_frac=h.nodata_frac,
                 rows=h.rows,
-                hw_median_ms=h.median_ms,
-                lw_median_ms=lo.median_ms,
+                hw_median_ms=h.iter_median_ms,
+                lw_median_ms=lo.iter_median_ms,
                 speedup=speedup,
                 consistency=cls,
                 max_rel_delta=delta,
@@ -321,8 +323,8 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 lw_mpix_s=lo.throughput_mpix_s,
                 hw_rows_s=h.throughput_rows_s,
                 lw_rows_s=lo.throughput_rows_s,
-                hw_minus_lw_ms=_delta_ms(h.median_ms, lo.median_ms),
-                delta_pct=(_delta_pct(h.median_ms, lo.median_ms) or 0.0),
+                hw_minus_lw_ms=_delta_ms(h.iter_median_ms, lo.iter_median_ms),
+                delta_pct=(_delta_pct(h.iter_median_ms, lo.iter_median_ms) or 0.0),
             )
         )
     unmatched = [
@@ -431,8 +433,9 @@ def coverage_block(cells) -> str:
 
     lines = ["## Coverage & parity", ""]
     lines.append(
-        f"- **Coverage:** Benchmarked {n_benched} / {n_registered} registered "
-        f"`rst_` functions."
+        f"- **Benchmark coverage:** {n_benched} / {n_registered} registered `rst_` "
+        f"functions have a benchmark cell. (This is PERF coverage; functional "
+        f"coverage is separate -- see the parity gap below.)"
     )
     div_part = (" - divergent: " + ", ".join(div_fns)) if div_fns else ""
     lines.append(
@@ -457,14 +460,15 @@ def coverage_block(cells) -> str:
         )
     if not_covered:
         lines.append(
-            f"- **Not yet covered:** {len(not_covered)} registered `rst_` "
-            f"function(s) not yet in the benchmark registry: "
-            + ", ".join(not_covered)
-            + "."
+            f"- **No comparison cell in this run:** {len(not_covered)} registered "
+            f"`rst_` function(s) -- all implemented + in the bench registry, but "
+            f"pure-core-only / timing-only (geometry-in, readers, metadata accessors), "
+            f"so a spark-path run produces no comparison cell. Run --modes both / "
+            f"pure-core to exercise them: " + ", ".join(not_covered) + "."
         )
     else:
         lines.append(
-            "- **Not yet covered:** 0 (every registered function is benchmarked)."
+            "- **Not yet benchmarked:** 0 (every registered function has a benchmark cell)."
         )
     lines.append("")
     return "\n".join(lines)
@@ -608,8 +612,9 @@ def scorecard_from_store(
 
     lines = ["# GeoBrix benchmark — store scorecard", ""]
     lines.append(
-        f"- **Coverage:** Benchmarked {n_benched} / {n_registered} registered "
-        f"`rst_` functions."
+        f"- **Benchmark coverage:** {n_benched} / {n_registered} registered `rst_` "
+        f"functions have a benchmark cell. (This is PERF coverage; functional "
+        f"coverage is separate -- see the parity gap below.)"
     )
     div_part = (" - divergent: " + ", ".join(div_fns)) if div_fns else ""
     lines.append(
@@ -674,7 +679,47 @@ def scorecard_from_store(
     return "\n".join(lines)
 
 
-def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
+def _hoist_dims(items, dims):
+    """Split run-constant dims out of a table into a one-line context preamble.
+
+    ``dims`` is a list of ``(label, getter, fmt)``. A dim with a single distinct
+    value across ``items`` is hoisted (its ``fmt(value)`` token rendered once
+    above the table); a dim that varies stays a column.
+    """
+    const_tokens, varying = [], []
+    for label, getter, fmt in dims:
+        vals = {getter(it) for it in items}
+        if len(vals) == 1:
+            const_tokens.append(fmt(next(iter(vals))))
+        else:
+            varying.append((label, getter, fmt))
+    return const_tokens, varying
+
+
+def _compare_context_line(const_tokens, items, pool_size):
+    """Italic context line of hoisted dim tokens + an optional pool token."""
+    tokens = list(const_tokens)
+    if pool_size is not None:
+        max_rows = max((it.rows for it in items), default=0)
+        if max_rows and pool_size < max_rows:
+            token = f"⚠ corpus pool {pool_size} < {max_rows} tiles/iter"
+        else:
+            token = f"corpus pool {pool_size} tiles available"
+        tokens.append(token)
+    if not tokens:
+        return None
+    return "_" + " · ".join(tokens) + "_"
+
+
+# Hoistable dimension descriptors over CellCompare: (label, getter, fmt).
+_CMP_DIM_TILE_PX = ("tile_px", lambda c: c.tile_px, lambda v: f"tile_px {v}²")
+_CMP_DIM_BANDS = ("bands", lambda c: c.bands, lambda v: f"{v} bands")
+_CMP_DIM_DTYPE = ("dtype", lambda c: c.dtype, lambda v: f"{v}")
+_CMP_DIM_SRID = ("srid", lambda c: c.srid, lambda v: f"srid {v}")
+_CMP_DIM_ROWS = ("rows", lambda c: c.rows, lambda v: f"tile scale {v}")
+
+
+def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str:
     lines = ["# GeoBrix benchmark — heavy vs light comparison", "", "## Insights", ""]
     insights = []
     ok_speed = [cl for cl in cells if cl.lw_median_ms > 0 and cl.hw_median_ms > 0]
@@ -725,48 +770,79 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows) -> str:
         "_Δms/Δ% = heavy − light (heavy timing minus light); positive → heavy "
         "slower (lightweight faster), negative → heavy faster._",
         "",
+        "_Timing columns: `hw_iter_ms`/`lw_iter_ms` = median wall-clock of ONE full "
+        "iteration over all N tiles (whole distributed job). `hw_per_tile_ms`/"
+        "`lw_per_tile_ms` = that ÷ N (amortized per tile). Same N both tiers._",
+        "",
     ]
+    _sp = sorted({cl.rows for cl in cells if cl.mode == "spark-path"})
+    if _sp:
+        _rc = ", ".join(str(x) for x in _sp)
+        lines += [
+            f"_**Tile scale: {_rc} tiles/iteration** (spark-path) — every tile processed "
+            f"each timed iteration, not a sample. Pure-core = 1 tile/iter._",
+            "",
+        ]
 
     lines += coverage_block(cells).split("\n")
 
+    dims = [
+        _CMP_DIM_TILE_PX,
+        _CMP_DIM_BANDS,
+        _CMP_DIM_DTYPE,
+        _CMP_DIM_SRID,
+        _CMP_DIM_ROWS,
+    ]
     for mode in ("pure-core", "spark-path"):
         mc = [cl for cl in cells if cl.mode == mode]
         if not mc:
             continue
         if mode == "pure-core":
-            lines += [
-                f"## {mode} (hw vs lw)",
-                "",
-                "| fn | tile_px | bands | rows | hw_ms | lw_ms | Δms | Δ% | "
-                "hw_mpix/s | lw_mpix/s | speedup | consistency | note |",
-                "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
-            ]
-            for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
-                lines.append(
-                    f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
-                    f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
-                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.3f} | "
-                    f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)} | "
-                    f"{cl.hw_mpix_s:.1f} | {cl.lw_mpix_s:.1f} | "
-                    f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
-                )
+            tput_labels = ["hw_mpix/s", "lw_mpix/s"]
+
+            def tput_cells(cl):
+                return [f"{cl.hw_mpix_s:.1f}", f"{cl.lw_mpix_s:.1f}"]
+
         else:
-            lines += [
-                f"## {mode} (hw vs lw)",
-                "",
-                "| fn | tile_px | bands | rows | hw_ms | lw_ms | Δms | Δ% | "
-                "hw_rows/s | lw_rows/s | speedup | consistency | note |",
-                "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
-            ]
-            for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
-                lines.append(
-                    f"| {cl.fn} | {cl.tile_px} | {cl.bands} | {cl.rows} | "
-                    f"{cl.hw_median_ms:.3f} | {cl.lw_median_ms:.3f} | "
-                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.3f} | "
-                    f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)} | "
-                    f"{cl.hw_rows_s:.1f} | {cl.lw_rows_s:.1f} | "
-                    f"{cl.speedup:.2f} | {cl.consistency} | {cl.note} |"
-                )
+            # spark-path headline: amortized per-tile wall-clock (median_ms / rows),
+            # more interpretable + N-stable than rows/s (its inverse). Same row count
+            # both tiers, so the speedup column is unchanged.
+            tput_labels = ["hw_per_tile_ms", "lw_per_tile_ms"]
+
+            def tput_cells(cl):
+                return [
+                    f"{(cl.hw_median_ms / cl.rows if cl.rows else 0.0):.3f}",
+                    f"{(cl.lw_median_ms / cl.rows if cl.rows else 0.0):.3f}",
+                ]
+
+        const_tokens, varying = _hoist_dims(mc, dims)
+        lines += [f"## {mode} (hw vs lw)", ""]
+        ctx = _compare_context_line(const_tokens, mc, pool_size)
+        if ctx:
+            lines += [ctx, ""]
+        # fn is always first; varying dims sit between fn and the metric columns;
+        # all timing/throughput/consistency columns are always present.
+        metric_labels = (
+            ["hw_iter_ms", "lw_iter_ms", "Δms", "Δ%"]
+            + tput_labels
+            + ["speedup", "consistency", "note"]
+        )
+        cols = ["fn"] + [lbl for lbl, _, _ in varying] + metric_labels
+        lines += ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+        for cl in sorted(mc, key=lambda c: c.speedup, reverse=True):
+            row = (
+                [cl.fn]
+                + [str(getter(cl)) for _, getter, _ in varying]
+                + [
+                    f"{cl.hw_median_ms:.1f}",
+                    f"{cl.lw_median_ms:.1f}",
+                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.1f}",
+                    f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)}",
+                ]
+                + tput_cells(cl)
+                + [f"{cl.speedup:.2f}", cl.consistency, cl.note]
+            )
+            lines.append("| " + " | ".join(row) + " |")
         lines += [""]
     return "\n".join(lines)
 

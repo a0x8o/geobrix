@@ -2,7 +2,7 @@ package com.databricks.labs.gbx.bench
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import java.io.{FileOutputStream, OutputStreamWriter}
+import java.io.{FileInputStream, FileOutputStream, OutputStreamWriter}
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import org.apache.spark.sql.SparkSession
@@ -38,7 +38,11 @@ case class BenchRow(
     env_gdal_version: String,
     env_runtime_version: String,
     env_where: String,
-    output_fingerprint: String
+    output_fingerprint: String,
+    // Wall clock over the measured iterations: total (sum) + avg (mean). Mirrors the
+    // Python ResultRow fields; default 0.0 so error/skip rows stay valid.
+    total_wall_clock_ms: Double = 0.0,
+    avg_wall_clock_ms: Double = 0.0
 )
 
 object BenchIO {
@@ -54,8 +58,23 @@ object BenchIO {
     * equivalent of Python's `Path.read_bytes()` on a Volume. Works on-cluster (UC
     * Volume) and in local tests (local file) alike. */
   def readBytes(path: String): Array[Byte] = {
-    val df = SparkSession.active.read.format("binaryFile").load(path)
-    df.select("content").head().getAs[Array[Byte]](0)
+    // Dual-mode: a LOCAL file (e.g. a pure-core corpus staged to local disk) reads via
+    // plain java.io; a UC Volume path can't be opened by the JVM (EPERM), so fall back
+    // to Spark's binaryFile (the only UC-aware reader). FileInputStream on a /Volumes
+    // path raises IOException -> Spark fallback.
+    try {
+      val is = new FileInputStream(path)
+      try is.readAllBytes()
+      finally is.close()
+    } catch {
+      case _: java.io.IOException =>
+        SparkSession.active.read
+          .format("binaryFile")
+          .load(path)
+          .select("content")
+          .head()
+          .getAs[Array[Byte]](0)
+    }
   }
 
   def writeJsonl(rows: Seq[BenchRow], path: String): Unit = {

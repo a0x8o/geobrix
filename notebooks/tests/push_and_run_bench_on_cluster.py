@@ -61,7 +61,16 @@ if _env_file.exists():
 
 def _geobrix_version() -> str:
     """Read version from python package __init__.py (avoid heavy imports)."""
-    init_py = TESTS_DIR.parent.parent / "python" / "geobrix" / "src" / "databricks" / "labs" / "gbx" / "__init__.py"
+    init_py = (
+        TESTS_DIR.parent.parent
+        / "python"
+        / "geobrix"
+        / "src"
+        / "databricks"
+        / "labs"
+        / "gbx"
+        / "__init__.py"
+    )
     if init_py.exists():
         with open(init_py) as f:
             for line in f:
@@ -129,7 +138,15 @@ def _local_size_sweep_count() -> int:
     """# of size-sweep tiles in the locally-staged corpus (for pure-core expected rows).
     None if the local corpus.json can't be read."""
     try:
-        local = TESTS_DIR.parent.parent / "sample-data" / "Volumes" / "main" / "default" / "bench-corpus" / "corpus.json"
+        local = (
+            TESTS_DIR.parent.parent
+            / "sample-data"
+            / "Volumes"
+            / "main"
+            / "default"
+            / "bench-corpus"
+            / "corpus.json"
+        )
         if not local.exists():
             return None
         with open(local) as fh:
@@ -139,8 +156,14 @@ def _local_size_sweep_count() -> int:
         return None
 
 
-def _expected_rows(functions: str, sel: str, modes: str, row_counts: str,
-                   lightweight: bool, heavyweight: bool) -> int:
+def _expected_rows(
+    functions: str,
+    sel: str,
+    modes: str,
+    row_counts: str,
+    lightweight: bool,
+    heavyweight: bool,
+) -> int:
     """Best-effort total rows this run will stream, for an 'N of EXPECTED' progress
     display. Only reliable for a LIGHTWEIGHT-ONLY run: the lightweight fn set + corpus
     are known host-side. The heavyweight fn count is decided in Scala (BenchDispatch),
@@ -151,7 +174,10 @@ def _expected_rows(functions: str, sel: str, modes: str, row_counts: str,
     try:
         sys.path.insert(0, "python/geobrix/src")
         from databricks.labs.gbx.bench import spec as _spec
-        fns = _spec.select(functions=[x for x in functions.split(",") if x] or None, set=sel)
+
+        fns = _spec.select(
+            functions=[x for x in functions.split(",") if x] or None, set=sel
+        )
     except Exception:
         return None
     rc = [int(x) for x in row_counts.split(",") if x]
@@ -179,10 +205,37 @@ def main() -> int:
     do_wait = "--no-wait" not in sys.argv
     heavyweight = "--lightweight-only" not in sys.argv
     lightweight = "--heavyweight-only" not in sys.argv
+    # --explain-only: print/persist each spark-path fn's physical plan, run nothing timed.
+    # It's a lightweight spark-path-only diagnostic -- force that scope so the heavy JVM
+    # path (which can't .explain) and the pure-core path stay out entirely.
+    explain_only = "--explain-only" in sys.argv
+    if explain_only:
+        heavyweight = False
+        lightweight = True
     if not heavyweight and not lightweight:
-        print("ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
-              "(nothing to run). Pass at most one.", file=sys.stderr)
+        print(
+            "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
+            "(nothing to run). Pass at most one.",
+            file=sys.stderr,
+        )
         return 2
+
+    # --resume: keep existing rows for this run_id and skip already-complete (tier x mode)
+    # sections (load them from the table instead of re-running). For picking up after a
+    # timeout/crash on the SAME cluster. Mutually exclusive with the truncate modes, which
+    # would wipe the rows resume relies on. NOTE: spark-path timings depend on cluster size,
+    # so only resume on an unchanged cluster config (pure-core is size-independent).
+    resume = "--resume" in sys.argv
+    if resume and ("--truncate-all" in sys.argv or "--truncate-results" in sys.argv):
+        print(
+            "ERROR: --resume is mutually exclusive with --truncate-all / "
+            "--truncate-results (truncate would wipe the rows resume reuses).",
+            file=sys.stderr,
+        )
+        return 2
+    # On resume, fns whose only row is an error are re-run by default (purged + retried,
+    # e.g. after a code/JAR fix); --no-fix-errors keeps them as-is and skips them.
+    fix_errors = "--no-fix-errors" not in sys.argv
 
     run_id = _arg("--run-id", "cluster")
     functions = _arg("--functions", "")
@@ -194,33 +247,62 @@ def main() -> int:
     row_counts = _arg("--row-counts", "10,100,1000,10000")
     warmup = int(_arg("--warmup", "2"))
     measured = int(_arg("--measured", "5"))
+    # Spark-path iteration counts are SEPARATE from pure-core: the N-tile sweep is itself
+    # the averaging, so spark-path defaults to 1 warm-up + 1 measured (cheap, per-tile is
+    # stable over N). Pure-core (fast single-tile op) keeps --warmup/--measured for a
+    # stable median. Override with --spark-warmup / --spark-measured.
+    spark_warmup = int(_arg("--spark-warmup", "1"))
+    spark_measured = int(_arg("--spark-measured", "1"))
+    # Tiles per spark-path partition; 0 = auto (n / (slots*4): oversubscribe slots ~4x so
+    # finished slots grab pending tasks rather than idling on the straggler tail).
+    partition_size = int(_arg("--override-partition-size", "0"))
 
     host = os.environ.get("DATABRICKS_HOST")
     token = os.environ.get("DATABRICKS_TOKEN")
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
     if not (host and token) and not profile:
-        print("Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE", file=sys.stderr)
+        print(
+            "Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE",
+            file=sys.stderr,
+        )
         return 2
 
     cluster_id = _strip_invisible(os.environ.get("CLUSTER_ID") or "")
     if not cluster_id:
-        print("Set CLUSTER_ID (existing cluster to run the benchmark on)", file=sys.stderr)
+        print(
+            "Set CLUSTER_ID (existing cluster to run the benchmark on)", file=sys.stderr
+        )
         return 2
 
     catalog = _strip_invisible(os.environ.get("GBX_BUNDLE_VOLUME_CATALOG") or "main")
     schema = _strip_invisible(os.environ.get("GBX_BUNDLE_VOLUME_SCHEMA") or "default")
-    volume = _strip_invisible(os.environ.get("GBX_BUNDLE_VOLUME_NAME") or "geobrix_samples")
+    volume = _strip_invisible(
+        os.environ.get("GBX_BUNDLE_VOLUME_NAME") or "geobrix_samples"
+    )
     volroot = f"/Volumes/{catalog}/{schema}/{volume}"
     ver = _geobrix_version()
 
     # Wheel path: explicit or derived under the Volume root.
-    wheel = _strip_invisible(os.environ.get("GBX_BUNDLE_WHEEL_VOLUME_PATH") or "").strip()
+    wheel = _strip_invisible(
+        os.environ.get("GBX_BUNDLE_WHEEL_VOLUME_PATH") or ""
+    ).strip()
     if not wheel:
         wheel = f"{volroot}/geobrix-{ver}-py3-none-any.whl"
 
-    corpus = _strip_invisible(os.environ.get("GBX_BENCH_CORPUS") or "").strip() or f"{volroot}/bench-corpus"
-    table = _strip_invisible(os.environ.get("GBX_BENCH_RESULTS_TABLE") or "").strip() or f"{catalog}.{schema}.bench_results"
-    tests_jar = _strip_invisible(os.environ.get("GBX_BENCH_TESTS_JAR_VOLUME_PATH") or "").strip() or f"{volroot}/geobrix-{ver}-tests.jar"
+    corpus = (
+        _strip_invisible(os.environ.get("GBX_BENCH_CORPUS") or "").strip()
+        or f"{volroot}/bench-corpus"
+    )
+    table = (
+        _strip_invisible(os.environ.get("GBX_BENCH_RESULTS_TABLE") or "").strip()
+        or f"{catalog}.{schema}.bench_results"
+    )
+    tests_jar = (
+        _strip_invisible(
+            os.environ.get("GBX_BENCH_TESTS_JAR_VOLUME_PATH") or ""
+        ).strip()
+        or f"{volroot}/geobrix-{ver}-tests.jar"
+    )
     out_dir = f"{volroot}/bench-out/{run_id}"
 
     cfg = dict(
@@ -235,6 +317,9 @@ def main() -> int:
         row_counts=row_counts,
         warmup=warmup,
         measured=measured,
+        spark_warmup=spark_warmup,
+        spark_measured=spark_measured,
+        partition_size=partition_size,
         heavyweight=heavyweight,
         lightweight=lightweight,
         # Two truncate modes (default: neither -> rows accumulate across runs):
@@ -244,19 +329,35 @@ def main() -> int:
         #    rows remain. (Takes precedence if both are passed.)
         truncate_results=("--truncate-results" in sys.argv),
         truncate_all=("--truncate-all" in sys.argv),
+        #  --resume: keep existing rows; function-granular (load done fns, run missing).
+        resume=resume,
+        #  fix_errors (default True): on resume, re-run fns whose only row is an error.
+        fix_errors=fix_errors,
+        #  --explain-only: print/persist spark-path physical plans, no timing/no rows.
+        explain_only=explain_only,
     )
+    if explain_only:
+        # Plans are a spark-path concern only; never run the pure-core sections.
+        cfg["modes"] = "spark-path"
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
     sys.path.insert(0, "python/geobrix/src")
     try:
         from databricks.labs.gbx.bench.cluster import build_bench_notebook
     except ImportError as e:
-        print(f"Could not import build_bench_notebook from repo source (python/geobrix/src): {e}", file=sys.stderr)
-        print("Run this from the repo root so 'python/geobrix/src' resolves.", file=sys.stderr)
+        print(
+            f"Could not import build_bench_notebook from repo source (python/geobrix/src): {e}",
+            file=sys.stderr,
+        )
+        print(
+            "Run this from the repo root so 'python/geobrix/src' resolves.",
+            file=sys.stderr,
+        )
         return 2
 
     try:
         import io
+
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service import compute, jobs
         from databricks.sdk.service.workspace import ImportFormat
@@ -278,17 +379,26 @@ def main() -> int:
     print(f"  out_dir    : {out_dir}")
     print(f"  wheel      : {wheel}")
     if heavyweight:
-        print(f"  tests.jar  : {tests_jar}  (attached as job library; fat JAR via cluster init script)")
+        print(
+            f"  tests.jar  : {tests_jar}  (attached as job library; fat JAR via cluster init script)"
+        )
     print("  NOTE: this submits a job to a real cluster and consumes compute.")
     print("=" * 64)
 
     nb = build_bench_notebook(cfg)
     nb_bytes = json.dumps(nb, indent=1).encode("utf-8")
 
-    w = WorkspaceClient(profile=profile) if profile else WorkspaceClient(host=host, token=token)
+    w = (
+        WorkspaceClient(profile=profile)
+        if profile
+        else WorkspaceClient(host=host, token=token)
+    )
 
     # Notebook path: env override or per-user default.
-    notebook_path_from_env = _strip_invisible(os.environ.get("GBX_BENCH_RUNNER_NOTEBOOK_PATH") or "").strip() or None
+    notebook_path_from_env = (
+        _strip_invisible(os.environ.get("GBX_BENCH_RUNNER_NOTEBOOK_PATH") or "").strip()
+        or None
+    )
     me = w.current_user.me()
     default_path = f"/Users/{me.user_name}/geobrix_bench_runner.ipynb"
     notebook_path = notebook_path_from_env or default_path
@@ -319,7 +429,10 @@ def main() -> int:
     print("Submitting one-off benchmark run on cluster...")
     submit_waiter = w.jobs.submit(
         run_name=f"geobrix-bench-{run_id}",
-        timeout_seconds=7200,
+        # 6h: the full 1000-row both-run is dominated by the slow light spark-path fns
+        # (the perf gap being measured). 2h timed out mid light-spark-path; 6h covers
+        # light+heavy spark-path even before cluster upsizing parallelizes it.
+        timeout_seconds=21600,
         tasks=[
             jobs.SubmitTask(
                 task_key="run_bench",
@@ -347,8 +460,10 @@ def main() -> int:
     except Exception:
         pass
     print(f"  results : {table}  (streaming; filter run_id = '{run_id}')")
-    print(f"  query   : SELECT fn, mode, rows, median_ms, status "
-          f"FROM {table} WHERE run_id = '{run_id}' ORDER BY fn")
+    print(
+        f"  query   : SELECT fn, mode, rows, iter_median_ms, status "
+        f"FROM {table} WHERE run_id = '{run_id}' ORDER BY fn"
+    )
     print("=" * 64)
 
     if not do_wait:
@@ -368,17 +483,29 @@ def main() -> int:
     POLL_SECS = 5
     # The tier(s) this invocation writes -> filter the live count by (run_id, api) so it
     # stays accurate when light and heavy share a run_id in the same table.
-    poll_apis = [a for a, on in (("lightweight", lightweight), ("heavyweight", heavyweight)) if on]
-    expected = _expected_rows(functions, sel, modes, row_counts, lightweight, heavyweight)
+    poll_apis = [
+        a
+        for a, on in (("lightweight", lightweight), ("heavyweight", heavyweight))
+        if on
+    ]
+    expected = _expected_rows(
+        functions, sel, modes, row_counts, lightweight, heavyweight
+    )
     # "27 (of 83)" when we know the total this run will stream, else just "27".
     of = f" (of {expected})" if expected else ""
-    warehouse_id = _strip_invisible(os.environ.get("GBX_BENCH_SQL_WAREHOUSE_ID") or "") or _discover_warehouse(w)
+    warehouse_id = _strip_invisible(
+        os.environ.get("GBX_BENCH_SQL_WAREHOUSE_ID") or ""
+    ) or _discover_warehouse(w)
     if warehouse_id:
         tot = f" (expecting {expected} rows)" if expected else ""
-        print(f"Waiting; polling live row count via SQL warehouse {warehouse_id} every {POLL_SECS}s{tot}...")
+        print(
+            f"Waiting; polling live row count via SQL warehouse {warehouse_id} every {POLL_SECS}s{tot}..."
+        )
     else:
-        print("Waiting; no SQL warehouse for live counts (set GBX_BENCH_SQL_WAREHOUSE_ID "
-              "for them) -- heartbeating run state. The table above is queryable now.")
+        print(
+            "Waiting; no SQL warehouse for live counts (set GBX_BENCH_SQL_WAREHOUSE_ID "
+            "for them) -- heartbeating run state. The table above is queryable now."
+        )
     run = None
     last_count = -1
     stale_polls = 0
@@ -406,19 +533,37 @@ def main() -> int:
             else:
                 stale_polls += 1
                 if stale_polls % 6 == 0:  # ~30s with no new rows -> show we're alive
-                    print(f"  [{lc}] still {max(last_count, 0)}{of} rows (current fn taking a while)")
+                    print(
+                        f"  [{lc}] still {max(last_count, 0)}{of} rows (current fn taking a while)"
+                    )
         time.sleep(POLL_SECS)
 
     run_id_remote = remote_run_id
     state = run.state
     if state and getattr(state, "life_cycle_state", None):
-        lc = state.life_cycle_state.value if hasattr(state.life_cycle_state, "value") else str(state.life_cycle_state)
+        lc = (
+            state.life_cycle_state.value
+            if hasattr(state.life_cycle_state, "value")
+            else str(state.life_cycle_state)
+        )
         if lc == "TERMINATED":
-            result_state = (state.result_state.value if state.result_state and hasattr(state.result_state, "value") else str(state.result_state)) if state.result_state else "UNKNOWN"
+            result_state = (
+                (
+                    state.result_state.value
+                    if state.result_state and hasattr(state.result_state, "value")
+                    else str(state.result_state)
+                )
+                if state.result_state
+                else "UNKNOWN"
+            )
             # Try to surface the notebook's dbutils.notebook.exit() payload.
             try:
                 out = w.jobs.get_run_output(run.tasks[0].run_id) if run.tasks else None
-                if out and getattr(out, "notebook_output", None) and out.notebook_output.result:
+                if (
+                    out
+                    and getattr(out, "notebook_output", None)
+                    and out.notebook_output.result
+                ):
                     print("Notebook output:", out.notebook_output.result)
             except Exception:
                 pass
@@ -436,8 +581,14 @@ def main() -> int:
                 print(f"Results -> table {table}")
                 print(f"Summary  -> {out_dir}/{summary_file}")
                 return 0
-            print(f"Run {run_id_remote} finished with result_state={result_state}", file=sys.stderr)
-            print(f"Check the Delta table {table} and out_dir {out_dir} for partial results.", file=sys.stderr)
+            print(
+                f"Run {run_id_remote} finished with result_state={result_state}",
+                file=sys.stderr,
+            )
+            print(
+                f"Check the Delta table {table} and out_dir {out_dir} for partial results.",
+                file=sys.stderr,
+            )
     else:
         print(f"Run state: {state}", file=sys.stderr)
     return 1

@@ -19,9 +19,9 @@ def _row(**kw):
         nodata_frac=0.0,
         warmup_iters=1,
         measured_iters=2,
-        median_ms=1.0,
-        min_ms=1.0,
-        p90_ms=1.0,
+        iter_median_ms=1.0,
+        iter_min_ms=1.0,
+        iter_p90_ms=1.0,
         throughput_mpix_s=1.0,
         throughput_rows_s=1.0,
         peak_rss_mb=0.0,
@@ -56,8 +56,26 @@ def spark():
 
 def test_rows_to_dataframe_schema_and_where(spark):
     df = cl.rows_to_dataframe([_row(), _row(fn="rst_avg")], spark, where="cluster")
-    assert len(df.columns) == 30
-    assert "output_fingerprint" in df.columns
+    cols = df.columns
+    assert len(cols) == 34
+    assert "output_fingerprint" in cols
+    assert "iter_total_wall_clock_ms" in cols
+    assert "avg_wall_clock_ms" in cols
+    assert "per_tile_avg_ms" in cols
+    # run_event_num is the FIRST column (monotonic per-run event index).
+    assert cols[0] == "run_event_num"
+    # Column ORDER: avg/per_tile metrics sit right after measured_iters, and the
+    # per-iter distribution (iter_*) trails as the last four columns.
+    assert cols == cl.ORDER
+    mi = cols.index("measured_iters")
+    assert cols[mi + 1] == "avg_wall_clock_ms"
+    assert cols[mi + 2] == "per_tile_avg_ms"
+    assert cols[-4:] == [
+        "iter_median_ms",
+        "iter_min_ms",
+        "iter_p90_ms",
+        "iter_total_wall_clock_ms",
+    ]
     vals = {r["fn"]: r["env_where"] for r in df.collect()}
     assert vals == {"rst_width": "cluster", "rst_avg": "cluster"}
 
@@ -130,3 +148,136 @@ def test_build_bench_notebook_heavyweight_only_omits_lightweight():
     src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
     assert "HeavyBenchMain" in src
     assert "run_pure_core" not in src and "run_spark_path" not in src
+
+
+def _cfg(**kw):
+    base = dict(
+        wheel="/Volumes/c/s/v/geobrix-0.4.0-py3-none-any.whl",
+        corpus="/Volumes/c/s/v/bench-corpus",
+        out_dir="/Volumes/c/s/v/bench-out/run1",
+        table="main.default.bench_results",
+        run_id="run1",
+        functions="rst_width,rst_slope",
+        modes="both",
+        row_counts="1000",
+        warmup=1,
+        measured=3,
+        heavyweight=True,
+        lightweight=True,
+    )
+    base.update(kw)
+    return base
+
+
+def _section_cells(nb):
+    # The per-(tier x mode) section cells are the ones whose first line is the "# (x)" tag.
+    return [
+        "".join(c["source"])
+        for c in nb["cells"]
+        if "".join(c["source"]).lstrip().startswith("# (")
+    ]
+
+
+def test_build_bench_notebook_one_cell_per_section_in_order():
+    # both tiers + both modes -> 4 section cells in pure-core(light,heavy), spark(light,heavy)
+    # order, each calling show_section so its table+summary render when the cell finishes.
+    nb = cl.build_bench_notebook(_cfg())
+    secs = _section_cells(nb)
+    assert len(secs) == 4
+    assert 'show_section("lightweight", "pure-core", run_light("pure-core"))' in secs[0]
+    assert 'show_section("heavyweight", "pure-core", run_heavy("pure-core"))' in secs[1]
+    assert (
+        'show_section("lightweight", "spark-path", run_light("spark-path"))' in secs[2]
+    )
+    assert (
+        'show_section("heavyweight", "spark-path", run_heavy("spark-path"))' in secs[3]
+    )
+    # 2 install cells + setup + 4 sections + epilogue
+    assert len(nb["cells"]) == 8
+    src = "\n".join("".join(c["source"]) for c in nb["cells"])
+    assert "def show_section(" in src
+    assert "dbutils.notebook.exit" in src
+
+
+def test_build_bench_notebook_pure_core_only_has_no_spark_section():
+    nb = cl.build_bench_notebook(_cfg(modes="pure-core"))
+    secs = _section_cells(nb)
+    assert len(secs) == 2  # light pure-core, heavy pure-core
+    assert all("spark-path" not in s for s in secs)
+
+
+def test_build_bench_notebook_lightweight_both_modes_two_sections():
+    nb = cl.build_bench_notebook(_cfg(heavyweight=False))
+    secs = _section_cells(nb)
+    assert len(secs) == 2  # light pure-core, light spark-path
+    assert all("run_heavy" not in s for s in secs)
+    assert 'show_section("lightweight", "pure-core"' in secs[0]
+    assert 'show_section("lightweight", "spark-path"' in secs[1]
+
+
+def test_build_bench_notebook_resume_emits_function_granular_logic():
+    nb = cl.build_bench_notebook(_cfg(resume=True))
+    src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
+    assert "RESUME = True" in src
+    # function-granular resume: load done fns, run only the missing ones
+    assert "def _done_fns(" in src
+    assert "def _purge_errors(" in src
+    # run_light / run_heavy consult _done_fns (2 call sites + the def)
+    assert src.count("_done_fns(") >= 3
+    # resume keeps existing rows -> no truncate
+    assert "TRUNCATE_ALL = False" in src
+    assert "TRUNCATE = False" in src
+
+
+def test_build_bench_notebook_default_no_resume():
+    nb = cl.build_bench_notebook(_cfg())
+    src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
+    assert "RESUME = False" in src
+
+
+def test_build_bench_notebook_partition_size_threading():
+    # default -> PARTITION_SIZE = 0 (auto: n/(slots*4)); --override-partition-size flows through.
+    src_default = "\n".join(
+        "".join(c.get("source", [])) for c in cl.build_bench_notebook(_cfg())["cells"]
+    )
+    assert "PARTITION_SIZE = 0" in src_default
+    src_ov = "\n".join(
+        "".join(c.get("source", []))
+        for c in cl.build_bench_notebook(_cfg(partition_size=8))["cells"]
+    )
+    assert "PARTITION_SIZE = 8" in src_ov
+    assert "partition_size=PARTITION_SIZE" in src_ov
+
+
+def test_build_bench_notebook_fix_errors_default_and_override():
+    # Default: fix errors on resume (purge + re-run errored fns).
+    src_default = "\n".join(
+        "".join(c.get("source", []))
+        for c in cl.build_bench_notebook(_cfg(resume=True))["cells"]
+    )
+    assert "FIX_ERRORS = True" in src_default
+    # --no-fix-errors -> keep errored fns as-is.
+    src_no = "\n".join(
+        "".join(c.get("source", []))
+        for c in cl.build_bench_notebook(_cfg(resume=True, fix_errors=False))["cells"]
+    )
+    assert "FIX_ERRORS = False" in src_no
+
+
+def test_build_bench_notebook_explain_only_threading():
+    # Default: EXPLAIN_ONLY = False (no plan-dump branch taken).
+    src_default = "\n".join(
+        "".join(c.get("source", [])) for c in cl.build_bench_notebook(_cfg())["cells"]
+    )
+    assert "EXPLAIN_ONLY = False" in src_default
+    # explain_only -> EXPLAIN_ONLY True + run_spark_path invoked with explain_only=True
+    # so run_light prints/persists plans instead of timing.
+    src_ex = "\n".join(
+        "".join(c.get("source", []))
+        for c in cl.build_bench_notebook(
+            _cfg(explain_only=True, modes="spark-path", heavyweight=False)
+        )["cells"]
+    )
+    assert "EXPLAIN_ONLY = True" in src_ex
+    assert "explain_only=True" in src_ex
+    assert "explain_dir=EXPLAIN_DIR" in src_ex
