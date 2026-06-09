@@ -2299,10 +2299,22 @@ def registered_rst() -> "frozenset[str]":
             cand = c
             break
         root = root.parent
-    if cand is None:
-        raise FileNotFoundError("registered_functions.txt not found above " + __file__)
+    if cand is not None:
+        text = cand.read_text()
+    else:
+        # Installed without the repo tree above this file (e.g. the wheel on a cluster):
+        # read the copy packaged alongside this module. Kept byte-identical to the
+        # canonical docs/tests-function-info/registered_functions.txt by the
+        # binding-parity check (check-binding-parity.py), so there is no drift.
+        from importlib.resources import files
+
+        text = (
+            files("databricks.labs.gbx.bench")
+            .joinpath("registered_functions.txt")
+            .read_text()
+        )
     names = set()
-    for line in cand.read_text().splitlines():
+    for line in text.splitlines():
         s = line.strip()
         if not s or s.startswith("#"):
             continue

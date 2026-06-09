@@ -379,16 +379,21 @@ def pyrx_implemented() -> "frozenset[str]":
     """
     root = Path(__file__).resolve()
     rel = Path("python/geobrix/src/databricks/labs/gbx/pyrx/functions.py")
-    cand = None
+    src = None
     for _ in range(12):
         c = root / rel
         if c.exists():
-            cand = c
+            src = c.read_text()
             break
         root = root.parent
-    if cand is None:
-        raise FileNotFoundError("pyrx functions.py not found above " + __file__)
-    names = set(re.findall(r"def (rst_[a-z0-9_]+)", cand.read_text()))
+    if src is None:
+        # Installed without the repo tree (e.g. the wheel on a cluster): read pyrx
+        # functions.py from the IMPORTED module's own location instead of the repo
+        # path, mirroring spec.registered_rst's on-cluster fallback.
+        from databricks.labs.gbx.pyrx import functions as _prx
+
+        src = Path(_prx.__file__).read_text()
+    names = set(re.findall(r"def (rst_[a-z0-9_]+)", src))
     return frozenset(names)
 
 

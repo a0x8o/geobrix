@@ -88,6 +88,20 @@ def main() -> int:
     print()
 
     failed = False
+
+    # Drift guard: the bench wheel ships a copy of registered_functions.txt (so
+    # spec.registered_rst works on a cluster with no repo tree). It MUST stay
+    # byte-identical to the canonical file here.
+    packaged = REPO_ROOT / "python/geobrix/src/databricks/labs/gbx/bench/registered_functions.txt"
+    if not packaged.exists():
+        failed = True
+        print(f"❌ packaged copy missing: {packaged.relative_to(REPO_ROOT)} "
+              "(spec.registered_rst's cluster fallback needs it)")
+    elif packaged.read_text() != REGISTERED_TXT.read_text():
+        failed = True
+        print(f"❌ packaged copy drifted from canonical: {packaged.relative_to(REPO_ROOT)} "
+              f"!= {REGISTERED_TXT.relative_to(REPO_ROOT)} -- re-copy the canonical file.")
+
     for label, found in bindings.items():
         missing = sorted(sql - found)
         if missing:
