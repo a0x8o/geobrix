@@ -192,6 +192,18 @@ print(
 )
 corpus = _m.Corpus.read(f"{{CORPUS}}/corpus.json")
 fnspecs = _s.select(functions=[x for x in FUNCTIONS.split(",") if x] or None, set=SET)
+# --redo-functions FORCES its fns into the run scope even when they fall outside --set /
+# --functions, so `--redo-functions X` actually RE-RUNS X. Purging alone (the old behavior)
+# would DELETE X's rows and re-run nothing when X is not in the selected set -- a silent
+# data-loss footgun. Union any redo fn missing from the base scope into BOTH fnspecs (the
+# lightweight scope + the heavy _mode_names gate) AND FUNCTIONS (the csv run_heavy splits).
+_redo_names = [x for x in REDO_FUNCTIONS.split(",") if x]
+if _redo_names:
+    _base_names = [f.name for f in fnspecs]
+    _redo_missing = [x for x in _redo_names if x not in _base_names]
+    if _redo_missing:
+        fnspecs = list(fnspecs) + list(_s.select(functions=_redo_missing))
+        FUNCTIONS = ",".join([x for x in FUNCTIONS.split(",") if x] + _redo_missing)
 # Per-mode expected row counts: how many fns run in each mode. Used by --resume to tell a
 # COMPLETE (tier x mode) section (already in the table for this run_id) from a partial one.
 _PC_EXP = len([f for f in fnspecs if "pure-core" in f.modes])
@@ -659,5 +671,7 @@ def build_bench_notebook(cfg: dict) -> dict:
     if heavy and do_spark:
         cells.append(_cell(_CELL_HEAVY_SPARK))
     cells.append(_cell(_EPILOGUE))
-    cells.append(_cell(_EXIT))  # exit in its OWN cell so the compare render isn't truncated
+    cells.append(
+        _cell(_EXIT)
+    )  # exit in its OWN cell so the compare render isn't truncated
     return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
