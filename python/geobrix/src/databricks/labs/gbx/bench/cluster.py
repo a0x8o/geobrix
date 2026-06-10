@@ -339,21 +339,34 @@ def _purge_functions(api, mode):
 
 def _show_md(title, text, path=None):
     # Render a generated summary inline in the run notebook (visible in the Databricks
-    # run UI) as RENDERED markdown -- headings + GFM pipe-tables become real HTML, not a
-    # monospace text block. Falls back to print if IPython display isn't available.
+    # run UI) as RENDERED markdown -- headings + GFM pipe-tables become real HTML.
+    # Databricks' job-run UI does NOT render IPython.display.Markdown (that path only
+    # renders in Jupyter), so convert markdown -> HTML and use displayHTML, which IS the
+    # Databricks primitive for inline rich output. Fall back to IPython, then print.
     # path: when given, show the Volume location of the .md FILE as a line above the
     # rendered body so the run links to the artifact (e.g. .../bench-out/<run_id>/summary.md).
     _loc = ("\\n\\n**Summary file:** `" + path + "`") if path else ""
+    _full = "### " + title + _loc + "\\n\\n" + text
+    try:
+        import markdown as _mdlib
+
+        _html = _mdlib.markdown(_full, extensions=["tables", "fenced_code", "sane_lists"])
+        displayHTML(_html)  # noqa: F821  (Databricks notebook global)
+        return
+    except Exception:
+        pass
     try:
         from IPython.display import Markdown
         from IPython.display import display as _md_display
 
-        _md_display(Markdown("### " + title + _loc + "\\n\\n" + text))
+        _md_display(Markdown(_full))
+        return
     except Exception:
-        print("\\n===== " + title + " =====")
-        if path:
-            print("Summary file: " + path)
-        print(text)
+        pass
+    print("\\n===== " + title + " =====")
+    if path:
+        print("Summary file: " + path)
+    print(text)
 
 
 def show_section(api, mode, rows):
@@ -621,7 +634,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
     # (light, heavy) then spark-path (light, heavy).
     cells = [
-        _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]'"),
+        # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
+        _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]' markdown"),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.

@@ -78,7 +78,7 @@ def main() -> int:
         w.files.create_directory(artifact_volume)
     except Exception:
         pass
-    print("Uploading to %s (overwrite if exists)..." % volume_path)
+    print("Uploading product jar to %s (overwrite if exists)..." % volume_path)
     w.files.upload_from(
         file_path=volume_path,
         source_path=str(jar_path.resolve()),
@@ -86,6 +86,42 @@ def main() -> int:
         use_parallel=False,
     )
     print("Done: %s" % volume_path)
+
+    # Also stage the bench tests.jar (carries HeavyRunner / the bench Scala harness). The
+    # bench launcher attaches it as a cluster library from the BUNDLE volroot -- a DIFFERENT
+    # Volume than the artifact volume the init script reads the product jar from. The same
+    # `mvn package` already built it (maven-jar-plugin bench-test-jar goal), so stage it here
+    # too: one command keeps both jars current (no manual fs cp). Skippable for product-only.
+    if os.environ.get("GBX_BUNDLE_SKIP_TESTS_JAR_UPLOAD", "").strip().lower() in ("1", "true", "yes"):
+        print("GBX_BUNDLE_SKIP_TESTS_JAR_UPLOAD=1: skipping tests.jar upload.")
+        return 0
+
+    test_jars = [j for j in target.glob("*-tests.jar")]
+    if not test_jars:
+        print("WARNING: no *-tests.jar in target/; tests.jar NOT staged (heavy bench needs it).", file=sys.stderr)
+        return 0
+    test_jar = test_jars[0]
+
+    # Match the launcher's resolution exactly: explicit override, else BUNDLE volroot.
+    tests_jar_dest = (os.environ.get("GBX_BENCH_TESTS_JAR_VOLUME_PATH") or "").strip()
+    if not tests_jar_dest:
+        b_cat = (os.environ.get("GBX_BUNDLE_VOLUME_CATALOG") or "main").strip()
+        b_sch = (os.environ.get("GBX_BUNDLE_VOLUME_SCHEMA") or "default").strip()
+        b_vol = (os.environ.get("GBX_BUNDLE_VOLUME_NAME") or "geobrix_samples").strip()
+        b_root = f"/Volumes/{b_cat}/{b_sch}/{b_vol}"
+        try:
+            w.files.create_directory(b_root)
+        except Exception:
+            pass
+        tests_jar_dest = f"{b_root}/{test_jar.name}"
+    print("Uploading tests.jar to %s (overwrite if exists)..." % tests_jar_dest)
+    w.files.upload_from(
+        file_path=tests_jar_dest,
+        source_path=str(test_jar.resolve()),
+        overwrite=True,
+        use_parallel=False,
+    )
+    print("Done: %s" % tests_jar_dest)
     return 0
 
 

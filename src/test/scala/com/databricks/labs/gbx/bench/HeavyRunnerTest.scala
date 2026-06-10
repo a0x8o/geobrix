@@ -73,14 +73,16 @@ class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(lines.length == rows.length)
   }
 
-  test("aggParts: tile aggregators parallelize (bounded), geometry aggregators serialize") {
-    // tile_aggregate -> ~2 keys/task (ceil(n/2)), capped at n; large-output aggs stay bounded.
+  test("aggParts: all kinds parallelize on the same bounded fan-out (~2 keys/task, capped at n)") {
+    // ceil(n/2) keys/task, capped at n; large-output aggs stay bounded per task.
     assert(HeavyRunner.aggParts("tile_aggregate", 1000) == 500)
     assert(HeavyRunner.aggParts("tile_aggregate", 4) == 2)
     assert(HeavyRunner.aggParts("tile_aggregate", 1) == 1)
-    // geometry_aggregate -> ALWAYS 1 (VectorRasterBridge GDAL path not thread-safe).
-    assert(HeavyRunner.aggParts("geometry_aggregate", 1000) == 1)
-    assert(HeavyRunner.aggParts("geometry_aggregate", 10) == 1)
+    // Geometry aggregators are no longer pinned to 1 -- the GDAL/OGR registration race is closed
+    // (GDALManager.init/initOgr), so they parallelize identically to tile aggregators.
+    assert(HeavyRunner.aggParts("geometry_aggregate", 1000) == 500)
+    assert(HeavyRunner.aggParts("geometry_aggregate", 10) == 5)
+    assert(HeavyRunner.aggParts("geometry_aggregate", 1) == 1)
   }
 
   test("timeIters runs the warm body for warm-up and the measured body for measured") {

@@ -15,15 +15,16 @@ object HeavyRunner {
   // worker memory, while still running parallel (mirrors the lightweight _AGG_KEYS_PER_TASK).
   private val AggKeysPerTask = 2
 
-  /** Post-shuffle task count for a scaled *_agg over n keys. TILE aggregators parallelize
-    * with a bounded ~AggKeysPerTask keys/task (so large-output aggs hold few big outputs per
-    * task); GEOMETRY aggregators (gridfrompoints/dtmfromgeoms/rasterize) go through the
-    * not-thread-safe VectorRasterBridge (gdal.GetDriverByName("MEM") raced to null/sigabrt
-    * under concurrency), so they are serialized to ONE task until that product gap is fixed. */
+  /** Post-shuffle task count for a scaled *_agg over n keys -- uniform across kinds: a bounded
+    * ~AggKeysPerTask keys/task (so large-output aggs hold few big outputs per task), capped at n.
+    * GEOMETRY aggregators (gridfrompoints/dtmfromgeoms/rasterize) used to be pinned to ONE task
+    * because their VectorRasterBridge path raced GDAL/OGR registration under concurrency
+    * (GetDriverByName -> null / native sigabrt). That race is now closed at the source --
+    * registration goes through the synchronized GDALManager.init/initOgr guards -- so geometry
+    * aggregators parallelize on the same bounded fan-out as tile aggregators (kept here only for
+    * call-site stability and to make re-pinning a one-line change if a regression ever surfaces). */
   private[bench] def aggParts(kind: String, n: Int): Int =
-    if (kind == "tile_aggregate")
-      math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
-    else 1
+    math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
 
   private def resolve(corpusRoot: String, path: String): String =
     if (Paths.get(path).isAbsolute) path else Paths.get(corpusRoot, path).toString
@@ -437,16 +438,16 @@ object HeavyRunner {
           // memory, parallel across the slots. Because the keys are already hash-partitioned
           // by `key` into `parts` == shuffle.partitions, the groupBy's hash exchange elides
           // (one stage). Mirrors the lightweight _run_aggregate; GDAL concurrency is safe
-          // via GDALManager.init (GdalParallelSafetyTest). aggParts() decides the fan-out:
-          // tile aggregators parallelize (bounded keys/task), geometry aggregators serialize.
+          // via the synchronized GDALManager.init/initOgr guards (GdalParallelSafetyTest,
+          // OgrThreadSafetyTest). aggParts() gives every kind the same bounded keys/task fan-out.
           val parts = aggParts(kind, n)
           spark.conf.set("spark.sql.shuffle.partitions", parts.toString)
           val keys = spark.range(n).select(col("id").alias("key")).repartition(parts, col("key"))
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
           val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
           // Minimal warm-up scaled: ONE key per partition (so each post-shuffle task's GDAL
-          // UDAF spins up once) instead of the full n-key group. Geometry aggregators have
-          // parts==1 -> a single-group warm-up. Mirrors the lightweight _run_aggregate.
+          // UDAF spins up once) instead of the full n-key group. Mirrors the lightweight
+          // _run_aggregate.
           val warmKeys =
             spark.range(parts).select(col("id").alias("key")).repartition(parts, col("key"))
           val warmScaled = warmKeys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))

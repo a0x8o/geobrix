@@ -1,6 +1,6 @@
 # Push JAR to Volume
 
-Runs **mvn clean package -DskipTests** and uploads **target/*-jar-with-dependencies.jar** to **GBX_ARTIFACT_VOLUME**/ (no subpath). Overwrites if file already exists. Set **GBX_BUNDLE_SKIP_JAR_UPLOAD=1** to use existing JAR (no build/upload).
+Runs **mvn clean package -DskipTests** and uploads **both** jars it produces (one build): the product **target/*-jar-with-dependencies.jar** → **GBX_ARTIFACT_VOLUME**/ (the init script loads it onto the cluster), and the bench **target/*-tests.jar** → the **bundle volroot** (`/Volumes/$GBX_BUNDLE_VOLUME_CATALOG/$GBX_BUNDLE_VOLUME_SCHEMA/$GBX_BUNDLE_VOLUME_NAME/`, where the bench launcher attaches it as a cluster library). Both overwrite if present. Set **GBX_BUNDLE_SKIP_JAR_UPLOAD=1** to skip the build/upload entirely, or **GBX_BUNDLE_SKIP_TESTS_JAR_UPLOAD=1** to stage only the product jar. Override the tests.jar destination with **GBX_BENCH_TESTS_JAR_VOLUME_PATH**.
 
 ---
 
