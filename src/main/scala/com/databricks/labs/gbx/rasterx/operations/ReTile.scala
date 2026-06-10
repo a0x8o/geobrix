@@ -1,7 +1,5 @@
 package com.databricks.labs.gbx.rasterx.operations
 
-import com.databricks.labs.gbx.rasterx.gdal.GDAL
-import com.databricks.labs.gbx.rasterx.operator.GDALTranslate
 import org.gdal.gdal.{Dataset, gdal}
 
 /** Splits a raster into non-overlapping tiles (windows); supports retile and getTile. */
@@ -38,24 +36,13 @@ object ReTile {
         xOffset: Int,
         yOffset: Int
     ): (Dataset, Map[String, String]) = {
-        val uuid = java.util.UUID.randomUUID().toString.replace("-", "")
-        val driver = ds.GetDriver
-        val extension = GDAL.getExtension(driver.getShortName)
-
-        val rasterPath = s"/vsimem/retile_$uuid.$extension"
-
-        val result = GDALTranslate.executeTranslate(
-          rasterPath,
-          ds,
-          command = s"gdal_translate -srcwin $xStart $yStart $xOffset $yOffset",
-          options
-        )
+        val result = WindowedExtract.extract(ds, options, xStart, yStart, xOffset, yOffset)
 
         val isEmpty = RasterAccessors.isEmpty(result._1)
 
         if (isEmpty) {
             result._1.delete()
-            gdal.Unlink(rasterPath)
+            gdal.Unlink(result._2("path"))
             null
         } else {
             (result._1, result._2)

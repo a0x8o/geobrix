@@ -89,6 +89,26 @@ object GDALManager extends Logging {
             }
         }
 
+    /**
+      * Returns the GTiff driver via a guarded lookup (REQUIRED for thread-safety).
+      *
+      * The GDAL Java bindings expose `gdal.GetDriverByName` against the process-global driver
+      * registry. A raw per-task lookup can race [[init]]'s `AllRegister()` and return null
+      * (NPE) or sigabrt the executor. This accessor takes the same `lock` [[init]]/[[initOgr]]
+      * use, so the driver registry is fully populated before the lookup returns. Callers must
+      * have already ensured [[init]] ran (raster expressions always do).
+      */
+    private[rasterx] def gtiffDriver(): org.gdal.gdal.Driver = driverByName("GTiff")
+
+    /** Returns the in-memory MEM driver via the same guarded lookup as [[gtiffDriver]]. */
+    private[rasterx] def memDriver(): org.gdal.gdal.Driver = driverByName("MEM")
+
+    /** Guarded `gdal.GetDriverByName` — see [[gtiffDriver]] for the thread-safety rationale. */
+    private def driverByName(shortName: String): org.gdal.gdal.Driver =
+        lock.synchronized {
+            gdal.GetDriverByName(shortName)
+        }
+
     /** Apply ExpressionConfig to GDAL options and store checkpoint settings for this process. */
     def configureGDAL(config: ExpressionConfig): Unit = {
         val CPL_TMPDIR = config.configs.getOrElse("cpl_tmpdir", "/tmp/gdal")
