@@ -240,6 +240,22 @@ def main() -> int:
     run_id = _arg("--run-id", "cluster")
     functions = _arg("--functions", "")
     sel = _arg("--set", "core")
+
+    # --redo-functions <csv>: force re-run this explicit list of fns for the selected
+    # (run_id, api, mode) by purging their existing rows first, leaving every other fn's rows
+    # intact. INDEPENDENT of --set/--functions, so one run can resume the never-ran fns AND
+    # force-redo this named subset (e.g. re-measure the aggregators with a new wheel while the
+    # rest of the run completes normally). Exclusive with the truncates (which clear broadly).
+    redo_functions = _arg("--redo-functions", "")
+    if redo_functions.strip() and (
+        "--truncate-all" in sys.argv or "--truncate-results" in sys.argv
+    ):
+        print(
+            "ERROR: --redo-functions is mutually exclusive with --truncate-all / "
+            "--truncate-results.",
+            file=sys.stderr,
+        )
+        return 2
     if sel not in ("core", "full"):
         print(f"ERROR: --set must be 'core' or 'full' (got '{sel}')", file=sys.stderr)
         return 2
@@ -333,6 +349,9 @@ def main() -> int:
         resume=resume,
         #  fix_errors (default True): on resume, re-run fns whose only row is an error.
         fix_errors=fix_errors,
+        #  --redo-functions: force re-run this explicit fn list (purge their rows first),
+        #  independent of --set/--functions, layered on the normal resume run.
+        redo_functions=redo_functions,
         #  --explain-only: print/persist spark-path physical plans, no timing/no rows.
         explain_only=explain_only,
     )

@@ -85,10 +85,17 @@ def to_delta(rows: List[ResultRow], spark, table: str, where: str = "cluster") -
     return len(rows)
 
 
-def _cell(source: str, kind: str = "code") -> dict:
+def _cell(source: str, kind: str = "code", collapsed: bool = False) -> dict:
+    # collapsed: hide this cell's SOURCE by default. Sets the JupyterLab standard
+    # (`jupyter.source_hidden`) plus the legacy `collapsed` flag; the Databricks notebook /
+    # job-run viewer may or may not honor either (jobs render a static notebook), so this is
+    # best-effort -- it cleanly collapses in Jupyter/.ipynb viewers regardless.
+    meta = {}
+    if collapsed:
+        meta = {"jupyter": {"source_hidden": True}, "collapsed": True}
     return {
         "cell_type": kind,
-        "metadata": {},
+        "metadata": meta,
         "outputs": [],
         "execution_count": None,
         "source": source.splitlines(keepends=True),
@@ -125,6 +132,12 @@ RESUME = {resume!r}
 # On --resume, FIX_ERRORS (default) re-runs fns whose only row is an error (e.g. after a
 # code/JAR fix) by purging those error rows first; --no-fix-errors keeps them as-is.
 FIX_ERRORS = {fix_errors!r}
+# --redo-functions: force re-run this explicit list of fns for the selected (api, mode) by
+# DELETING their existing rows first (whatever the status), so they re-run while every OTHER
+# fn's rows stay. It is INDEPENDENT of the run scope (--set/--functions), so one run can
+# resume-run the never-ran fns AND force-redo this named subset. Unlike --resume (runs only
+# MISSING) or --truncate-* (clears broadly). CSV string of fn names ("" = redo nothing).
+REDO_FUNCTIONS = {redo_functions!r}
 LIGHTWEIGHT, HEAVYWEIGHT = {lightweight!r}, {heavyweight!r}
 # --explain-only: build each spark-path fn's DataFrame and print/persist its physical plan
 # WITHOUT timing or writing to Delta. Plans are also teed to EXPLAIN_DIR on the Volume so
@@ -278,6 +291,26 @@ def _purge_errors(api, mode):
         print(f"[resume] {api} {mode}: purged {int(_n)} error row(s) -> will re-run them")
 
 
+def _purge_functions(api, mode):
+    # --redo-functions: DELETE the named fns' rows for this (api, mode) -- any status -- so
+    # they count as MISSING and re-run, while every other fn's rows stay. Independent of the
+    # run scope, so a resume run also force-redoes this subset. Targeted, run_id-scoped.
+    _fns = [f for f in REDO_FUNCTIONS.split(",") if f]
+    if not _fns:
+        return
+    _in = ",".join("'" + f + "'" for f in _fns)
+    _n = spark.sql(
+        f"SELECT count(*) FROM {TABLE} WHERE run_id='{RUN_ID}' "
+        f"AND api='{api}' AND mode='{mode}' AND fn IN ({_in})"
+    ).collect()[0][0]
+    if int(_n) > 0:
+        spark.sql(
+            f"DELETE FROM {TABLE} WHERE run_id='{RUN_ID}' "
+            f"AND api='{api}' AND mode='{mode}' AND fn IN ({_in})"
+        )
+        print(f"[redo] {api} {mode}: purged {int(_n)} row(s) for {len(_fns)} fn(s) -> re-running")
+
+
 def _show_md(title, text):
     # Render a generated summary inline in the run notebook (visible in the Databricks
     # run UI) as RENDERED markdown -- headings + GFM pipe-tables become real HTML, not a
@@ -328,11 +361,15 @@ def run_light(mode):
         )
         return []
     _purge_errors("lightweight", mode)
+    _purge_functions("lightweight", mode)
     _done = _done_fns("lightweight", mode)
     _loaded = _load_section("lightweight", mode) if _done else []
     if _loaded:
         lw.extend(_loaded)
-    _todo = [f for f in fnspecs if f.name not in _done]
+    # Scope the to-do to fns that actually HAVE this mode -- e.g. the *_agg aggregators are
+    # spark-path-only (no pure-core form), so without this filter a pure-core resume would
+    # forever report them as "missing" and call run_pure_core on them for zero rows.
+    _todo = [f for f in fnspecs if f.name not in _done and mode in f.modes]
     if _loaded or _done:
         print(f"[resume] lightweight {mode}: loaded {len(_loaded)} existing fn(s), "
               f"running {len(_todo)} missing")
@@ -362,11 +399,18 @@ def run_heavy(mode):
     # Function-granular --resume: load fns already in the table; run ONLY the missing ones
     # by passing a filtered FUNCTIONS list to the JVM (e.g. a single fn to re-run).
     _purge_errors("heavyweight", mode)
+    _purge_functions("heavyweight", mode)
     _done = _done_fns("heavyweight", mode)
     _loaded = _load_section("heavyweight", mode) if _done else []
     if _loaded:
         hw.extend(_loaded)
-    _todo_fns = [f for f in FUNCTIONS.split(",") if f and f not in _done]
+    # Scope to fns that HAVE this mode (the *_agg aggregators are spark-path-only); otherwise
+    # a pure-core resume perpetually reports the 7 aggregators as "missing" + dispatches them
+    # to the JVM pure-core path for zero rows.
+    _mode_names = {f.name for f in fnspecs if mode in f.modes}
+    _todo_fns = [
+        f for f in FUNCTIONS.split(",") if f and f not in _done and f in _mode_names
+    ]
     if _loaded or _done:
         print(f"[resume] heavyweight {mode}: loaded {len(_loaded)} existing fn(s), "
               f"running {len(_todo_fns)} missing")
@@ -529,6 +573,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         truncate_all=cfg.get("truncate_all", False),
         resume=bool(cfg.get("resume")),
         fix_errors=bool(cfg.get("fix_errors", True)),
+        redo_functions=str(cfg.get("redo_functions", "") or ""),
         lightweight=bool(cfg.get("lightweight")),
         heavyweight=bool(cfg.get("heavyweight")),
         explain_only=bool(cfg.get("explain_only")),
@@ -552,7 +597,9 @@ def build_bench_notebook(cfg: dict) -> dict:
     cells = [
         _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]'"),
         _cell("dbutils.library.restartPython()"),
-        _cell(setup),
+        # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
+        # run view leads with the per-section result cells, not this wall of setup code.
+        _cell(setup, collapsed=True),
     ]
     if light and do_pure:
         cells.append(_cell(_CELL_LIGHT_PURE))

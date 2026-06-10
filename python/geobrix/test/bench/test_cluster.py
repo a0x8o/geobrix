@@ -264,6 +264,39 @@ def test_build_bench_notebook_fix_errors_default_and_override():
     assert "FIX_ERRORS = False" in src_no
 
 
+def test_build_bench_notebook_setup_cell_collapsed():
+    # Cmd 3 (cells[2], the big setup cell) is collapsed by default; the install/restart cells
+    # and the section cells are not.
+    nb = cl.build_bench_notebook(_cfg())
+    setup = nb["cells"][2]
+    assert "_PREAMBLE" not in "".join(
+        setup["source"]
+    )  # it's the assembled setup, sanity
+    assert setup["metadata"].get("collapsed") is True
+    assert setup["metadata"].get("jupyter", {}).get("source_hidden") is True
+    # install cell (cells[0]) stays expanded
+    assert nb["cells"][0]["metadata"].get("collapsed") is not True
+
+
+def test_build_bench_notebook_redo_functions_threading():
+    # Default: empty redo list; _purge_functions present but a no-op.
+    src_default = "\n".join(
+        "".join(c.get("source", [])) for c in cl.build_bench_notebook(_cfg())["cells"]
+    )
+    assert "REDO_FUNCTIONS = ''" in src_default
+    assert "def _purge_functions(" in src_default
+    # --redo-functions <csv> -> the list threads through, INDEPENDENT of --set/--functions,
+    # and _purge_functions is wired into both run_light and run_heavy.
+    src_redo = "\n".join(
+        "".join(c.get("source", []))
+        for c in cl.build_bench_notebook(
+            _cfg(redo_functions="rst_combineavg_agg,rst_merge_agg")
+        )["cells"]
+    )
+    assert "REDO_FUNCTIONS = 'rst_combineavg_agg,rst_merge_agg'" in src_redo
+    assert src_redo.count("_purge_functions(") >= 3  # def + light + heavy call sites
+
+
 def test_build_bench_notebook_explain_only_threading():
     # Default: EXPLAIN_ONLY = False (no plan-dump branch taken).
     src_default = "\n".join(
