@@ -579,7 +579,16 @@ elif lw:
     result["summary"] = f"{OUT}/lightweight.summary.md"
 else:
     result["summary"] = f"{OUT}/heavyweight.summary.md"
+"""
 
+# The notebook exit MUST be its own trailing cell. dbutils.notebook.exit() ends the run
+# immediately, so when it shares a cell with the compare _show_md(), the job-run UI keeps
+# only the exit value (the JSON) and DROPS that cell's displayHTML output -- which is why the
+# final heavy-vs-light summary never rendered inline (only its path showed in the JSON), while
+# the per-section summaries (their own cells) did. Splitting it lets the render cell complete
+# and commit its HTML output before this cell exits. `result` persists across cells (shared
+# notebook globals).
+_EXIT = """# Emit the status-led JSON exit payload (separate cell -- see _EPILOGUE note).
 dbutils.notebook.exit(json.dumps(result))
 """
 
@@ -650,4 +659,5 @@ def build_bench_notebook(cfg: dict) -> dict:
     if heavy and do_spark:
         cells.append(_cell(_CELL_HEAVY_SPARK))
     cells.append(_cell(_EPILOGUE))
+    cells.append(_cell(_EXIT))  # exit in its OWN cell so the compare render isn't truncated
     return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
