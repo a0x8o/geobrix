@@ -73,6 +73,16 @@ class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(lines.length == rows.length)
   }
 
+  test("aggParts: tile aggregators parallelize (bounded), geometry aggregators serialize") {
+    // tile_aggregate -> ~2 keys/task (ceil(n/2)), capped at n; large-output aggs stay bounded.
+    assert(HeavyRunner.aggParts("tile_aggregate", 1000) == 500)
+    assert(HeavyRunner.aggParts("tile_aggregate", 4) == 2)
+    assert(HeavyRunner.aggParts("tile_aggregate", 1) == 1)
+    // geometry_aggregate -> ALWAYS 1 (VectorRasterBridge GDAL path not thread-safe).
+    assert(HeavyRunner.aggParts("geometry_aggregate", 1000) == 1)
+    assert(HeavyRunner.aggParts("geometry_aggregate", 10) == 1)
+  }
+
   test("spark-path run parallelizes (no coalesce) over a row_pool and yields ok rows") {
     // Validates the repartition-for-parallelism change in runSparkPath: a local[4] session
     // runs the heavy spark-path column over an 8-tile row_pool. With the old coalesce(1) this

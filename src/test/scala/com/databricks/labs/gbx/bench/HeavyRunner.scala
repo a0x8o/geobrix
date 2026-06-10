@@ -15,6 +15,16 @@ object HeavyRunner {
   // worker memory, while still running parallel (mirrors the lightweight _AGG_KEYS_PER_TASK).
   private val AggKeysPerTask = 2
 
+  /** Post-shuffle task count for a scaled *_agg over n keys. TILE aggregators parallelize
+    * with a bounded ~AggKeysPerTask keys/task (so large-output aggs hold few big outputs per
+    * task); GEOMETRY aggregators (gridfrompoints/dtmfromgeoms/rasterize) go through the
+    * not-thread-safe VectorRasterBridge (gdal.GetDriverByName("MEM") raced to null/sigabrt
+    * under concurrency), so they are serialized to ONE task until that product gap is fixed. */
+  private[bench] def aggParts(kind: String, n: Int): Int =
+    if (kind == "tile_aggregate")
+      math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
+    else 1
+
   private def resolve(corpusRoot: String, path: String): String =
     if (Paths.get(path).isAbsolute) path else Paths.get(corpusRoot, path).toString
 
@@ -410,17 +420,9 @@ object HeavyRunner {
           // memory, parallel across the slots. Because the keys are already hash-partitioned
           // by `key` into `parts` == shuffle.partitions, the groupBy's hash exchange elides
           // (one stage). Mirrors the lightweight _run_aggregate; GDAL concurrency is safe
-          // via GDALManager.init (GdalParallelSafetyTest).
-          // Tile aggregators parallelize (bounded keys/task). GEOMETRY aggregators
-          // (gridfrompoints/dtmfromgeoms/rasterize) go through VectorRasterBridge, whose
-          // gdal.GetDriverByName("MEM") + OGR/rasterize path is NOT thread-safe -- running
-          // them concurrently raced GetDriverByName to null (NPE) and even sigabrt'd a worker
-          // (see VectorRasterBridge.buildEmptyRaster). Serialize them to one task (parts=1)
-          // until that product concurrency gap is fixed; tile aggs are unaffected.
-          val parts =
-            if (kind == "tile_aggregate")
-              math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
-            else 1
+          // via GDALManager.init (GdalParallelSafetyTest). aggParts() decides the fan-out:
+          // tile aggregators parallelize (bounded keys/task), geometry aggregators serialize.
+          val parts = aggParts(kind, n)
           spark.conf.set("spark.sql.shuffle.partitions", parts.toString)
           val keys = spark.range(n).select(col("id").alias("key")).repartition(parts, col("key"))
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
