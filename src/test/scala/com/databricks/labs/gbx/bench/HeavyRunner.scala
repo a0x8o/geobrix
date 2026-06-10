@@ -411,7 +411,16 @@ object HeavyRunner {
           // by `key` into `parts` == shuffle.partitions, the groupBy's hash exchange elides
           // (one stage). Mirrors the lightweight _run_aggregate; GDAL concurrency is safe
           // via GDALManager.init (GdalParallelSafetyTest).
-          val parts = math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
+          // Tile aggregators parallelize (bounded keys/task). GEOMETRY aggregators
+          // (gridfrompoints/dtmfromgeoms/rasterize) go through VectorRasterBridge, whose
+          // gdal.GetDriverByName("MEM") + OGR/rasterize path is NOT thread-safe -- running
+          // them concurrently raced GetDriverByName to null (NPE) and even sigabrt'd a worker
+          // (see VectorRasterBridge.buildEmptyRaster). Serialize them to one task (parts=1)
+          // until that product concurrency gap is fixed; tile aggs are unaffected.
+          val parts =
+            if (kind == "tile_aggregate")
+              math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
+            else 1
           spark.conf.set("spark.sql.shuffle.partitions", parts.toString)
           val keys = spark.range(n).select(col("id").alias("key")).repartition(parts, col("key"))
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
