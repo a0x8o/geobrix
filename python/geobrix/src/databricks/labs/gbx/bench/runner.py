@@ -22,6 +22,11 @@ from databricks.labs.gbx.bench.results import ResultRow
 from databricks.labs.gbx.bench.spec import FnSpec
 from databricks.labs.gbx.pyrx import _serde
 
+# Default groups (keys) per task for the *_agg spark-path scaling. Small so large-output
+# aggregators (rst_merge_agg's union mosaic) hold few big outputs per task -> bounded worker
+# memory (a 6-keys/task fan-out OOM'd merge on the cluster). --override-partition-size wins.
+_AGG_KEYS_PER_TASK = 2
+
 
 def _synthesized_paths(corpus_root, tile_rel_path: str, fn: str) -> List[str]:
     """Synthesize (write-once) the multi-tile input for a `tile_array` fn.
@@ -405,6 +410,9 @@ def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
         iter_p90_ms=stats["iter_p90_ms"] if stats else 0.0,
         iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"] if stats else 0.0,
         avg_wall_clock_ms=stats["avg_wall_clock_ms"] if stats else 0.0,
+        # Headline spark-path metric: amortized wall-clock per aggregated group (iter / n).
+        # Aggregators set this too (regular spark-path rows already did) so it isn't 0.
+        per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
         throughput_mpix_s=(
             (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0)) if ms else 0.0
         ),
@@ -561,8 +569,10 @@ def _explain_aggregate(spark, fs, group_df, agg_col, n, parts, explain_dir):
         spark.conf.set("spark.sql.shuffle.partitions", str(parts))
     except Exception:  # noqa: BLE001
         pass
-    keys = spark.range(n).select(F.col("id").alias("key"))
-    scaled = group_df.crossJoin(F.broadcast(keys))
+    keys = (
+        spark.range(n).select(F.col("id").alias("key")).repartition(parts, F.col("key"))
+    )
+    scaled = keys.crossJoin(F.broadcast(group_df))
     plan_df = scaled.groupBy("key").agg(agg_col(scaled).alias("out"))
     _emit_explain(
         f"{fs.name} (agg, n={n}, shuffle.partitions={parts})", plan_df, explain_dir
@@ -623,16 +633,22 @@ def _run_aggregate(
     def _agg_parts(n):
         # Task count for the aggregate's post-shuffle stage. The groupBy injects a mandatory
         # hash-partitioning shuffle on `key` whose width is spark.sql.shuffle.partitions; we
-        # set that (below) to _parts so the n keys spread over ~slots*4 tasks. A pre-groupBy
-        # repartition does NOT work here -- it is elided by the optimizer because the hash
-        # exchange supersedes it (confirmed via --explain-only).
+        # set that (below) to _parts. A pre-groupBy repartition does NOT work -- it's elided
+        # by the optimizer because the hash exchange supersedes it (confirmed via --explain).
+        #
+        # MEMORY: keys-per-task = n/_parts, and each key holds its whole group + output in the
+        # worker. Large-OUTPUT aggregators (rst_merge_agg's union mosaic is ~2.25x a tile)
+        # OOM'd a worker at the old ~6 keys/task (RSS measured ~94MB for 6 merges + Arrow
+        # batch + JVM shuffle). So default to a SMALL keys-per-task (2) -> ~1-2 big outputs
+        # in flight per task -> bounded per-task memory, still parallel (n/2 partitions over
+        # the slots). --override-partition-size still wins for tuning. (Per-task memory > a
+        # few extra scheduling waves for the 7 aggregators.)
         import math as _math
 
-        _slots = max(1, spark.sparkContext.defaultParallelism)
         _psize = (
             partition_size
             if (partition_size and partition_size > 0)
-            else max(1, n // (_slots * 4))
+            else _AGG_KEYS_PER_TASK
         )
         return max(1, _math.ceil(n / _psize))
 
@@ -664,24 +680,30 @@ def _run_aggregate(
     group_df.count()
     for n in sorted_counts:
         # Replicate the fixed group N times across N distinct keys (one group per key), so
-        # the aggregate runs N times -- the scaled distributed-aggregation timing. crossJoin
-        # a tiny broadcast keys DataFrame to copy the group per key.
+        # the aggregate runs N times -- the scaled distributed-aggregation timing.
         #
         # PARALLELISM: the col_fn is a non-partial Python Arrow UDAF (no map-side partial
-        # aggregation -- the whole group per key lands in ONE post-shuffle stage). The groupBy
-        # injects a mandatory hash-partitioning shuffle on `key`; its width is
-        # spark.sql.shuffle.partitions, and a pre-groupBy .repartition() is ELIDED by the
-        # optimizer (the hash exchange supersedes it -- confirmed via --explain-only). So the
-        # ONLY lever on the agg stage's task count is shuffle.partitions: set it to _parts
-        # (~slots*4) so the n keys oversubscribe the slots instead of riding the default 200.
-        # AQE is off (preamble) so it's respected.
+        # aggregation -- the whole group per key lands in one post-shuffle stage). The naive
+        # form `group_df.crossJoin(broadcast(keys))` broadcasts the KEYS and iterates group_df,
+        # which puts the ENTIRE xN replication into group_size tasks (a 2-tile group -> 2 busy
+        # tasks while every other slot idles -- the "38/40, 2 running" straggler). Instead:
+        # hash-partition the N KEYS into _parts (a cheap shuffle of N longs) and BROADCAST the
+        # tiny few-tile group, so the replication runs _parts-wide; and because the keys are
+        # already hash-partitioned by `key` into _parts == shuffle.partitions, the groupBy's
+        # own hash exchange is ELIDED -- replication + aggregate run in ONE _parts-wide stage.
+        # (Confirmed via the local plan harness + --explain-only.) AQE is off (preamble) so
+        # shuffle.partitions is respected.
         _parts = _agg_parts(n)
         try:
             spark.conf.set("spark.sql.shuffle.partitions", str(_parts))
         except Exception:  # noqa: BLE001
             pass
-        keys = spark.range(n).select(F.col("id").alias("key"))
-        scaled = group_df.crossJoin(F.broadcast(keys))
+        keys = (
+            spark.range(n)
+            .select(F.col("id").alias("key"))
+            .repartition(_parts, F.col("key"))
+        )
+        scaled = keys.crossJoin(F.broadcast(group_df))
         try:
 
             def job(_df=scaled):
@@ -754,7 +776,9 @@ def _explain_spark_path(
                     else max(1, _n // (nparts * 4))
                 )
                 _parts = _n if _k == "tile_array" else max(1, math.ceil(_n / _ps))
-                _edf = df_all.limit(_n).repartition(max(1, _parts))
+                # _n == max(row_counts) == the cap df_all is already built at, so the cached
+                # set IS the input -- no limit (which would funnel through one partition).
+                _edf = df_all.repartition(max(1, _parts))
                 _ecol = _fs.col_fn(input_col(_fs.name, _k, _edf), _fs.args)
                 _emit_explain(
                     f"{_fs.name} (kind={_k}, n={_n}, parts={_parts})",
@@ -836,7 +860,8 @@ def run_spark_path(
     env = capture_env(where)
     pool = corpus.row_pool
 
-    # Build the tile DataFrame once at the max row count; subselect with limit(n).
+    # Build the tile DataFrame once, capped at the max row count (paths = tiles[:max_rows]),
+    # then cache it. The cap lives at the SOURCE so no downstream limit funnel is needed.
     # Read the tile bytes on the EXECUTORS via spark.read.binaryFile -- the UC-aware
     # reader, the same approach the heavy tier uses (HeavyRunner.scala) -- rather than
     # decoding every tile on the driver and handing Spark a local list. A driver-side
@@ -917,8 +942,8 @@ def run_spark_path(
     # Warm-up DF: exactly one tile row per partition of df_all (mapPartitions -> take 1),
     # so a warm-up pass exercises EVERY executor slot's Python worker / UDF once without
     # paying the full row-count cost. (df.limit(N) would pull all N rows from the first
-    # couple of partitions, warming only a slot or two.) The measured iterations still run
-    # the full df_all.limit(n); only the warm-up uses this capped, slot-spread DF.
+    # couple of partitions, warming only a slot or two.) The measured iterations run the
+    # cached df_all directly (repartitioned); only the warm-up uses this slot-spread DF.
     import itertools as _it
 
     _warm_df = spark.createDataFrame(
@@ -1003,7 +1028,15 @@ def run_spark_path(
             else:
                 _psize = max(1, n // (_nparts * 4))
             _parts = n if _kind == "tile_array" else max(1, math.ceil(n / _psize))
-            df = df_all.limit(n).repartition(max(1, _parts))
+            # df_all is already capped to max_rows at the SOURCE (paths = tiles[:max_rows])
+            # and cached, so when n == max_rows the whole cached set IS the input -- use it
+            # directly. A per-fn .limit(n) would inject a GlobalLimit that collapses the
+            # corpus through ONE partition (SinglePartition funnel) BEFORE the repartition,
+            # serializing every tile through a single task ahead of the UDF -- paid per fn for
+            # zero benefit when n already == the cached size. Only sub-max ladder points
+            # (n < max_rows) still need a limit; that one funnels a smaller (cheaper) subset.
+            _src = df_all if n >= max_rows else df_all.limit(n)
+            df = _src.repartition(max(1, _parts))
             try:
 
                 def job(_df=df, _fs=fs, _k=_kind):
