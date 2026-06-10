@@ -194,9 +194,11 @@ def test_run_spark_path_produces_ok_rows(tmp_path, spark):
     )
     assert rows and all(r.status == "ok" for r in rows)
     assert all(r.mode == "spark-path" and r.fn == "rst_width" for r in rows)
-    # per_tile_avg_ms is the amortized per-tile wall-clock (iter_median_ms / rows).
+    # per_tile_avg_s is the amortized per-tile wall-clock (iter_median_s / rows);
+    # per_tile_avg_ms is the same value in milliseconds.
     for r in rows:
-        assert r.per_tile_avg_ms == pytest.approx(r.iter_median_ms / r.rows, rel=1e-9)
+        assert r.per_tile_avg_s == pytest.approx(r.iter_median_s / r.rows, rel=1e-9)
+        assert r.per_tile_avg_ms == pytest.approx(r.per_tile_avg_s * 1000.0, rel=1e-9)
     assert sorted({r.rows for r in rows}) == [2, 4]
 
 

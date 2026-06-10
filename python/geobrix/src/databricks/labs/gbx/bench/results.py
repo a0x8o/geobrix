@@ -24,9 +24,9 @@ class ResultRow:
     nodata_frac: float
     warmup_iters: int
     measured_iters: int
-    iter_median_ms: float
-    iter_min_ms: float
-    iter_p90_ms: float
+    iter_median_s: float
+    iter_min_s: float
+    iter_p90_s: float
     throughput_mpix_s: float
     throughput_rows_s: float
     peak_rss_mb: float
@@ -44,14 +44,16 @@ class ResultRow:
         ""  # JSON summary of the output (pure-core only); "" when not captured
     )
     # Wall clock over the measured iterations: total (sum) + avg (mean = total /
-    # measured_iters). Complements iter_median_ms/iter_min_ms/iter_p90_ms. Default 0.0
-    # so error/skip rows (no timing) stay valid; OK rows pass the real values from
-    # time_iters.
-    iter_total_wall_clock_ms: float = 0.0
-    avg_wall_clock_ms: float = 0.0
-    # Spark-path headline metric: amortized wall-clock per tile = iter_median_ms / rows.
+    # measured_iters), in SECONDS. Complements iter_median_s/iter_min_s/iter_p90_s.
+    # Default 0.0 so error/skip rows (no timing) stay valid; OK rows pass the real
+    # values from time_iters (converted ms -> s).
+    iter_total_wall_clock_s: float = 0.0
+    avg_wall_clock_s: float = 0.0
+    # Spark-path headline metric: amortized wall-clock per tile = iter_median / rows.
     # Stable across row counts and directly comparable light-vs-heavy (same row count
-    # both tiers). 0.0 for pure-core (single-tile) and error/skip rows.
+    # both tiers). 0.0 for pure-core (single-tile) and error/skip rows. Reported in
+    # BOTH seconds (per_tile_avg_s) and milliseconds (per_tile_avg_ms).
+    per_tile_avg_s: float = 0.0
     per_tile_avg_ms: float = 0.0
     # Monotonic per-run event index, assigned at WRITE time (Delta sink) in execution
     # order so the table's first column shows what ran last + reveals per-event slowdown.
@@ -79,9 +81,9 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
     """Data-derived, human-readable observations. Each bullet is conditional on the data."""
     out: List[str] = []
     if pure:
-        s = max(pure, key=lambda r: r.iter_median_ms)
+        s = max(pure, key=lambda r: r.iter_median_s)
         out.append(
-            f"Slowest pure-core op: `{s.fn}` — {s.iter_median_ms:.2f} ms "
+            f"Slowest pure-core op: `{s.fn}` — {s.iter_median_s:.2f} s "
             f"at {s.tile_px}²/{s.bands}-band ({s.dtype})."
         )
         tps = [r.throughput_mpix_s for r in pure if r.throughput_mpix_s]
@@ -97,8 +99,8 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
             if len({r.tile_px for r in rs}) >= 2:
                 small = min(rs, key=lambda r: r.tile_px)
                 large = max(rs, key=lambda r: r.tile_px)
-                if small.iter_median_ms > 0 and small.tile_px > 0:
-                    t_ratio = large.iter_median_ms / small.iter_median_ms
+                if small.iter_median_s > 0 and small.tile_px > 0:
+                    t_ratio = large.iter_median_s / small.iter_median_s
                     px_ratio = (large.tile_px**2) / (small.tile_px**2)
                     rel = t_ratio / px_ratio if px_ratio else 0
                     shape = (
@@ -120,8 +122,8 @@ def _derive_insights(rows, ok, errs, na, pure, spark) -> List[str]:
             sp = min((r for r in spark if r.fn == fn), key=lambda r: r.rows)
             pc = min((r for r in pure if r.fn == fn), key=lambda r: r.tile_px)
             out.append(
-                f"Spark-path carries Spark/UDF overhead: `{fn}` {sp.iter_median_ms:.0f} ms for "
-                f"{sp.rows} rows (spark-path) vs {pc.iter_median_ms:.3f} ms for one tile (pure-core)."
+                f"Spark-path carries Spark/UDF overhead: `{fn}` {sp.iter_median_s:.2f} s for "
+                f"{sp.rows} rows (spark-path) vs {pc.iter_median_s:.4f} s for one tile (pure-core)."
             )
     if errs:
         efns = sorted({r.fn for r in errs})
@@ -198,7 +200,7 @@ def _context_line(const_tokens, items, pool_size):
 
 
 # Hoistable dimension descriptors: (label, getter, fmt). Metric columns
-# (iter_median_ms, throughput, note, …) are never hoisted — only these dims.
+# (iter_median_s, throughput, note, …) are never hoisted — only these dims.
 _DIM_TILE_PX = ("tile_px", lambda r: r.tile_px, lambda v: f"tile_px {v}²")
 _DIM_BANDS = ("bands", lambda r: r.bands, lambda v: f"{v} bands")
 _DIM_DTYPE = ("dtype", lambda r: r.dtype, lambda v: f"{v}")
@@ -234,9 +236,10 @@ def summarize(rows: List[ResultRow], pool_size=None) -> str:
         )
     # Metric legend: the two timing columns measure different things.
     lines.append(
-        "_`iter_median_ms` = median wall-clock of ONE full iteration over all N tiles "
-        "(whole distributed job). `per_tile_avg_ms` = `iter_median_ms` / N "
-        "(amortized per tile) — the headline spark-path rate._"
+        "_`iter_median_s` = median wall-clock (seconds) of ONE full iteration over all "
+        "N tiles (whole distributed job). `per_tile_avg` = `iter_median_s` / N "
+        "(amortized per tile) — the headline spark-path rate, shown in both seconds "
+        "(`per_tile_avg_s`) and milliseconds (`per_tile_avg_ms`)._"
     )
     lines += ["", "## Insights", ""]
     insights = _derive_insights(rows, ok, errs, na, pure, spark)
@@ -273,24 +276,25 @@ def summarize(rows: List[ResultRow], pool_size=None) -> str:
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    slow = sorted(pure, key=lambda r: r.iter_median_ms, reverse=True)[:15]
+    slow = sorted(pure, key=lambda r: r.iter_median_s, reverse=True)[:15]
     if slow:
         _emit_table(
-            "Slowest pure-core functions (by iter_median_ms)",
+            "Slowest pure-core functions (by iter_median_s)",
             slow,
             [_DIM_TILE_PX, _DIM_BANDS, _DIM_DTYPE, _DIM_SRID],
-            ["iter_median_ms", "mpix/s"],
-            lambda r: [f"{r.iter_median_ms:.1f}", f"{r.throughput_mpix_s:.1f}"],
+            ["iter_median_s", "mpix/s"],
+            lambda r: [f"{r.iter_median_s:.2f}", f"{r.throughput_mpix_s:.1f}"],
         )
     if spark:
         _emit_table(
-            "Spark-path (per_tile_avg_ms = iter_median_ms / tiles)",
+            "Spark-path (per_tile_avg = iter_median_s / tiles)",
             sorted(spark, key=lambda r: (r.fn, r.rows)),
             [_DIM_TILE_PX, _DIM_BANDS, _DIM_DTYPE, _DIM_SRID, _DIM_ROWS],
-            ["iter_median_ms", "per_tile_avg_ms", "rows/s"],
+            ["iter_median_s", "per_tile_avg_s", "per_tile_avg_ms", "rows/s"],
             lambda r: [
-                f"{r.iter_median_ms:.1f}",
-                f"{(r.iter_median_ms / r.rows if r.rows else 0.0):.3f}",
+                f"{r.iter_median_s:.2f}",
+                f"{(r.iter_median_s / r.rows if r.rows else 0.0):.5f}",
+                f"{(r.iter_median_s / r.rows * 1000.0 if r.rows else 0.0):.3f}",
                 f"{r.throughput_rows_s:.1f}",
             ],
         )

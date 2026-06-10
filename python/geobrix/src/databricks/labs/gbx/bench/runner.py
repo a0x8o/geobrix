@@ -271,9 +271,9 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        iter_median_ms=0.0,
-                        iter_min_ms=0.0,
-                        iter_p90_ms=0.0,
+                        iter_median_s=0.0,
+                        iter_min_s=0.0,
+                        iter_p90_s=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,
@@ -331,11 +331,12 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=stats["warmup_iters"],
                         measured_iters=stats["measured_iters"],
-                        iter_median_ms=ms,
-                        iter_min_ms=stats["iter_min_ms"],
-                        iter_p90_ms=stats["iter_p90_ms"],
-                        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"],
-                        avg_wall_clock_ms=stats["avg_wall_clock_ms"],
+                        iter_median_s=ms / 1000.0,
+                        iter_min_s=stats["iter_min_ms"] / 1000.0,
+                        iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                        iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"]
+                        / 1000.0,
+                        avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
                         throughput_mpix_s=(
                             (_mpix(te.tile_px, te.bands, 1) / (ms / 1000.0))
                             if ms
@@ -365,9 +366,9 @@ def run_pure_core(
                         nodata_frac=te.nodata_frac,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        iter_median_ms=0.0,
-                        iter_min_ms=0.0,
-                        iter_p90_ms=0.0,
+                        iter_median_s=0.0,
+                        iter_min_s=0.0,
+                        iter_p90_s=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,
@@ -405,13 +406,17 @@ def _agg_result_row(fs, run_id, pool, n, env, stats, fingerprint, status, note):
         nodata_frac=0.0,
         warmup_iters=warmup,
         measured_iters=measured,
-        iter_median_ms=ms,
-        iter_min_ms=stats["iter_min_ms"] if stats else 0.0,
-        iter_p90_ms=stats["iter_p90_ms"] if stats else 0.0,
-        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"] if stats else 0.0,
-        avg_wall_clock_ms=stats["avg_wall_clock_ms"] if stats else 0.0,
-        # Headline spark-path metric: amortized wall-clock per aggregated group (iter / n).
-        # Aggregators set this too (regular spark-path rows already did) so it isn't 0.
+        iter_median_s=ms / 1000.0,
+        iter_min_s=(stats["iter_min_ms"] / 1000.0) if stats else 0.0,
+        iter_p90_s=(stats["iter_p90_ms"] / 1000.0) if stats else 0.0,
+        iter_total_wall_clock_s=(
+            stats["iter_total_wall_clock_ms"] / 1000.0 if stats else 0.0
+        ),
+        avg_wall_clock_s=(stats["avg_wall_clock_ms"] / 1000.0) if stats else 0.0,
+        # Headline spark-path metric: amortized wall-clock per aggregated group (iter / n),
+        # reported in both seconds and milliseconds. Aggregators set this too (regular
+        # spark-path rows already did) so it isn't 0.
+        per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
         per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
         throughput_mpix_s=(
             (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0)) if ms else 0.0
@@ -1069,12 +1074,15 @@ def run_spark_path(
                         nodata_frac=0.0,
                         warmup_iters=stats["warmup_iters"],
                         measured_iters=stats["measured_iters"],
-                        iter_median_ms=ms,
-                        iter_min_ms=stats["iter_min_ms"],
-                        iter_p90_ms=stats["iter_p90_ms"],
-                        iter_total_wall_clock_ms=stats["iter_total_wall_clock_ms"],
-                        avg_wall_clock_ms=stats["avg_wall_clock_ms"],
-                        # Headline spark-path metric: amortized wall-clock per tile.
+                        iter_median_s=ms / 1000.0,
+                        iter_min_s=stats["iter_min_ms"] / 1000.0,
+                        iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                        iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"]
+                        / 1000.0,
+                        avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+                        # Headline spark-path metric: amortized wall-clock per tile,
+                        # reported in both seconds and milliseconds.
+                        per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
                         per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
                         throughput_mpix_s=(
                             (_mpix(pool.tile_px, pool.bands, n) / (ms / 1000.0))
@@ -1105,9 +1113,9 @@ def run_spark_path(
                         nodata_frac=0.0,
                         warmup_iters=warmup,
                         measured_iters=0,
-                        iter_median_ms=0.0,
-                        iter_min_ms=0.0,
-                        iter_p90_ms=0.0,
+                        iter_median_s=0.0,
+                        iter_min_s=0.0,
+                        iter_p90_s=0.0,
                         throughput_mpix_s=0.0,
                         throughput_rows_s=0.0,
                         peak_rss_mb=0.0,

@@ -27,7 +27,8 @@ ORDER = [
     "nodata_frac",
     "warmup_iters",
     "measured_iters",
-    "avg_wall_clock_ms",
+    "avg_wall_clock_s",
+    "per_tile_avg_s",
     "per_tile_avg_ms",
     "throughput_mpix_s",
     "throughput_rows_s",
@@ -43,10 +44,10 @@ ORDER = [
     "env_gdal_version",
     "env_runtime_version",
     "env_where",
-    "iter_median_ms",
-    "iter_min_ms",
-    "iter_p90_ms",
-    "iter_total_wall_clock_ms",
+    "iter_median_s",
+    "iter_min_s",
+    "iter_p90_s",
+    "iter_total_wall_clock_s",
 ]
 
 # Guard against drift: ORDER must cover exactly the ResultRow fields, no more, no less.
@@ -77,7 +78,7 @@ def to_delta(rows: List[ResultRow], spark, table: str, where: str = "cluster") -
     if not rows:
         return 0
     df = rows_to_dataframe(rows, spark, where=where)
-    # mergeSchema so new ResultRow columns (e.g. iter_total/avg_wall_clock_ms) append to an
+    # mergeSchema so new ResultRow columns (e.g. iter_total/avg_wall_clock_s) append to an
     # existing bench_results table instead of failing on a schema mismatch.
     df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(
         table
@@ -311,17 +312,23 @@ def _purge_functions(api, mode):
         print(f"[redo] {api} {mode}: purged {int(_n)} row(s) for {len(_fns)} fn(s) -> re-running")
 
 
-def _show_md(title, text):
+def _show_md(title, text, path=None):
     # Render a generated summary inline in the run notebook (visible in the Databricks
     # run UI) as RENDERED markdown -- headings + GFM pipe-tables become real HTML, not a
     # monospace text block. Falls back to print if IPython display isn't available.
+    # path: when given, show the Volume location of the .md FILE as a line above the
+    # rendered body so the run links to the artifact (e.g. .../bench-out/<run_id>/summary.md).
+    _loc = ("\\n\\n**Summary file:** `" + path + "`") if path else ""
     try:
         from IPython.display import Markdown
         from IPython.display import display as _md_display
 
-        _md_display(Markdown("### " + title + "\\n\\n" + text))
+        _md_display(Markdown("### " + title + _loc + "\\n\\n" + text))
     except Exception:
-        print("\\n===== " + title + " =====\\n" + text)
+        print("\\n===== " + title + " =====")
+        if path:
+            print("Summary file: " + path)
+        print(text)
 
 
 def show_section(api, mode, rows):
@@ -337,9 +344,10 @@ def show_section(api, mode, rows):
     except Exception:
         _df.show(300, truncate=False)
     _md = results.summarize(rows, pool_size=len(corpus.row_pool.tiles))
-    with open(f"{OUT}/{api}.{mode}.summary.md", "w") as fh:
+    _path = f"{OUT}/{api}.{mode}.summary.md"
+    with open(_path, "w") as fh:
         fh.write(_md)
-    _show_md(f"{api} {mode} summary -- {RUN_ID}", _md)
+    _show_md(f"{api} {mode} summary -- {RUN_ID}", _md, path=_path)
 """
 
 # Lightweight helper: pure Python/PySpark. Emitted only when --lightweight, so a
@@ -450,16 +458,24 @@ def run_heavy(mode):
             return _fh.read().split("\\n")[:-1]
 
     def _remap_iter(_d):
-        # The Scala BenchRow still emits the OLD timing key names (Scala isn't being
-        # changed); rename them to the ResultRow iter_* fields before constructing.
+        # The Scala BenchRow still emits MILLISECONDS under the OLD timing key names
+        # (Scala isn't being changed). ResultRow now stores timings in SECONDS, so
+        # rename each ms key to its iter_*_s / *_s field AND divide by 1000.0.
         for _old, _new in (
-            ("median_ms", "iter_median_ms"),
-            ("min_ms", "iter_min_ms"),
-            ("p90_ms", "iter_p90_ms"),
-            ("total_wall_clock_ms", "iter_total_wall_clock_ms"),
+            ("median_ms", "iter_median_s"),
+            ("min_ms", "iter_min_s"),
+            ("p90_ms", "iter_p90_s"),
+            ("total_wall_clock_ms", "iter_total_wall_clock_s"),
+            ("avg_wall_clock_ms", "avg_wall_clock_s"),
         ):
             if _old in _d:
-                _d[_new] = _d.pop(_old)
+                _d[_new] = _d.pop(_old) / 1000.0
+        # per_tile_avg: Scala emits neither key, so derive both from the median + rows.
+        # ms = iter_median_s * 1000 (the original millisecond median); per-tile = ms / n.
+        _n = _d.get("rows") or 0
+        _ms = _d.get("iter_median_s", 0.0) * 1000.0
+        _d["per_tile_avg_ms"] = (_ms / _n) if (_ms and _n) else 0.0
+        _d["per_tile_avg_s"] = (_ms / _n / 1000.0) if (_ms and _n) else 0.0
         return _d
 
     _th = threading.Thread(target=_go, daemon=True)
@@ -533,7 +549,8 @@ if hw and lw:
     )
     with open(f"{OUT}/summary.md", "w") as fh:
         fh.write(_cmp_md)
-    _show_md(f"Heavy vs light comparison -- {RUN_ID}", _cmp_md)  # final, both tiers ran
+    # final render, both tiers ran: show the compare md + link to the summary.md artifact.
+    _show_md(f"Heavy vs light comparison -- {RUN_ID}", _cmp_md, path=f"{OUT}/summary.md")
     result["compared"] = len(cells)
     result["summary"] = f"{OUT}/summary.md"
 elif lw:

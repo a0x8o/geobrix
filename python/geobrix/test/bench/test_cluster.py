@@ -19,9 +19,9 @@ def _row(**kw):
         nodata_frac=0.0,
         warmup_iters=1,
         measured_iters=2,
-        iter_median_ms=1.0,
-        iter_min_ms=1.0,
-        iter_p90_ms=1.0,
+        iter_median_s=1.0,
+        iter_min_s=1.0,
+        iter_p90_s=1.0,
         throughput_mpix_s=1.0,
         throughput_rows_s=1.0,
         peak_rss_mb=0.0,
@@ -57,24 +57,27 @@ def spark():
 def test_rows_to_dataframe_schema_and_where(spark):
     df = cl.rows_to_dataframe([_row(), _row(fn="rst_avg")], spark, where="cluster")
     cols = df.columns
-    assert len(cols) == 34
+    assert len(cols) == 35
     assert "output_fingerprint" in cols
-    assert "iter_total_wall_clock_ms" in cols
-    assert "avg_wall_clock_ms" in cols
+    assert "iter_total_wall_clock_s" in cols
+    assert "avg_wall_clock_s" in cols
+    assert "per_tile_avg_s" in cols
     assert "per_tile_avg_ms" in cols
     # run_event_num is the FIRST column (monotonic per-run event index).
     assert cols[0] == "run_event_num"
-    # Column ORDER: avg/per_tile metrics sit right after measured_iters, and the
-    # per-iter distribution (iter_*) trails as the last four columns.
+    # Column ORDER: avg/per_tile metrics sit right after measured_iters (per_tile_avg_s
+    # immediately left of per_tile_avg_ms), and the per-iter distribution (iter_*)
+    # trails as the last four columns.
     assert cols == cl.ORDER
     mi = cols.index("measured_iters")
-    assert cols[mi + 1] == "avg_wall_clock_ms"
-    assert cols[mi + 2] == "per_tile_avg_ms"
+    assert cols[mi + 1] == "avg_wall_clock_s"
+    assert cols[mi + 2] == "per_tile_avg_s"
+    assert cols[mi + 3] == "per_tile_avg_ms"
     assert cols[-4:] == [
-        "iter_median_ms",
-        "iter_min_ms",
-        "iter_p90_ms",
-        "iter_total_wall_clock_ms",
+        "iter_median_s",
+        "iter_min_s",
+        "iter_p90_s",
+        "iter_total_wall_clock_s",
     ]
     vals = {r["fn"]: r["env_where"] for r in df.collect()}
     assert vals == {"rst_width": "cluster", "rst_avg": "cluster"}

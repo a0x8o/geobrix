@@ -233,6 +233,9 @@ class CellCompare:
     srid: int
     nodata_frac: float
     rows: int
+    # Median wall-clock of one full iteration, in SECONDS (read from ResultRow's
+    # iter_median_s). Field names retain the _ms suffix for CSV/store compatibility
+    # with persisted records, but the stored values are seconds.
     hw_median_ms: float
     lw_median_ms: float
     speedup: float  # hw/lw; >1 => lightweight faster
@@ -283,9 +286,7 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
     cells: List[CellCompare] = []
     for k in sorted(set(hw_by) & set(lw_by)):
         h, lo = hw_by[k], lw_by[k]
-        speedup = (
-            (h.iter_median_ms / lo.iter_median_ms) if lo.iter_median_ms > 0 else 0.0
-        )
+        speedup = (h.iter_median_s / lo.iter_median_s) if lo.iter_median_s > 0 else 0.0
         if h.status == "ok" and lo.status == "ok":
             # A function may declare a looser per-fn rel_tol for an inherent
             # cross-engine algorithm spread (e.g. rst_contour's segmentation);
@@ -312,8 +313,8 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 srid=h.srid,
                 nodata_frac=h.nodata_frac,
                 rows=h.rows,
-                hw_median_ms=h.iter_median_ms,
-                lw_median_ms=lo.iter_median_ms,
+                hw_median_ms=h.iter_median_s,
+                lw_median_ms=lo.iter_median_s,
                 speedup=speedup,
                 consistency=cls,
                 max_rel_delta=delta,
@@ -323,8 +324,8 @@ def compare_cells(hw_rows: List[ResultRow], lw_rows: List[ResultRow]):
                 lw_mpix_s=lo.throughput_mpix_s,
                 hw_rows_s=h.throughput_rows_s,
                 lw_rows_s=lo.throughput_rows_s,
-                hw_minus_lw_ms=_delta_ms(h.iter_median_ms, lo.iter_median_ms),
-                delta_pct=(_delta_pct(h.iter_median_ms, lo.iter_median_ms) or 0.0),
+                hw_minus_lw_ms=_delta_ms(h.iter_median_s, lo.iter_median_s),
+                delta_pct=(_delta_pct(h.iter_median_s, lo.iter_median_s) or 0.0),
             )
         )
     unmatched = [
@@ -728,12 +729,12 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str
         hw_win = min(ok_speed, key=lambda cl: cl.speedup)
         insights.append(
             f"Biggest lightweight win: `{lw_win.fn}` ({lw_win.mode}) — {lw_win.speedup:.1f}x "
-            f"(hw {lw_win.hw_median_ms:.1f} ms vs lw {lw_win.lw_median_ms:.1f} ms)."
+            f"(hw {lw_win.hw_median_ms:.2f} s vs lw {lw_win.lw_median_ms:.2f} s)."
         )
         if hw_win.speedup > 0:
             insights.append(
                 f"Biggest heavyweight win: `{hw_win.fn}` ({hw_win.mode}) — {1.0 / hw_win.speedup:.1f}x "
-                f"(hw {hw_win.hw_median_ms:.1f} ms vs lw {hw_win.lw_median_ms:.1f} ms)."
+                f"(hw {hw_win.hw_median_ms:.2f} s vs lw {hw_win.lw_median_ms:.2f} s)."
             )
     pc = [cl for cl in cells if cl.consistency != "na"]
     n_exact = sum(1 for cl in pc if cl.consistency == "exact")
@@ -767,12 +768,12 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str
         f"**within_tol** = every stat agrees to rel ≤ {REL_TOL:g} OR abs ≤ {ABS_TOL:g}; "
         f"**divergent** = neither. Per-cell max_rel_delta in comparison.csv._",
         "",
-        "_Δms/Δ% = heavy − light (heavy timing minus light); positive → heavy "
+        "_Δs/Δ% = heavy − light (heavy timing minus light); positive → heavy "
         "slower (lightweight faster), negative → heavy faster._",
         "",
-        "_Timing columns: `hw_iter_ms`/`lw_iter_ms` = median wall-clock of ONE full "
-        "iteration over all N tiles (whole distributed job). `hw_per_tile_ms`/"
-        "`lw_per_tile_ms` = that ÷ N (amortized per tile). Same N both tiers._",
+        "_Timing columns: `hw_iter_s`/`lw_iter_s` = median wall-clock (seconds) of ONE "
+        "full iteration over all N tiles (whole distributed job). `hw_per_tile_s`/"
+        "`lw_per_tile_s` = that ÷ N (amortized per tile, seconds). Same N both tiers._",
         "",
     ]
     _sp = sorted({cl.rows for cl in cells if cl.mode == "spark-path"})
@@ -804,15 +805,15 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str
                 return [f"{cl.hw_mpix_s:.1f}", f"{cl.lw_mpix_s:.1f}"]
 
         else:
-            # spark-path headline: amortized per-tile wall-clock (median_ms / rows),
-            # more interpretable + N-stable than rows/s (its inverse). Same row count
-            # both tiers, so the speedup column is unchanged.
-            tput_labels = ["hw_per_tile_ms", "lw_per_tile_ms"]
+            # spark-path headline: amortized per-tile wall-clock (iter_median_s / rows,
+            # in seconds), more interpretable + N-stable than rows/s (its inverse). Same
+            # row count both tiers, so the speedup column is unchanged.
+            tput_labels = ["hw_per_tile_s", "lw_per_tile_s"]
 
             def tput_cells(cl):
                 return [
-                    f"{(cl.hw_median_ms / cl.rows if cl.rows else 0.0):.3f}",
-                    f"{(cl.lw_median_ms / cl.rows if cl.rows else 0.0):.3f}",
+                    f"{(cl.hw_median_ms / cl.rows if cl.rows else 0.0):.5f}",
+                    f"{(cl.lw_median_ms / cl.rows if cl.rows else 0.0):.5f}",
                 ]
 
         const_tokens, varying = _hoist_dims(mc, dims)
@@ -823,7 +824,7 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str
         # fn is always first; varying dims sit between fn and the metric columns;
         # all timing/throughput/consistency columns are always present.
         metric_labels = (
-            ["hw_iter_ms", "lw_iter_ms", "Δms", "Δ%"]
+            ["hw_iter_s", "lw_iter_s", "Δs", "Δ%"]
             + tput_labels
             + ["speedup", "consistency", "note"]
         )
@@ -834,9 +835,9 @@ def summarize_compare(cells, unmatched, hw_rows, lw_rows, pool_size=None) -> str
                 [cl.fn]
                 + [str(getter(cl)) for _, getter, _ in varying]
                 + [
-                    f"{cl.hw_median_ms:.1f}",
-                    f"{cl.lw_median_ms:.1f}",
-                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.1f}",
+                    f"{cl.hw_median_ms:.2f}",
+                    f"{cl.lw_median_ms:.2f}",
+                    f"{_delta_ms(cl.hw_median_ms, cl.lw_median_ms):+.2f}",
                     f"{_fmt_delta_pct(cl.hw_median_ms, cl.lw_median_ms)}",
                 ]
                 + tput_cells(cl)

@@ -16,9 +16,9 @@ def _row(**kw):
         nodata_frac=0.02,
         warmup_iters=2,
         measured_iters=5,
-        iter_median_ms=1.5,
-        iter_min_ms=1.2,
-        iter_p90_ms=1.9,
+        iter_median_s=1.5,
+        iter_min_s=1.2,
+        iter_p90_s=1.9,
         throughput_mpix_s=44.0,
         throughput_rows_s=666.0,
         peak_rss_mb=120.0,
@@ -38,7 +38,7 @@ def _row(**kw):
 
 
 def test_jsonl_roundtrip(tmp_path):
-    rows = [_row(), _row(fn="rst_slope", category="terrain", iter_median_ms=20.0)]
+    rows = [_row(), _row(fn="rst_slope", category="terrain", iter_median_s=20.0)]
     p = tmp_path / "shard.jsonl"
     r.write_jsonl(rows, p)
     loaded = r.read_jsonl(p)
@@ -47,8 +47,8 @@ def test_jsonl_roundtrip(tmp_path):
 
 def test_summary_lists_slowest(tmp_path):
     rows = [
-        _row(fn="rst_fast", iter_median_ms=1.0),
-        _row(fn="rst_slow", iter_median_ms=99.0),
+        _row(fn="rst_fast", iter_median_s=1.0),
+        _row(fn="rst_slow", iter_median_s=99.0),
     ]
     md = r.summarize(rows)
     assert "rst_slow" in md
@@ -56,10 +56,10 @@ def test_summary_lists_slowest(tmp_path):
     assert md.index("rst_slow") < md.index("rst_fast")
 
 
-def test_spark_path_table_reports_per_tile_ms():
-    # spark-path table surfaces per_tile_ms = median_ms / rows.
+def test_spark_path_table_reports_per_tile_s_and_ms():
+    # spark-path table surfaces per_tile_avg = iter_median_s / rows, in BOTH s and ms.
     rows = [
-        _row(fn="rst_resample", mode="spark-path", rows=1000, iter_median_ms=100000.0),
+        _row(fn="rst_resample", mode="spark-path", rows=1000, iter_median_s=100.0),
     ]
     md = r.summarize(rows)
     hdr = [
@@ -68,10 +68,15 @@ def test_spark_path_table_reports_per_tile_ms():
         if ln.startswith("| fn |") and "per_tile_avg_ms" in ln
     ]
     assert hdr, "spark-path table should have a per_tile_avg_ms column"
-    # iter_median_ms (whole-iteration) is delineated from per_tile_avg_ms
-    assert "iter_median_ms" in hdr[0]
+    # per_tile_avg_s sits to the LEFT of per_tile_avg_ms.
+    assert "per_tile_avg_s" in hdr[0]
+    assert hdr[0].index("per_tile_avg_s") < hdr[0].index("per_tile_avg_ms")
+    # iter_median_s (whole-iteration, seconds) is delineated from per_tile_avg.
+    assert "iter_median_s" in hdr[0]
     row_line = [ln for ln in md.splitlines() if ln.startswith("| rst_resample ")][0]
-    assert "100.000" in row_line  # 100000 ms / 1000 tiles = 100.000 ms/tile
+    # 100 s / 1000 tiles = 0.1 s/tile = 100 ms/tile.
+    assert "0.10000" in row_line  # per_tile_avg_s
+    assert "100.000" in row_line  # per_tile_avg_ms
 
 
 def test_summarize_has_insights_status_and_flags(tmp_path):
@@ -80,14 +85,14 @@ def test_summarize_has_insights_status_and_flags(tmp_path):
             fn="rst_width",
             mode="pure-core",
             tile_px=256,
-            iter_median_ms=1.0,
+            iter_median_s=1.0,
             status="ok",
         ),
         _row(
             fn="rst_slope",
             mode="pure-core",
             tile_px=4096,
-            iter_median_ms=50.0,
+            iter_median_s=50.0,
             status="ok",
             category="terrain",
             nodata_frac=0.1,
@@ -100,7 +105,7 @@ def test_summarize_has_insights_status_and_flags(tmp_path):
             bands=1,
             status="error",
             note="band index 2 out of range",
-            iter_median_ms=0.0,
+            iter_median_s=0.0,
         ),
     ]
     md = r.summarize(rows)
@@ -119,7 +124,7 @@ def test_summarize_has_insights_status_and_flags(tmp_path):
     slow_header = [
         ln
         for ln in md.splitlines()
-        if ln.startswith("| fn |") and "median_ms" in ln and "mpix/s" in ln
+        if ln.startswith("| fn |") and "median_s" in ln and "mpix/s" in ln
     ][0]
     assert "tile_px" in slow_header
 
@@ -127,22 +132,22 @@ def test_summarize_has_insights_status_and_flags(tmp_path):
 def test_summarize_keeps_varying_srid_as_column():
     # Mixed srid (or any non-px dim that varies) stays a column; constant hoists.
     rows = [
-        _row(fn="rst_a", mode="pure-core", srid=4326, iter_median_ms=5.0),
-        _row(fn="rst_b", mode="pure-core", srid=3857, iter_median_ms=6.0),
+        _row(fn="rst_a", mode="pure-core", srid=4326, iter_median_s=5.0),
+        _row(fn="rst_b", mode="pure-core", srid=3857, iter_median_s=6.0),
     ]
     md = r.summarize(rows)
     hdr = [
-        ln for ln in md.splitlines() if ln.startswith("| fn |") and "median_ms" in ln
+        ln for ln in md.splitlines() if ln.startswith("| fn |") and "median_s" in ln
     ][0]
     assert "srid" in hdr
     # constant srid is hoisted out of the table into the context line
     same = [
-        _row(fn="rst_a", mode="pure-core", srid=4326, iter_median_ms=5.0),
-        _row(fn="rst_b", mode="pure-core", srid=4326, iter_median_ms=6.0),
+        _row(fn="rst_a", mode="pure-core", srid=4326, iter_median_s=5.0),
+        _row(fn="rst_b", mode="pure-core", srid=4326, iter_median_s=6.0),
     ]
     md2 = r.summarize(same)
     hdr2 = [
-        ln for ln in md2.splitlines() if ln.startswith("| fn |") and "median_ms" in ln
+        ln for ln in md2.splitlines() if ln.startswith("| fn |") and "median_s" in ln
     ][0]
     assert "srid" not in hdr2
     assert "srid 4326" in md2
@@ -151,8 +156,8 @@ def test_summarize_keeps_varying_srid_as_column():
 def _hoist_md(pool_size=None):
     """All pure-core rows share tile_px/bands/dtype/srid -> they hoist."""
     rows = [
-        _row(fn="rst_a", iter_median_ms=1.5, tile_px=512, bands=4, dtype="float32"),
-        _row(fn="rst_b", iter_median_ms=9.0, tile_px=512, bands=4, dtype="float32"),
+        _row(fn="rst_a", iter_median_s=1.5, tile_px=512, bands=4, dtype="float32"),
+        _row(fn="rst_b", iter_median_s=9.0, tile_px=512, bands=4, dtype="float32"),
     ]
     return r.summarize(rows, pool_size=pool_size)
 
@@ -162,7 +167,7 @@ def test_summarize_hoists_constant_dims_above_table():
     slow_header = [
         ln
         for ln in md.splitlines()
-        if ln.startswith("| fn |") and "median_ms" in ln and "mpix/s" in ln
+        if ln.startswith("| fn |") and "median_s" in ln and "mpix/s" in ln
     ][0]
     # constant dims are NOT columns
     assert "tile_px" not in slow_header
@@ -193,7 +198,7 @@ def test_summarize_pool_warns_when_smaller_than_rows():
             fn="rst_sp",
             mode="spark-path",
             rows=1000,
-            iter_median_ms=5.0,
+            iter_median_s=5.0,
             srid=0,
         )
     ]

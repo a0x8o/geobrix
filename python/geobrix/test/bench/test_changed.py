@@ -154,9 +154,9 @@ def _row(fn, api, **over):
         nodata_frac=0.0,
         warmup_iters=2,
         measured_iters=5,
-        iter_median_ms=10.0,
-        iter_min_ms=9.0,
-        iter_p90_ms=11.0,
+        iter_median_s=10.0,
+        iter_min_s=9.0,
+        iter_p90_s=11.0,
         throughput_mpix_s=5.0,
         throughput_rows_s=100.0,
         peak_rss_mb=50.0,
@@ -213,14 +213,14 @@ def test_write_records_from_run(tmp_path):
     # two fns in the shards; we only write a record for one of them
     results.write_jsonl(
         [
-            _row("rst_slope", "heavyweight", iter_median_ms=20.0),
+            _row("rst_slope", "heavyweight", iter_median_s=20.0),
             _row("rst_avg", "heavyweight"),
         ],
         run_dir / "heavyweight.jsonl",
     )
     results.write_jsonl(
         [
-            _row("rst_slope", "lightweight", iter_median_ms=5.0),
+            _row("rst_slope", "lightweight", iter_median_s=5.0),
             _row("rst_avg", "lightweight"),
         ],
         run_dir / "lightweight.jsonl",
@@ -285,8 +285,8 @@ def test_write_records_from_run(tmp_path):
     # only this fn's shard rows captured
     assert {r["fn"] for r in rec["heavy_rows"]} == {"rst_slope"}
     assert {r["fn"] for r in rec["light_rows"]} == {"rst_slope"}
-    assert rec["heavy_rows"][0]["iter_median_ms"] == 20.0
-    assert rec["light_rows"][0]["iter_median_ms"] == 5.0
+    assert rec["heavy_rows"][0]["iter_median_s"] == 20.0
+    assert rec["light_rows"][0]["iter_median_s"] == 5.0
 
 
 def test_write_records_from_run_includes_spark_path_aggregate_cell(tmp_path):

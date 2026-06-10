@@ -19,9 +19,9 @@ def _rr(api, fn, mode, median, fp="", **kw):
         nodata_frac=0.0,
         warmup_iters=1,
         measured_iters=2,
-        iter_median_ms=median,
-        iter_min_ms=median,
-        iter_p90_ms=median,
+        iter_median_s=median,
+        iter_min_s=median,
+        iter_p90_s=median,
         throughput_mpix_s=1.0,
         throughput_rows_s=1.0,
         peak_rss_mb=0.0,
@@ -389,7 +389,7 @@ def test_compare_cells_populates_throughput():
 def test_summarize_compare_pure_core_header_has_throughput_columns():
     cells = [_cmp("rst_slope", "pure-core", 20.0, 4.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
     assert "hw_mpix/s" in header
     assert "lw_mpix/s" in header
 
@@ -428,7 +428,7 @@ def test_summarize_compare_hoists_constant_dims_and_rounds_ms():
         _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", tile_px=512, bands=4),
     ]
     md = c.summarize_compare(cells, [], [], [], pool_size=1000)
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
     # constant dims hoisted out of the header
     assert "tile_px" not in header
     assert "bands" not in header
@@ -448,7 +448,7 @@ def test_summarize_compare_keeps_varying_dim_as_column():
         _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", tile_px=4096),
     ]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
     assert "tile_px" in header
 
 
@@ -460,7 +460,7 @@ def test_summarize_compare_keeps_varying_srid_as_column():
         _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", srid=3857),
     ]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
     assert "srid" in header
     # constant srid stays hoisted (context line), not a column
     same = [
@@ -468,9 +468,7 @@ def test_summarize_compare_keeps_varying_srid_as_column():
         _cmp("rst_b", "pure-core", 30.0, 6.0, 5.0, "exact", "", srid=4326),
     ]
     md2 = c.summarize_compare(same, [], [], [])
-    header2 = [ln for ln in md2.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][
-        0
-    ]
+    header2 = [ln for ln in md2.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
     assert "srid" not in header2
     assert "srid 4326" in md2
 
@@ -606,8 +604,8 @@ def test_raster_collection_agg_divergence():
 def test_summarize_compare_header_has_delta_columns():
     cells = [_cmp("rst_slope", "pure-core", 10.0, 2.0, 5.0, "exact", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_ms" in ln][0]
-    assert "Δms" in header
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "hw_iter_s" in ln][0]
+    assert "Δs" in header
     assert "Δ%" in header
 
 
@@ -640,13 +638,13 @@ def test_summarize_compare_zero_hw_delta_pct_guard():
 def test_summarize_compare_spark_path_header_has_delta_columns():
     cells = [_cmp("rst_w", "spark-path", 10.0, 2.0, 5.0, "na", "")]
     md = c.summarize_compare(cells, [], [], [])
-    header = [
-        ln for ln in md.splitlines() if "| fn |" in ln and "lw_per_tile_ms" in ln
-    ][0]
-    assert "Δms" in header
+    header = [ln for ln in md.splitlines() if "| fn |" in ln and "lw_per_tile_s" in ln][
+        0
+    ]
+    assert "Δs" in header
     assert "Δ%" in header
-    # spark-path reports per-tile (median_ms / rows), not rows/s
-    assert "hw_per_tile_ms" in header
+    # spark-path reports per-tile (iter_median_s / rows), not rows/s
+    assert "hw_per_tile_s" in header
     assert "rows/s" not in header
 
 
