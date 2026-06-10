@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions.grid
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, VectorRasterBridge}
 import com.databricks.labs.gbx.util.SerializationUtil
 import com.databricks.labs.gbx.vectorx.jts.JTS
@@ -253,7 +254,7 @@ object RST_GridFromPoints extends WithExpressionInfo {
         import org.gdal.ogr.{Feature, FieldDefn, Geometry => OgrGeom, ogr}
         import org.gdal.ogr.ogrConstants.{OFTReal, wkbPoint}
         import org.gdal.osr.SpatialReference
-        ogr.RegisterAll()
+        GDALManager.initOgr()
         val driver = ogr.GetDriverByName("GeoJSON")
         val ds = driver.CreateDataSource(path)
         val sr = new SpatialReference()

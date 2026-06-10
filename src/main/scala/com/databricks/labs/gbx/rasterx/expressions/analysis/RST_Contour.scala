@@ -1,7 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions.analysis
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
-import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, RasterSerializationUtil}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
@@ -116,7 +116,7 @@ object RST_Contour extends WithExpressionInfo {
         require(attrField != null && attrField.nonEmpty,
             "gbx_rst_contour: attr_field must be non-empty")
 
-        ogr.RegisterAll()
+        GDALManager.initOgr()
         val ogrDriver = ogr.GetDriverByName("Memory")
         val outDs = ogrDriver.CreateDataSource("rst_contour_out")
         val srcSrs = ds.GetSpatialRef

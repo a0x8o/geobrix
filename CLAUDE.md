@@ -113,6 +113,7 @@ Only **integer indices ±1..±6** (1=100km, 2=10km, 3=1km, 4=100m, 5=10m, 6=1m; 
 - `GetStatistics` only works on the MDArray, **not on `Band` directly**.
 - Always release Dataset/Band resources via `RasterDriver.releaseDataset(ds)` in a `try/finally`.
 - For tests that work with non-EPSG projections (e.g. ESRI:54008), mix in `SilenceProjError` to suppress expected PROJ warnings.
+- **Thread-safety (REQUIRED): register GDAL/OGR only via the synchronized `GDALManager` guards** — `GDALManager.init(config)` for GDAL drivers, `GDALManager.initOgr()` for OGR drivers. NEVER call raw `gdal.AllRegister()` / `ogr.RegisterAll()` per task, and never set process-global `gdal.SetConfigOption` outside `GDALManager`'s guarded paths. The GDAL Java bindings hold process-global registry/config state; concurrent Spark tasks in one executor JVM that race registration get a null `GetDriverByName` (NPE) or a native SIGSEGV that kills the executor.
 
 ### Unity Catalog Volumes
 

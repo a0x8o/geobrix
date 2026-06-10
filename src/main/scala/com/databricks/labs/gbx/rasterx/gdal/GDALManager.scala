@@ -28,6 +28,9 @@ object GDALManager extends Logging {
     var checkpointPath: String = _
     var useCheckpoint: Boolean = _
 
+    /** Tracks whether OGR drivers have been registered in this JVM. See [[initOgr]]. */
+    @volatile private var ogrEnabled = false
+
     private val pythonLock = new Object
     @volatile private var pythonDepth = 0
 
@@ -65,6 +68,24 @@ object GDALManager extends Logging {
                         isEnabled = false
                         throw exception
                 }
+            }
+        }
+
+    /**
+      * Register OGR (vector) drivers once per JVM; idempotent after first success.
+      *
+      * The GDAL Java bindings expose `org.gdal.ogr.ogr.RegisterAll()` as a process-global
+      * mutation of the driver registry, and it is NOT thread-safe. Concurrent Spark tasks in
+      * one executor JVM that each call `RegisterAll()` ad-hoc race that registry — a racing
+      * `GetDriverByName(...)` can return null (NPE) or the native layer can sigabrt. Registering
+      * exactly once under the shared `lock` (mirroring [[init]]) closes that race: after the
+      * first call every task sees a fully-registered registry and never re-registers.
+      */
+    def initOgr(): Unit =
+        lock.synchronized {
+            if (!ogrEnabled) {
+                org.gdal.ogr.ogr.RegisterAll()
+                ogrEnabled = true
             }
         }
 

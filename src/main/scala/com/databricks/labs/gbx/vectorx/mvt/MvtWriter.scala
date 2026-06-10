@@ -1,8 +1,9 @@
 package com.databricks.labs.gbx.vectorx.mvt
 
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.gdal
 import org.gdal.ogr.ogr.{CreateGeometryFromWkb, GetDriverByName}
-import org.gdal.ogr.{Feature, FieldDefn, ogr}
+import org.gdal.ogr.{Feature, FieldDefn}
 import org.gdal.ogr.ogrConstants.{OFTString, wkbUnknown}
 import org.gdal.osr.SpatialReference
 
@@ -49,7 +50,11 @@ object MvtWriter {
         features: Seq[(Array[Byte], Map[String, Any])]
     ): Array[Byte] = {
         ensureNativeLoaded()
-        ogr.RegisterAll()
+        // Register OGR drivers once per JVM via the shared guard so concurrent MVT-encoding
+        // tasks can't race the process-global driver registry. (init() needs an ExpressionConfig
+        // not available on this static helper path; initOgr only registers OGR under the lock,
+        // which is all this path needs — the native lib is already loaded above.)
+        GDALManager.initOgr()
         val driver = GetDriverByName("MVT")
         if (driver == null) {
             throw new RuntimeException(

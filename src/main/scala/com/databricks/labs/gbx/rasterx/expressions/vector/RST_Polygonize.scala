@@ -1,7 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions.vector
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
-import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, RasterSerializationUtil}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
@@ -94,7 +94,7 @@ object RST_Polygonize extends WithExpressionInfo {
         val maskBand = srcBand.GetMaskBand()
 
         // Build an in-memory OGR layer to receive the output polygons.
-        ogr.RegisterAll()
+        GDALManager.initOgr()
         val ogrDriver = ogr.GetDriverByName("Memory")
         val outDs = ogrDriver.CreateDataSource("rst_polygonize_out")
         val sr = new SpatialReference()

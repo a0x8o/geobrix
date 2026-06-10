@@ -1,5 +1,6 @@
 package com.databricks.labs.gbx.rasterx.util
 
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.{Dataset, gdal}
 import org.gdal.gdalconst.gdalconstConstants.GDT_Float64
 import org.gdal.ogr.{DataSource, Feature, FeatureDefn, FieldDefn, Geometry, Layer, ogr}
@@ -33,7 +34,7 @@ object VectorRasterBridge {
         features: Seq[(Array[Byte], Double)],
         srid: Int
     ): (DataSource, Layer) = {
-        ogr.RegisterAll()
+        GDALManager.initOgr()
         val driver = ogr.GetDriverByName("Memory")
         val ds = driver.CreateDataSource(s"mem_${UUID.randomUUID().toString.replace("-", "")}")
         val sr = new SpatialReference()
