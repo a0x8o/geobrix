@@ -148,6 +148,41 @@ def test_combineavg_tiles_shape_mismatch_raises():
         agg.combineavg_tiles([a, b])
 
 
+def test_combineavg_tiles_streaming_many_tiles_with_nodata():
+    # Exercises the streaming sum+count accumulation over N>2 tiles (the memory rewrite):
+    # the per-pixel mean must use ONLY the valid (non-NoData) inputs at each pixel, no matter
+    # how the tiles are folded one-at-a-time.
+    tiles = [
+        _ras(np.array([[10.0, -9999.0], [1.0, 5.0]])),
+        _ras(np.array([[20.0, 4.0], [2.0, -9999.0]])),
+        _ras(np.array([[30.0, 8.0], [-9999.0, -9999.0]])),
+        _ras(np.array([[40.0, -9999.0], [4.0, 5.0]])),
+        _ras(np.array([[50.0, 12.0], [-9999.0, 5.0]])),
+    ]
+    out = agg.combineavg_tiles(tiles)
+    with _serde.open_tile(out) as ds:
+        got = ds.read(1)
+    # pixel(0,0): mean(10,20,30,40,50)=30 ; (0,1): mean(4,8,12)=8 ;
+    # (1,0): mean(1,2,4)=7/3 ; (1,1): mean(5,5,5)=5
+    assert np.allclose(got, [[30.0, 8.0], [7.0 / 3.0, 5.0]])
+
+
+def test_combineavg_tiles_streaming_no_nodata_declared():
+    # When no input declares NoData, every value counts (the valid=None fast path).
+    tiles = [_ras(np.array([[v, v]]), nodata=None) for v in (1.0, 2.0, 3.0, 6.0)]
+    out = agg.combineavg_tiles(tiles)
+    with _serde.open_tile(out) as ds:
+        assert np.allclose(ds.read(1), [[3.0, 3.0]])  # mean(1,2,3,6)=3
+
+
+def test_open_all_closes_and_raises_on_corrupt_tile():
+    # A corrupt tile mid-group must raise cleanly (not hang/crash) -- exercises the _open_all
+    # partial-open failure path that closes the already-opened buffers before re-raising.
+    good = _ras(np.array([[1.0, 2.0], [3.0, 4.0]]))
+    with pytest.raises(Exception):  # noqa: B017 — rasterio raises its own IO error type
+        agg.merge_tiles([good, b"not a valid geotiff", good])
+
+
 # --- frombands_tiles --------------------------------------------------------
 def test_frombands_tiles_ascending_order():
     # Provide out of order: index 2 then index 0 then index 1.
