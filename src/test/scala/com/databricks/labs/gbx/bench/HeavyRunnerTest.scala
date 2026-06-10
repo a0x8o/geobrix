@@ -1,10 +1,11 @@
 package com.databricks.labs.gbx.bench
 
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+import org.apache.spark.sql.SparkSession
 import org.gdal.gdal.gdal
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.BeforeAndAfterAll
-import java.nio.file.Files
+import java.nio.file.{Files, Paths}
 
 class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
   override def beforeAll(): Unit = {
@@ -70,5 +71,41 @@ class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
     val lines = new String(incBytes, java.nio.charset.StandardCharsets.UTF_8)
       .split("\n").filter(_.nonEmpty)
     assert(lines.length == rows.length)
+  }
+
+  test("spark-path run parallelizes (no coalesce) over a row_pool and yields ok rows") {
+    // Validates the repartition-for-parallelism change in runSparkPath: a local[4] session
+    // runs the heavy spark-path column over an 8-tile row_pool. With the old coalesce(1) this
+    // ran on one task; now it repartitions, so concurrent GDAL tasks must stay safe (they do
+    // via GDALManager's synchronized init) and the rows come back ok.
+    val spark = SparkSession.builder()
+      .master("local[4]")
+      .appName("heavy-sparkpath")
+      .config("spark.sql.adaptive.enabled", "false")
+      .getOrCreate()
+    try {
+      val tif = this.getClass
+        .getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
+        .toString.replace("file:/", "/")
+      val bytes = Files.readAllBytes(Paths.get(tif))
+      val dir = Files.createTempDirectory("rowpool")
+      val tilesJson = (0 until 8).map { i =>
+        Files.write(dir.resolve(s"r$i.tif"), bytes)
+        s"""{"path":"r$i.tif","cellid":$i,"srid":4326,"dtype":"float32","bands":1,"tile_px":1200,"nodata_frac":0.0}"""
+      }.mkString(",")
+      val json =
+        s"""{"seed":1,"size_sweep":[],"row_pool":{"tile_px":1200,"bands":1,"dtype":"float32","tiles":[$tilesJson]}}"""
+      Files.write(dir.resolve("corpus.json"), json.getBytes)
+      val corpus = BenchManifest.read(dir.resolve("corpus.json").toString)
+
+      val rows = HeavyRunner.runSparkPath(
+        spark, dir.toString, corpus, fns = Seq("rst_width"),
+        runId = "t", rowCounts = Seq(4, 8), warmup = 1, measured = 1, argsByFn = Map.empty)
+
+      assert(rows.nonEmpty)
+      assert(rows.filter(_.fn == "rst_width").forall(_.status == "ok"),
+        s"all rst_width spark-path rows should be ok: ${rows.map(r => r.fn -> r.status)}")
+      assert(rows.exists(_.rows == 8L))
+    } finally spark.stop()
   }
 }

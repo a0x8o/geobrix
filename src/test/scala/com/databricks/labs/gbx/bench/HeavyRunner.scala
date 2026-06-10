@@ -10,6 +10,11 @@ import java.security.MessageDigest
 
 object HeavyRunner {
 
+  // Groups (keys) per task for the *_agg spark-path scaling. Small so large-output
+  // aggregators (rst_merge_agg's union mosaic) hold few big outputs per task -> bounded
+  // worker memory, while still running parallel (mirrors the lightweight _AGG_KEYS_PER_TASK).
+  private val AggKeysPerTask = 2
+
   private def resolve(corpusRoot: String, path: String): String =
     if (Paths.get(path).isAbsolute) path else Paths.get(corpusRoot, path).toString
 
@@ -212,16 +217,18 @@ object HeavyRunner {
     val poolSrid = pool.tiles.headOption.map(_.srid).getOrElse(0)
     val maxRows = rowCounts.max
     val paths = pool.tiles.take(maxRows).map(t => resolve(corpusRoot, t.path))
-    // coalesce(1): the rst_fromcontent map (and every downstream spark-path job) opens
-    // rasters through GDAL. In the bench's local[N] mode all task threads share one JVM;
-    // the first GDAL-touching task on each thread re-enters GDALDriverManager::
-    // AutoSkipDrivers(), which mutates a process-global, non-thread-safe driver list and
-    // SIGSEGVs when called concurrently. One partition serializes GDAL to a single task
-    // thread -> no concurrent AllRegister -> no crash. Real clusters run distributed
-    // across separate executor JVMs and are unaffected; this only removes local-mode
-    // parallelism (timing is single-thread, documented on the aggregate path below).
+    // PARALLELISM: GDAL is safe across concurrent tasks in one JVM because GDALManager.init
+    // is synchronized + idempotent (registers once per process), which is why the product
+    // heavy rst_* functions run on multi-core executors. So we REPARTITION for parallelism
+    // rather than the old coalesce(1), which serialized all maxRows tiles onto a single task
+    // (1000 tiles serial per fn -- the cluster grind). Validated by GdalParallelSafetyTest
+    // (concurrent rst_fromcontent + column eval in local[4] does not crash). Oversubscribe
+    // slots ~4x (capped at the row count) so finished slots pick up the straggler tail,
+    // mirroring the lightweight run_spark_path. The cap at the SOURCE (take(maxRows)) means
+    // no downstream limit funnel is needed when n == maxRows.
+    val parts = math.max(1, math.min(maxRows, spark.sparkContext.defaultParallelism * 4))
     val dfAll = spark.read.format("binaryFile").load(paths: _*)
-      .coalesce(1)
+      .repartition(parts)
       .withColumn("raster", functions.rst_fromcontent(col("content"), lit("GTiff")))
       .select(col("raster"))
       .cache()
@@ -268,7 +275,10 @@ object HeavyRunner {
     for (fn <- sparkFns; n <- rowCounts.sorted) {
       val a = argsByFn.getOrElse(fn, Map.empty)
       try {
-        val df = dfAll.limit(n)
+        // dfAll is already capped to maxRows at the source + repartitioned, so when n ==
+        // maxRows use it DIRECTLY: a limit(n) here injects a GlobalLimit that funnels the
+        // whole corpus through one partition before the column eval, undoing the repartition.
+        val df = if (n >= maxRows) dfAll else dfAll.limit(n)
         val (median, mn, p90, _total, _avg) = timeIters(() => {
           df.select(BenchDispatch.column(fn, inputCol(fn), a).alias("o"))
             .write.format("noop").mode("overwrite").save()
@@ -325,18 +335,13 @@ object HeavyRunner {
       emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
         0.0, warmup, 0, 0, 0, 0, 0, 0, "error", msg.take(300), ""))
     }
-    // Serialize the heavy aggregate spark-path to a SINGLE partition so GDAL is
-    // touched by at most one task thread at a time. In the bench's local[N] mode
-    // every task thread shares one JVM; the first GDAL-touching task on each thread
-    // re-enters GDALDriverManager::AutoSkipDrivers(), which mutates a process-global,
-    // non-thread-safe driver list and SIGSEGVs when called concurrently. One reduce
-    // partition (shuffle.partitions=1 + keyParts=1 + coalesce(1)) means the groupBy's
-    // single task runs alone -> no concurrent AllRegister -> no crash. This trades
-    // distributed timing for the heavy aggregate (real clusters run distributed across
-    // separate executor JVMs and are unaffected); consistency + single-thread heavy-vs-
-    // light timing are still obtained.
+    // PARALLELISM: the aggregate runs distributed (was a single coalesce(1) task -- 1000
+    // group-aggregations serial -- the cluster grind). GDAL is safe across concurrent tasks
+    // in one JVM because GDALManager.init is synchronized + idempotent (proved by
+    // GdalParallelSafetyTest), so we hash-partition the keys for parallelism (below).
+    // shuffle.partitions is set PER-N inside the perf loop to the bounded fan-out; saved here
+    // and restored in finally.
     val savedShuffle = spark.conf.get("spark.sql.shuffle.partitions")
-    spark.conf.set("spark.sql.shuffle.partitions", "1")
     try {
       val kind = BenchDispatch.inputKind(fn)
       // Build the fixed group DataFrame + (for geometry aggregators) extent.
@@ -374,9 +379,9 @@ object HeavyRunner {
         import spark.implicits._
         spark.createDataFrame(pairs).toDF("geom_wkb", "value")
       }
-      // coalesce(1): the group DataFrame's tile column is built by rst_fromcontent
-      // (tile_aggregate) which opens rasters through GDAL; keep its materialization on
-      // a single task thread too, for the same local-mode AutoSkipDrivers reason.
+      // The fixed group is a handful of tiles; cache it once (it's broadcast per key in the
+      // perf loop, so its partitioning is irrelevant). coalesce(1) keeps the tiny build on
+      // one task -- cheap, and the broadcast collects it anyway.
       val cached = groupDf.coalesce(1).cache()
       cached.count()
       // CONSISTENCY: one group -> one out tile -> raster fingerprint.
@@ -399,15 +404,17 @@ object HeavyRunner {
       // PERF: time the scaled groupBy (the fixed group replicated across N keys).
       sorted.foreach { n =>
         try {
-          // Single partition end-to-end (see the shuffle.partitions=1 note above):
-          // one key partition, the scaled crossJoin coalesced to one partition, so the
-          // groupBy's map and reduce sides run on ONE task thread. GDAL is therefore
-          // touched serially -> no concurrent AutoSkipDrivers -> no local-mode SIGSEGV.
-          // The N row copies still flow through a real groupBy().agg(); only the
-          // parallelism is removed (timing is now single-thread, documented above).
-          val keys = spark.range(n).select(col("id").alias("key")).repartition(1)
+          // Parallel scaled groupBy: hash-partition the N keys into a BOUNDED fan-out
+          // (~AggKeysPerTask keys/task) and broadcast the small group, so each task holds
+          // only a few group-aggregations (a few big outputs for merge) -> bounded worker
+          // memory, parallel across the slots. Because the keys are already hash-partitioned
+          // by `key` into `parts` == shuffle.partitions, the groupBy's hash exchange elides
+          // (one stage). Mirrors the lightweight _run_aggregate; GDAL concurrency is safe
+          // via GDALManager.init (GdalParallelSafetyTest).
+          val parts = math.max(1, math.min(n, math.ceil(n.toDouble / AggKeysPerTask).toInt))
+          spark.conf.set("spark.sql.shuffle.partitions", parts.toString)
+          val keys = spark.range(n).select(col("id").alias("key")).repartition(parts, col("key"))
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
-            .coalesce(1)
           val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
           val (median, mn, p90, _total, _avg) = timeIters(() => {
             scaled.groupBy("key").agg(aggCol.alias("out"))
