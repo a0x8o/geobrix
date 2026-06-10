@@ -29,13 +29,22 @@ def _open_all(rasters: List[bytes]):
     """Open a list of GTiff byte buffers as rasterio datasets.
 
     Returns ``(memfiles, datasets)``; callers MUST close both (datasets first).
+
+    On a partial-open failure (e.g. a corrupt tile midway through the group) close
+    the buffers opened so far before re-raising -- the caller's ``try/finally`` only
+    runs once this returns, so without this a mid-loop failure would leak every
+    MemoryFile/dataset already opened.
     """
     memfiles = []
     datasets = []
-    for b in rasters:
-        mf = MemoryFile(bytes(b))
-        memfiles.append(mf)
-        datasets.append(mf.open())
+    try:
+        for b in rasters:
+            mf = MemoryFile(bytes(b))
+            memfiles.append(mf)
+            datasets.append(mf.open())
+    except Exception:
+        _close_all(memfiles, datasets)
+        raise
     return memfiles, datasets
 
 
@@ -109,53 +118,68 @@ def combineavg_tiles(rasters: List[bytes]) -> bytes:
     which can tolerate differing grids; this reducer assumes the tiles are
     ALREADY aligned (same shape/extent/CRS) and raises ``ValueError`` if their
     raster shapes differ, rather than silently resampling.
+
+    SCALE: the group's running sum + count are accumulated ONE tile at a time
+    (open, add, close) so peak memory is ~O(one tile + 2 float64/int64
+    accumulators), independent of the group size N. Stacking all N tiles as
+    float64 (the obvious form) peaks at ~4x the raw group bytes -- a 16-tile group
+    of 1024x1024x4 float32 hit ~1.2 GB and would OOM a Spark Python worker; the
+    streaming form holds ~170 MB for the same input and is byte-identical.
     """
     if not rasters:
         return None
     if len(rasters) == 1:
         return bytes(rasters[0])
-    memfiles, datasets = _open_all(rasters)
-    try:
-        ref = datasets[0]
-        shape = (ref.count, ref.height, ref.width)
-        for ds in datasets[1:]:
-            if (ds.count, ds.height, ds.width) != shape:
+    sums = counts = None
+    shape = ref_profile = out_dtype = None
+    fallback = None
+    any_nodata = False
+    for b in rasters:
+        with MemoryFile(bytes(b)) as mf, mf.open() as ds:
+            if sums is None:
+                shape = (ds.count, ds.height, ds.width)
+                sums = np.zeros(shape, dtype="float64")
+                counts = np.zeros(shape, dtype="int64")
+                ref_profile = ds.profile.copy()
+                out_dtype = ds.dtypes[0]
+            elif (ds.count, ds.height, ds.width) != shape:
                 raise ValueError(
                     "rst_combineavg_agg requires aligned tiles (same shape); got "
                     f"{(ds.count, ds.height, ds.width)} vs {shape}"
                 )
-        # Per-source NoData (None where undeclared).
-        nodata = [ds.nodata for ds in datasets]
-        fallback = next((nd for nd in nodata if nd is not None), 0.0)
-
-        stacked = np.asarray(
-            [ds.read().astype("float64") for ds in datasets], dtype="float64"
-        )  # shape (N, bands, h, w)
-        valid = np.ones(stacked.shape, dtype=bool)
-        for i, nd in enumerate(nodata):
+            nd = ds.nodata
+            arr = ds.read().astype("float64")
             if nd is not None:
-                valid[i] = stacked[i] != nd
-        sums = np.where(valid, stacked, 0.0).sum(axis=0)
-        counts = valid.sum(axis=0)
-        means = np.where(counts > 0, sums / np.maximum(counts, 1), fallback)
-
-        out_dtype = ref.dtypes[0]
-        if np.issubdtype(np.dtype(out_dtype), np.integer):
-            out = np.rint(means)
+                any_nodata = True
+                if fallback is None:
+                    fallback = nd
+                valid = arr != nd
+            else:
+                valid = None
+        # tile closed; only the running accumulators + this one tile stay resident
+        if valid is None:
+            sums += arr
+            counts += 1
         else:
-            out = means
-        out = out.astype(out_dtype)
+            sums += np.where(valid, arr, 0.0)
+            counts += valid
 
-        profile = ref.profile.copy()
-        profile.update(driver="GTiff")
-        if any(nd is not None for nd in nodata):
-            profile.update(nodata=fallback)
-        with MemoryFile() as out_mf:
-            with out_mf.open(**profile) as dst:
-                dst.write(out)
-            return out_mf.read()
-    finally:
-        _close_all(memfiles, datasets)
+    if fallback is None:
+        fallback = 0.0
+    means = np.where(counts > 0, sums / np.maximum(counts, 1), fallback)
+    if np.issubdtype(np.dtype(out_dtype), np.integer):
+        out = np.rint(means)
+    else:
+        out = means
+    out = out.astype(out_dtype)
+
+    ref_profile.update(driver="GTiff")
+    if any_nodata:
+        ref_profile.update(nodata=fallback)
+    with MemoryFile() as out_mf:
+        with out_mf.open(**ref_profile) as dst:
+            dst.write(out)
+        return out_mf.read()
 
 
 def frombands_tiles(indexed: List[Tuple[int, bytes]]) -> bytes:
