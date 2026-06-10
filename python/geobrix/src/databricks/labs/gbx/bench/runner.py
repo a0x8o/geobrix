@@ -709,6 +709,16 @@ def _run_aggregate(
             .repartition(_parts, F.col("key"))
         )
         scaled = keys.crossJoin(F.broadcast(group_df))
+        # Minimal warm-up scaled: ONE key per partition (so each post-shuffle task's
+        # Python worker / Arrow UDAF spins up once) instead of the full n-key group --
+        # mirrors the regular spark-path's _warm_df. For geometry aggregators _parts is
+        # small (1), so this is a single-group warm-up.
+        _warm_keys = (
+            spark.range(_parts)
+            .select(F.col("id").alias("key"))
+            .repartition(_parts, F.col("key"))
+        )
+        _warm_scaled = _warm_keys.crossJoin(F.broadcast(group_df))
         try:
 
             def job(_df=scaled):
@@ -716,7 +726,12 @@ def _run_aggregate(
                     "noop"
                 ).mode("overwrite").save()
 
-            stats = time_iters(job, warmup, measured)
+            def warm(_df=_warm_scaled):
+                _df.groupBy("key").agg(_agg_col(_df).alias("out")).write.format(
+                    "noop"
+                ).mode("overwrite").save()
+
+            stats = time_iters(job, warmup, measured, warmup_fn=warm)
             # Emit the consistency fingerprint on the smallest-N row only.
             fp = fingerprint if n == sorted_counts[0] else ""
             out.append(_agg_result_row(fs, run_id, pool, n, env, stats, fp, "ok", ""))

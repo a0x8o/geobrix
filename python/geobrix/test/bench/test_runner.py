@@ -395,6 +395,60 @@ def test_run_spark_path_tile_aggregators_produce_raster_fingerprints(tmp_path, s
         assert parsed["kind"] == "raster", (name, parsed.get("kind"))
 
 
+def test_run_aggregate_passes_minimal_warmup_fn(tmp_path, spark, monkeypatch):
+    # The agg perf loop must hand time_iters a warmup_fn (the minimal one-key-per-partition
+    # warm scaled), so the warm-up no longer re-aggregates the full n-key group. Spy on
+    # time_iters to capture that a warmup_fn is supplied for the timed agg jobs, while still
+    # producing correct ok rows + a consistency fingerprint.
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=8,
+        tile_px=[32],
+        bands=[2],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=4,
+        row_tile_px=32,
+        row_bands=2,
+        row_dtype="float32",
+    )
+    fns = s.select(functions=["rst_combineavg_agg"])
+
+    saw_warmup_fn = {"count": 0}
+    real_time_iters = rn.time_iters
+
+    def spy(fn, warmup, measured, warmup_fn=None):
+        if warmup_fn is not None:
+            saw_warmup_fn["count"] += 1
+        return real_time_iters(fn, warmup, measured, warmup_fn=warmup_fn)
+
+    monkeypatch.setattr(rn, "time_iters", spy)
+
+    rows = rn.run_spark_path(
+        spark=spark,
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        row_counts=[2, 4],
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows, "expected aggregate rows"
+    assert all(r.status == "ok" for r in rows), [
+        (r.fn, r.status, r.note) for r in rows if r.status != "ok"
+    ]
+    # One timed agg job per row count (N=2, N=4), each given a minimal warmup_fn.
+    assert saw_warmup_fn["count"] == 2, saw_warmup_fn["count"]
+    import json
+
+    fp = {r.rows: r.output_fingerprint for r in rows if r.fn == "rst_combineavg_agg"}
+    assert fp.get(2), "no consistency fingerprint at N=2 with warm-up path"
+    assert json.loads(fp[2])["kind"] == "raster"
+
+
 def test_run_spark_path_geometry_aggregators_produce_raster_fingerprints(
     tmp_path, spark
 ):
