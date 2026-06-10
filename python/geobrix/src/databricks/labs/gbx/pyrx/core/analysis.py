@@ -316,6 +316,11 @@ def viewshed(ds, observer_x, observer_y, observer_height, target_height, max_dis
 
     Returns:
         Single-band uint8 GTiff bytes (255 visible / 0 invisible).
+
+    Note:
+        The first viewshed call in a Python process compiles the underlying
+        numba kernels -- a one-time cost of several seconds, amortized across all
+        subsequent calls in that process. Steady-state cost scales with tile size.
     """
     observer_height = float(observer_height)
     target_height = float(target_height)
