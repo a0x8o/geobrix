@@ -86,6 +86,29 @@ def to_delta(rows: List[ResultRow], spark, table: str, where: str = "cluster") -
     return len(rows)
 
 
+def _remap_heavy_iter_to_seconds(d: dict) -> dict:
+    """Map a heavy Scala jsonl row (MILLISECOND timing keys) onto ResultRow second-scale
+    fields, in place. The Scala BenchRow still emits ms under the old key names (Scala is
+    unchanged); ResultRow now stores SECONDS, so rename each ms key to its iter_*_s / *_s
+    field and divide by 1000. per_tile_avg_{s,ms} are derived from the median + rows (Scala
+    emits neither). The heavy run notebook calls this so the conversion is shared + testable.
+    """
+    for _old, _new in (
+        ("median_ms", "iter_median_s"),
+        ("min_ms", "iter_min_s"),
+        ("p90_ms", "iter_p90_s"),
+        ("total_wall_clock_ms", "iter_total_wall_clock_s"),
+        ("avg_wall_clock_ms", "avg_wall_clock_s"),
+    ):
+        if _old in d:
+            d[_new] = d.pop(_old) / 1000.0
+    _n = d.get("rows") or 0
+    _ms = d.get("iter_median_s", 0.0) * 1000.0  # back to the original ms median
+    d["per_tile_avg_ms"] = (_ms / _n) if (_ms and _n) else 0.0
+    d["per_tile_avg_s"] = (_ms / _n / 1000.0) if (_ms and _n) else 0.0
+    return d
+
+
 def _cell(source: str, kind: str = "code", collapsed: bool = False) -> dict:
     # collapsed: hide this cell's SOURCE by default. Sets the JupyterLab standard
     # (`jupyter.source_hidden`) plus the legacy `collapsed` flag; the Databricks notebook /
@@ -457,26 +480,10 @@ def run_heavy(mode):
         with open(path) as _fh:
             return _fh.read().split("\\n")[:-1]
 
-    def _remap_iter(_d):
-        # The Scala BenchRow still emits MILLISECONDS under the OLD timing key names
-        # (Scala isn't being changed). ResultRow now stores timings in SECONDS, so
-        # rename each ms key to its iter_*_s / *_s field AND divide by 1000.0.
-        for _old, _new in (
-            ("median_ms", "iter_median_s"),
-            ("min_ms", "iter_min_s"),
-            ("p90_ms", "iter_p90_s"),
-            ("total_wall_clock_ms", "iter_total_wall_clock_s"),
-            ("avg_wall_clock_ms", "avg_wall_clock_s"),
-        ):
-            if _old in _d:
-                _d[_new] = _d.pop(_old) / 1000.0
-        # per_tile_avg: Scala emits neither key, so derive both from the median + rows.
-        # ms = iter_median_s * 1000 (the original millisecond median); per-tile = ms / n.
-        _n = _d.get("rows") or 0
-        _ms = _d.get("iter_median_s", 0.0) * 1000.0
-        _d["per_tile_avg_ms"] = (_ms / _n) if (_ms and _n) else 0.0
-        _d["per_tile_avg_s"] = (_ms / _n / 1000.0) if (_ms and _n) else 0.0
-        return _d
+    # ms->s conversion of the heavy Scala jsonl rows uses the shared, unit-tested
+    # _cl._remap_heavy_iter_to_seconds (imported in the preamble) so the cluster path and
+    # the host tests exercise the SAME logic.
+    _remap_iter = _cl._remap_heavy_iter_to_seconds
 
     _th = threading.Thread(target=_go, daemon=True)
     _th.start()

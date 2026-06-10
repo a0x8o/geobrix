@@ -281,6 +281,39 @@ def test_build_bench_notebook_setup_cell_collapsed():
     assert nb["cells"][0]["metadata"].get("collapsed") is not True
 
 
+def test_remap_heavy_iter_to_seconds():
+    # Heavy Scala jsonl emits MILLISECOND keys; remap renames to *_s and /1000, and derives
+    # per_tile_avg_{s,ms} from the median + rows (Scala emits neither).
+    d = cl._remap_heavy_iter_to_seconds(
+        {
+            "fn": "rst_width",
+            "rows": 1000,
+            "median_ms": 70785.0,
+            "min_ms": 70000.0,
+            "p90_ms": 71000.0,
+            "total_wall_clock_ms": 75000.0,
+            "avg_wall_clock_ms": 72000.0,
+        }
+    )
+    assert d["iter_median_s"] == pytest.approx(70.785)
+    assert d["iter_min_s"] == pytest.approx(70.0)
+    assert d["iter_p90_s"] == pytest.approx(71.0)
+    assert d["iter_total_wall_clock_s"] == pytest.approx(75.0)
+    assert d["avg_wall_clock_s"] == pytest.approx(72.0)
+    # per-tile derived from the original ms median / rows
+    assert d["per_tile_avg_ms"] == pytest.approx(70.785)
+    assert d["per_tile_avg_s"] == pytest.approx(0.070785)
+    # old ms keys removed
+    assert "median_ms" not in d and "avg_wall_clock_ms" not in d
+
+
+def test_remap_heavy_iter_to_seconds_zero_rows():
+    # No rows -> per-tile is 0 (no divide-by-zero), timings still convert.
+    d = cl._remap_heavy_iter_to_seconds({"rows": 0, "median_ms": 5000.0})
+    assert d["iter_median_s"] == pytest.approx(5.0)
+    assert d["per_tile_avg_ms"] == 0.0 and d["per_tile_avg_s"] == 0.0
+
+
 def test_build_bench_notebook_redo_functions_threading():
     # Default: empty redo list; _purge_functions present but a no-op.
     src_default = "\n".join(
