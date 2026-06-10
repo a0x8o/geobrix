@@ -19,6 +19,11 @@ ORDER = [
     "fn",
     "category",
     "mode",
+    # Headline timing metrics sit right after `mode` for at-a-glance reading (seconds; per-
+    # tile also in ms). The rest of the dims/throughput/env follow.
+    "avg_wall_clock_s",
+    "per_tile_avg_s",
+    "per_tile_avg_ms",
     "tile_px",
     "bands",
     "dtype",
@@ -27,9 +32,6 @@ ORDER = [
     "nodata_frac",
     "warmup_iters",
     "measured_iters",
-    "avg_wall_clock_s",
-    "per_tile_avg_s",
-    "per_tile_avg_ms",
     "throughput_mpix_s",
     "throughput_rows_s",
     "peak_rss_mb",

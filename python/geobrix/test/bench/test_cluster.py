@@ -65,14 +65,14 @@ def test_rows_to_dataframe_schema_and_where(spark):
     assert "per_tile_avg_ms" in cols
     # run_event_num is the FIRST column (monotonic per-run event index).
     assert cols[0] == "run_event_num"
-    # Column ORDER: avg/per_tile metrics sit right after measured_iters (per_tile_avg_s
-    # immediately left of per_tile_avg_ms), and the per-iter distribution (iter_*)
-    # trails as the last four columns.
+    # Column ORDER: the headline timing metrics sit right after `mode` (per_tile_avg_s
+    # immediately left of per_tile_avg_ms), and the per-iter distribution (iter_*) trails
+    # as the last four columns.
     assert cols == cl.ORDER
-    mi = cols.index("measured_iters")
-    assert cols[mi + 1] == "avg_wall_clock_s"
-    assert cols[mi + 2] == "per_tile_avg_s"
-    assert cols[mi + 3] == "per_tile_avg_ms"
+    mo = cols.index("mode")
+    assert cols[mo + 1] == "avg_wall_clock_s"
+    assert cols[mo + 2] == "per_tile_avg_s"
+    assert cols[mo + 3] == "per_tile_avg_ms"
     assert cols[-4:] == [
         "iter_median_s",
         "iter_min_s",
