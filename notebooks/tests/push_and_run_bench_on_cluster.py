@@ -261,12 +261,14 @@ def main() -> int:
         return 2
     modes = _arg("--modes", "both")
     row_counts = _arg("--row-counts", "10,100,1000,10000")
-    warmup = int(_arg("--warmup", "2"))
-    measured = int(_arg("--measured", "5"))
-    # Spark-path iteration counts are SEPARATE from pure-core: the N-tile sweep is itself
-    # the averaging, so spark-path defaults to 1 warm-up + 1 measured (cheap, per-tile is
-    # stable over N). Pure-core (fast single-tile op) keeps --warmup/--measured for a
-    # stable median. Override with --spark-warmup / --spark-measured.
+    # Pure-core defaults: 1 warm-up + 3 measured. One warm-up absorbs the cold cost (e.g.
+    # numba JIT compiles on the FIRST call), and 3 measured gives a stable median of a fast
+    # single-tile op without overpaying. Override with --warmup / --measured.
+    warmup = int(_arg("--warmup", "1"))
+    measured = int(_arg("--measured", "3"))
+    # Spark-path iteration counts are SEPARATE from pure-core: the N-tile sweep over the whole
+    # partitioned job IS the averaging, so spark-path defaults to 1 warm-up + 1 measured.
+    # Override with --spark-warmup / --spark-measured.
     spark_warmup = int(_arg("--spark-warmup", "1"))
     spark_measured = int(_arg("--spark-measured", "1"))
     # Tiles per spark-path partition; 0 = auto (n / (slots*4): oversubscribe slots ~4x so
