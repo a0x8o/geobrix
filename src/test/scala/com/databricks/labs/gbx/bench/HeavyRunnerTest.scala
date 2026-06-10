@@ -83,6 +83,24 @@ class HeavyRunnerTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(HeavyRunner.aggParts("geometry_aggregate", 10) == 1)
   }
 
+  test("timeIters runs the warm body for warm-up and the measured body for measured") {
+    // The warm-up iterations run warmBody (the cheap, minimal-data stand-in); the measured
+    // iterations run body (the full job). Counts must match warmup/measured exactly so the
+    // warm-up never charges the full-N cost on the measured iterations.
+    var warmCount = 0
+    var bodyCount = 0
+    val warmBody = () => { warmCount += 1 }
+    val body = () => { bodyCount += 1 }
+    HeavyRunner.timeIters(body, warmup = 2, measured = 3, warmBody = warmBody)
+    assert(warmCount == 2, s"warm body should run warmup(2) times, got $warmCount")
+    assert(bodyCount == 3, s"measured body should run measured(3) times, got $bodyCount")
+
+    // With no warm body (null), the warm-up falls back to running body itself.
+    var only = 0
+    HeavyRunner.timeIters(() => { only += 1 }, warmup = 2, measured = 3)
+    assert(only == 5, s"with no warm body, body runs warmup+measured(5) times, got $only")
+  }
+
   test("spark-path run parallelizes (no coalesce) over a row_pool and yields ok rows") {
     // Validates the repartition-for-parallelism change in runSparkPath: a local[4] session
     // runs the heavy spark-path column over an 8-tile row_pool. With the old coalesce(1) this

@@ -84,10 +84,16 @@ object HeavyRunner {
 
   // Returns (median, min, p90, total_wall_clock, avg_wall_clock) in ms over the measured
   // iterations -- total is the sum, avg is the mean (total / measured).
-  private def timeIters(body: () => Unit, warmup: Int, measured: Int)
+  // warmBody (optional): a cheaper stand-in run for the warm-up iterations only -- the
+  // spark-path warm-up exercises ~one tile per executor slot instead of the full row count,
+  // so JVM/UDF spin-up isn't charged to the first measured iteration without paying the
+  // full-N cost on every warm-up pass. null -> warm-up runs `body` (legacy behavior).
+  private[bench] def timeIters(body: () => Unit, warmup: Int, measured: Int,
+                               warmBody: () => Unit = null)
       : (Double, Double, Double, Double, Double) = {
+    val warm = if (warmBody != null) warmBody else body
     var i = 0
-    while (i < warmup) { body(); i += 1 }
+    while (i < warmup) { warm(); i += 1 }
     val samples = Array.ofDim[Double](measured)
     i = 0
     while (i < measured) {
@@ -266,6 +272,13 @@ object HeavyRunner {
           .write.format("noop").mode("overwrite").save()
       } catch { case _: Throwable => () }  // warm-up failures must never abort timing
     }
+    // Minimal warm-up DataFrame: ~one tile per partition per slot (defaultParallelism rows
+    // over defaultParallelism partitions), so a per-fn warm-up pass exercises every executor
+    // slot's GDAL/UDF once WITHOUT re-running the full row count. The measured iterations run
+    // the full cached dfAll; only the per-fn warm body uses this slot-spread DF. Mirrors the
+    // lightweight runner's _warm_df.
+    val warmParts = math.max(1, spark.sparkContext.defaultParallelism)
+    val warmDf = dfAll.limit(warmParts).repartition(warmParts)
     val out = scala.collection.mutable.ArrayBuffer.empty[BenchRow]
     def emit(r: BenchRow): Unit = { out += r; sink(r) }
     // bucket A: the 7 *_agg aggregators run a real df.groupBy(key).agg(...). They are
@@ -289,10 +302,14 @@ object HeavyRunner {
         // maxRows use it DIRECTLY: a limit(n) here injects a GlobalLimit that funnels the
         // whole corpus through one partition before the column eval, undoing the repartition.
         val df = if (n >= maxRows) dfAll else dfAll.limit(n)
+        // Warm-up runs the fn over warmDf (~one tile per slot), NOT the full n rows.
+        val warmBody = () =>
+          warmDf.select(BenchDispatch.column(fn, inputCol(fn), a).alias("o"))
+            .write.format("noop").mode("overwrite").save()
         val (median, mn, p90, _total, _avg) = timeIters(() => {
           df.select(BenchDispatch.column(fn, inputCol(fn), a).alias("o"))
             .write.format("noop").mode("overwrite").save()
-        }, warmup, measured)
+        }, warmup, measured, warmBody)
         val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
         emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n, 0.0,
           warmup, measured, median, mn, p90, mpixS,
@@ -427,10 +444,20 @@ object HeavyRunner {
           val keys = spark.range(n).select(col("id").alias("key")).repartition(parts, col("key"))
           val scaled = keys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
           val aggCol = BenchDispatch.aggregateColumn(fn, scaled, ext, a)
+          // Minimal warm-up scaled: ONE key per partition (so each post-shuffle task's GDAL
+          // UDAF spins up once) instead of the full n-key group. Geometry aggregators have
+          // parts==1 -> a single-group warm-up. Mirrors the lightweight _run_aggregate.
+          val warmKeys =
+            spark.range(parts).select(col("id").alias("key")).repartition(parts, col("key"))
+          val warmScaled = warmKeys.crossJoin(org.apache.spark.sql.functions.broadcast(cached))
+          val warmAggCol = BenchDispatch.aggregateColumn(fn, warmScaled, ext, a)
+          val warmBody = () =>
+            warmScaled.groupBy("key").agg(warmAggCol.alias("out"))
+              .write.format("noop").mode("overwrite").save()
           val (median, mn, p90, _total, _avg) = timeIters(() => {
             scaled.groupBy("key").agg(aggCol.alias("out"))
               .write.format("noop").mode("overwrite").save()
-          }, warmup, measured)
+          }, warmup, measured, warmBody)
           val mpixS = if (median > 0) mpix(pool.tile_px, pool.bands, n) / (median / 1000.0) else 0.0
           val emitFp = if (n == sorted.head) fp else ""
           emit(row(e, runId, fn, "spark-path", pool.tile_px, pool.bands, pool.dtype, poolSrid, n,
