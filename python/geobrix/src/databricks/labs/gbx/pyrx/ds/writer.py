@@ -4,6 +4,7 @@ Enforces the exact (source, tile) schema like the heavy GDAL writer. Writer
 options are path/nameCol/ext only; the on-disk encoding comes from tile.metadata
 (see _write.tile_to_bytes). Pure Python (Serverless).
 """
+
 from __future__ import annotations
 
 import glob
@@ -82,8 +83,14 @@ class RasterGbxWriter(DataSourceWriter):
             cellid = tile["cellid"]
             raster_bytes = bytes(tile["raster"])
             metadata = dict(tile["metadata"] or {})
-            name = row[self.name_col] if self.name_col else _safe_name(raster_bytes, cellid)
-            out_bytes = _write.tile_to_bytes(cellid, raster_bytes, metadata, self.force_driver)
+            name = (
+                row[self.name_col]
+                if self.name_col
+                else _safe_name(raster_bytes, cellid)
+            )
+            out_bytes = _write.tile_to_bytes(
+                cellid, raster_bytes, metadata, self.force_driver
+            )
             out = os.path.join(self.path, f"{name}.{self.ext}")
             with open(out, "wb") as fh:
                 fh.write(out_bytes)

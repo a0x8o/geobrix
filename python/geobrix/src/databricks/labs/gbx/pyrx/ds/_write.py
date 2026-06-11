@@ -10,6 +10,7 @@ Hybrid, mirroring the heavy gdal writer's intent (encoding from tile.metadata):
 
 Writer .option()s never carry encoding; only tile.metadata does (like heavy).
 """
+
 from __future__ import annotations
 
 from typing import Dict
@@ -51,7 +52,6 @@ def tile_to_bytes(
     if str(driver).upper() == "GTIFF":
         return raster_bytes
 
-    import rasterio
     from rasterio.io import MemoryFile
 
     with MemoryFile(raster_bytes) as src_mf, src_mf.open() as src:

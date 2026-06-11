@@ -74,13 +74,20 @@ def test_overwrite_replaces_not_accumulates(spark, tmp_path):
 
 def test_namecol_controls_filenames(spark, tmp_path):
     from pyspark.sql import functions as F
+
     src = tmp_path / "in.tif"
     _write_sample(str(src))
     out_dir = tmp_path / "out_named"
     spark.dataSource.register(RasterGbxDataSource)
     spark.dataSource.register(GTiffGbxDataSource)
-    df = spark.read.format("raster_gbx").load(str(src)).withColumn("source", F.lit("mytile"))
-    df.write.format("gtiff_gbx").mode("overwrite").option("nameCol", "source").save(str(out_dir))
+    df = (
+        spark.read.format("raster_gbx")
+        .load(str(src))
+        .withColumn("source", F.lit("mytile"))
+    )
+    df.write.format("gtiff_gbx").mode("overwrite").option("nameCol", "source").save(
+        str(out_dir)
+    )
     files = [f for f in os.listdir(out_dir) if f.endswith(".tif")]
     assert files == ["mytile.tif"]
 
@@ -92,13 +99,16 @@ def test_ext_option_controls_suffix(spark, tmp_path):
     spark.dataSource.register(RasterGbxDataSource)
     spark.dataSource.register(GTiffGbxDataSource)
     df = spark.read.format("raster_gbx").load(str(src))
-    df.write.format("gtiff_gbx").mode("overwrite").option("ext", "tiff").save(str(out_dir))
+    df.write.format("gtiff_gbx").mode("overwrite").option("ext", "tiff").save(
+        str(out_dir)
+    )
     assert all(f.endswith(".tiff") for f in os.listdir(out_dir))
 
 
 def test_raster_gbx_catch_all_writer_round_trips(spark, tmp_path):
     import numpy as np
     import rasterio
+
     src = tmp_path / "in.tif"
     _write_sample(str(src))
     out_dir = tmp_path / "out_catchall"
@@ -109,4 +119,6 @@ def test_raster_gbx_catch_all_writer_round_trips(spark, tmp_path):
     assert len(written) == 1
     with rasterio.open(os.path.join(out_dir, written[0])) as ds:
         arr = ds.read(1)
-    np.testing.assert_allclose(arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6)
+    np.testing.assert_allclose(
+        arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6
+    )
