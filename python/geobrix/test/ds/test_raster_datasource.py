@@ -5,7 +5,7 @@ import rasterio
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 
-from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource
+from databricks.labs.gbx.ds.raster import RasterGbxDataSource
 
 EXPECTED_METADATA_KEYS = {
     "path",

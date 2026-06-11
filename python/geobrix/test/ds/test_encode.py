@@ -3,7 +3,7 @@
 import numpy as np
 from rasterio.io import MemoryFile
 
-from databricks.labs.gbx.pyrx.ds import _encode
+from databricks.labs.gbx.ds import _encode
 
 EXPECTED_METADATA_KEYS = {
     "path",

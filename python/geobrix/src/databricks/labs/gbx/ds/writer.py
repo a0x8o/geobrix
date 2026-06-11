@@ -17,8 +17,8 @@ from typing import Iterator, List, Optional
 from pyspark.sql.datasource import DataSourceWriter, WriterCommitMessage
 from pyspark.sql.types import StructType
 
-from databricks.labs.gbx.pyrx.ds import _write
-from databricks.labs.gbx.pyrx.ds.raster import reader_schema
+from databricks.labs.gbx.ds import _write
+from databricks.labs.gbx.ds.raster import reader_schema
 
 
 @dataclass

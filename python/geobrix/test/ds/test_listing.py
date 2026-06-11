@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from databricks.labs.gbx.pyrx.ds import _listing
+from databricks.labs.gbx.ds import _listing
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from databricks.labs.gbx.pyrx.ds.gtiff import GTiffGbxDataSource
+from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
 
 
 def _write_sample(path):

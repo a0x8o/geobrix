@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from databricks.labs.gbx.pyrx.ds import register as ds_register
+from databricks.labs.gbx.ds import register as ds_register
 
 
 def _write_sample(path):

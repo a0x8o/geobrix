@@ -11,8 +11,8 @@ from typing import Optional
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.gbx.pyrx.ds.gtiff import GTiffGbxDataSource
-from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource
+from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
+from databricks.labs.gbx.ds.raster import RasterGbxDataSource
 
 _SOURCES = (RasterGbxDataSource, GTiffGbxDataSource)
 

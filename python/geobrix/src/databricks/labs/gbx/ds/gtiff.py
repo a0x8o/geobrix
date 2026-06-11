@@ -9,8 +9,8 @@ from typing import Dict
 from pyspark.sql.datasource import DataSourceReader, DataSourceWriter
 from pyspark.sql.types import StructType
 
-from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource, RasterGbxReader
-from databricks.labs.gbx.pyrx.ds.writer import RasterGbxWriter
+from databricks.labs.gbx.ds.raster import RasterGbxDataSource, RasterGbxReader
+from databricks.labs.gbx.ds.writer import RasterGbxWriter
 
 
 class GTiffGbxReader(RasterGbxReader):

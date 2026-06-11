@@ -23,7 +23,7 @@ from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
 from pyspark.sql.types import StringType, StructField, StructType
 
 from databricks.labs.gbx.pyrx import _serde
-from databricks.labs.gbx.pyrx.ds import _encode, _listing
+from databricks.labs.gbx.ds import _encode, _listing
 
 
 def reader_schema() -> StructType:
@@ -125,7 +125,7 @@ class RasterGbxDataSource(DataSource):
     ) -> "DataSourceWriter":  # noqa: F821
         from pyspark.sql.datasource import DataSourceWriter  # noqa: F401
 
-        from databricks.labs.gbx.pyrx.ds.writer import RasterGbxWriter
+        from databricks.labs.gbx.ds.writer import RasterGbxWriter
 
         path = self.options.get("path")
         if not path:

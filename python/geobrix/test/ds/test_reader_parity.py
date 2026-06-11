@@ -95,7 +95,7 @@ def spark_with_jar():
         .config("spark.jars", jar)
         .getOrCreate()
     )
-    from databricks.labs.gbx.pyrx.ds.register import register
+    from databricks.labs.gbx.ds.register import register
 
     register(session)
     yield session

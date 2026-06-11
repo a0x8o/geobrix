@@ -3,7 +3,7 @@
 import numpy as np
 from rasterio.io import MemoryFile
 
-from databricks.labs.gbx.pyrx.ds import _write
+from databricks.labs.gbx.ds import _write
 
 
 def _gtiff_bytes(width=4, height=3, dtype="float32"):
