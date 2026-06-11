@@ -55,3 +55,18 @@ def test_strict_schema_rejects_extra_columns(spark, tmp_path):
     df = spark.read.format("raster_gbx").load(str(src)).withColumn("extra", F.lit(1))
     with pytest.raises(Exception):
         df.write.format("gtiff_gbx").mode("overwrite").save(str(tmp_path / "o2"))
+
+
+def test_overwrite_replaces_not_accumulates(spark, tmp_path):
+    src = tmp_path / "in.tif"
+    _write_sample(str(src))
+    out_dir = tmp_path / "out"
+    spark.dataSource.register(RasterGbxDataSource)
+    spark.dataSource.register(GTiffGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(src))
+    df.write.format("gtiff_gbx").mode("overwrite").save(str(out_dir))
+    first = {f for f in os.listdir(out_dir) if f.endswith(".tif")}
+    assert len(first) == 1
+    df.write.format("gtiff_gbx").mode("overwrite").save(str(out_dir))
+    second = [f for f in os.listdir(out_dir) if f.endswith(".tif")]
+    assert len(second) == 1, f"overwrite accumulated stale tiles: {second}"

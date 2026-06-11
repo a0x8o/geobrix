@@ -7,6 +7,8 @@ gtiff_gdal, so both tiers coexist.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pyspark.sql import SparkSession
 
 from databricks.labs.gbx.pyrx.ds.gtiff import GTiffGbxDataSource
@@ -15,7 +17,7 @@ from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource
 _SOURCES = (RasterGbxDataSource, GTiffGbxDataSource)
 
 
-def register(spark: SparkSession = None) -> None:
+def register(spark: Optional[SparkSession] = None) -> None:
     """Register raster_gbx + gtiff_gbx. Uses the active session if not given."""
     if spark is None:
         spark = SparkSession.builder.getOrCreate()

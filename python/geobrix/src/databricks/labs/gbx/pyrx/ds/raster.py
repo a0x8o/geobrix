@@ -3,6 +3,11 @@
 1:1 swap-out for the Scala ``gdal`` reader: recursively lists files, splits each
 into BalancedSubdivision tiles, re-encodes each tile as GTiff, emits
 (source, tile) rows matching pyrx._serde.TILE_SCHEMA. Pure Python (Serverless).
+
+Limitation: per-band masks/alpha and source colormaps are not yet propagated to
+the re-encoded tiles (band data + nodata/dtype/crs/transform are). Sources that
+rely on a colormap or per-band mask will differ structurally from the heavy
+reader; tracked as a follow-up.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
 from pyspark.sql.types import StringType, StructField, StructType
 
 from databricks.labs.gbx.pyrx import _serde
-from databricks.labs.gbx.pyrx.ds import _encode, _listing, _tiling
+from databricks.labs.gbx.pyrx.ds import _encode, _listing
 
 
 def reader_schema() -> StructType:
@@ -47,28 +52,38 @@ class RasterGbxReader(DataSourceReader):
         return [_FilePartition(f, self.size_mib) for f in files]
 
     def read(self, partition: "_FilePartition") -> Iterator[Tuple]:
+        import os
+
         import rasterio
 
         from databricks.labs.gbx.pyrx import _env
+        from databricks.labs.gbx.pyrx.core import tiling as core_tiling
 
         _env.configure_gdal_env()
 
+        # Heavy keys the BalancedSubdivision split on RasterAccessors.memSize,
+        # which for an on-disk source is the file's encoded byte size. Reuse the
+        # shared, tested split math in core.tiling rather than re-deriving it.
+        size_bytes = os.path.getsize(partition.file_path)
         with rasterio.open(partition.file_path) as ds:
-            windows = _tiling.plan_windows(
-                width=ds.width,
-                height=ds.height,
-                bands=ds.count,
-                dtype=ds.dtypes[0],
-                size_mib=partition.size_mib,
+            tile_x, tile_y = core_tiling._get_tile_size(
+                ds.width, ds.height, size_bytes, partition.size_mib
             )
-            for win in windows:
-                cellid, raster_bytes, meta = _encode.encode_tile(
-                    ds,
-                    window=win,
-                    source_path=partition.file_path,
-                    all_parents="",
-                )
-                yield (partition.file_path, (cellid, raster_bytes, meta))
+            row_off = 0
+            while row_off < ds.height:
+                win_h = min(tile_y, ds.height - row_off)
+                col_off = 0
+                while col_off < ds.width:
+                    win_w = min(tile_x, ds.width - col_off)
+                    cellid, raster_bytes, meta = _encode.encode_tile(
+                        ds,
+                        window=(col_off, row_off, win_w, win_h),
+                        source_path=partition.file_path,
+                        all_parents="",
+                    )
+                    yield (partition.file_path, (cellid, raster_bytes, meta))
+                    col_off += tile_x
+                row_off += tile_y
 
 
 class RasterGbxDataSource(DataSource):

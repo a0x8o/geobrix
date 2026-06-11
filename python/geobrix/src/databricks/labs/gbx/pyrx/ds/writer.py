@@ -6,6 +6,7 @@ row's tile.raster GTiff bytes to a file under the output path. Pure Python.
 
 from __future__ import annotations
 
+import glob
 import os
 import uuid
 from dataclasses import dataclass
@@ -37,6 +38,12 @@ class RasterGbxWriter(DataSourceWriter):
         assert_write_schema(schema)
         self.path = path
         self.overwrite = overwrite
+        if overwrite and os.path.isdir(path):
+            for stale in glob.glob(os.path.join(path, "*.tif")):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
 
     def write(self, iterator: Iterator) -> WriterCommitMessage:
         os.makedirs(self.path, exist_ok=True)

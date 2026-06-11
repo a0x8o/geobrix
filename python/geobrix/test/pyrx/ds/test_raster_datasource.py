@@ -87,3 +87,38 @@ def test_corrupt_file_fails_fast(spark, tmp_path):
     df = spark.read.format("raster_gbx").load(str(bad))
     with pytest.raises(Exception):
         df.collect()
+
+
+def test_multi_tile_split_matches_core_tiling(spark, tmp_path):
+    import os
+
+    import rasterio
+
+    from databricks.labs.gbx.pyrx.core import tiling as core_tiling
+
+    # Incompressible noise so the on-disk file is genuinely large -> forces a split.
+    f = tmp_path / "big.tif"
+    rng = np.random.default_rng(0)
+    data = rng.integers(0, 255, size=(3, 2048, 2048), dtype="uint8")
+    profile = dict(
+        driver="GTiff",
+        width=2048,
+        height=2048,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(0.0, 0.0, 1.0, 1.0),
+    )
+    with rasterio.open(str(f), "w", **profile) as ds:
+        ds.write(data)
+
+    size_bytes = os.path.getsize(str(f))
+    with rasterio.open(str(f)) as ds:
+        expected = len(core_tiling.make_tiles(ds, size_in_mb=1, size_bytes=size_bytes))
+    assert expected > 1, "test setup failed to force a multi-tile split"
+
+    spark.dataSource.register(RasterGbxDataSource)
+    df = spark.read.format("raster_gbx").option("sizeInMB", "1").load(str(f))
+    assert df.count() == expected
+    # every emitted tile is a fresh, un-tessellated tile
+    assert all(r["tile"]["cellid"] == -1 for r in df.select("tile").collect())

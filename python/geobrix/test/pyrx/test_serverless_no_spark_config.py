@@ -62,7 +62,6 @@ def test_serverless_scan_includes_ds_subpackage():
         "gtiff.py",
         "writer.py",
         "register.py",
-        "_tiling.py",
         "_encode.py",
         "_listing.py",
     ):

@@ -6,6 +6,7 @@ WindowedExtract metadata. tile.raster is NOT raw source bytes.
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Tuple
 
 import rasterio
@@ -42,7 +43,7 @@ def encode_tile(
         raster_bytes = mf.read()
 
     metadata = {
-        "path": f"/vsimem/light_{abs(hash((source_path, col_off, row_off))) & 0xffffffff}.tif",
+        "path": f"/vsimem/light_{os.path.basename(source_path)}_{col_off}_{row_off}.tif",
         "sourcePath": source_path,
         "driver": "GTiff",
         "format": "GTiff",
