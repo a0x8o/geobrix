@@ -46,31 +46,56 @@ const sidebars = {
       label: 'Readers & Writers',
       collapsed: false,
       items: [
+        'readers/overview',
+        'writers/overview',
         {
           type: 'category',
-          label: 'Readers',
+          label: 'Lightweight',
           collapsed: false,
           items: [
-            'readers/overview',
-            'readers/gdal',
-            'readers/gtiff',
-            'readers/raster_gbx',
-            'readers/ogr',
-            'readers/shapefile',
-            'readers/geojson',
-            'readers/geopackage',
-            'readers/filegdb',
+            {
+              type: 'category',
+              label: 'Readers',
+              collapsed: false,
+              items: [
+                { type: 'category', label: 'General', collapsed: false, items: ['readers/raster_gbx'] },
+                { type: 'category', label: 'Named', collapsed: false, items: ['readers/gtiff_gbx'] },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Writers',
+              collapsed: false,
+              items: [
+                { type: 'category', label: 'General', collapsed: false, items: ['writers/raster_gbx'] },
+                { type: 'category', label: 'Named', collapsed: false, items: ['writers/gtiff_gbx'] },
+              ],
+            },
           ],
         },
         {
           type: 'category',
-          label: 'Writers',
+          label: 'Heavyweight',
           collapsed: false,
           items: [
-            'writers/overview',
-            'writers/gdal',
-            'writers/raster_gbx',
-            'writers/pmtiles',
+            {
+              type: 'category',
+              label: 'Readers',
+              collapsed: false,
+              items: [
+                { type: 'category', label: 'General', collapsed: false, items: ['readers/gdal', 'readers/ogr'] },
+                { type: 'category', label: 'Named', collapsed: false, items: ['readers/gtiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Writers',
+              collapsed: false,
+              items: [
+                { type: 'category', label: 'General', collapsed: false, items: ['writers/gdal'] },
+                { type: 'category', label: 'Named', collapsed: false, items: ['writers/pmtiles'] },
+              ],
+            },
           ],
         },
       ],

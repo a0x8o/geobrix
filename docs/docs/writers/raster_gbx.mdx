@@ -5,21 +5,23 @@ sidebar_position: 4
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import rasterGbxWrite from '!!raw-loader!../../tests/python/writers/raster_gbx_write_examples.py';
 
-# Lightweight Raster Writer (`raster_gbx` / `gtiff_gbx`)
+# Lightweight Raster Writer (`raster_gbx`)
 
 Pure-Python/PySpark raster writer — the lightweight tier's drop-in for the
 GDAL-backed [`gdal`](./gdal) writer. Requires the exact `(source, tile)` schema,
 the same as the heavy writer. Writer options are `path` / `nameCol` / `ext`; the
 on-disk format and compression come from `tile.metadata`, not writer options.
 
-## Write GeoTIFF tiles
+## Write raster tiles
 
-<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_GTIFF_GBX"
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_RASTER_GBX"
   source="docs/tests/python/writers/raster_gbx_write_examples.py"
   testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
 
 A whole-file GeoTIFF tile is written through verbatim (no re-encode); a tile whose
 `metadata["driver"]` is non-GTiff (e.g. `COG`) is re-encoded via `rasterio`.
+
+For an explicit GeoTIFF-forced writer, see the [Lightweight GeoTIFF Writer](./gtiff_gbx).
 
 :::note Register before writing
 
