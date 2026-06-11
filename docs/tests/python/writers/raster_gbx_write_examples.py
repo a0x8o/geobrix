@@ -11,6 +11,12 @@ from path_config import SAMPLE_DATA_BASE
 
 SAMPLE_RASTER_PATH = f"{SAMPLE_DATA_BASE}/nyc/sentinel2/nyc_sentinel2_red.tif"
 
+WRITE_RASTER_GBX = """# Catch-all lightweight writer (output driver from tile.metadata; default GTiff)
+from databricks.labs.gbx.pyrx.ds.register import register
+register(spark)
+df = spark.read.format("raster_gbx").load("{SAMPLE_RASTER_PATH}")
+df.write.format("raster_gbx").mode("overwrite").save(OUT_DIR)"""
+
 WRITE_GTIFF_GBX = """# Read then write GeoTIFF tiles (lightweight)
 from databricks.labs.gbx.pyrx.ds.register import register
 register(spark)
@@ -51,6 +57,25 @@ def write_gtiff_gbx(spark, path=None):
         with rasterio.open(path or SAMPLE_RASTER_PATH) as src:
             truth = src.read()
         # whole-file GTiff pass-through -> identical pixels
+        assert written.shape == truth.shape
+        np.testing.assert_allclose(written, truth, rtol=1e-3, atol=1e-3)
+
+
+def write_raster_gbx(spark, path=None):
+    """Verify WRITE_RASTER_GBX: round-trip read -> write via catch-all format -> re-read, same pixels."""
+    import numpy as np
+    import rasterio
+
+    _register(spark)
+    df = spark.read.format("raster_gbx").load(path or SAMPLE_RASTER_PATH)
+    with tempfile.TemporaryDirectory() as out_dir:
+        df.write.format("raster_gbx").mode("overwrite").save(out_dir)
+        files = [f for f in os.listdir(out_dir) if f.endswith(".tif")]
+        assert files, "no output written"
+        with rasterio.open(os.path.join(out_dir, files[0])) as w:
+            written = w.read()
+        with rasterio.open(path or SAMPLE_RASTER_PATH) as src:
+            truth = src.read()
         assert written.shape == truth.shape
         np.testing.assert_allclose(written, truth, rtol=1e-3, atol=1e-3)
 

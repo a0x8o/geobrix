@@ -9,6 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import raster_gbx_write_examples as ex  # noqa: E402
 
 
+def test_write_raster_gbx(spark):
+    ex.write_raster_gbx(spark)
+
+
 def test_write_gtiff_gbx(spark):
     ex.write_gtiff_gbx(spark)
 
