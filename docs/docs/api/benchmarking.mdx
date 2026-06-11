@@ -6,14 +6,16 @@ sidebar_position: 2
 
 GeoBrix ships a benchmark suite that compares the two [execution tiers](./execution-tiers) — **Heavyweight (rasterx)** and **Lightweight (pyrx)** — on the **same inputs**, reporting both **performance** (per-function timing) and **output consistency** (do the two tiers produce the same result?).
 
-This page explains what the benchmark measures, how to run it **on a Databricks cluster** (the primary, same-hardware comparison), how to run it **locally**, how to read the output, and a full table of representative local results.
+This page explains what the benchmark measures, how to run it **on a Databricks cluster** (the primary, same-hardware comparison), how to run it **locally**, how to read the output, and full tables of representative results — both the **pure-core** (algorithm-in-isolation) view and the **spark-path at scale** view from a cluster.
 
 ## What it measures
 
 Each function is timed under two independent models:
 
-- **Pure-core** — the raster operation in isolation: open a tile, call the function, measure. This is the fairest apples-to-apples view of the algorithm itself, with no Spark or serialization in the path.
-- **Spark-path** — the registered function (`gbx_rst_*`) applied to a Spark DataFrame of *N* rows. This includes the realistic per-row overhead (UDF dispatch, serialization, Python-worker round-trips for the lightweight tier), and is swept across a **row ladder** (e.g. 10 → 100 → 1,000 → 10,000 rows).
+- **Pure-core** — the raster operation in isolation: open **a single tile**, call the function, measure. It is always one tile per measurement (repeated once for each tile *shape* in the corpus — each tile-size / band-count / dtype / SRID combination), and it ignores `--row-counts` entirely. This is the fairest apples-to-apples view of the algorithm itself, with no Spark or serialization in the path.
+- **Spark-path** — the registered function (`gbx_rst_*`) applied to a Spark DataFrame of *N* rows (the only model that uses `--row-counts`). This includes the realistic per-row overhead (UDF dispatch, serialization, Python-worker round-trips for the lightweight tier), and is swept across a **row ladder** (e.g. 10 → 100 → 1,000 → 10,000 rows).
+
+Both models run the function `--warmup` times **untimed** (to absorb cold caches, JIT, and worker spin-up) and then `--measured` times **timed**; the reported figure is the **median over the measured passes**. Locally the defaults are `2` warmup / `5` measured; on a cluster they are `1` / `3` for pure-core and `1` / `1` for spark-path (one full *N*-tile iteration is already substantial).
 
 Alongside timing, every pure-core result carries an **output fingerprint** (per-band statistics) so the two tiers can be checked for **consistency**:
 
@@ -53,18 +55,17 @@ bash scripts/commands/gbx-bench-cluster.sh \
   --row-counts 10,100,1000,10000
 ```
 
-Scale the run with these options:
+Scale the run with the options below. `--cluster-id` and `--run-id` identify the run; the rest are optional. `--row-counts` and `--functions` take a **comma-separated list**; `--modes` and `--set` take a **single value**.
 
 | Option | Purpose |
 |---|---|
-| `--modes pure-core \| spark-path \| both` | Which timing model(s) to run (default `both`). |
-| `--row-counts 10,100,1000,10000` | The spark-path row ladder — the main scale dimension. |
-| `--set core \| full` | Which function set to benchmark — the representative `core` set (default) or every benchmarked function (`full`). |
-| `--functions rst_slope,rst_ndvi` | Restrict to specific functions (overrides `--set`). |
-| `--warmup` / `--measured` | Warmup and measured iteration counts (defaults 2 / 5). |
-| `--lightweight-only` | Skip the heavyweight leg — **required on ARM clusters** (heavyweight is x86-only). |
-| `--heavyweight-only` | Skip the lightweight leg. |
-| `--no-wait` | Submit the job without blocking on completion. |
+| `--modes pure-core \| spark-path \| both` | Timing model — pick only one mode (default `both`, which runs both models). |
+| `--row-counts 10,100,1000,10000` | Spark-path row ladder — each value is the number of **distinct tiles processed in one timed iteration** (the main scale dimension); one iteration is measured per rung. The largest value must be **≤ the corpus row-pool size** (the bench refuses to under-fill). Default `10,100,1000,10000`. |
+| `--set core \| full` | Which function set to benchmark — the representative `core` set or every benchmarked function (`full`). Default `core`. |
+| `--functions rst_slope,rst_ndvi` | Comma-separated list restricting the run to specific functions; overrides `--set`. Default: unset (benchmarks the `--set`). |
+| `--warmup` / `--measured` | Warmup and measured iteration counts. Defaults: pure-core `1` / `3`, spark-path `1` / `1`. |
+| `--lightweight-only` / `--heavyweight-only` | Run a single tier (mutually exclusive). `--lightweight-only` is **required on ARM clusters** (heavyweight is x86-only); `--heavyweight-only` skips the lightweight leg. Default: both tiers run. |
+| `--no-wait` | Submit the job without blocking on completion. Default: waits for the run to finish. |
 
 ```bash
 # ARM cluster: lightweight only
@@ -73,14 +74,18 @@ bash scripts/commands/gbx-bench-cluster.sh --cluster-id <arm-cluster-id> --light
 
 Tile sizes, band counts, data types, and projections are set when the corpus is generated (see the local section's scale knobs); the same corpus is reused for both tiers so the comparison is fair.
 
+:::note
+A spark-path iteration processes `max(--row-counts)` **distinct** tiles drawn from the corpus row pool — it does not recycle a small pool to reach the row count. The largest `--row-counts` value must therefore be **≤ the corpus row-pool size**; if it isn't, the bench **refuses to run** rather than silently under-fill (which would report a row count it never actually processed). Generate a larger pool or lower the row ladder.
+:::
+
 ### Output
 
 - **`bench_results` Delta table** — every measured row (tagged with environment + run ID), so runs accumulate and can be queried/visualized over time.
-- **`summary.md` / `comparison.csv`** on the Volume — the human-readable speedup + consistency report (see [Reading the output](#reading-the-output)).
+- **`summary.md` / `comparison.csv`** on the Volume — the human-readable speedup + consistency report (see [Reading the output](#reading-the-output)), also rendered inline in the run notebook.
 
 ## Running locally
 
-The local pipeline runs the heavyweight tier in the `geobrix-dev` Docker container and the lightweight tier in an isolated Python virtual environment, then compares them. Local runs are intentionally **modest in scale** (small tiles, a single row) — the full row ladder and large tiles belong on a cluster — but they're ideal for a quick, reproducible check.
+The local pipeline runs the heavyweight tier in the `geobrix-dev` Docker container and the lightweight tier in an isolated Python virtual environment, then compares them. Local runs are intentionally **single-tile** for pure-core (the algorithm cost in isolation); the full row ladder and at-scale spark-path numbers belong on a cluster, but can still be exercised in the local Docker environment at a modest scale.
 
 ```bash
 # Full local pipeline: generate corpus -> heavyweight -> lightweight -> compare
@@ -89,12 +94,16 @@ bash scripts/commands/gbx-bench-all.sh --run-id local-1 --modes pure-core
 
 The heavyweight and lightweight legs run **one after the other** (never concurrently) so they don't contend for CPU and skew each other's timings. Outputs land in `test-logs/bench/<run-id>/`.
 
-### Core vs full
+### Set (core vs full)
 
-`--set` selects how many functions the run benchmarks:
+`--set` selects **how many functions** the run benchmarks:
 
 - `--set core` (the default) runs a small, representative set covering each function family — accessors, terrain, band math, warps. It's fast and is the right choice for a routine check.
 - `--set full` runs every benchmarked function. It takes longer but gives the complete coverage and parity picture.
+
+:::note
+The **`core`** here is the *function set* (`--set`) — how many functions run. Don't confuse it with **pure-core**, the *timing model* (`--modes`) that times one tile in isolation. They are independent: you can run `--set core --modes pure-core`, `--set full --modes spark-path`, or any other combination.
+:::
 
 An explicit `--functions` list overrides `--set`.
 
@@ -106,171 +115,284 @@ bash scripts/commands/gbx-bench-all.sh --modes pure-core
 bash scripts/commands/gbx-bench-all.sh --set full --modes pure-core
 ```
 
-Scale and shape the corpus with:
+Scale and shape the corpus with the options below. Each takes a **comma-separated list to sweep several values** (e.g. `--tile-px 256,512,1024`) **or a single value** (e.g. `--tile-px 1024`); the corpus is the combination across the options you set.
 
 | Option | Purpose |
 |---|---|
-| `--tile-px 256,512` | Tile sizes (pixels per side). |
-| `--bands 1,4` | Band counts. |
-| `--dtypes float32,uint16` | Pixel data types. |
-| `--srids 4326,32618` | Projections — include a geographic (lat/long) **and** a projected (metre) CRS to exercise both. |
-| `--nodata-frac 0.0,0.25` | Fraction of NoData pixels. |
-| `--row-counts 10,100` | Spark-path row ladder (keep modest locally). |
-| `--modes pure-core \| spark-path \| both` | Timing model(s). |
+| `--tile-px 256,512,1024,2048` | Tile sizes (pixels per side) — any size; larger tiles (1024², 2048², …) make the per-tile algorithm cost dominate the fixed overhead. Default `256,512`. |
+| `--bands 1,4` | Band counts — any positive integer count. Default `2`. |
+| `--dtypes uint8,int16,float32` | Pixel data types — these three are the full supported set (closed; other dtypes are not generated). Default `float32`. |
+| `--srids 4326,3857,32618,27700` | Projections — the full supported set (closed): `4326` (WGS84 geographic), `3857` (WebMercator), `32618` (UTM 18N), `27700` (British National Grid); other SRIDs are not generated. Default `4326,32618`. Pick at least one geographic (lat/long) **and** one projected (metre) CRS to exercise both. |
+| `--nodata-frac 0.0,0.25` | Fraction of pixels set to NoData — **any value in `0.0`–`1.0`** (0% to 100%; continuous, not a fixed set). Default `0.0`. Pass a comma-separated list to sweep several fractions. |
+| `--row-counts 10,100,1000,10000` | Spark-path row ladder — each value is the number of **distinct tiles processed in one timed iteration** (the scale dimension); the bench measures one iteration per rung. The largest value must be **≤ the corpus row-pool size** (the bench refuses to under-fill). Default `2,4` (laptop-modest); run the full ladder on a cluster. |
+| `--modes pure-core \| spark-path \| both` | Timing model — pick only one mode. Default `both` (runs both models). |
+| `--warmup` / `--measured` | Untimed warmup passes / timed passes per measurement (median of the timed passes is reported). Defaults `2` / `5` locally. |
 
 The individual stages are also available as standalone commands — `gbx:bench:gen-data`, `gbx:bench:heavyweight`, `gbx:bench:lightweight`, and `gbx:bench:compare` — if you want to regenerate just one part of the pipeline.
 
 ## Reading the output
 
-The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table:
+The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table. For a spark-path run it looks like:
 
 ```text
-Consistency (163 compared cells): exact 54 - within-tol 107 - divergent 2
+Consistency (7 compared cells): exact 0 - within-tol 7 - divergent 0
 
-| fn | tile_px | hw_ms | lw_ms | hw_mpix/s | lw_mpix/s | speedup | consistency |
-| rst_ndvi | 256 | 654.881 | 0.714 | 0.2 | 187.4 | 917.55 | within_tol |
-| rst_slope | 256 | 8.719 | 1.948 | 15.0 | 67.3 | 4.47 | within_tol |
-| rst_width | 512 | 0.017 | 0.244 | 31224.3 | 2145.4 | 0.07 | exact |
+Tile scale: 1000 tiles/iteration (spark-path) — every tile processed each timed iteration.
+
+| fn | hw_iter_s | lw_iter_s | hw_per_tile_s | lw_per_tile_s | speedup | consistency |
+| rst_dtmfromgeoms_agg | 175.10 | 9.94 | 0.17510 | 0.00994 | 17.61 | within_tol |
+| rst_slope | 7.31 | 7.57 | 0.00731 | 0.00757 | 0.97 | timing-only |
+| rst_proximity | 0.52 | 8.12 | 0.00052 | 0.00812 | 0.06 | timing-only |
 ```
 
-- **`speedup`** is `heavy_ms / light_ms` — greater than 1 means the lightweight tier is faster.
-- **`hw_mpix/s` / `lw_mpix/s`** are per-tier throughput (megapixels per second) for each engine; the spark-path tables report `rows/s` instead.
-- **`consistency`** is the `exact` / `within_tol` / `divergent` label defined above. Per-cell deltas are in `comparison.csv` (the `max_rel_delta` column).
+- **`hw_iter_s` / `lw_iter_s`** are the median wall-clock of **one full iteration over all *N* tiles** (the whole distributed job). **`hw_per_tile_s` / `lw_per_tile_s`** are that ÷ *N* — the amortized per-tile cost. (A pure-core summary uses `hw_ms` / `lw_ms` and `hw_mpix/s` / `lw_mpix/s` for the single-tile algorithm cost instead.)
+- **`speedup`** is `heavy / light` — greater than 1 means the lightweight tier is faster.
+- **`consistency`** is the `exact` / `within_tol` / `divergent` label defined above (`timing-only` where the output can't be fingerprinted for a direct comparison — readers, metadata accessors, and most non-aggregator spark-path cells). Per-cell deltas are in `comparison.csv` (the `max_rel_delta` column).
 
 A per-engine summary is also written for each tier (`heavyweight.summary.md`, `lightweight.summary.md`) with that tier's own timing and throughput in isolation.
 
-## Local results
+## Results — pure-core (local, 1024²)
 
-The table below covers all 107 raster functions, sorted by speedup (lightweight-faster at the top). It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable. One row per function (the 512² tile where available; aggregators at 1024²); cells whose output cannot be fingerprinted for a direct comparison (readers, metadata accessors, and some Spark-path runs) are timed and labelled `timing-only`.
+The pure-core table is the **algorithm in isolation**: open one tile, call the function, measure — no Spark, no serialization. It is the fairest view of the raw implementation. It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable. Per-tile timing is shown in **milliseconds**; cells whose output cannot be fingerprinted for a direct comparison (readers, metadata accessors) are timed and labelled `timing-only`.
 
-> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · 2-band `float32` tiles at 256² (EPSG:4326) and 512² (EPSG:32618); aggregators at 1024². Timings are pure-core except the `*_agg` aggregators and a few Spark-only operations, which are spark-path.
+> **Environment:** amd64 · Linux · GeoBrix 0.4.0 · GDAL 3.11.4 · 2-band `float32` tiles at **1024²** (EPSG:32618) with **2% NoData**. All rows are pure-core (single tile).
 >
-> **Consistency (full suite):** of the 107 functions, **106 agree within tolerance** (exact or within-tolerance on every compared statistic). The sole exception is **`rst_convolve`**, which differs slightly at raster edges — a by-design GDAL block-halo difference; interior values match. (Across all compared cells: 54 exact, 107 within-tolerance, 2 divergent — both the edge-difference cells of `rst_convolve`.)
+> **Consistency:** of 100 functions — **26 exact**, **47 within-tolerance**, **23 timing-only** (no fingerprint), and **4 divergent**. The four divergences are all **NoData / edge handling**, where the bulk of the raster matches but the boundary or masked pixels differ:
+> - **`rst_convolve`** — a one-pixel edge ring (GDAL applies a block-halo convolution that no single lightweight boundary mode reproduces exactly); interior pixels match.
+> - **`rst_derivedband`** and **`rst_resample`** — differ in how NoData is masked/propagated through the operation; valid-pixel values agree within tolerance.
+> - **`rst_contour`** — a vector output whose feature count differs (a segmentation artifact at NoData boundaries), not a pixel value.
+>
+> These boundary behaviors are tracked for alignment to the heavyweight (GDAL) semantics; they do not affect interior/valid-pixel results.
 
-> The table is ordered by **Speedup = `Heavy (ms) / Light (ms)`** (highest first). **> 1× means the lightweight tier is faster**; **< 1× means the heavyweight tier is faster.**
+> The table is ordered by **Speedup = `Heavy / Light`** (highest first). **> 1× means the lightweight tier is faster**; **< 1× means the heavyweight tier is faster.**
 
-| Function | Tile | Heavy (ms) | Light (ms) | Speedup | Consistency |
-|---|---|---|---|---|---|
-| `rst_fromcontent` | 512² | 33.54 | 0.000166 | 202,029× | within_tol |
-| `rst_threshold` | 512² | 712 | 1.53 | 464× | timing-only |
-| `rst_nbr` | 512² | 828 | 1.88 | 439× | within_tol |
-| `rst_ndwi` | 512² | 831 | 1.90 | 437× | within_tol |
-| `rst_savi` | 512² | 752 | 2.00 | 376× | within_tol |
-| `rst_index` | 512² | 735 | 2.00 | 368× | within_tol |
-| `rst_evi` | 512² | 765 | 2.32 | 329× | within_tol |
-| `rst_ndvi` | 512² | 713 | 2.27 | 314× | within_tol |
-| `rst_mapalgebra` | 512² | 728 | 2.99 | 243× | within_tol |
-| `rst_initnodata` | 512² | 105 | 1.21 | 87.35× | within_tol |
-| `rst_dtmfromgeoms` | 512² | 1190 | 15.09 | 78.89× | within_tol |
-| `rst_derivedband` | 512² | 85.05 | 1.51 | 56.29× | within_tol |
-| `rst_setsrid` | 512² | 64.10 | 1.20 | 53.54× | within_tol |
-| `rst_separatebands` | 512² | 72.36 | 1.45 | 49.97× | within_tol |
-| `rst_maketiles` | 512² | 130 | 2.73 | 47.57× | within_tol |
-| `rst_retile` | 512² | 229 | 5.51 | 41.53× | within_tol |
-| `rst_tooverlappingtiles` | 512² | 448 | 11.72 | 38.21× | within_tol |
-| `rst_updatetype` | 512² | 74.03 | 2.02 | 36.71× | within_tol |
-| `rst_convolve` | 512² | 217 | 6.26 | 34.61× | divergent |
-| `rst_fillnodata` | 512² | 107 | 3.38 | 31.66× | within_tol |
-| `rst_rasterize` | 512² | 32.34 | 1.06 | 30.54× | within_tol |
-| `rst_asformat` | 512² | 28.48 | 1.32 | 21.62× | within_tol |
-| `rst_band` | 512² | 20.08 | 0.94 | 21.36× | within_tol |
-| `rst_frombands` | 512² | 76.00 | 3.74 | 20.32× | within_tol |
-| `rst_h3_tessellate` | 512² | 256 | 14.96 | 17.10× | exact |
-| `rst_resample` | 512² | 178 | 10.63 | 16.70× | within_tol |
-| `rst_resample_to_size` | 512² | 26.16 | 1.76 | 14.88× | within_tol |
-| `rst_clip` | 512² | 20.87 | 1.44 | 14.48× | timing-only |
-| `rst_dtmfromgeoms_agg` | 1024² | 3133 | 223 | 14.03× | within_tol |
-| `rst_median` | 512² | 53.31 | 4.00 | 13.31× | within_tol |
-| `rst_buildoverviews` | 512² | 95.44 | 7.51 | 12.70× | within_tol |
-| `rst_transform` | 512² | 116 | 10.11 | 11.49× | within_tol |
-| `rst_pixelcount` | 512² | 13.74 | 1.26 | 10.89× | exact |
-| `rst_combineavg` | 512² | 97.50 | 9.09 | 10.73× | within_tol |
-| `rst_merge` | 512² | 107 | 10.03 | 10.63× | within_tol |
-| `rst_avg` | 512² | 13.63 | 1.67 | 8.16× | within_tol |
-| `rst_tilexyz` | 512² | 15.13 | 2.39 | 6.34× | timing-only |
-| `rst_quadbin_rastertogridmedian` | 512² | 157 | 25.74 | 6.09× | within_tol |
-| `rst_h3_rastertogridavg` | 512² | 2152 | 362 | 5.94× | within_tol |
-| `rst_to_webmercator` | 512² | 108 | 18.37 | 5.90× | within_tol |
-| `rst_resample_to_res` | 512² | 61.87 | 10.75 | 5.76× | timing-only |
-| `rst_hillshade` | 512² | 28.89 | 5.78 | 5.00× | within_tol |
-| `rst_slope` | 512² | 30.99 | 6.33 | 4.89× | within_tol |
-| `rst_h3_rastertogridmedian` | 512² | 2162 | 447 | 4.84× | within_tol |
-| `rst_tpi` | 512² | 20.81 | 4.36 | 4.78× | within_tol |
-| `rst_h3_rastertogridmin` | 512² | 2076 | 435 | 4.77× | within_tol |
-| `rst_h3_rastertogridcount` | 512² | 1973 | 435 | 4.54× | within_tol |
-| `rst_h3_rastertogridmax` | 512² | 1974 | 437 | 4.52× | within_tol |
-| `rst_roughness` | 512² | 20.60 | 4.72 | 4.37× | within_tol |
-| `rst_tri` | 512² | 24.07 | 6.07 | 3.97× | within_tol |
-| `rst_proximity` | 512² | 34.55 | 11.82 | 2.92× | within_tol |
-| `rst_combineavg_agg` | 1024² | 1354 | 490 | 2.76× | within_tol |
-| `rst_tryopen` | 512² | 0.709 | 0.258 | 2.75× | exact |
-| `rst_aspect` | 512² | 32.19 | 12.28 | 2.62× | within_tol |
-| `rst_frombands_agg` | 1024² | 813 | 333 | 2.44× | within_tol |
-| `rst_filter` | 512² | 268 | 119 | 2.24× | within_tol |
-| `rst_derivedband_agg` | 1024² | 525 | 238 | 2.20× | within_tol |
-| `rst_merge_agg` | 1024² | 1384 | 660 | 2.10× | within_tol |
-| `rst_quadbin_rastertogridmax` | 512² | 47.79 | 23.57 | 2.03× | within_tol |
-| `rst_quadbin_rastertogridcount` | 512² | 45.56 | 22.87 | 1.99× | within_tol |
-| `rst_quadbin_rastertogridavg` | 512² | 49.66 | 25.19 | 1.97× | within_tol |
-| `rst_quadbin_rastertogridmin` | 512² | 46.27 | 23.61 | 1.96× | within_tol |
-| `rst_max` | 512² | 2.02 | 1.35 | 1.50× | exact |
-| `rst_min` | 512² | 2.05 | 1.38 | 1.48× | exact |
-| `rst_boundingbox` | 512² | 0.295 | 0.258 | 1.14× | timing-only |
-| `rst_rasterize_agg` | 1024² | 189 | 222 | 0.85× | within_tol |
-| `rst_cog_convert` | 512² | 60.62 | 74.37 | 0.82× | within_tol |
-| `rst_color_relief` | 512² | 4.57 | 5.69 | 0.80× | timing-only |
-| `rst_xyzpyramid` | 512² | 88.80 | 118 | 0.75× | timing-only |
-| `rst_getsubdataset` | 512² | 0.145 | 0.276 | 0.53× | timing-only |
-| `rst_gridfrompoints` | 512² | 31.91 | 64.84 | 0.49× | within_tol |
-| `rst_gridfrompoints_agg` | 1024² | 383 | 809 | 0.47× | within_tol |
-| `rst_bandmetadata` | 512² | 0.11 | 0.239 | 0.46× | timing-only |
-| `rst_metadata` | 512² | 0.0837 | 0.255 | 0.33× | timing-only |
-| `rst_rotation` | 512² | 0.0783 | 0.244 | 0.32× | exact |
-| `rst_srid` | 512² | 0.0788 | 0.255 | 0.31× | exact |
-| `rst_summary` | 512² | 0.451 | 1.54 | 0.29× | timing-only |
-| `rst_polygonize` | 512² | 37.76 | 146 | 0.26× | within_tol |
-| `rst_width` | 512² | 0.0535 | 0.263 | 0.20× | exact |
-| `rst_numbands` | 512² | 0.0475 | 0.253 | 0.19× | exact |
-| `rst_height` | 512² | 0.0463 | 0.261 | 0.18× | exact |
-| `rst_contour` | 512² | 64.15 | 390 | 0.16× | within_tol |
-| `rst_getnodata` | 512² | 0.0355 | 0.238 | 0.15× | exact |
-| `rst_pixelwidth` | 512² | 0.0334 | 0.242 | 0.14× | exact |
-| `rst_isempty` | 512² | 0.0327 | 0.248 | 0.13× | exact |
-| `rst_upperlefty` | 512² | 0.0286 | 0.239 | 0.12× | exact |
-| `rst_skewy` | 512² | 0.0275 | 0.245 | 0.11× | exact |
-| `rst_pixelheight` | 512² | 0.0221 | 0.241 | 0.09× | exact |
-| `rst_rastertoworldcoordy` | 512² | 0.0234 | 0.261 | 0.09× | exact |
-| `rst_scalex` | 512² | 0.0198 | 0.239 | 0.08× | exact |
-| `rst_upperleftx` | 512² | 0.0194 | 0.239 | 0.08× | exact |
-| `rst_format` | 512² | 0.0182 | 0.237 | 0.08× | exact |
-| `rst_rastertoworldcoordx` | 512² | 0.0193 | 0.254 | 0.08× | exact |
-| `rst_rastertoworldcoord` | 512² | 0.02 | 0.264 | 0.08× | exact |
-| `rst_scaley` | 512² | 0.0178 | 0.239 | 0.07× | exact |
-| `rst_subdatasets` | 512² | 0.0202 | 0.273 | 0.07× | timing-only |
-| `rst_skewx` | 512² | 0.0176 | 0.259 | 0.07× | exact |
-| `rst_type` | 512² | 0.0156 | 0.293 | 0.05× | timing-only |
-| `rst_georeference` | 512² | 0.0125 | 0.239 | 0.05× | timing-only |
-| `rst_worldtorastercoordy` | 512² | 0.0109 | 0.263 | 0.04× | timing-only |
-| `rst_worldtorastercoordx` | 512² | 0.0103 | 0.257 | 0.04× | timing-only |
-| `rst_worldtorastercoord` | 512² | 0.0101 | 0.267 | 0.04× | timing-only |
-| `rst_sample` | 512² | 0.00904 | 0.278 | 0.03× | timing-only |
-| `rst_histogram` | 512² | 0.123 | 4.39 | 0.03× | timing-only |
-| `rst_memsize` | 512² | 0.0165 | 0.605 | 0.03× | timing-only |
-| `rst_viewshed` | 512² | 7.21 | 635 | 0.01× | timing-only |
-| `rst_fromfile` | 512² | — | 0.141 | — | timing-only |
+| Function | Heavy (ms) | Light (ms) | Speedup | Consistency |
+|---|---|---|---|---|
+| `rst_fromcontent` | 114 | 0.0002 | 684,479× | within_tol |
+| `rst_threshold` | 718 | 5.63 | 127× | timing-only |
+| `rst_index` | 762 | 7.00 | 109× | within_tol |
+| `rst_ndwi` | 747 | 7.33 | 102× | within_tol |
+| `rst_savi` | 769 | 7.55 | 102× | within_tol |
+| `rst_nbr` | 743 | 7.43 | 100× | within_tol |
+| `rst_ndvi` | 768 | 7.77 | 99× | within_tol |
+| `rst_dtmfromgeoms` | 4915 | 58.4 | 84× | within_tol |
+| `rst_evi` | 771 | 9.33 | 83× | within_tol |
+| `rst_mapalgebra` | 735 | 11.2 | 66× | within_tol |
+| `rst_separatebands` | 220 | 4.53 | 49× | within_tol |
+| `rst_convolve` | 788 | 21.4 | 37× | divergent |
+| `rst_initnodata` | 159 | 4.32 | 37× | within_tol |
+| `rst_fillnodata` | 417 | 12.9 | 32× | within_tol |
+| `rst_setsrid` | 133 | 4.48 | 30× | within_tol |
+| `rst_band` | 76.9 | 2.76 | 28× | within_tol |
+| `rst_maketiles` | 227 | 9.78 | 23× | within_tol |
+| `rst_updatetype` | 162 | 7.54 | 22× | within_tol |
+| `rst_asformat` | 94.5 | 4.47 | 21× | within_tol |
+| `rst_frombands` | 184 | 8.81 | 21× | within_tol |
+| `rst_derivedband` | 108 | 6.15 | 18× | divergent |
+| `rst_retile` | 280 | 17.9 | 16× | within_tol |
+| `rst_rasterize` | 49.3 | 3.22 | 15× | within_tol |
+| `rst_h3_tessellate` | 495 | 35.3 | 14× | exact |
+| `rst_tooverlappingtiles` | 423 | 31.7 | 13× | within_tol |
+| `rst_resample` | 659 | 54.8 | 12× | divergent |
+| `rst_resample_to_size` | 65.3 | 5.83 | 11× | within_tol |
+| `rst_pixelcount` | 47.9 | 4.53 | 11× | exact |
+| `rst_avg` | 46.5 | 4.75 | 9.80× | within_tol |
+| `rst_median` | 168 | 17.1 | 9.79× | within_tol |
+| `rst_clip` | 34.3 | 3.55 | 9.66× | timing-only |
+| `rst_merge` | 309 | 32.0 | 9.65× | within_tol |
+| `rst_buildoverviews` | 174 | 18.1 | 9.61× | within_tol |
+| `rst_combineavg` | 220 | 27.5 | 8.00× | within_tol |
+| `rst_quadbin_rastertogridmedian` | 647 | 94.3 | 6.86× | within_tol |
+| `rst_tryopen` | 1.54 | 0.230 | 6.67× | exact |
+| `rst_h3_rastertogridmax` | 7370 | 1241 | 5.94× | exact |
+| `rst_h3_rastertogridavg` | 7356 | 1243 | 5.92× | within_tol |
+| `rst_h3_rastertogridcount` | 7312 | 1239 | 5.90× | within_tol |
+| `rst_h3_rastertogridmin` | 7320 | 1244 | 5.88× | within_tol |
+| `rst_transform` | 181 | 31.1 | 5.82× | within_tol |
+| `rst_h3_rastertogridmedian` | 7627 | 1376 | 5.54× | exact |
+| `rst_tilexyz` | 12.7 | 2.40 | 5.27× | timing-only |
+| `rst_resample_to_res` | 254 | 53.9 | 4.71× | timing-only |
+| `rst_slope` | 86.1 | 24.0 | 3.59× | within_tol |
+| `rst_tpi` | 57.7 | 16.7 | 3.45× | within_tol |
+| `rst_roughness` | 61.0 | 18.3 | 3.33× | within_tol |
+| `rst_to_webmercator` | 201 | 69.0 | 2.91× | within_tol |
+| `rst_hillshade` | 62.6 | 21.7 | 2.89× | within_tol |
+| `rst_tri` | 58.3 | 23.4 | 2.50× | within_tol |
+| `rst_filter` | 891 | 435 | 2.05× | within_tol |
+| `rst_aspect` | 88.5 | 44.6 | 1.98× | within_tol |
+| `rst_quadbin_rastertogridmax` | 152 | 79.9 | 1.90× | within_tol |
+| `rst_quadbin_rastertogridavg` | 154 | 82.9 | 1.85× | within_tol |
+| `rst_quadbin_rastertogridcount` | 137 | 78.2 | 1.75× | within_tol |
+| `rst_quadbin_rastertogridmin` | 144 | 84.1 | 1.71× | within_tol |
+| `rst_max` | 7.65 | 4.56 | 1.68× | exact |
+| `rst_min` | 7.60 | 4.59 | 1.66× | exact |
+| `rst_xyzpyramid` | 204 | 141 | 1.45× | timing-only |
+| `rst_proximity` | 74.4 | 56.0 | 1.33× | within_tol |
+| **heavyweight faster below (&lt; 1×)** | **━━━** | **━━━** | **━━━** | **━━━** |
+| `rst_getsubdataset` | 0.232 | 0.237 | 0.98× | timing-only |
+| `rst_boundingbox` | 0.234 | 0.242 | 0.97× | timing-only |
+| `rst_color_relief` | 16.3 | 22.4 | 0.73× | timing-only |
+| `rst_metadata` | 0.145 | 0.241 | 0.60× | timing-only |
+| `rst_rastertoworldcoord` | 0.142 | 0.249 | 0.57× | exact |
+| `rst_srid` | 0.133 | 0.243 | 0.55× | exact |
+| `rst_scalex` | 0.087 | 0.223 | 0.39× | exact |
+| `rst_gridfrompoints` | 87.5 | 242 | 0.36× | within_tol |
+| `rst_scaley` | 0.079 | 0.224 | 0.35× | exact |
+| `rst_pixelheight` | 0.079 | 0.228 | 0.35× | exact |
+| `rst_type` | 0.076 | 0.225 | 0.34× | timing-only |
+| `rst_getnodata` | 0.058 | 0.223 | 0.26× | exact |
+| `rst_contour` | 362 | 1414 | 0.26× | divergent |
+| `rst_isempty` | 0.054 | 0.224 | 0.24× | exact |
+| `rst_polygonize` | 152 | 640 | 0.24× | within_tol |
+| `rst_height` | 0.051 | 0.236 | 0.22× | exact |
+| `rst_numbands` | 0.050 | 0.232 | 0.22× | exact |
+| `rst_width` | 0.047 | 0.252 | 0.19× | exact |
+| `rst_upperleftx` | 0.040 | 0.226 | 0.18× | exact |
+| `rst_upperlefty` | 0.039 | 0.224 | 0.17× | exact |
+| `rst_rastertoworldcoordx` | 0.041 | 0.242 | 0.17× | exact |
+| `rst_rastertoworldcoordy` | 0.038 | 0.236 | 0.16× | exact |
+| `rst_skewy` | 0.034 | 0.224 | 0.15× | exact |
+| `rst_pixelwidth` | 0.035 | 0.234 | 0.15× | exact |
+| `rst_format` | 0.029 | 0.225 | 0.13× | exact |
+| `rst_skewx` | 0.029 | 0.225 | 0.13× | exact |
+| `rst_rotation` | 0.028 | 0.226 | 0.13× | exact |
+| `rst_bandmetadata` | 0.025 | 0.224 | 0.11× | timing-only |
+| `rst_georeference` | 0.024 | 0.222 | 0.11× | timing-only |
+| `rst_subdatasets` | 0.024 | 0.244 | 0.10× | timing-only |
+| `rst_summary` | 0.478 | 5.89 | 0.08× | timing-only |
+| `rst_worldtorastercoordx` | 0.019 | 0.247 | 0.08× | timing-only |
+| `rst_worldtorastercoord` | 0.015 | 0.248 | 0.06× | timing-only |
+| `rst_worldtorastercoordy` | 0.014 | 0.242 | 0.06× | timing-only |
+| `rst_sample` | 0.011 | 0.276 | 0.04× | timing-only |
+| `rst_histogram` | 0.308 | 16.0 | 0.02× | timing-only |
+| `rst_memsize` | 0.019 | 1.67 | 0.01× | timing-only |
+| `rst_viewshed` | 16.7 | 4047 | 0.004× | timing-only |
+| `rst_cog_convert` | —* | 342 | — | timing-only |
+| `rst_fromfile` | —* | 0.732 | — | timing-only |
 
-### How to read these numbers
+<sub>\* `rst_cog_convert` and `rst_fromfile` are not measured on the local heavyweight tier (a container-specific GDAL driver quirk returns immediately). They run normally on a cluster — see `rst_cog_convert` in the spark-path table below.</sub>
 
-- **Band math (`rst_ndvi`/`ndwi`/`nbr`/`evi`/`savi`/`index`/`mapalgebra`)** shows the largest lightweight wins (roughly 240–980×). The heavyweight tier computes these by shelling out to a `gdal_calc` subprocess per call, which dominates its time; the lightweight tier evaluates the expression in-process with NumPy.
-- **Reductions, warps, and tiling (`rst_median`/`avg`/`transform`/`to_webmercator`/`retile`/`maketiles`)** favor the lightweight tier by roughly 8–48×.
-- **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~2–5× lightweight win, and all match within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
-- **Discrete-grid aggregation (`rst_h3_*`/`rst_quadbin_*`)** is a ~2–6× lightweight win and matches within tolerance.
-- **Trivial metadata accessors (`rst_width`/`height`/`numbands` and the world↔raster coordinate helpers)** are sub-millisecond on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is fractions of a millisecond.
-- **Algorithm-bound outliers** — chiefly `rst_viewshed`, and to a lesser degree `rst_contour` and `rst_polygonize` — are slower on the lightweight tier (the heavyweight GDAL implementations are hard to beat), but remain well under a second on these tiles and match within tolerance. A few others (e.g. `rst_gridfrompoints`) sit at or near parity, slightly slower only at the largest tiles.
-- **`rst_convolve`** is the single function whose outputs differ: the heavyweight tier applies a GDAL block-halo convolution that no single lightweight boundary mode reproduces exactly. Interior pixels match; only the one-pixel edge ring differs.
+### How to read the pure-core numbers
 
-### Caveats
+- **Band math (`rst_ndvi`/`ndwi`/`nbr`/`evi`/`savi`/`index`/`mapalgebra`/`threshold`)** shows the largest lightweight wins (roughly 65–130×). The heavyweight tier computes these by shelling out to a `gdal_calc` subprocess per call, which dominates its time; the lightweight tier evaluates the expression in-process with NumPy.
+- **Tiling and warps (`rst_maketiles`/`retile`/`tooverlappingtiles`/`merge`/`transform`)** favor the lightweight tier by roughly 9–23×. The retile family reads only the output window per tile rather than translating the whole raster, so it stays fast even at 1024².
+- **Terrain (`rst_slope`/`aspect`/`hillshade`/`tri`/`tpi`/`roughness`)** is a steadier ~2–3.6× lightweight win, all within tolerance — including on geographic rasters, where both tiers auto-derive the horizontal scale from the CRS.
+- **Discrete-grid aggregation (`rst_h3_*`/`rst_quadbin_*`)** is a ~1.7–6× lightweight win and matches within tolerance.
+- **Trivial metadata accessors (`rst_width`/`height`/`numbands` and the world↔raster coordinate helpers)** are microseconds on both tiers; here the JVM-native heavyweight path edges out the Python-worker call, so speedup dips below 1×. At this scale the absolute difference is a fraction of a millisecond.
+- **Algorithm-bound outliers** — `rst_viewshed`, `rst_contour`, and `rst_polygonize` — are slower on the lightweight tier (the heavyweight GDAL implementations are hard to beat). `rst_viewshed` in particular is xrspatial/Numba-based; its first call also pays a one-time JIT compile cost (the figures above are warmed). These remain correct (within tolerance, where comparable) but are the cases where the heavyweight tier is the better choice.
+
+## Results — spark-path at scale (cluster, 1000 tiles, 1024²)
+
+Pure-core measures the algorithm; **spark-path measures the job**. Each function runs as a registered `gbx_rst_*` UDF over a DataFrame of **1,000 distinct 1024² tiles** on a cluster, so the timing includes the realistic per-tile overhead — UDF dispatch, and for the lightweight tier the JVM↔Python serialization of tile bytes on every row.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 2-band `float32` tiles at **1024²** (EPSG:32618) · **1,000 tiles per iteration** (every tile processed each iteration, not sampled). `Heavy/tile` and `Light/tile` are the whole-job wall-clock amortized over the 1,000 tiles. (At 1,000 tiles, the per-tile figure in ms equals the whole-iteration time in seconds.)
+>
+> Of the 83 functions with a spark-path cell, the lightweight tier is **at least as fast in 57** and the heavyweight tier is faster in **26**. Only the 7 aggregators produce a comparable fingerprint here (all **within tolerance**); the rest are `timing-only` in spark-path.
+
+**The headline:** the pure-core wins do not all survive at scale. Operations that win 3–6× in isolation — terrain (`rst_slope`/`aspect`/`tri`/`tpi`), the H3/QuadBin grids — collapse to **parity or slightly heavyweight-favored** once every tile's bytes cross the Python boundary. The serialization cost, not the compute, dominates byte-heavy operations at scale. Band math and the largest reductions still favor the lightweight tier (~2–4×) because their compute saving outweighs the boundary tax; algorithm-bound GDAL operations (`rst_proximity`, `rst_contour`, `rst_polygonize`, `rst_gridfrompoints`) favor the heavyweight tier by 5–16×.
+
+> Ordered by **Speedup = `Heavy / Light`** (highest first).
+
+| Function | Heavy/tile (ms) | Light/tile (ms) | Speedup | Consistency |
+|---|---|---|---|---|
+| `rst_dtmfromgeoms_agg` | 175.10 | 9.94 | 18× | within_tol |
+| `rst_fillnodata` | 32.71 | 6.98 | 4.69× | timing-only |
+| `rst_convolve` | 35.98 | 7.87 | 4.57× | timing-only |
+| `rst_resample` | 45.82 | 10.92 | 4.20× | timing-only |
+| `rst_h3_tessellate` | 45.59 | 10.99 | 4.15× | timing-only |
+| `rst_evi` | 24.31 | 6.19 | 3.93× | timing-only |
+| `rst_nbr` | 22.59 | 5.96 | 3.79× | timing-only |
+| `rst_mapalgebra` | 20.90 | 5.67 | 3.68× | timing-only |
+| `rst_index` | 22.04 | 6.02 | 3.66× | timing-only |
+| `rst_ndwi` | 21.98 | 6.08 | 3.62× | timing-only |
+| `rst_savi` | 21.55 | 6.24 | 3.45× | timing-only |
+| `rst_ndvi` | 22.31 | 6.55 | 3.40× | timing-only |
+| `rst_threshold` | 19.28 | 6.29 | 3.07× | timing-only |
+| `rst_median` | 9.73 | 3.24 | 3.01× | timing-only |
+| `rst_separatebands` | 15.04 | 6.11 | 2.46× | timing-only |
+| `rst_transform` | 18.76 | 7.84 | 2.39× | timing-only |
+| `rst_updatetype` | 16.78 | 7.04 | 2.38× | timing-only |
+| `rst_quadbin_rastertogridmedian` | 27.60 | 11.90 | 2.32× | timing-only |
+| `rst_buildoverviews` | 15.60 | 7.02 | 2.22× | timing-only |
+| `rst_avg` | 7.06 | 3.25 | 2.17× | timing-only |
+| `rst_initnodata` | 13.39 | 6.24 | 2.15× | timing-only |
+| `rst_setsrid` | 13.15 | 6.17 | 2.13× | timing-only |
+| `rst_pixelcount` | 6.71 | 3.19 | 2.10× | timing-only |
+| `rst_to_webmercator` | 20.83 | 9.91 | 2.10× | timing-only |
+| `rst_tooverlappingtiles` | 22.57 | 10.75 | 2.10× | timing-only |
+| `rst_retile` | 15.66 | 8.53 | 1.84× | timing-only |
+| `rst_filter` | 51.09 | 29.78 | 1.72× | timing-only |
+| `rst_isempty` | 4.58 | 2.71 | 1.69× | timing-only |
+| `rst_skewy` | 4.08 | 2.43 | 1.68× | timing-only |
+| `rst_frombands_agg` | 12.63 | 7.52 | 1.68× | within_tol |
+| `rst_format` | 4.07 | 2.42 | 1.68× | timing-only |
+| `rst_combineavg_agg` | 16.69 | 9.96 | 1.68× | within_tol |
+| `rst_skewx` | 4.04 | 2.44 | 1.66× | timing-only |
+| `rst_rastertoworldcoordx` | 4.08 | 2.48 | 1.65× | timing-only |
+| `rst_upperlefty` | 4.15 | 2.52 | 1.64× | timing-only |
+| `rst_width` | 5.14 | 3.14 | 1.64× | timing-only |
+| `rst_pixelheight` | 4.23 | 2.58 | 1.64× | timing-only |
+| `rst_derivedband` | 10.27 | 6.28 | 1.63× | timing-only |
+| `rst_upperleftx` | 4.10 | 2.57 | 1.59× | timing-only |
+| `rst_scalex` | 3.98 | 2.50 | 1.59× | timing-only |
+| `rst_rastertoworldcoordy` | 4.07 | 2.57 | 1.58× | timing-only |
+| `rst_numbands` | 4.11 | 2.61 | 1.57× | timing-only |
+| `rst_getnodata` | 3.94 | 2.52 | 1.56× | timing-only |
+| `rst_rotation` | 4.09 | 2.63 | 1.56× | timing-only |
+| `rst_pixelwidth` | 4.16 | 2.73 | 1.52× | timing-only |
+| `rst_scaley` | 4.00 | 2.63 | 1.52× | timing-only |
+| `rst_maketiles` | 10.10 | 6.74 | 1.50× | timing-only |
+| `rst_quadbin_rastertogridmax` | 17.02 | 11.41 | 1.49× | timing-only |
+| `rst_band` | 8.56 | 5.81 | 1.47× | timing-only |
+| `rst_max` | 4.51 | 3.06 | 1.47× | timing-only |
+| `rst_min` | 4.47 | 3.04 | 1.47× | timing-only |
+| `rst_height` | 4.56 | 3.10 | 1.47× | timing-only |
+| `rst_srid` | 4.12 | 2.83 | 1.46× | timing-only |
+| `rst_merge_agg` | 23.13 | 16.48 | 1.40× | within_tol |
+| `rst_resample_to_size` | 7.30 | 5.34 | 1.37× | timing-only |
+| `rst_derivedband_agg` | 9.43 | 7.61 | 1.24× | within_tol |
+| `rst_aspect` | 7.66 | 7.60 | 1.01× | timing-only |
+| **heavyweight faster below (&lt; 1×)** | **━━━** | **━━━** | **━━━** | **━━━** |
+| `rst_roughness` | 7.42 | 7.46 | 0.99× | timing-only |
+| `rst_slope` | 7.31 | 7.57 | 0.97× | timing-only |
+| `rst_quadbin_rastertogridcount` | 10.73 | 11.14 | 0.96× | timing-only |
+| `rst_quadbin_rastertogridmin` | 11.17 | 11.84 | 0.94× | timing-only |
+| `rst_tpi` | 6.87 | 7.40 | 0.93× | timing-only |
+| `rst_tri` | 7.05 | 7.70 | 0.92× | timing-only |
+| `rst_quadbin_rastertogridavg` | 10.68 | 11.92 | 0.90× | timing-only |
+| `rst_rastertoworldcoord` | 4.17 | 4.99 | 0.84× | timing-only |
+| `rst_hillshade` | 5.79 | 7.02 | 0.82× | timing-only |
+| `rst_h3_rastertogridmedian` | 67.02 | 81.90 | 0.82× | timing-only |
+| `rst_h3_rastertogridavg` | 56.72 | 77.22 | 0.73× | timing-only |
+| `rst_h3_rastertogridmax` | 57.06 | 78.56 | 0.73× | timing-only |
+| `rst_tryopen` | 3.99 | 5.59 | 0.71× | timing-only |
+| `rst_h3_rastertogridmin` | 56.51 | 79.28 | 0.71× | timing-only |
+| `rst_h3_rastertogridcount` | 55.34 | 79.39 | 0.70× | timing-only |
+| `rst_fromcontent` | 4.03 | 5.90 | 0.68× | timing-only |
+| `rst_asformat` | 4.00 | 6.04 | 0.66× | timing-only |
+| `rst_frombands` | 2.31 | 4.94 | 0.47× | timing-only |
+| `rst_cog_convert` | 4.23 | 11.13 | 0.38× | timing-only |
+| `rst_rasterize_agg` | 2.00 | 6.16 | 0.32× | within_tol |
+| `rst_merge` | 2.30 | 8.42 | 0.27× | timing-only |
+| `rst_combineavg` | 1.91 | 7.73 | 0.25× | timing-only |
+| `rst_polygonize` | 10.90 | 54.88 | 0.20× | timing-only |
+| `rst_contour` | 13.91 | 127.62 | 0.11× | timing-only |
+| `rst_gridfrompoints_agg` | 2.66 | 33.75 | 0.08× | within_tol |
+| `rst_proximity` | 0.52 | 8.12 | 0.06× | timing-only |
+
+### Repartition strategy
+
+The spark-path numbers above are wall-clock for a whole distributed job, so they're sensitive to how evenly the 1,000 tiles spread across the cluster's task slots. The benchmark harness tunes the partitioning so the comparison reflects the engines, not a straggler tail:
+
+- **Repartition the *N*-row DataFrame to ~`slots × 4` partitions** (oversubscribe ~4×) so a slot that finishes early picks up a pending tile instead of idling while one long tile finishes.
+- **Set `spark.sql.shuffle.partitions` to match**, and **disable AQE** for the measured run so Adaptive Query Execution can't coalesce that repartition back toward `defaultParallelism` and reintroduce the idle tail.
+
+:::warning Serverless: no Spark-config tuning
+This repartitioning is **benchmark-harness tuning** — it lives in the bench code that runs from a repo checkout, **not** in the GeoBrix product. The lightweight **pyrx** tier never mutates Spark configuration: it only registers UDFs and builds Column expressions, so it is safe on **Serverless / Spark Connect**, where runtime `spark.conf.set(...)` and JVM-bridge access are not permitted. On Serverless you therefore can't hand-tune partitions; you rely on the platform's managed AQE and default partitioning. Treat the tuned figures above as the controlled, like-for-like comparison number — not as what a Serverless user sets by hand.
+:::
+
+## Caveats
 
 - Absolute timings depend on the machine, the corpus, and the tier's install; treat the **relative** speedup and the **consistency** outcome as the durable signal, not the millisecond values.
-- Most rows above are **pure-core**, which isolates the algorithm; the `*_agg` aggregators and a few Spark-only operations are timed **spark-path**. The full spark-path model — which you should run on a cluster across the row ladder — adds per-row UDF and serialization overhead and is the better predictor of end-to-end job cost.
-- Consistency is checked on output statistics with tolerance, not byte-equality: GDAL and NumPy can differ in the last bits, and neighborhood operations legitimately differ on the one-pixel kernel border. The benchmark treats those as informational, not as divergences.
+- The two tables answer different questions. **Pure-core** isolates the algorithm and is where the lightweight tier's biggest wins show; **spark-path at scale** adds the per-row UDF and serialization overhead and is the better predictor of end-to-end job cost — and the better place to decide which tier to run a given operation on.
+- Consistency is checked on output statistics with tolerance, not byte-equality: GDAL and NumPy can differ in the last bits, and neighborhood / NoData-boundary operations legitimately differ on the one-pixel kernel border or in how masked pixels propagate. The benchmark surfaces those as `divergent` so they're visible, not hidden.
