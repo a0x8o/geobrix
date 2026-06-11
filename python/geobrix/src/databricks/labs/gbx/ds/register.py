@@ -1,8 +1,8 @@
-"""Register the light raster DataSources with a Spark session.
+"""Register the light DataSources with a Spark session.
 
 Mirrors pyrx.functions.register: call once, consciously. The format strings
-raster_gbx / gtiff_gbx do not collide with the Scala-registered gdal /
-gtiff_gdal, so both tiers coexist.
+raster_gbx / gtiff_gbx / pmtiles_gbx do not collide with the Scala-registered
+gdal / gtiff_gdal, so both tiers coexist.
 """
 
 from __future__ import annotations
@@ -12,13 +12,14 @@ from typing import Optional
 from pyspark.sql import SparkSession
 
 from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
+from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 from databricks.labs.gbx.ds.raster import RasterGbxDataSource
 
-_SOURCES = (RasterGbxDataSource, GTiffGbxDataSource)
+_SOURCES = (RasterGbxDataSource, GTiffGbxDataSource, PMTilesGbxDataSource)
 
 
 def register(spark: Optional[SparkSession] = None) -> None:
-    """Register raster_gbx + gtiff_gbx. Uses the active session if not given."""
+    """Register raster_gbx + gtiff_gbx + pmtiles_gbx. Uses the active session if not given."""
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
     for source in _SOURCES:
