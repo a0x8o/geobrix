@@ -68,7 +68,7 @@ const sidebars = {
               collapsed: false,
               items: [
                 { type: 'category', label: 'General', collapsed: false, items: ['writers/raster_gbx'] },
-                { type: 'category', label: 'Named', collapsed: false, items: ['writers/gtiff_gbx'] },
+                { type: 'category', label: 'Named', collapsed: false, items: ['writers/gtiff_gbx', 'writers/pmtiles_gbx'] },
               ],
             },
           ],
