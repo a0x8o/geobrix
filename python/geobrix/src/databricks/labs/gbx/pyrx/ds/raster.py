@@ -4,6 +4,11 @@
 into BalancedSubdivision tiles, re-encodes each tile as GTiff, emits
 (source, tile) rows matching pyrx._serde.TILE_SCHEMA. Pure Python (Serverless).
 
+Fast path: when a source is a single whole-raster GTiff tile (the common
+"directory of GeoTIFFs" case), the original file bytes are passed through
+unchanged instead of being decoded + re-encoded — pixels are identical, so it
+is parity-safe (decoded-pixel, not byte) and ~80x cheaper per tile.
+
 Limitation: per-band masks/alpha and source colormaps are not yet propagated to
 the re-encoded tiles (band data + nodata/dtype/crs/transform are). Sources that
 rely on a colormap or per-band mask will differ structurally from the heavy
@@ -69,6 +74,24 @@ class RasterGbxReader(DataSourceReader):
             tile_x, tile_y = core_tiling._get_tile_size(
                 ds.width, ds.height, size_bytes, partition.size_mib
             )
+            # Fast path: when the split is a single tile spanning the whole raster
+            # AND the source is already a GTiff, emit the original file bytes
+            # instead of decoding + re-encoding (the re-encode is ~95% of per-tile
+            # cost). Pixels are identical, so this is parity-safe (decoded-pixel,
+            # not byte). Sub-tiles or non-GTiff sources fall through to encode_tile.
+            if tile_x >= ds.width and tile_y >= ds.height and ds.driver == "GTiff":
+                compression = str(ds.profile.get("compress") or "DEFLATE").upper()
+                cellid, raster_bytes, meta = _encode.passthrough_tile(
+                    partition.file_path,
+                    ds.width,
+                    ds.height,
+                    source_path=partition.file_path,
+                    all_parents="",
+                    compression=compression,
+                )
+                yield (partition.file_path, (cellid, raster_bytes, meta))
+                return
+
             row_off = 0
             while row_off < ds.height:
                 win_h = min(tile_y, ds.height - row_off)

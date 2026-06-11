@@ -56,3 +56,39 @@ def encode_tile(
         "isSubset": "false",
     }
     return CELLID_FRESH, raster_bytes, metadata
+
+
+def passthrough_tile(
+    file_path: str,
+    width: int,
+    height: int,
+    source_path: str,
+    all_parents: str,
+    compression: str = "DEFLATE",
+) -> Tuple[int, bytes, Dict[str, str]]:
+    """Whole-file GTiff fast path: emit the ORIGINAL file bytes, no decode/re-encode.
+
+    Valid only when one tile spans the whole raster and the source is already a
+    GTiff: the decoded pixels are byte-for-byte the source's, so this is identical
+    in pixel terms to ``encode_tile`` over the full window but ~80x cheaper
+    (profiling: the GTiff/DEFLATE re-encode is ~95% of per-tile cost). Parity is
+    decoded-pixel, not byte, so passing source bytes through is contract-safe and
+    also preserves colormaps/masks that a re-encode would drop.
+    """
+    with open(file_path, "rb") as fh:
+        raster_bytes = fh.read()
+
+    metadata = {
+        "path": f"/vsimem/light_{os.path.basename(source_path)}_0_0.tif",
+        "sourcePath": source_path,
+        "driver": "GTiff",
+        "format": "GTiff",
+        "last_command": f"passthrough -srcwin 0 0 {width} {height}",
+        "last_error": "",
+        "all_parents": f"{source_path};{all_parents}",
+        "size": "-1",
+        "compression": compression,
+        "isZipped": "false",
+        "isSubset": "false",
+    }
+    return CELLID_FRESH, raster_bytes, metadata

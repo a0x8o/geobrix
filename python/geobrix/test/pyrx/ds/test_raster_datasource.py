@@ -122,3 +122,56 @@ def test_multi_tile_split_matches_core_tiling(spark, tmp_path):
     assert df.count() == expected
     # every emitted tile is a fresh, un-tessellated tile
     assert all(r["tile"]["cellid"] == -1 for r in df.select("tile").collect())
+
+
+def test_whole_file_gtiff_is_passthrough(spark, tmp_path):
+    # A single whole-raster GTiff tile must emit the ORIGINAL file bytes verbatim
+    # (no decode/re-encode) — the fast path. Still cellid=-1 + 11 metadata keys,
+    # and the decoded pixels equal the source.
+    f = tmp_path / "whole.tif"
+    _write_sample(str(f))
+    raw = f.read_bytes()
+
+    spark.dataSource.register(RasterGbxDataSource)
+    rows = spark.read.format("raster_gbx").load(str(f)).collect()
+    assert len(rows) == 1
+    tile = rows[0]["tile"]
+    assert (
+        bytes(tile["raster"]) == raw
+    ), "whole-file GTiff should pass through unchanged"
+    assert tile["cellid"] == -1
+    assert set(tile["metadata"].keys()) == EXPECTED_METADATA_KEYS
+    with MemoryFile(bytes(tile["raster"])) as mf, mf.open() as out:
+        arr = out.read(1)
+    np.testing.assert_allclose(
+        arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6
+    )
+
+
+def test_multi_tile_subwindows_are_reencoded(spark, tmp_path):
+    # When the source splits into sub-tiles, those CANNOT pass through (each is a
+    # window of the source), so they must be re-encoded -> bytes differ from source.
+    f = tmp_path / "big.tif"
+    rng = np.random.default_rng(1)
+    data = rng.integers(0, 255, size=(3, 2048, 2048), dtype="uint8")
+    profile = dict(
+        driver="GTiff",
+        width=2048,
+        height=2048,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(0.0, 0.0, 1.0, 1.0),
+    )
+    with rasterio.open(str(f), "w", **profile) as ds:
+        ds.write(data)
+    raw = f.read_bytes()
+
+    spark.dataSource.register(RasterGbxDataSource)
+    rows = (
+        spark.read.format("raster_gbx").option("sizeInMB", "1").load(str(f)).collect()
+    )
+    assert len(rows) > 1  # split happened
+    assert all(
+        bytes(r["tile"]["raster"]) != raw for r in rows
+    ), "sub-tiles must be re-encoded"
