@@ -4,23 +4,29 @@ Hybrid, mirroring the heavy gdal writer's intent (encoding from tile.metadata):
 - target driver GTiff (the common case; raster_gbx/gtiff_gbx tiles are already
   GTiff) -> pass tile.raster bytes through VERBATIM. Pixel-identical to heavy;
   heavy's specific creation options differ but our contract is decoded-pixel.
-- non-GTiff target -> rasterio re-encode to that driver applying the
-  metadata-derived compression/blocksize/zlevel/zstd, and stamp RASTERX_<key>
-  (each metadata entry) + RASTERX_CELL (cellid), matching heavy SetMetadataItem.
+- target driver COG -> rasterio re-encode applying metadata-derived
+  compression/blocksize/zlevel/zstd, and stamp RASTERX_<key> + RASTERX_CELL.
+
+Only GTiff (verbatim pass-through) and COG (re-encode, GTiff-structured) are
+validated end-to-end. Other drivers (PNG, PNM, Zarr, etc.) are passed
+best-effort to rasterio with the metadata-derived options and are NOT
+guaranteed to match heavy (heavy special-cases dtype coercion for PNG, etc.).
 
 Writer .option()s never carry encoding; only tile.metadata does (like heavy).
 """
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 
 def _is_float(dtype: str) -> bool:
     return str(dtype).startswith("float")
 
 
-def _creation_opts(driver: str, meta: Dict[str, str], dtype: str) -> Dict[str, str]:
+def _creation_opts(
+    driver: str, meta: Dict[str, str], dtype: str, width: int, height: int
+) -> Dict[str, str]:
     """GTiff/COG creation options from tile metadata, mirroring OperatorOptions.appendOptions."""
     compression = str(meta.get("compression", "DEFLATE")).upper()
     opts: Dict[str, str] = {"compress": compression}
@@ -35,7 +41,8 @@ def _creation_opts(driver: str, meta: Dict[str, str], dtype: str) -> Dict[str, s
         blk = int(meta.get("blocksize", "512"))
     except ValueError:
         blk = 512
-    blk = max(64, (blk // 16) * 16)
+    blk = max(64, (min(blk, min(width, height)) // 16) * 16)
+    blk = max(16, blk)  # never 0 for tiny rasters
     if driver.upper() == "COG":
         opts["blocksize"] = str(blk)
     return opts
@@ -45,7 +52,7 @@ def tile_to_bytes(
     cellid: int,
     raster_bytes: bytes,
     metadata: Dict[str, str],
-    force_driver: str = None,
+    force_driver: Optional[str] = None,
 ) -> bytes:
     """Return the on-disk bytes for one tile (verbatim GTiff, else re-encode)."""
     driver = force_driver or metadata.get("driver") or metadata.get("format") or "GTiff"
@@ -58,7 +65,9 @@ def tile_to_bytes(
         data = src.read()
         profile = src.profile.copy()
         profile["driver"] = driver
-        profile.update(_creation_opts(driver, metadata, src.dtypes[0]))
+        profile.update(
+            _creation_opts(driver, metadata, src.dtypes[0], src.width, src.height)
+        )
         with MemoryFile() as out_mf:
             with out_mf.open(**profile) as dst:
                 dst.write(data)

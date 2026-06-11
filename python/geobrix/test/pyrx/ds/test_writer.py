@@ -122,3 +122,28 @@ def test_raster_gbx_catch_all_writer_round_trips(spark, tmp_path):
     np.testing.assert_allclose(
         arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6
     )
+
+
+def test_append_mode_adds_files(spark, tmp_path):
+    src = tmp_path / "in.tif"
+    _write_sample(str(src))
+    out_dir = tmp_path / "out_append"
+    spark.dataSource.register(RasterGbxDataSource)
+    spark.dataSource.register(GTiffGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(src))
+    df.write.format("gtiff_gbx").mode("append").save(str(out_dir))
+    df.write.format("gtiff_gbx").mode("append").save(str(out_dir))
+    n = len([f for f in os.listdir(out_dir) if f.endswith(".tif")])
+    assert n == 2, f"append should accumulate, got {n}"
+
+
+def test_missing_column_rejected(spark, tmp_path):
+    import pytest
+
+    src = tmp_path / "in.tif"
+    _write_sample(str(src))
+    spark.dataSource.register(RasterGbxDataSource)
+    spark.dataSource.register(GTiffGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(src)).select("tile")  # drop 'source'
+    with pytest.raises(Exception):
+        df.write.format("gtiff_gbx").mode("overwrite").save(str(tmp_path / "o_missing"))

@@ -43,7 +43,7 @@ def _safe_name(raster_bytes: bytes, cellid: int) -> str:
     pid_tid), so the uuid suffix keeps names unique across partitions. NOT
     byte-identical to heavy's MurmurHash3_pid_tid -- use nameCol for control.
     """
-    h = hashlib.sha1(raster_bytes).hexdigest()[:12]
+    h = hashlib.sha1(raster_bytes + str(cellid).encode()).hexdigest()[:12]
     return f"{h}_{uuid.uuid4().hex[:8]}"
 
 
@@ -83,11 +83,13 @@ class RasterGbxWriter(DataSourceWriter):
             cellid = tile["cellid"]
             raster_bytes = bytes(tile["raster"])
             metadata = dict(tile["metadata"] or {})
-            name = (
-                row[self.name_col]
-                if self.name_col
-                else _safe_name(raster_bytes, cellid)
-            )
+            if self.name_col:
+                raw_name = row[self.name_col]
+                name = os.path.basename(str(raw_name)) if raw_name is not None else ""
+                if not name:
+                    name = _safe_name(raster_bytes, cellid)
+            else:
+                name = _safe_name(raster_bytes, cellid)
             out_bytes = _write.tile_to_bytes(
                 cellid, raster_bytes, metadata, self.force_driver
             )
