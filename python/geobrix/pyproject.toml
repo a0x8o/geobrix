@@ -74,6 +74,9 @@ light = [
     "rio-cogeo>=7.0,<8",
     "h3>=4.0,<5",
     "quadbin>=0.2,<0.3",
+    # Protomaps PMTiles archive writer/reader (pure-Python) for the pmtiles_gbx
+    # tiled-output backend. Writer needs ascending tileid; Reader used in tests.
+    "pmtiles>=3.4,<4",
     "scikit-image>=0.22,<1",
     "xarray-spatial>=0.4,<1",
 ]
