@@ -153,6 +153,22 @@ Per the repo convention, **doc-tests are the documentation source** (code in
   example (today `gtiff_gdal` appears only as a read-back format). Keep the
   existing accurate "driver comes from the tile" framing.
 
+## Performance (measured 2026-06-11, cluster, 1000 tiles, run `rw2-20260611`)
+
+| op | light | heavy | verdict |
+|---|---|---|---|
+| read | 20.43 s | 8.63 s | light ~2.4× slower (Python→JVM byte transfer is the wall; see reader spec) |
+| **write** | **2.53 s** | 4.12 s | **light ~1.6× faster** |
+
+The **writer is a win for the light tier** — the inverse of the reader. The light
+writer passes whole-file GTiff bytes through **verbatim**; the heavy writer
+re-encodes every tile via `gdal_translate`, so it pays the ~per-tile encode cost
+the light path skips. (Write timing reads the corpus once into a cached DataFrame,
+then times only `.write…save()`, isolating write cost.) Heavy write must use
+`mode("append")` — the GDAL writer is append-only and rejects `overwrite`
+(`UNSUPPORTED_FEATURE` truncate). Writer bench: `bench.readers.run_format_write`,
+wired into the cluster reader cell.
+
 ## Out of scope (this spec)
 
 - Vector readers/writers (`vector_gbx`, `*_ogr`).
