@@ -94,3 +94,19 @@ def test_ext_option_controls_suffix(spark, tmp_path):
     df = spark.read.format("raster_gbx").load(str(src))
     df.write.format("gtiff_gbx").mode("overwrite").option("ext", "tiff").save(str(out_dir))
     assert all(f.endswith(".tiff") for f in os.listdir(out_dir))
+
+
+def test_raster_gbx_catch_all_writer_round_trips(spark, tmp_path):
+    import numpy as np
+    import rasterio
+    src = tmp_path / "in.tif"
+    _write_sample(str(src))
+    out_dir = tmp_path / "out_catchall"
+    spark.dataSource.register(RasterGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(src))
+    df.write.format("raster_gbx").mode("overwrite").save(str(out_dir))
+    written = [f for f in os.listdir(out_dir) if f.endswith(".tif")]
+    assert len(written) == 1
+    with rasterio.open(os.path.join(out_dir, written[0])) as ds:
+        arr = ds.read(1)
+    np.testing.assert_allclose(arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6)

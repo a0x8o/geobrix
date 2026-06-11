@@ -119,3 +119,19 @@ class RasterGbxDataSource(DataSource):
 
     def reader(self, schema: StructType) -> DataSourceReader:
         return RasterGbxReader(self.options)
+
+    def writer(self, schema: StructType, overwrite: bool) -> "DataSourceWriter":  # noqa: F821
+        from pyspark.sql.datasource import DataSourceWriter  # noqa: F401
+        from databricks.labs.gbx.pyrx.ds.writer import RasterGbxWriter
+
+        path = self.options.get("path")
+        if not path:
+            raise ValueError("raster_gbx writer requires an output path (.save(path)).")
+        return RasterGbxWriter(
+            path,
+            schema,
+            overwrite,
+            name_col=self.options.get("nameCol"),
+            ext=self.options.get("ext", "tif"),
+            force_driver=None,
+        )

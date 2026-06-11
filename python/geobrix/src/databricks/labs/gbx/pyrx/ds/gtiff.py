@@ -31,4 +31,11 @@ class GTiffGbxDataSource(RasterGbxDataSource):
         path = self.options.get("path")
         if not path:
             raise ValueError("gtiff_gbx writer requires an output path (.save(path)).")
-        return RasterGbxWriter(path, schema, overwrite)
+        return RasterGbxWriter(
+            path,
+            schema,
+            overwrite,
+            name_col=self.options.get("nameCol"),
+            ext=self.options.get("ext", "tif"),
+            force_driver="GTiff",
+        )
