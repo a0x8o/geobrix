@@ -12,6 +12,18 @@
 
 ---
 
+## Execution status (2026-06-11)
+
+- **T1–T8 — DONE.** Primitives + `raster_gbx`/`gtiff_gbx`/writer/`register` + Serverless guard. TDD, code-reviewed (critical fix: reuse `core.tiling` for split parity instead of a divergent raw-byte model), 21 tests green in `.venv-pyrx`, lint clean. Commits `90192d7`→`3026ec4`, `340a69d`.
+- **T11 — DONE.** `bench/readers.py` (pure-local + spark-path) + `gbx:bench:readers` command + unit test. Commit `0168d96`. (Note: reader bench is its own module/command, not a FnSpec — `category="reader"`, `fn="raster_gbx_read"`.)
+- **T9 — WRITTEN, execution BLOCKED on Docker.** `test_reader_parity.py` committed (`f6d40e6`), marked `integration`, JAR-backed fixture + real SRTM sample. Run once Docker is available.
+- **T10 — BLOCKED on Docker.** Full `ds/` suite + CI-black check in the `geobrix-dev` container.
+- **T12 — BLOCKED on Docker + cluster.** Wheel/JAR staging builds in Docker; needs a running bench cluster (none up). `notebooks/tests/databricks_cluster_config.env` is present.
+
+**Blocker:** Docker Desktop refuses commands ("Sign in enforced by your administrators"). All Docker-routed steps (T9 run, T10, T12 staging) wait on that sign-in.
+
+---
+
 ## Ground-truth facts (verified against Scala source — do not re-derive)
 
 - **Schema:** `source: string` + `tile: struct{cellid: long, raster: binary, metadata: map<string,string>}`. Single source of truth: `python/geobrix/src/databricks/labs/gbx/pyrx/_serde.py::TILE_SCHEMA` (`cellid` LongType non-null, `raster` BinaryType non-null, `metadata` MapType(String,String) nullable). **Always import it — never redeclare.**
