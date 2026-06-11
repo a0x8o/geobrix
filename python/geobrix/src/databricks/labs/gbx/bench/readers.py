@@ -1,0 +1,333 @@
+"""Reader benchmark mode: time the light raster reader (raster_gbx) per-file.
+
+Pure-local path: open each file with rasterio, split into tiles via pyrx
+core tiling, re-encode each tile — measures the end-to-end reader cost on
+the local filesystem without Spark overhead.
+
+Spark-path: register the raster_gbx data source and time
+spark.read.format("raster_gbx").load(path).count() over a corpus directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+from typing import List, Optional
+
+from databricks.labs.gbx.bench.results import ResultRow
+from databricks.labs.gbx.bench.runner import capture_env, peak_rss_mb, time_iters
+
+
+def _read_one_file_light(file_path: str, size_mib: int) -> int:
+    """Open a raster file, compute tiles, return tile count."""
+    import rasterio
+
+    from databricks.labs.gbx.pyrx.core import tiling as core_tiling
+
+    size_bytes = os.path.getsize(file_path)
+    with rasterio.open(file_path) as ds:
+        tiles = core_tiling.make_tiles(ds, size_in_mb=size_mib, size_bytes=size_bytes)
+        return len(tiles)
+
+
+def run_pure_local_reader(
+    files: List[str],
+    run_id: str,
+    warmup: int,
+    measured: int,
+    size_mib: int = 16,
+    where: str = "venv",
+) -> List[ResultRow]:
+    """Time the light raster reader on a list of local file paths.
+
+    One ResultRow is emitted per file. ``iter_median_s`` is the median
+    wall-clock over ``measured`` iterations for that single file.
+    """
+    env = capture_env(where)
+    out: List[ResultRow] = []
+    for file_path in files:
+        try:
+            stats = time_iters(
+                lambda f=file_path: _read_one_file_light(f, size_mib),
+                warmup,
+                measured,
+            )
+            ms = stats["iter_median_ms"]
+            out.append(
+                ResultRow(
+                    run_id=run_id,
+                    api="lightweight",
+                    fn="raster_gbx_read",
+                    category="reader",
+                    mode="pure-core",
+                    tile_px=0,
+                    bands=0,
+                    dtype="",
+                    srid=0,
+                    rows=1,
+                    nodata_frac=0.0,
+                    warmup_iters=stats["warmup_iters"],
+                    measured_iters=stats["measured_iters"],
+                    iter_median_s=ms / 1000.0,
+                    iter_min_s=stats["iter_min_ms"] / 1000.0,
+                    iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                    iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+                    avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+                    throughput_mpix_s=0.0,
+                    throughput_rows_s=(1.0 / (ms / 1000.0)) if ms else 0.0,
+                    peak_rss_mb=peak_rss_mb(),
+                    status="ok",
+                    note=os.path.basename(file_path),
+                    output_fingerprint="",
+                    **env,
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            out.append(
+                ResultRow(
+                    run_id=run_id,
+                    api="lightweight",
+                    fn="raster_gbx_read",
+                    category="reader",
+                    mode="pure-core",
+                    tile_px=0,
+                    bands=0,
+                    dtype="",
+                    srid=0,
+                    rows=1,
+                    nodata_frac=0.0,
+                    warmup_iters=warmup,
+                    measured_iters=0,
+                    iter_median_s=0.0,
+                    iter_min_s=0.0,
+                    iter_p90_s=0.0,
+                    throughput_mpix_s=0.0,
+                    throughput_rows_s=0.0,
+                    peak_rss_mb=0.0,
+                    status="error",
+                    note=str(e)[:300],
+                    output_fingerprint="",
+                    **env,
+                )
+            )
+    return out
+
+
+def run_spark_path_reader(
+    spark,
+    path: str,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    size_mib: int = 16,
+    where: str = "venv",
+) -> List[ResultRow]:
+    """Time the raster_gbx Spark data source over a corpus directory.
+
+    Registers the light DS, then times
+    ``spark.read.format("raster_gbx").option("sizeInMB", ...).load(path).count()``.
+    One ResultRow is emitted covering the whole directory.
+    """
+    from databricks.labs.gbx.pyrx.ds.register import register
+
+    register(spark)
+    env = capture_env(where)
+
+    def _job():
+        return (
+            spark.read.format("raster_gbx")
+            .option("sizeInMB", str(size_mib))
+            .load(path)
+            .count()
+        )
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        # Count the actual row count from one call so we can record it.
+        try:
+            actual_rows = _job()
+        except Exception:  # noqa: BLE001
+            actual_rows = 0
+        out = [
+            ResultRow(
+                run_id=run_id,
+                api="lightweight",
+                fn="raster_gbx_read",
+                category="reader",
+                mode="spark-path",
+                tile_px=0,
+                bands=0,
+                dtype="",
+                srid=0,
+                rows=int(actual_rows),
+                nodata_frac=0.0,
+                warmup_iters=stats["warmup_iters"],
+                measured_iters=stats["measured_iters"],
+                iter_median_s=ms / 1000.0,
+                iter_min_s=stats["iter_min_ms"] / 1000.0,
+                iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+                avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+                per_tile_avg_s=(
+                    (ms / actual_rows / 1000.0) if (ms and actual_rows) else 0.0
+                ),
+                per_tile_avg_ms=(ms / actual_rows) if (ms and actual_rows) else 0.0,
+                throughput_mpix_s=0.0,
+                throughput_rows_s=(
+                    (actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0
+                ),
+                peak_rss_mb=peak_rss_mb(),
+                status="ok",
+                note=os.path.basename(path.rstrip("/\\")),
+                output_fingerprint="",
+                **env,
+            )
+        ]
+    except Exception as e:  # noqa: BLE001
+        out = [
+            ResultRow(
+                run_id=run_id,
+                api="lightweight",
+                fn="raster_gbx_read",
+                category="reader",
+                mode="spark-path",
+                tile_px=0,
+                bands=0,
+                dtype="",
+                srid=0,
+                rows=0,
+                nodata_frac=0.0,
+                warmup_iters=warmup,
+                measured_iters=0,
+                iter_median_s=0.0,
+                iter_min_s=0.0,
+                iter_p90_s=0.0,
+                throughput_mpix_s=0.0,
+                throughput_rows_s=0.0,
+                peak_rss_mb=0.0,
+                status="error",
+                note=str(e)[:300],
+                output_fingerprint="",
+                **env,
+            )
+        ]
+    return out
+
+
+def _list_tifs(corpus_dir: str) -> List[str]:
+    """Return all *.tif / *.tiff paths under corpus_dir."""
+    import glob
+
+    tifs = sorted(glob.glob(os.path.join(corpus_dir, "**", "*.tif"), recursive=True))
+    tifs += sorted(glob.glob(os.path.join(corpus_dir, "**", "*.tiff"), recursive=True))
+    return tifs
+
+
+def _print_summary(rows: List[ResultRow]) -> None:
+    """Print a compact results table to stdout."""
+    if not rows:
+        print("(no results)")
+        return
+    print(
+        f"\n{'file/note':<40} {'mode':<12} {'status':<8} {'median_s':>10} {'rows':>8}"
+    )
+    print("-" * 82)
+    for r in rows:
+        print(
+            f"{r.note:<40} {r.mode:<12} {r.status:<8} "
+            f"{r.iter_median_s:>10.4f} {r.rows:>8}"
+        )
+    ok = [r for r in rows if r.status == "ok"]
+    if ok:
+        import statistics
+
+        med = statistics.median(r.iter_median_s for r in ok)
+        print(f"\nMedian iter_median_s across {len(ok)} file(s): {med:.4f} s")
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    ap = argparse.ArgumentParser(prog="databricks.labs.gbx.bench.readers")
+    ap.add_argument(
+        "--mode",
+        default="pure-local",
+        choices=["pure-local", "spark-path", "both"],
+        help="Benchmark mode (default: pure-local)",
+    )
+    ap.add_argument(
+        "--corpus",
+        required=True,
+        help="Directory containing *.tif files to benchmark",
+    )
+    ap.add_argument("--run-id", default="local", help="Run ID label (default: local)")
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--measured", type=int, default=3, help="Measured iterations (default: 3)"
+    )
+    ap.add_argument(
+        "--size-mib", type=int, default=16, help="Tile size budget in MiB (default: 16)"
+    )
+    ap.add_argument(
+        "--out",
+        default="",
+        help="Output JSONL path (default: print summary only)",
+    )
+    ap.add_argument("--where", default="venv", help="env_where label (default: venv)")
+    a = ap.parse_args(argv)
+
+    rows: List[ResultRow] = []
+
+    if a.mode in ("pure-local", "both"):
+        files = _list_tifs(a.corpus)
+        if not files:
+            print(f"WARNING: no .tif/.tiff files found under {a.corpus}", flush=True)
+        else:
+            print(f"pure-local: {len(files)} file(s)", flush=True)
+            rows += run_pure_local_reader(
+                files=files,
+                run_id=a.run_id,
+                warmup=a.warmup,
+                measured=a.measured,
+                size_mib=a.size_mib,
+                where=a.where,
+            )
+
+    if a.mode in ("spark-path", "both"):
+        import sys
+
+        from pyspark.sql import SparkSession
+
+        os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+        os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+        spark = (
+            SparkSession.builder.master("local[2]")
+            .appName("bench-readers")
+            .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+            .getOrCreate()
+        )
+        print(f"spark-path: corpus={a.corpus}", flush=True)
+        rows += run_spark_path_reader(
+            spark=spark,
+            path=a.corpus,
+            run_id=a.run_id,
+            warmup=a.warmup,
+            measured=a.measured,
+            size_mib=a.size_mib,
+            where=a.where,
+        )
+
+    _print_summary(rows)
+
+    if a.out:
+        from databricks.labs.gbx.bench.results import write_jsonl
+
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        write_jsonl(rows, a.out)
+        print(f"wrote {len(rows)} rows -> {a.out}")
+
+
+if __name__ == "__main__":
+    main()
