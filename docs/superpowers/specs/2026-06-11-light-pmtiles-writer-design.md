@@ -111,10 +111,13 @@ labels carry the tier signal, so the path need not). With:
   `pmtiles` reader or `format('gdal')`" message.
 - **`PMTilesGbxWriter`** (`DataSourceWriter`) — thin: reads options, drives
   `tiles.shard` + `PMTilesBackend` (+ `TileJSONCatalog` when sharded).
-- **Registration:** `gbx.ds.register.register(spark)` registers the light
-  DataSources (initially `pmtiles_gbx`); `pyrx.ds.register` continues to register
-  the raster ones. (Unifying registration + migrating `pyrx/ds/` raster
-  readers/writers under `ds/` is a flagged follow-up, not in this spec.)
+- **Registration:** `gbx.ds.register.register(spark)` registers **all** light
+  Python DataSources. The shipped raster readers/writers (`raster_gbx`,
+  `gtiff_gbx`) are **migrated from `pyrx/ds/` into `gbx/ds/`** as a precursor step
+  (format names unchanged; imports/tests/docs/bench/Serverless-scan updated;
+  `pyrx.ds.register` → `gbx.ds.register`). So `gbx/ds/` becomes the single home for
+  raster, the tiles framework, and PMTiles — and the tier-neutral place future
+  `pyvx`/`pygx`-backed DataSources plug in.
 - **Dependency:** add `pmtiles` to the **`[light]`** extra.
 
 ## Write contract (`pmtiles_gbx`)
@@ -126,24 +129,29 @@ labels carry the tier signal, so the path need not). With:
   - `path` (required) — the `.save()` target.
   - `mode` — `overwrite` (default, clears prior output + scratch); `append`
     rejected (a finalized archive can't be appended to).
-  - `shardZoom` — **unset (default) ⇒ single archive** at `path` (one `.pmtiles`);
-    **set ⇒ sharded**: partition tiles by their parent at `shardZoom`, emit one
-    `<z>_<x>_<y>.pmtiles` per parent under `path/` (a directory) + a catalog. This
-    is the scale/real-world pattern; single-archive is the simple default.
-  - `catalog` — when sharded: `tilejson` (default) | `none`. (Single-archive
-    emits no catalog.)
+  - `shardZoom` — **default `6` ⇒ SHARDED** (the real-world default): partition
+    tiles by their parent at `shardZoom`, emitting one `<z>_<x>_<y>.pmtiles` per
+    *populated* parent under `path/` (a directory) + a catalog. Guidance:
+    `shardZoom ≈ maxZoom − 8` (Z6 suits max-zoom ~14); tune for ~100 MB–2 GB
+    shards. Tiles with `z < shardZoom` (global low-zoom overviews) collect into a
+    single overview shard.
+  - **`shardZoom = 0` ⇒ single archive** — one parent (the whole world) = one
+    `.pmtiles` at `path`, no catalog (the merge/simple case).
+  - `catalog` — `tilejson` (default, sharded) | `none`.
   - `tileType` — default auto-sniff (PNG/JPEG/WebP/MVT; must agree within a shard);
     override available.
   - `tileCompression` — default none/passthrough.
   - `metadata` — JSON string → archive metadata.
-- **Single-archive flow:** the two-phase shard machinery with a single implicit
-  shard — per-partition scratch → driver sorts by tileid → `PMTilesBackend.assemble`
-  → one `.pmtiles`.
-- **Sharded flow:** `write(iterator)` (executor) writes each tile to a scratch
-  shard keyed by `grid.parent(z,x,y,shardZoom)`; `commit(messages)` (driver) groups
-  scratch by parent, assembles one `.pmtiles` per parent (sorted by tileid), then
-  `TileJSONCatalog.write(...)` emits the catalog. `abort` cleans scratch + partials.
-  Shards are **bounded + non-overlapping** (each parent owns a disjoint tile set).
+- **Sharded flow (default):** `write(iterator)` (executor) writes each tile to a
+  scratch shard keyed by `grid.parent(z,x,y,shardZoom)` (low-zoom `z<shardZoom`
+  tiles → the overview shard); `commit(messages)` (driver) merges per-parent
+  scratch fragments, assembles one `.pmtiles` per populated parent (tiles sorted by
+  tileid), then `TileJSONCatalog.write(...)` emits the catalog. Shards are
+  **bounded + non-overlapping** (each parent owns a disjoint tile set). `abort`
+  cleans scratch + partials.
+- **Single-archive (`shardZoom=0`):** the same machinery with one implicit world
+  shard → per-partition scratch → driver sorts by tileid → `PMTilesBackend.assemble`
+  → one `.pmtiles`, no catalog.
 - **Scratch** lives under the output parent (shared Volume), executor-write /
   driver-read; pure-Python `open`/`os` (Serverless-safe; no `_jvm`/`.rdd`).
 - **Parity:** valid archive(s) the `pmtiles` reader (and heavy reader) decode to
@@ -187,11 +195,15 @@ labels carry the tier signal, so the path need not). With:
 - **Bottom-up raster pyramid, global-scaling enforcement, sparse-skip, pixel-buffer
   ↔ xyz integration** (raster-depth phase).
 - **Light vector tier (`pyvx`)** — `st_asmvt` etc. are heavy-only; the light
-  vector→PMTiles path is a separate large effort (ties to the parked DuckDB-vs-
-  pyogrio engine question).
-- **Migrating the shipped `pyrx/ds/` raster readers/writers under `ds/`** and
-  unifying registration — recommended follow-up consolidation, not here.
+  vector→PMTiles path needs `pyvx` (ties to the parked DuckDB-vs-pyogrio engine
+  question). *It's fine to begin `pyvx`/`pygx` as the design needs them* — `gbx/ds/`
+  is deliberately tier-neutral so their backends plug in — but the PMTiles-first
+  phase doesn't require them (it packages pre-made tiles + uses the `quadbin` pip
+  pkg directly).
 - A light PMTiles **reader**, light **MBTiles** writer, Tippecanoe/GeoJSON→PMTiles.
+
+(The `pyrx/ds/` → `gbx/ds/` migration is now **in scope** as a precursor step — see
+Architecture/Registration — not deferred.)
 
 ## Verify-during-impl checklist
 
@@ -210,3 +222,14 @@ labels carry the tier signal, so the path need not). With:
 6. `tileCompression`: who gzips (the `pmtiles` lib vs us); match the header byte to
    the actual bytes (default none/passthrough).
 7. Empty-input + empty-shard behavior (valid empty archive or skip with a note).
+8. **Default `shardZoom=6` + the overview shard**: confirm `shardZoom` is known at
+   `write()` (a fixed default/option, since the global zoom range isn't available
+   pre-write), low-zoom `z<shardZoom` tiles route to one overview shard, and the
+   default is documented as tune-for-your-pyramid (`≈ maxZoom−8`). `shardZoom=0`
+   collapses to a single archive.
+9. **Migration (precursor):** `pyrx/ds/` → `gbx/ds/` moves `raster.py`, `gtiff.py`,
+   `writer.py`, `_write.py`, `_encode.py`, `_listing.py`, `register.py`; update the
+   `pyrx._serde`/`_env`/`core.tiling` imports (those stay in `pyrx`), the doc-test
+   `register` imports + `.mdx` register notes, the bench `cluster.py` reference, the
+   Serverless-scan path list, and the cluster/CI lint — format names unchanged; full
+   `ds/` suite + docs build stay green.
