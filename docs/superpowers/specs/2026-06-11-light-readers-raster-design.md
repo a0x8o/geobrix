@@ -218,12 +218,26 @@ Summary: `…/bench-out/readers-20260611/summary.md`.
    parity-safe (decoded-pixel), and preserves colormaps/masks.
 3. **Re-bench at scale (run `readers-passthru-20260611`):** light 24.13 → **20.33 s**
    (heavy 8.27 s) — only **~16%** faster despite pass-through firing for 99.6% of
-   tiles. **Conclusion: the at-scale bottleneck is the DataSource V2 Python→JVM
-   binary transfer (~12 ms/tile, [[pyrx-udf-boundary-tax]] in reader form), not
-   the re-encode.** The decisive next lever is **Arrow-native batch output from
-   `read()`** (yield `pyarrow.RecordBatch`, not per-row tuples). Pass-through is
-   kept (free CPU win + colormap/mask fidelity) but does not flip the at-scale
-   number alone.
+   tiles. The at-scale bottleneck is the DataSource V2 Python→JVM binary transfer
+   (~12 ms/tile, [[pyrx-udf-boundary-tax]] in reader form), not the re-encode.
+   Pass-through is **kept** (free CPU win + colormap/mask fidelity).
+4. **Arrow batch output — tried and reverted (neutral/negative).** Yielded
+   `pyarrow.RecordBatch` from `read()` instead of tuples, with a
+   `maxFilesPerPartition` knob to grow batches:
+   - `maxFilesPerPartition=16` (run `readers-arrow-20260611`): **28.20 s — worse.**
+     The cluster is 20× `rd-fleet.xlarge` (~80 cores); batching dropped 1000→~63
+     partitions and starved the cores. Parallelism loss > any Arrow gain.
+   - `maxFilesPerPartition=1` (run `readers-arrow1-20260611`): **19.93 s** ≈ the
+     20.33 s tuple path (within run-to-run noise; heavy swung 7.75–8.98 s across
+     runs). Arrow output itself is **neutral**.
+   - **Structural conclusion:** on an ~80-core cluster you can't get large Arrow
+     batches *and* adequate parallelism from 1000 files (good utilization needs
+     ~160–320 partitions → only ~3–6 files/partition → tiny batches). The residual
+     ~2.5× gap is the inherent cost of a Python reader handing ~4 GB of tile bytes
+     across the Python→JVM boundary (heavy stays in-JVM). Arrow was reverted to
+     keep the simpler tuple path. **Best light result: pass-through, ~20 s (~2.5×
+     heavy).** Further wins would need a fundamentally different transfer (e.g. a
+     JVM-side reader), out of scope for the pure-Python tier.
 
 ## Testing (TDD — tests are the contract)
 
