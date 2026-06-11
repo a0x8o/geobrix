@@ -560,9 +560,7 @@ _reader_rows = []
 if LIGHTWEIGHT:
     _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                              api="lightweight", fmt="raster_gbx",
-                             options={"filterRegex": r".*\\.tif$",
-                                      "maxFilesPerPartition": "16"},
-                             where="cluster")
+                             options={"filterRegex": r".*\\.tif$"}, where="cluster")
     _sink([_r]); lw.append(_r); _reader_rows.append(_r)
 if HEAVYWEIGHT:
     _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
