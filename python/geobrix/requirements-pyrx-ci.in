@@ -44,6 +44,9 @@ rio-tiler==9.0.6
 # --- COG output (rst_cog_convert) ---
 rio-cogeo==7.0.2
 
+# --- PMTiles tile-archive output (pmtiles_gbx writer) ---
+pmtiles==3.7.0
+
 # --- discrete global grids: raster->H3/quadbin aggregation ---
 h3==4.4.2
 quadbin==0.2.2

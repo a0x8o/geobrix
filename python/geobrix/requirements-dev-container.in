@@ -44,6 +44,7 @@ rio-tiler==9.0.6
 rio-cogeo==7.0.2
 h3==4.4.2
 quadbin==0.2.2
+pmtiles==3.7.0
 
 # --- contour (scikit-image) + viewshed (xarray-spatial) ---
 scikit-image==0.26.0
