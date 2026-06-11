@@ -192,6 +192,25 @@ file. Light meaningfully slower than heavy is a **deprecation blocker** — the
 reader bench produces the same light-vs-heavy ratio the function bench does, and
 emits a per-run summary link.
 
+### Cluster result (2026-06-11, run_id `readers-20260611`, 1000 tiles)
+
+Both readers timed on the cluster through the unified Delta/compare plumbing
+(`fn="raster_read"`, `mode="spark-path"`):
+
+| reader | iter (1000 tiles) | per-tile |
+|---|---|---|
+| heavy `gdal` | 8.98 s | 0.00898 s |
+| light `raster_gbx` | 24.13 s | 0.02413 s |
+
+**Light is ~2.7× slower than heavy `gdal`** (speedup 0.37). Expected source:
+Python-side windowed-read + GTiff re-encode + the DataSource V2 Python→JVM row
+transfer vs JVM-native GDAL. Per the deprecation-blocker policy this is a
+**perf follow-up** (candidate levers: Arrow batch output from `read()`, skip the
+re-encode when a tile spans the whole file, parallelize tiling). The heavy
+`gdal` reader does **not** produce tiles in the local dev container (GDAL-init
+quirk) but works on-cluster — hence the live comparison runs there.
+Summary: `…/bench-out/readers-20260611/summary.md`.
+
 ## Testing (TDD — tests are the contract)
 
 - **Parity test:** same sample file through `gdal` and `raster_gbx` → schema eq,

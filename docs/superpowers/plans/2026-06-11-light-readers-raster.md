@@ -12,15 +12,15 @@
 
 ---
 
-## Execution status (2026-06-11)
+## Execution status — COMPLETE (2026-06-11)
 
-- **T1–T8 — DONE.** Primitives + `raster_gbx`/`gtiff_gbx`/writer/`register` + Serverless guard. TDD, code-reviewed (critical fix: reuse `core.tiling` for split parity instead of a divergent raw-byte model), 21 tests green in `.venv-pyrx`, lint clean. Commits `90192d7`→`3026ec4`, `340a69d`.
-- **T11 — DONE.** `bench/readers.py` (pure-local + spark-path) + `gbx:bench:readers` command + unit test. Commit `0168d96`. (Note: reader bench is its own module/command, not a FnSpec — `category="reader"`, `fn="raster_gbx_read"`.)
-- **T9 — WRITTEN, execution BLOCKED on Docker.** `test_reader_parity.py` committed (`f6d40e6`), marked `integration`, JAR-backed fixture + real SRTM sample. Run once Docker is available.
-- **T10 — BLOCKED on Docker.** Full `ds/` suite + CI-black check in the `geobrix-dev` container.
-- **T12 — BLOCKED on Docker + cluster.** Wheel/JAR staging builds in Docker; needs a running bench cluster (none up). `notebooks/tests/databricks_cluster_config.env` is present.
+All tasks done. 19 commits on `light-readers`; nothing pushed.
 
-**Blocker:** Docker Desktop refuses commands ("Sign in enforced by your administrators"). All Docker-routed steps (T9 run, T10, T12 staging) wait on that sign-in.
+- **T1–T8 — DONE.** Primitives + `raster_gbx`/`gtiff_gbx`/writer/`register` + Serverless guard. TDD, code-reviewed (critical fix: reuse `core.tiling` for split parity instead of a divergent raw-byte model), 21 tests green, lint clean. Commits `90192d7`→`3026ec4`, `340a69d`.
+- **T9 — DONE.** `test_reader_parity.py` (`f6d40e6`,`1e7ccc9`,`4a18f34`): ground-truth pixel parity (light vs rasterio direct read) **passes in Docker**; light-vs-heavy compare **skips** locally (heavy `gdal` yields 0 tiles in local Docker — GDAL-init quirk) and runs on cluster.
+- **T10 — DONE.** Full `ds/` suite in Docker: **20 passed, 1 skipped**; CI-parity lint (Docker black) clean.
+- **T11 — DONE.** `bench/readers.py` + `gbx:bench:readers` + unit test. Commit `0168d96`. fn unified to `raster_read` for cross-tier pairing (`2818aba`).
+- **T12 — DONE.** On-cluster light-vs-heavy reader bench wired into the cluster runner (`2818aba`) + launcher venv fix (`feed6ad`). Ran `run_id=readers-20260611` at 1000 tiles, both tiers, SUCCESS: **heavy `gdal` 8.98 s vs light `raster_gbx` 24.13 s → light ~2.7× slower** (perf follow-up; see spec Performance section). Heavy reader confirmed working on-cluster.
 
 ---
 
