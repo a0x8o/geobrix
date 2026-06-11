@@ -100,7 +100,7 @@ def test_build_bench_notebook_cells():
     )
     nb = cl.build_bench_notebook(cfg)
     src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
-    assert "geobrix-0.4.0-py3-none-any.whl[pyrx]" in src
+    assert "geobrix-0.4.0-py3-none-any.whl[light]" in src
     assert "restartPython" in src
     assert "HeavyBenchMain" in src and "_jvm" in src
     assert "run_spark_path" in src or "run_pure_core" in src

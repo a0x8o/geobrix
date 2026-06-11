@@ -32,7 +32,7 @@ Options:
 
 NOTE: this submits a job to a real cluster and consumes compute. The operator
 must have provisioned the cluster (init script + bundle + wheel for heavyweight,
-or just the [pyrx] wheel for lightweight/ARM) and filled databricks_cluster_config.env.
+or just the [light] wheel for lightweight/ARM) and filled databricks_cluster_config.env.
 EOF
 }
 

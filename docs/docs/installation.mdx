@@ -24,7 +24,7 @@ The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **
 3. **Install** it — either notebook-scoped with the `%pip` magic (installs across the whole cluster for the notebook session; plain `pip` installs only on the driver), or as a [cluster-scoped library](https://docs.databricks.com/aws/en/libraries/notebooks-python-libraries#manage-libraries-with-pip-commands) pointing at the same Volume path (works on Serverless and Classic):
 
 ```python
-%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[pyrx]'
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[light]'
 ```
 
 Then import and (optionally) register the SQL functions:

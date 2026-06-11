@@ -708,7 +708,7 @@ def build_bench_notebook(cfg: dict) -> dict:
     # (light, heavy) then spark-path (light, heavy).
     cells = [
         # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
-        _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]' markdown"),
+        _cell(f"%pip install --quiet '{cfg['wheel']}[light]' markdown"),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.

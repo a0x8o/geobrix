@@ -195,7 +195,7 @@ GeoBrix raster functions share the **same names** across both execution tiers, s
 Pure Python on [rasterio](https://rasterio.readthedocs.io/) — **no JAR, no init script, no native GDAL bundle**. Runs on serverless, standard (shared) clusters, Lakeflow declarative pipelines, and ARM. Stage the GeoBrix wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install it with the `pyrx` extra — `%pip` (cluster-wide) or as a cluster-scoped library:
 
 ```python
-%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[pyrx]'
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[light]'
 ```
 
 ```python
