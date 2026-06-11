@@ -21,6 +21,16 @@ on-disk format and compression come from `tile.metadata`, not writer options.
 A whole-file GeoTIFF tile is written through verbatim (no re-encode); a tile whose
 `metadata["driver"]` is non-GTiff (e.g. `COG`) is re-encoded via `rasterio`.
 
+:::note Register before writing
+
+Like the lightweight readers, the lightweight writers are **not** auto-registered
+(Python Data Source V2 has no classpath auto-discovery, unlike the JAR-based
+heavyweight writers). Call `register(spark)` first, as shown above. See
+[Lightweight Raster Readers → Register](../readers/raster_gbx#register) for the
+full explanation.
+
+:::
+
 ## Control filenames (`nameCol`)
 
 <CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_WITH_NAMECOL"

@@ -18,6 +18,24 @@ unchanged — swapping tiers is a one-line `format(...)` change.
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="REGISTER"
   source="docs/tests/python/readers/raster_gbx_read_examples.py" />
 
+:::note Lightweight readers and writers are not auto-registered
+
+This is a key difference from the heavyweight tier. The heavyweight readers/writers
+(`gdal`, `gtiff_gdal`, …) are **auto-discovered from the JAR** on the classpath via
+Spark's JVM `DataSourceRegister` service loader, so `spark.read.format("gdal")`
+works with no setup call. The lightweight readers/writers are **Python** Data
+Source V2 sources, and Python has no classpath auto-discovery equivalent — so you
+must register them explicitly with `register(spark)` (above) before using
+`format("raster_gbx")` / `format("gtiff_gbx")` for reads **or** writes.
+
+Importing `databricks.labs.gbx.pyrx.ds` will opportunistically register them if a
+Spark session is already active, but the explicit `register(spark)` call is the
+reliable path, since your session is usually created after imports. (This mirrors
+the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
+`register(spark)`.)
+
+:::
+
 ## Read (catch-all)
 
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_RASTER_GBX"
