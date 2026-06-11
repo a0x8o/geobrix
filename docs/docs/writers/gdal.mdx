@@ -87,6 +87,31 @@ dbutils.fs.mkdirs(OUT_DIR)   # safe on Volumes (parent dirs are ok)
 | `ext` | `"tif"` | Filename suffix appended to each written file. Does **not** change the on-disk format; that is driven by `tile.metadata["driver"]`. |
 | `nameCol` | _unset_ | Name of an existing string column whose value becomes the output filename (without extension). Must be one of the two table columns — in practice, overwrite `source` (see below). When unset, names are `MurmurHash3(tile)_pid_tid`. |
 
+## Output encoding (from tile metadata)
+
+The output **driver, compression, and block layout are read from
+`tile.metadata`**, not from writer options. They are set when the tile is read or
+produced (e.g. via `RST_AsFormat`); the writer honors them on serialization.
+
+| Metadata key | Default | Effect |
+|--------------|---------|--------|
+| `driver` / `format` | `GTiff` | GDAL output driver. |
+| `compression` | `DEFLATE` | `DEFLATE` / `ZSTD` / `LZW` / … creation compression. |
+| `blocksize` | `512` | Tile/block size in pixels (floored to a multiple of 16, clamped to the raster size). |
+| `zlevel` | `6` | DEFLATE level. |
+| `zstd_level` | `9` | ZSTD level. |
+
+<CodeFromTest code={gdalWriteExamples} language="python" functionName="ENCODING_FROM_METADATA"
+  source="docs/tests/python/writers/gdal_examples.py" />
+
+### Named GeoTIFF writer (`gtiff_gdal`)
+
+`gtiff_gdal` is the `gdal` writer with the GeoTIFF driver preset — use it to make
+GeoTIFF output explicit.
+
+<CodeFromTest code={gdalWriteExamples} language="python" functionName="WRITE_GTIFF_GDAL"
+  source="docs/tests/python/writers/gdal_examples.py" />
+
 ## Filename Control
 
 Default filenames look like `946817315_0_0.tif` — collision-resistant within a single write, but with two rough edges:

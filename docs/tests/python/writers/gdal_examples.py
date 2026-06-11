@@ -74,32 +74,43 @@ stacked_df = (
 next_df = spark.read.format("gtiff_gdal").load("{OUTPUT_DIR}")"""
 
 
+# --- Named GeoTIFF writer + encoding metadata --------------------------------
+
+WRITE_GTIFF_GDAL = """# Named GeoTIFF writer (gtiff_gdal = gdal writer with driver preset)
+spark.read.format("gtiff_gdal").load(SAMPLE_RASTER_PATH) \\
+    .write.format("gtiff_gdal").mode("append").option("ext", "tif").save(OUT_DIR)"""
+
+ENCODING_FROM_METADATA = """# Output encoding is read from tile.metadata, not writer options:
+#   format/driver (default GTiff), compression (DEFLATE), blocksize (512),
+#   zlevel (6), zstd_level (9). Set them upstream (e.g. RST_AsFormat), then write."""
+
+
 # --- Test helpers -------------------------------------------------------------
+
 
 def write_gdal(spark, in_path, out_dir):
     """Verify WRITE_GDAL pattern works."""
     (
-        spark.read.format("gdal").load(in_path)
-            .write
-            .format("gdal")
-            .mode("append")
-            .option("ext", "tif")
-            .save(out_dir)
+        spark.read.format("gdal")
+        .load(in_path)
+        .write.format("gdal")
+        .mode("append")
+        .option("ext", "tif")
+        .save(out_dir)
     )
 
 
 def write_with_namecol(spark, in_path, out_dir):
     """Verify WRITE_WITH_NAMECOL pattern works."""
     from pyspark.sql.functions import monotonically_increasing_id, concat, lit
+
     (
-        spark.read.format("gdal").load(in_path)
-            .withColumn("source", concat(lit("tile_"), monotonically_increasing_id()))
-            .write
-            .format("gdal")
-            .mode("append")
-            .option("nameCol", "source")
-            .option("ext", "tif")
-            .save(out_dir)
+        spark.read.format("gdal")
+        .load(in_path)
+        .withColumn("source", concat(lit("tile_"), monotonically_increasing_id()))
+        .write.format("gdal")
+        .mode("append")
+        .option("nameCol", "source")
+        .option("ext", "tif")
+        .save(out_dir)
     )
-
-
