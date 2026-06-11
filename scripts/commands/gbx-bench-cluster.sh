@@ -52,5 +52,12 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 echo "Submitting benchmark job (this runs on a real cluster and costs compute)..."
-python notebooks/tests/push_and_run_bench_on_cluster.py "${PASS_ARGS[@]}"
+# The launcher imports the bench package (-> pyrx -> rasterio) and the
+# databricks SDK, so it must run in the project's .venv-pyrx (which has both),
+# not the ambient python. Fall back to system python only if the venv is absent.
+PYBIN="python"
+if [[ -x "$PROJECT_ROOT/.venv-pyrx/bin/python" ]]; then
+    PYBIN="$PROJECT_ROOT/.venv-pyrx/bin/python"
+fi
+"$PYBIN" notebooks/tests/push_and_run_bench_on_cluster.py "${PASS_ARGS[@]}"
 exit $?
