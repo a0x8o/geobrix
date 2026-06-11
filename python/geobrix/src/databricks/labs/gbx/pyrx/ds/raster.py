@@ -17,7 +17,7 @@ reader; tracked as a follow-up.
 
 from __future__ import annotations
 
-from typing import Dict, Iterator, Sequence, Tuple
+from typing import Dict, Iterator, Sequence
 
 from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
 from pyspark.sql.types import StringType, StructField, StructType
@@ -36,12 +36,94 @@ def reader_schema() -> StructType:
     )
 
 
-class _FilePartition(InputPartition):
-    """One source file = one partition (picklable)."""
+# Max tile rows accumulated per emitted Arrow batch (bounds executor memory;
+# the boundary win comes from amortizing the Python->JVM crossing over many rows).
+_BATCH_ROWS = 64
 
-    def __init__(self, file_path: str, size_mib: int):
-        self.file_path = file_path
+
+class _FilePartition(InputPartition):
+    """A group of source files = one partition (picklable).
+
+    Defaults to one file per partition (max parallelism); ``maxFilesPerPartition``
+    groups several so each ``read()`` can emit larger Arrow batches.
+    """
+
+    def __init__(self, file_paths: Sequence[str], size_mib: int):
+        self.file_paths = list(file_paths)
         self.size_mib = size_mib
+
+
+def _file_tiles(file_path: str, size_mib: int):
+    """Yield (source, cellid, raster_bytes, metadata) tiles for one file.
+
+    Whole-file GTiff -> pass through original bytes; otherwise split + re-encode.
+    """
+    import os
+
+    import rasterio
+
+    from databricks.labs.gbx.pyrx.core import tiling as core_tiling
+
+    size_bytes = os.path.getsize(file_path)
+    with rasterio.open(file_path) as ds:
+        tile_x, tile_y = core_tiling._get_tile_size(
+            ds.width, ds.height, size_bytes, size_mib
+        )
+        if tile_x >= ds.width and tile_y >= ds.height and ds.driver == "GTiff":
+            compression = str(ds.profile.get("compress") or "DEFLATE").upper()
+            cellid, raster_bytes, meta = _encode.passthrough_tile(
+                file_path,
+                ds.width,
+                ds.height,
+                source_path=file_path,
+                all_parents="",
+                compression=compression,
+            )
+            yield (file_path, cellid, raster_bytes, meta)
+            return
+        row_off = 0
+        while row_off < ds.height:
+            win_h = min(tile_y, ds.height - row_off)
+            col_off = 0
+            while col_off < ds.width:
+                win_w = min(tile_x, ds.width - col_off)
+                cellid, raster_bytes, meta = _encode.encode_tile(
+                    ds,
+                    window=(col_off, row_off, win_w, win_h),
+                    source_path=file_path,
+                    all_parents="",
+                )
+                yield (file_path, cellid, raster_bytes, meta)
+                col_off += tile_x
+            row_off += tile_y
+
+
+def _to_record_batch(rows):
+    """Build an Arrow RecordBatch (source, tile<cellid,raster,metadata>) from buffered rows.
+
+    Arrow columnar output avoids the per-row Python-object ser/de of the tuple
+    path on the Python->JVM boundary — the dominant cost at scale for the
+    byte-heavy tile payloads.
+    """
+    import pyarrow as pa
+
+    sources = [r[0] for r in rows]
+    cellids = [r[1] for r in rows]
+    rasters = [r[2] for r in rows]
+    metas = [list(r[3].items()) for r in rows]  # map<string,string> as (k,v) lists
+
+    meta_type = pa.map_(pa.string(), pa.string())
+    tile = pa.StructArray.from_arrays(
+        [
+            pa.array(cellids, pa.int64()),
+            pa.array(rasters, pa.binary()),
+            pa.array(metas, meta_type),
+        ],
+        names=["cellid", "raster", "metadata"],
+    )
+    return pa.RecordBatch.from_arrays(
+        [pa.array(sources, pa.string()), tile], names=["source", "tile"]
+    )
 
 
 class RasterGbxReader(DataSourceReader):
@@ -51,62 +133,32 @@ class RasterGbxReader(DataSourceReader):
             raise ValueError("raster_gbx requires a 'path' (e.g. .load(path)).")
         self.size_mib = int(options.get("sizeInMB", "16"))
         self.filter_regex = options.get("filterRegex", ".*")
+        self.max_files_per_partition = max(
+            1, int(options.get("maxFilesPerPartition", "1"))
+        )
 
     def partitions(self) -> Sequence[InputPartition]:
         files = _listing.list_files(self.path, self.filter_regex)
-        return [_FilePartition(f, self.size_mib) for f in files]
+        step = self.max_files_per_partition
+        return [
+            _FilePartition(files[i : i + step], self.size_mib)
+            for i in range(0, len(files), step)
+        ]
 
-    def read(self, partition: "_FilePartition") -> Iterator[Tuple]:
-        import os
-
-        import rasterio
-
+    def read(self, partition: "_FilePartition") -> Iterator["object"]:
         from databricks.labs.gbx.pyrx import _env
-        from databricks.labs.gbx.pyrx.core import tiling as core_tiling
 
         _env.configure_gdal_env()
 
-        # Heavy keys the BalancedSubdivision split on RasterAccessors.memSize,
-        # which for an on-disk source is the file's encoded byte size. Reuse the
-        # shared, tested split math in core.tiling rather than re-deriving it.
-        size_bytes = os.path.getsize(partition.file_path)
-        with rasterio.open(partition.file_path) as ds:
-            tile_x, tile_y = core_tiling._get_tile_size(
-                ds.width, ds.height, size_bytes, partition.size_mib
-            )
-            # Fast path: when the split is a single tile spanning the whole raster
-            # AND the source is already a GTiff, emit the original file bytes
-            # instead of decoding + re-encoding (the re-encode is ~95% of per-tile
-            # cost). Pixels are identical, so this is parity-safe (decoded-pixel,
-            # not byte). Sub-tiles or non-GTiff sources fall through to encode_tile.
-            if tile_x >= ds.width and tile_y >= ds.height and ds.driver == "GTiff":
-                compression = str(ds.profile.get("compress") or "DEFLATE").upper()
-                cellid, raster_bytes, meta = _encode.passthrough_tile(
-                    partition.file_path,
-                    ds.width,
-                    ds.height,
-                    source_path=partition.file_path,
-                    all_parents="",
-                    compression=compression,
-                )
-                yield (partition.file_path, (cellid, raster_bytes, meta))
-                return
-
-            row_off = 0
-            while row_off < ds.height:
-                win_h = min(tile_y, ds.height - row_off)
-                col_off = 0
-                while col_off < ds.width:
-                    win_w = min(tile_x, ds.width - col_off)
-                    cellid, raster_bytes, meta = _encode.encode_tile(
-                        ds,
-                        window=(col_off, row_off, win_w, win_h),
-                        source_path=partition.file_path,
-                        all_parents="",
-                    )
-                    yield (partition.file_path, (cellid, raster_bytes, meta))
-                    col_off += tile_x
-                row_off += tile_y
+        buf = []
+        for file_path in partition.file_paths:
+            for tile_row in _file_tiles(file_path, partition.size_mib):
+                buf.append(tile_row)
+                if len(buf) >= _BATCH_ROWS:
+                    yield _to_record_batch(buf)
+                    buf = []
+        if buf:
+            yield _to_record_batch(buf)
 
 
 class RasterGbxDataSource(DataSource):
