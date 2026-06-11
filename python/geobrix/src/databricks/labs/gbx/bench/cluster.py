@@ -566,9 +566,26 @@ if HEAVYWEIGHT:
     _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                              api="heavyweight", fmt="gdal", where="cluster")
     _sink([_r]); hw.append(_r); _reader_rows.append(_r)
+# Writer benchmark: light gtiff_gbx vs heavy gtiff_gdal (same raster_gbx-read input)
+import shutil as _sh
+_wsrc = f"{CORPUS}/rows"
+if LIGHTWEIGHT:
+    _wl = "/local_disk0/bench_writer_light"
+    _sh.rmtree(_wl, ignore_errors=True)
+    _wr = _rd.run_format_write(spark, _wsrc, _wl, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               write_api="lightweight", read_fmt="raster_gbx", write_fmt="gtiff_gbx",
+                               options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_wr]); lw.append(_wr); _reader_rows.append(_wr)
+if HEAVYWEIGHT:
+    _wh = "/local_disk0/bench_writer_heavy"
+    _sh.rmtree(_wh, ignore_errors=True)
+    _wr = _rd.run_format_write(spark, _wsrc, _wh, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               write_api="heavyweight", read_fmt="raster_gbx", write_fmt="gtiff_gdal",
+                               options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_wr]); hw.append(_wr); _reader_rows.append(_wr)
 if _reader_rows:
     _df = spark.sql(
-        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'reader'"
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category IN ('reader', 'writer')"
     )
     try:
         display(_df)

@@ -172,8 +172,8 @@ def _expected_rows(
     are known host-side. The heavyweight fn count is decided in Scala (BenchDispatch),
     not visible here, so any run that includes heavy returns None (count shown without a
     denominator) rather than a misleading number."""
-    # Reader rows: 1 per tier that is active (light + heavy = up to 2).
-    reader_rows = (1 if lightweight else 0) + (1 if heavyweight else 0)
+    # Reader + writer rows: 2 per tier that is active (1 read + 1 write; light + heavy = up to 4).
+    reader_rows = 2 * ((1 if lightweight else 0) + (1 if heavyweight else 0))
 
     if readers_only:
         return reader_rows or None
