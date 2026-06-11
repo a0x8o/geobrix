@@ -58,4 +58,6 @@ runs:
       run: |
         cd python/geobrix
         # pyproject sets pythonpath=["src"]; exclude integration (network) tests.
-        pytest test/pyrx -m "not integration" -v
+        # test/ds = lightweight DataSource readers/writer + the tiled-output
+        # framework (raster_gbx/gtiff_gbx/pmtiles_gbx); same light-dep set as pyrx.
+        pytest test/pyrx test/ds -m "not integration" -v
