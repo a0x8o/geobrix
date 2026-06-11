@@ -54,6 +54,7 @@ const sidebars = {
             'readers/overview',
             'readers/gdal',
             'readers/gtiff',
+            'readers/raster_gbx',
             'readers/ogr',
             'readers/shapefile',
             'readers/geojson',

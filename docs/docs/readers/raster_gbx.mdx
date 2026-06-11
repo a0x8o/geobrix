@@ -1,0 +1,46 @@
+---
+sidebar_position: 9
+---
+
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import rasterGbxExamples from '!!raw-loader!../../tests/python/readers/raster_gbx_read_examples.py';
+
+# Lightweight Raster Readers (`raster_gbx` / `gtiff_gbx`)
+
+Pure-Python/PySpark raster readers built on Spark DataSource V2 — the lightweight
+tier's drop-in for the GDAL-backed [`gdal`](./gdal) / [`gtiff_gdal`](./gtiff)
+readers. They require no JAR (powered by `rasterio`) and run on Serverless. Output
+is the same `(source, tile)` schema as the heavy readers, so downstream code is
+unchanged — swapping tiers is a one-line `format(...)` change.
+
+## Register
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="REGISTER"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+## Read (catch-all)
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_RASTER_GBX"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py"
+  testFile="docs/tests/python/readers/test_raster_gbx_read_examples.py"
+  outputConstant="READ_RASTER_GBX_output" />
+
+## Read GeoTIFF (named)
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_GTIFF_GBX"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py"
+  testFile="docs/tests/python/readers/test_raster_gbx_read_examples.py" />
+
+## Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See
+[Choosing an Execution Tier](../api/execution-tiers) for when to use the
+lightweight vs heavyweight readers.
