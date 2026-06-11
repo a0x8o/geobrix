@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from typing import Dict
 
-from pyspark.sql.datasource import DataSourceReader
+from pyspark.sql.datasource import DataSourceReader, DataSourceWriter
 from pyspark.sql.types import StructType
 
 from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource, RasterGbxReader
+from databricks.labs.gbx.pyrx.ds.writer import RasterGbxWriter
 
 
 class GTiffGbxReader(RasterGbxReader):
@@ -24,3 +25,9 @@ class GTiffGbxDataSource(RasterGbxDataSource):
 
     def reader(self, schema: StructType) -> DataSourceReader:
         return GTiffGbxReader(self.options)
+
+    def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
+        path = self.options.get("path")
+        if not path:
+            raise ValueError("gtiff_gbx writer requires an output path (.save(path)).")
+        return RasterGbxWriter(path, schema, overwrite)
