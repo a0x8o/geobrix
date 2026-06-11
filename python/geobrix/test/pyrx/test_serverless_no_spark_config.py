@@ -71,5 +71,11 @@ def test_serverless_scan_includes_ds_modules():
         "register.py",
         "_encode.py",
         "_listing.py",
+        "pmtiles.py",
+        "grid.py",
+        "_header.py",
+        "backend.py",
+        "catalog.py",
+        "shard.py",
     ):
         assert required in files, f"{required} not covered by Serverless scan"
