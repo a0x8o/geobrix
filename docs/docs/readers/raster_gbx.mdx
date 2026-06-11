@@ -30,7 +30,7 @@ must register them explicitly with `register(spark)` (above) before using
 
 Importing `databricks.labs.gbx.pyrx.ds` will opportunistically register them if a
 Spark session is already active, but the explicit `register(spark)` call is the
-reliable path, since your session is usually created after imports. (This mirrors
+reliable path, in case your session is created after imports. (This mirrors
 the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
 `register(spark)`.)
 
