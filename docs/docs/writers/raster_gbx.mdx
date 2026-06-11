@@ -1,0 +1,41 @@
+---
+sidebar_position: 4
+---
+
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import rasterGbxWrite from '!!raw-loader!../../tests/python/writers/raster_gbx_write_examples.py';
+
+# Lightweight Raster Writer (`raster_gbx` / `gtiff_gbx`)
+
+Pure-Python/PySpark raster writer — the lightweight tier's drop-in for the
+GDAL-backed [`gdal`](./gdal) writer. Requires the exact `(source, tile)` schema,
+the same as the heavy writer. Writer options are `path` / `nameCol` / `ext`; the
+on-disk format and compression come from `tile.metadata`, not writer options.
+
+## Write GeoTIFF tiles
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_GTIFF_GBX"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py"
+  testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
+
+A whole-file GeoTIFF tile is written through verbatim (no re-encode); a tile whose
+`metadata["driver"]` is non-GTiff (e.g. `COG`) is re-encoded via `rasterio`.
+
+## Control filenames (`nameCol`)
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_WITH_NAMECOL"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py"
+  testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
+
+## Output format & compression
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="ENCODING_NOTE"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py" />
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `nameCol` | _unset_ | Existing string column whose value is the output filename (overwrite `source`). When unset, an opaque unique name is used. |
+| `ext` | `"tif"` | Filename suffix. Does **not** change the on-disk format. |
+
+The driver / `compression` / `blocksize` / `zlevel` / `zstd_level` are read from
+`tile.metadata` (same as the heavy [`gdal`](./gdal) writer).

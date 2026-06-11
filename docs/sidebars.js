@@ -69,6 +69,7 @@ const sidebars = {
           items: [
             'writers/overview',
             'writers/gdal',
+            'writers/raster_gbx',
             'writers/pmtiles',
           ],
         },

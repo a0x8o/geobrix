@@ -43,26 +43,15 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 </TabItem>
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
-The lightweight tier does not yet ship dedicated `*_pyrx` writers. Today, lightweight raster write workflows use standard `rasterio` round-trips: read tiles from a DataFrame, write each tile's bytes to a file using `rasterio`, and optionally copy the result to a Unity Catalog Volume path.
+The lightweight tier ships a native Python DataSource V2 raster writer — no JAR, no init script.
 
-```python
-import rasterio
-import io
-from pathlib import Path
+### Available Writers
 
-# Example: write tile bytes back to GeoTIFF via rasterio
-for row in df.toLocalIterator():
-    tile_bytes = row.tile.raster
-    with rasterio.open(io.BytesIO(tile_bytes)) as src:
-        profile = src.profile
-        data = src.read()
+| Writer | Format Name | Description |
+|--------|-------------|-------------|
+| [Lightweight Raster Writer](./raster_gbx) | `raster_gbx`, `gtiff_gbx` | Pure-Python raster writer (no JAR; DataSource V2) |
 
-    out_path = Path("/Volumes/catalog/schema/volume/output.tif")
-    with rasterio.open(out_path, "w", **profile) as dst:
-        dst.write(data)
-```
-
-Dedicated `*_pyrx` writers — e.g. `spark.write.format("gtiff_pyrx")` — built on the [PySpark Python Data Source API](https://spark.apache.org/docs/latest/api/python/tutorial/sql/python_data_source.html) (no JAR, no init script) are planned for a future release.
+See the [Lightweight Raster Writer](./raster_gbx) page for full usage, options, and the `nameCol` / `ext` controls.
 
 </TabItem>
 </Tabs>
