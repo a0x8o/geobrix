@@ -2,7 +2,36 @@
 
 **Date:** 2026-06-11
 **Branch:** `light-readers`
-**Status:** Approved (design); ready for implementation plan
+**Status:** Approved (design), revised post-recon; ready for implementation plan
+
+## Revision 2026-06-11 (post-recon) — parity contract corrected
+
+Reading the Scala `gdal` reader directly (`GDAL_Reader.scala:12-45`,
+`RasterSerializationUtil.tileToRow`, `WindowedExtract.scala:108-119`,
+`RasterDriver.writeToBytes`) overturned three assumptions baked into the
+original parity contract below. The contract has been corrected throughout this
+doc; this note records the change for review:
+
+1. **`tile.raster` is NOT raw file bytes — it is a re-encoded GTiff (DEFLATE)
+   tile.** The heavy reader splits each source raster into tiles and writes each
+   tile out via `RasterDriver.writeToBytes`, which coerces to GTiff/DEFLATE
+   regardless of source format. Two independent GDAL stacks (JVM bindings vs
+   rasterio's bundled libgdal) cannot produce byte-identical GTiffs, so
+   **byte-for-byte `tile.raster` equality is infeasible** and is replaced by
+   **decoded pixel-array parity within tolerance** (the model `bench/compare.py`
+   already uses: `REL_TOL`/`ABS_TOL = 1e-3`).
+2. **One input file yields one row PER TILE, not one row per file.** The reader
+   splits via `BalancedSubdivision` (power-of-4 split sized by the `sizeInMB`
+   option, default 16). A sub-16MB raster produces exactly one tile (one row);
+   larger rasters produce N tiles. `cellid` is the literal **`-1L`**, not 0.
+3. **`metadata` is an 11-key map**, not driver/width/height/count:
+   `path, sourcePath, driver, format, last_command, last_error, all_parents,
+   size, compression, isZipped, isSubset`.
+
+Also: reader options are `path` / `sizeInMB` (default `16`) / `filterRegex`
+(default `.*`, recursive **regex** listing — not glob); the heavy reader is
+**fail-fast with no `ignoreCorruptFiles`**, so the previously-proposed
+`ignoreCorruptFiles` option is dropped to match heavy exactly.
 
 ## Summary
 
@@ -69,43 +98,53 @@ catch-all stays clean and generic; named readers add presets only.
 
 ## Parity contract (the swap-out guarantee)
 
-Locked with evidence during implementation, asserted by a dedicated parity test.
+Resolved against the Scala `gdal` reader source (see Revision note); asserted by
+a dedicated parity test.
 
 - **Schema:** identical `StructType` to the Scala reader — `source: string` +
   `tile: struct{cellid: long, raster: binary, metadata: map<string,string>}` —
   sourced from `pyrx._serde.TILE_SCHEMA` (one definition, not a copy).
-- **`tile.raster`:** the **raw original file bytes** (not a re-encode), so every
-  downstream consumer (pyrx core functions, heavy Scala expressions, the writer)
-  opens them identically via `rasterio.MemoryFile` / GDAL. No transcoding, no
-  precision drift.
-- **`cellid`:** matches the Scala reader's default for a freshly-read,
-  un-tessellated tile. **Verify-during-design:** confirm the Scala `GDAL_Reader`
-  literal (expected `0` or a sentinel) and emit the same.
-- **`metadata`:** **key-set parity is enforced.** **Verify-during-design:**
-  extract the exact key set the Scala `GDAL_Reader` populates (driver,
-  width/height, band count, etc.), then map rasterio's `DatasetReader`
-  attributes onto those **same keys**. Values are allowed to differ where
-  GDAL-Java and rasterio legitimately disagree; the light-vs-heavy comparison
-  testing surfaces any value gotchas.
-- **`source`:** the resolved file-path string, matching the Scala reader's
-  convention (absolute vs. as-supplied — verify).
+- **`tile.raster`:** a **re-encoded GTiff (DEFLATE) tile**, matching the heavy
+  reader's `RasterDriver.writeToBytes` behavior (always GTiff on the wire,
+  regardless of source format). Written via `rasterio` to an in-memory GTiff
+  with `compress="deflate"`. **Not byte-identical to heavy** (independent GDAL
+  stacks) — parity is asserted on the **decoded pixel array**, not the bytes.
+- **Row cardinality + `cellid`:** one row **per tile**. The reader splits each
+  source raster into tiles using a port of `BalancedSubdivision`'s power-of-4
+  split sized by `sizeInMB` (default 16): a sub-`sizeInMB` raster → 1 tile/row;
+  larger → N tiles/rows. Every emitted tile carries `cellid = -1` (the heavy
+  literal `-1L`).
+- **`metadata`:** **key-set parity is enforced** over the 11 heavy keys —
+  `path, sourcePath, driver, format, last_command, last_error, all_parents,
+  size, compression, isZipped, isSubset`. Values are allowed to differ where
+  GDAL-Java and rasterio legitimately disagree (e.g. the `path` in-memory URI is
+  implementation-specific; `driver`/`format` = `"GTiff"`, `compression` =
+  `"DEFLATE"`, `isZipped`/`isSubset` = `"false"` are fixed). Light-vs-heavy
+  comparison testing surfaces any value gotchas.
+- **`source`:** the resolved file path string from the recursive listing,
+  matching the heavy reader (`partition.filePath`).
 
 The parity test reads the same sample file through both `gdal` and `raster_gbx`
-and asserts: schema equality, byte-for-byte `tile.raster` equality, and metadata
-**key-set** equality. That test is the operational definition of "1:1 swapout."
+and asserts: schema equality, equal tile/row count, `cellid == -1` on every row,
+metadata **key-set** equality, and **decoded pixel-array equality within
+tolerance** (`REL_TOL`/`ABS_TOL = 1e-3`, decoding both tiers' `tile.raster` with
+rasterio). That test is the operational definition of "1:1 swapout."
 
 ## Distribution model
 
 The swap-viability crux: distribution must hold as well as the heavy reader's.
 
-- **`reader.partitions()` (driver):** expands the input path (glob, recursive
-  dir walk) into a file list, then emits **one `InputPartition` per file** — or,
-  behind a `maxFilesPerPartition` option, small batches — so partition count
-  scales with the corpus and Spark spreads `read()` tasks across executors. This
-  mirrors the Scala reader's one-unit-of-work-per-file parallelism.
-- **`read(partition)` (executor):** a Python task that opens each file with
-  rasterio, extracts metadata, reads raw bytes, and yields rows. Reads are local
-  to the task; cross-file parallelism comes from partitioning.
+- **`reader.partitions()` (driver):** recursively lists files under the input
+  `path` matching `filterRegex` (default `.*`), then emits **one
+  `InputPartition` per file** (carrying the file path + `sizeInMB`), so partition
+  count scales with the corpus and Spark spreads `read()` tasks across executors.
+  This mirrors the Scala reader's one-partition-per-file parallelism
+  (`GDAL_Batch.planInputPartitions`).
+- **`read(partition)` (executor):** a Python task that opens the file with
+  rasterio, splits it into tiles (BalancedSubdivision port), and for each tile
+  windowed-reads + re-encodes a GTiff and yields a row. Reads are local to the
+  task; cross-file parallelism comes from partitioning, tile fan-out happens
+  within the task (same as heavy, where tiling is inside `GDAL_Reader`).
 - Pure Python throughout — no `_jvm` / `sparkContext` / `.rdd` — so it holds on
   Serverless.
 - A **distribution smoke test** asserts partition count tracks file count and
@@ -125,10 +164,10 @@ DSv2 write lifecycle:
 
 - Path expansion failures (no match, unreadable dir) raise at `partitions()` on
   the driver with a clear message — fail fast before launching tasks.
-- Per-file open failures in `read(partition)`: default **fail-fast** (surface
-  the offending path), with an `ignoreCorruptFiles` option mirroring Spark's
-  file-source semantics for opt-in skipping. **Verify-during-design:** match the
-  Scala reader's default.
+- Per-file open failures in `read(partition)`: **fail-fast** (surface the
+  offending path), matching the heavy reader, which propagates the
+  `RasterDriver.read` exception with no `ignoreCorruptFiles` escape hatch. No
+  such option is added (would diverge from heavy).
 - rasterio resource hygiene: every `DatasetReader` / `MemoryFile` opened in a
   `with` block so handles close per-file (the Python analogue of the
   `releaseDataset` try/finally discipline).
@@ -180,10 +219,16 @@ spec).
 - `pygx` grid I/O.
 - These are named only to validate the `*_gbx` naming convention.
 
-## Verify-during-design checklist (resolve before/while implementing)
+## Verify-during-design checklist — RESOLVED (2026-06-11)
 
-1. Scala `GDAL_Reader` `cellid` literal for a freshly-read tile.
-2. Exact `metadata` key set the Scala `GDAL_Reader` populates.
-3. Scala reader's `source` path convention (absolute vs as-supplied).
-4. Scala reader's default behavior on corrupt/unreadable files
-   (fail-fast vs skip) — match it.
+1. **`cellid` literal** → `-1L` (`GDAL_Reader.scala:30`). Emit `-1`.
+2. **`metadata` key set** → the 11 keys listed above
+   (`WindowedExtract.scala:108-119`).
+3. **`source` path convention** → the listed file path, `partition.filePath`
+   (`GDAL_Reader.scala:34`).
+4. **Corrupt-file behavior** → fail-fast, no option (`GDAL_Reader.scala:17`).
+5. **`tile.raster` encoding** → re-encoded GTiff/DEFLATE
+   (`RasterDriver.writeToBytes`), not raw bytes — drove the byte→pixel parity
+   change.
+6. **Tiling** → `BalancedSubdivision.splitRasterIter` power-of-4 split by
+   `sizeInMB` (default 16); port `getTileSize`/split-count for row-count parity.
