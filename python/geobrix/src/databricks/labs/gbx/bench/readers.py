@@ -132,7 +132,7 @@ def run_spark_path_reader(
     ``spark.read.format("raster_gbx").option("sizeInMB", ...).load(path).count()``.
     One ResultRow is emitted covering the whole directory.
     """
-    from databricks.labs.gbx.pyrx.ds.register import register
+    from databricks.labs.gbx.ds.register import register
 
     register(spark)
     env = capture_env(where)
@@ -241,7 +241,7 @@ def run_format_read(
     env = capture_env(where)
 
     if fmt == "raster_gbx":
-        from databricks.labs.gbx.pyrx.ds.register import register
+        from databricks.labs.gbx.ds.register import register
 
         register(spark)
     elif fmt == "gdal":
@@ -360,7 +360,7 @@ def run_format_write(
     env = capture_env(where)
 
     # Register light DS (always needed for raster_gbx reader/writer).
-    from databricks.labs.gbx.pyrx.ds.register import register
+    from databricks.labs.gbx.ds.register import register
 
     register(spark)
 

@@ -184,7 +184,7 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 </TabItem>
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
-The lightweight tier ships native Python DataSource V2 raster readers — no JAR, no init script. Register them once per session via `pyrx.ds.register`, then use like any Spark reader.
+The lightweight tier ships native Python DataSource V2 raster readers — no JAR, no init script. Register them once per session via `gbx.ds.register`, then use like any Spark reader.
 
 ### Available Readers
 

@@ -28,7 +28,7 @@ Source V2 sources, and Python has no classpath auto-discovery equivalent — so 
 must register them explicitly with `register(spark)` (above) before using
 `format("raster_gbx")` / `format("gtiff_gbx")` for reads **or** writes.
 
-Importing `databricks.labs.gbx.pyrx.ds` will opportunistically register them if a
+Importing `databricks.labs.gbx.ds` will opportunistically register them if a
 Spark session is already active, but the explicit `register(spark)` call is the
 reliable path, in case your session is created after imports. (This mirrors
 the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
