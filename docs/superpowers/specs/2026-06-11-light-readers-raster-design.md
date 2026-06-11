@@ -202,14 +202,28 @@ Both readers timed on the cluster through the unified Delta/compare plumbing
 | heavy `gdal` | 8.98 s | 0.00898 s |
 | light `raster_gbx` | 24.13 s | 0.02413 s |
 
-**Light is ~2.7× slower than heavy `gdal`** (speedup 0.37). Expected source:
-Python-side windowed-read + GTiff re-encode + the DataSource V2 Python→JVM row
-transfer vs JVM-native GDAL. Per the deprecation-blocker policy this is a
-**perf follow-up** (candidate levers: Arrow batch output from `read()`, skip the
-re-encode when a tile spans the whole file, parallelize tiling). The heavy
-`gdal` reader does **not** produce tiles in the local dev container (GDAL-init
-quirk) but works on-cluster — hence the live comparison runs there.
+**Light is ~2.7× slower than heavy `gdal`** (speedup 0.37). The heavy `gdal`
+reader does **not** produce tiles in the local dev container (GDAL-init quirk)
+but works on-cluster — hence the live comparison runs there.
 Summary: `…/bench-out/readers-20260611/summary.md`.
+
+#### Optimization investigation (2026-06-11)
+
+1. **Profile (per whole-file tile):** the GTiff/DEFLATE **re-encode is ~95%** of
+   per-tile reader cost (52 ms of 55 ms; native GDAL, not Python). open/decode/
+   transfer are negligible locally; raw file read is 0.7 ms.
+2. **Whole-file pass-through** (committed): when a source splits to a single
+   whole-raster tile and is already GTiff (99.6% of the corpus), emit the
+   original bytes — **~48× faster per tile locally** (1.1 ms vs 55 ms),
+   parity-safe (decoded-pixel), and preserves colormaps/masks.
+3. **Re-bench at scale (run `readers-passthru-20260611`):** light 24.13 → **20.33 s**
+   (heavy 8.27 s) — only **~16%** faster despite pass-through firing for 99.6% of
+   tiles. **Conclusion: the at-scale bottleneck is the DataSource V2 Python→JVM
+   binary transfer (~12 ms/tile, [[pyrx-udf-boundary-tax]] in reader form), not
+   the re-encode.** The decisive next lever is **Arrow-native batch output from
+   `read()`** (yield `pyarrow.RecordBatch`, not per-row tuples). Pass-through is
+   kept (free CPU win + colormap/mask fidelity) but does not flip the at-scale
+   number alone.
 
 ## Testing (TDD — tests are the contract)
 
