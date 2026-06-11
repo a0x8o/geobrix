@@ -415,6 +415,34 @@ def main() -> int:
         else WorkspaceClient(host=host, token=token)
     )
 
+    # Pre-flight: REFUSE to submit a spark-path run the corpus row pool can't fill. The
+    # spark-path draws max(--row-counts) DISTINCT tiles from the pool; a smaller pool would
+    # silently UNDER-FILL (report rows=max while processing fewer tiles -> misleading numbers).
+    # Require pool >= the largest requested row count. (Skipped for --explain-only, which
+    # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool.)
+    if cfg["modes"] in ("spark-path", "both") and not cfg.get("explain_only"):
+        _max_rc = max((int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0)
+        try:
+            _cj = json.loads(
+                w.files.download(f"{corpus}/corpus.json").contents.read().decode("utf-8")
+            )
+            _pool = len(_cj.get("row_pool", {}).get("tiles", []))
+        except Exception as _e:
+            print(
+                f"ERROR: cannot read {corpus}/corpus.json to validate the row pool size: {_e}",
+                file=sys.stderr,
+            )
+            return 2
+        if _max_rc > _pool:
+            print(
+                f"ERROR: spark-path --row-counts max ({_max_rc}) exceeds the corpus row pool "
+                f"({_pool} tiles) at {corpus}. The pool must have >= {_max_rc} tiles or the run "
+                f"under-fills. Generate a larger pool (gbx:bench:gen-data --row-rows {_max_rc}, "
+                f"then stage it) or lower --row-counts. Refusing to submit.",
+                file=sys.stderr,
+            )
+            return 2
+
     # Notebook path: env override or per-user default.
     notebook_path_from_env = (
         _strip_invisible(os.environ.get("GBX_BENCH_RUNNER_NOTEBOOK_PATH") or "").strip()

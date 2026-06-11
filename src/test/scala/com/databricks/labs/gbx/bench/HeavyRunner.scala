@@ -233,6 +233,15 @@ object HeavyRunner {
     // mismatch the light side's real srid -> compared=0.
     val poolSrid = pool.tiles.headOption.map(_.srid).getOrElse(0)
     val maxRows = rowCounts.max
+    // Refuse to run an under-filled iteration: take(maxRows) would silently cap at the pool
+    // size and report rows=maxRows while processing fewer DISTINCT tiles. Require the pool to
+    // hold >= the largest requested row count.
+    require(
+      maxRows <= pool.tiles.length,
+      s"spark-path needs a row pool of >= $maxRows tiles (the largest row-count), but the " +
+        s"corpus pool has only ${pool.tiles.length}. Generate a larger pool or lower " +
+        s"--row-counts. Refusing to run an under-filled iteration."
+    )
     val paths = pool.tiles.take(maxRows).map(t => resolve(corpusRoot, t.path))
     // PARALLELISM: GDAL is safe across concurrent tasks in one JVM because GDALManager.init
     // is synchronized + idempotent (registers once per process), which is why the product

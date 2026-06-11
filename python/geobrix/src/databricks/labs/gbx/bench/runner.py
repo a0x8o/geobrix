@@ -891,6 +891,16 @@ def run_spark_path(
     # via binaryFile distributes the I/O so the bytes never transit the driver as one
     # giant relation, and the harness scales to any row count.
     max_rows = max(row_counts)
+    # Refuse to run an under-filled iteration: `pool.tiles[:max_rows]` would silently cap at
+    # the pool size and report `rows=max_rows` while only that many distinct tiles were
+    # processed -- a misleading measurement. Require pool >= the largest requested row count.
+    if max_rows > len(pool.tiles):
+        raise ValueError(
+            f"spark-path needs a row pool of >= {max_rows} tiles (the largest --row-counts), "
+            f"but the corpus pool has only {len(pool.tiles)}. Generate a larger pool "
+            f"(gbx:bench:gen-data --row-rows {max_rows}) or lower --row-counts. "
+            f"Refusing to run an under-filled iteration."
+        )
     tiles = pool.tiles[:max_rows]
     paths = [str(root / te.path) for te in tiles]
     # cellid keyed by file basename: binaryFile's "path" column is a fully-qualified URI
