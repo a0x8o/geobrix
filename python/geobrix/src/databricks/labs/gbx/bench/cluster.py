@@ -638,18 +638,16 @@ if LIGHTWEIGHT and HEAVYWEIGHT and _pl and _ph:
             with open(_pf, "rb") as _fh:
                 _src = MmapSource(_fh)
                 _rdr = _PMReader(_src)
-                for _z in range(10):
-                    for _entry in _rdr.get_tile(z=_z, x=0, y=0) and [] or []:
-                        pass
-                # Walk all tiles via metadata zoom range.
-                _meta = _rdr.metadata()
-                _zmin = int(_meta.get("minzoom", 0))
-                _zmax = int(_meta.get("maxzoom", 9))
+                # min/max zoom live in the PMTiles header (not metadata); the
+                # Reader tile accessor is .get(z, x, y) (returns None when absent).
+                _hdr = _rdr.header()
+                _zmin = int(_hdr["min_zoom"])
+                _zmax = int(_hdr["max_zoom"])
                 for _z in range(_zmin, _zmax + 1):
                     _side = 2 ** _z
                     for _x in range(_side):
                         for _y in range(_side):
-                            _b = _rdr.get_tile(_z, _x, _y)
+                            _b = _rdr.get(_z, _x, _y)
                             if _b is not None:
                                 tiles[(_z, _x, _y)] = bytes(_b)
         return tiles
