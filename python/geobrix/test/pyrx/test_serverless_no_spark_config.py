@@ -52,3 +52,18 @@ def test_pyrx_never_mutates_spark_config_or_uses_jvm_bridge():
         "pyrx must be Serverless-safe (no Spark config mutation / JVM bridge). "
         "Found:\n  " + "\n  ".join(violations)
     )
+
+
+def test_serverless_scan_includes_ds_subpackage():
+    """The DataSource V2 reader/writer modules must be in scope of the scan."""
+    files = {p.name for p in _pyrx_source_files()}
+    for required in (
+        "raster.py",
+        "gtiff.py",
+        "writer.py",
+        "register.py",
+        "_tiling.py",
+        "_encode.py",
+        "_listing.py",
+    ):
+        assert required in files, f"{required} not covered by Serverless scan"
