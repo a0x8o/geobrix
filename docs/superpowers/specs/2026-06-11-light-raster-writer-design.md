@@ -16,6 +16,13 @@ option (including the tile-metadata-driven encoding settings) is documented.
 Companion to the reader spec `2026-06-11-light-readers-raster-design.md` (same
 `pyrx/ds/` subpackage, same parity philosophy: pixel-level not byte-level).
 
+**Implementation is split into two plans** (this one design covers both):
+1. **Writer plan (first):** the light writer code parity — Architecture, Write
+   contract, and Testing sections below.
+2. **Docs plan (follow-up):** the Documentation section below (light reader+writer
+   pages + heavy `gdal`/`gtiff_gdal` reader+writer option audit), written after the
+   writer lands so the docs/doc-tests exercise the finished writer.
+
 ## Heavy writer contract (verified parity target)
 
 Read directly from the Scala write path (`GDAL_RowWriter`, `GDAL_BatchWrite`,
