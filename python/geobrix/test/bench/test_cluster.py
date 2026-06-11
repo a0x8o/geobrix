@@ -195,8 +195,9 @@ def test_build_bench_notebook_one_cell_per_section_in_order():
     assert (
         'show_section("heavyweight", "spark-path", run_heavy("spark-path"))' in secs[3]
     )
-    # 2 install cells + setup + 4 sections + epilogue
-    assert len(nb["cells"]) == 8
+    # 2 install cells + setup + 4 sections + epilogue + exit (exit is its own cell
+    # so the compare summary render isn't truncated -- see build_bench_notebook)
+    assert len(nb["cells"]) == 9
     src = "\n".join("".join(c["source"]) for c in nb["cells"])
     assert "def show_section(" in src
     assert "dbutils.notebook.exit" in src
