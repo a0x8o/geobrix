@@ -485,6 +485,120 @@ def run_format_write(
         )
 
 
+def run_pmtiles_write(
+    spark,
+    out_path: str,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    n_tiles: int = 1000,
+    shard_zoom: int = 0,
+    write_fmt: str = "pmtiles_gbx",
+    where: str = "venv",
+) -> "ResultRow":
+    """Time a PMTiles write of ``n_tiles`` synthetic PNG tiles.
+
+    ``write_fmt`` is ``'pmtiles_gbx'`` (light) or ``'pmtiles'`` (heavy).
+    Generates distinct (z, x, y) tiles, caches the DataFrame, then times
+    repeated ``write.format(write_fmt)`` calls. Returns a single ResultRow
+    (mode="spark-path", category="writer").
+    """
+    env = capture_env(where)
+
+    if write_fmt == "pmtiles_gbx":
+        from databricks.labs.gbx.ds.register import register
+
+        register(spark)
+
+    # Build n_tiles distinct (z, x, y) synthetic PNG tiles.
+    # z is chosen so that side*side >= n_tiles (no duplicate addresses).
+    png_header = b"\x89PNG\r\n\x1a\n"
+    z = max(1, (max(1, n_tiles) - 1).bit_length() // 2 + 1)
+    # Ensure side^2 covers n_tiles.
+    while (2 ** z) ** 2 < n_tiles:
+        z += 1
+    side = 2 ** z
+    rows_data = []
+    for i in range(n_tiles):
+        x = i % side
+        y = (i // side) % side
+        rows_data.append((z, x, y, bytearray(png_header + i.to_bytes(4, "big"))))
+    df = spark.createDataFrame(
+        rows_data, schema="z int, x int, y int, bytes binary"
+    ).cache()
+    n = int(df.count())
+
+    def _write():
+        writer = df.write.format(write_fmt).mode("overwrite")
+        if write_fmt == "pmtiles_gbx":
+            writer = writer.option("shardZoom", str(shard_zoom))
+        writer.save(out_path)
+
+    try:
+        stats = time_iters(_write, warmup, measured)
+        ms = stats["iter_median_ms"]
+        return ResultRow(
+            run_id=run_id,
+            api="lightweight" if write_fmt == "pmtiles_gbx" else "heavyweight",
+            fn=write_fmt,
+            category="writer",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+            per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"{write_fmt} write of {n} tiles",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api="lightweight" if write_fmt == "pmtiles_gbx" else "heavyweight",
+            fn=write_fmt,
+            category="writer",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[:200],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _list_tifs(corpus_dir: str) -> List[str]:
     """Return all *.tif / *.tiff paths under corpus_dir."""
     import glob

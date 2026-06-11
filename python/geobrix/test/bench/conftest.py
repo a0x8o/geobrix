@@ -1,8 +1,15 @@
 """Shared fixtures for bench tests that require a local Spark session."""
 
 import logging
+import os
+import sys
 
 import pytest
+
+# Ensure PySpark workers use the same Python interpreter as the driver so that
+# local Spark tests don't fail with PYTHON_VERSION_MISMATCH.
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 
 @pytest.fixture(scope="module")
