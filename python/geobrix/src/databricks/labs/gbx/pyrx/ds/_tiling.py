@@ -5,6 +5,7 @@ raster as the heavy reader (row-count parity). Mirrors
 ``BalancedSubdivision.getTileSize`` in
 src/main/scala/.../rasterx/operations/BalancedSubdivision.scala.
 """
+
 from __future__ import annotations
 
 from typing import List, Tuple
@@ -17,7 +18,9 @@ def _mem_size_bytes(width: int, height: int, bands: int, dtype: str) -> int:
     return width * height * bands * int(np.dtype(dtype).itemsize)
 
 
-def _num_splits_k(width: int, height: int, bands: int, dtype: str, size_mib: int) -> int:
+def _num_splits_k(
+    width: int, height: int, bands: int, dtype: str, size_mib: int
+) -> int:
     """Number of quad-split rounds k (nx=ny=2^k, tiles=4^k). Mirrors the Scala while-loop."""
     size_bytes = _mem_size_bytes(width, height, bands, dtype)
     limit = size_mib * 1024 * 1024
@@ -27,7 +30,9 @@ def _num_splits_k(width: int, height: int, bands: int, dtype: str, size_mib: int
     return k
 
 
-def tile_grid(width: int, height: int, bands: int, dtype: str, size_mib: int) -> Tuple[int, int, int, int]:
+def tile_grid(
+    width: int, height: int, bands: int, dtype: str, size_mib: int
+) -> Tuple[int, int, int, int]:
     """Return (nx, ny, tile_x, tile_y): grid divisions and per-tile pixel dims (ceil-div)."""
     k = _num_splits_k(width, height, bands, dtype, size_mib)
     nx = 1 << k
@@ -37,7 +42,9 @@ def tile_grid(width: int, height: int, bands: int, dtype: str, size_mib: int) ->
     return nx, ny, tile_x, tile_y
 
 
-def plan_windows(width: int, height: int, bands: int, dtype: str, size_mib: int) -> List[Tuple[int, int, int, int]]:
+def plan_windows(
+    width: int, height: int, bands: int, dtype: str, size_mib: int
+) -> List[Tuple[int, int, int, int]]:
     """List of (col_off, row_off, win_w, win_h) windows tiling the raster, no gaps/overlap."""
     _nx, _ny, tile_x, tile_y = tile_grid(width, height, bands, dtype, size_mib)
     windows: List[Tuple[int, int, int, int]] = []

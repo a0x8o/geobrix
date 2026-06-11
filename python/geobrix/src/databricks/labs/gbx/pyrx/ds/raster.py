@@ -4,12 +4,13 @@
 into BalancedSubdivision tiles, re-encodes each tile as GTiff, emits
 (source, tile) rows matching pyrx._serde.TILE_SCHEMA. Pure Python (Serverless).
 """
+
 from __future__ import annotations
 
 from typing import Dict, Iterator, Sequence, Tuple
 
 from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
-from pyspark.sql.types import StructField, StructType, StringType
+from pyspark.sql.types import StringType, StructField, StructType
 
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx.ds import _encode, _listing, _tiling
@@ -17,10 +18,12 @@ from databricks.labs.gbx.pyrx.ds import _encode, _listing, _tiling
 
 def reader_schema() -> StructType:
     """(source, tile) — tile from the single-source TILE_SCHEMA."""
-    return StructType([
-        StructField("source", StringType(), nullable=False),
-        StructField("tile", _serde.TILE_SCHEMA, nullable=False),
-    ])
+    return StructType(
+        [
+            StructField("source", StringType(), nullable=False),
+            StructField("tile", _serde.TILE_SCHEMA, nullable=False),
+        ]
+    )
 
 
 class _FilePartition(InputPartition):
@@ -47,16 +50,23 @@ class RasterGbxReader(DataSourceReader):
         import rasterio
 
         from databricks.labs.gbx.pyrx import _env
+
         _env.configure_gdal_env()
 
         with rasterio.open(partition.file_path) as ds:
             windows = _tiling.plan_windows(
-                width=ds.width, height=ds.height, bands=ds.count,
-                dtype=ds.dtypes[0], size_mib=partition.size_mib,
+                width=ds.width,
+                height=ds.height,
+                bands=ds.count,
+                dtype=ds.dtypes[0],
+                size_mib=partition.size_mib,
             )
             for win in windows:
                 cellid, raster_bytes, meta = _encode.encode_tile(
-                    ds, window=win, source_path=partition.file_path, all_parents="",
+                    ds,
+                    window=win,
+                    source_path=partition.file_path,
+                    all_parents="",
                 )
                 yield (partition.file_path, (cellid, raster_bytes, meta))
 

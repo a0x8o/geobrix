@@ -1,12 +1,22 @@
 """Unit tests for windowed GTiff re-encode + metadata."""
+
 import numpy as np
 from rasterio.io import MemoryFile
 
 from databricks.labs.gbx.pyrx.ds import _encode
 
 EXPECTED_METADATA_KEYS = {
-    "path", "sourcePath", "driver", "format", "last_command", "last_error",
-    "all_parents", "size", "compression", "isZipped", "isSubset",
+    "path",
+    "sourcePath",
+    "driver",
+    "format",
+    "last_command",
+    "last_error",
+    "all_parents",
+    "size",
+    "compression",
+    "isZipped",
+    "isSubset",
 }
 
 

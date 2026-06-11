@@ -3,6 +3,7 @@
 Local-filesystem only — fits FUSE-mounted UC Volumes (/Volumes/...). Returns
 sorted absolute paths so partition ordering is deterministic.
 """
+
 from __future__ import annotations
 
 import os

@@ -1,6 +1,7 @@
 """gtiff_gbx — named GeoTIFF reader. Light analogue of Scala GTiff_DataSource:
 extends the catch-all and presets driver="GTiff" (the dsExtraMap mirror).
 """
+
 from __future__ import annotations
 
 from typing import Dict

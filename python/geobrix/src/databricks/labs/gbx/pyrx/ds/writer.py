@@ -3,6 +3,7 @@
 Enforces the exact (source, tile) schema like the heavy GDAL writer, writes each
 row's tile.raster GTiff bytes to a file under the output path. Pure Python.
 """
+
 from __future__ import annotations
 
 import os

@@ -1,4 +1,5 @@
 """Round-trip: raster_gbx read -> gtiff_gbx write -> re-read; + strict schema."""
+
 import os
 
 import numpy as np
@@ -11,8 +12,15 @@ from databricks.labs.gbx.pyrx.ds.raster import RasterGbxDataSource
 
 def _write_sample(path):
     data = np.arange(12, dtype="float32").reshape(3, 4)
-    profile = dict(driver="GTiff", width=4, height=3, count=1, dtype="float32",
-                   crs="EPSG:4326", transform=from_origin(10.0, 50.0, 0.5, 0.5))
+    profile = dict(
+        driver="GTiff",
+        width=4,
+        height=3,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 50.0, 0.5, 0.5),
+    )
     with rasterio.open(path, "w", **profile) as ds:
         ds.write(data, 1)
 
@@ -31,12 +39,15 @@ def test_round_trip(spark, tmp_path):
     assert len(written) == 1
     with rasterio.open(os.path.join(out_dir, written[0])) as ds:
         arr = ds.read(1)
-    np.testing.assert_allclose(arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6)
+    np.testing.assert_allclose(
+        arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6
+    )
 
 
 def test_strict_schema_rejects_extra_columns(spark, tmp_path):
     import pytest
     from pyspark.sql import functions as F
+
     src = tmp_path / "in.tif"
     _write_sample(str(src))
     spark.dataSource.register(RasterGbxDataSource)

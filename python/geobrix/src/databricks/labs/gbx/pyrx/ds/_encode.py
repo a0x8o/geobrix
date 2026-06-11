@@ -3,6 +3,7 @@
 Mirrors RasterDriver.writeToBytes (always GTiff/DEFLATE on the wire) and
 WindowedExtract metadata. tile.raster is NOT raw source bytes.
 """
+
 from __future__ import annotations
 
 from typing import Dict, Tuple

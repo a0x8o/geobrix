@@ -1,4 +1,5 @@
 """Unit tests for recursive path listing with regex filter."""
+
 import os
 
 import pytest

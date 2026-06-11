@@ -4,6 +4,7 @@ Mirrors pyrx.functions.register: call once, consciously. The format strings
 raster_gbx / gtiff_gbx do not collide with the Scala-registered gdal /
 gtiff_gdal, so both tiers coexist.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import SparkSession
