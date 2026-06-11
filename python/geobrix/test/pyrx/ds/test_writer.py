@@ -160,13 +160,19 @@ def test_metadata_driver_cog_triggers_reencode(spark, tmp_path):
     out_dir = tmp_path / "out_cog"
     spark.dataSource.register(RasterGbxDataSource)
     df = spark.read.format("raster_gbx").load(str(src))
+    # Replace metadata with a clean map whose driver=COG (map_concat with the
+    # existing metadata would duplicate the 'driver' key -> Spark rejects it).
     df2 = df.withColumn(
         "tile",
         F.col("tile").withField(
             "metadata",
-            F.map_concat(
-                F.col("tile.metadata"),
-                F.create_map(F.lit("driver"), F.lit("COG")),
+            F.create_map(
+                F.lit("driver"),
+                F.lit("COG"),
+                F.lit("format"),
+                F.lit("COG"),
+                F.lit("compression"),
+                F.lit("DEFLATE"),
             ),
         ),
     )
