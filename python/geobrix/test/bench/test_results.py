@@ -1,3 +1,6 @@
+import dataclasses
+import json
+
 from databricks.labs.gbx.bench import results as r
 
 
@@ -204,3 +207,77 @@ def test_summarize_pool_warns_when_smaller_than_rows():
     ]
     md = r.summarize(rows, pool_size=500)
     assert "⚠" in md or "< rows" in md
+
+
+# --- _normalize_row: heavyweight (Scala BenchRow) ms->s deserialization ---
+
+
+def test_normalize_row_converts_all_ms_fields_to_seconds():
+    out = r._normalize_row(
+        {
+            "median_ms": 1234.0,
+            "min_ms": 1000.0,
+            "p90_ms": 1900.0,
+            "total_wall_clock_ms": 6170.0,
+            "avg_wall_clock_ms": 1234.0,
+        }
+    )
+    assert out["iter_median_s"] == 1.234
+    assert out["iter_min_s"] == 1.0
+    assert out["iter_p90_s"] == 1.9
+    assert out["iter_total_wall_clock_s"] == 6.17
+    assert out["avg_wall_clock_s"] == 1.234
+    # the ms-suffixed keys are consumed, not carried through
+    assert not any(k.endswith("_ms") for k in out)
+
+
+def test_normalize_row_none_ms_becomes_zero():
+    # a null timing (e.g. an errored heavyweight row) maps to 0.0, not None.
+    assert r._normalize_row({"median_ms": None})["iter_median_s"] == 0.0
+
+
+def test_normalize_row_does_not_clobber_existing_seconds():
+    # setdefault: if the canonical seconds field is already present, the ms
+    # value must not overwrite it (and the ms key is still dropped).
+    out = r._normalize_row({"median_ms": 9999.0, "iter_median_s": 2.5})
+    assert out["iter_median_s"] == 2.5
+    assert "median_ms" not in out
+
+
+def test_normalize_row_drops_unknown_keys():
+    # forward-compat: columns ResultRow doesn't declare are dropped.
+    out = r._normalize_row({"iter_median_s": 1.0, "some_future_col": "x"})
+    assert out == {"iter_median_s": 1.0}
+
+
+def test_read_jsonl_normalizes_heavyweight_ms_shard(tmp_path):
+    # A heavyweight shard carries seconds as ms-suffixed fields plus columns
+    # ResultRow doesn't declare; read_jsonl must yield a valid seconds ResultRow.
+    base = dataclasses.asdict(_row(api="heavyweight"))
+    ms_only = {
+        k: v
+        for k, v in base.items()
+        if k
+        not in (
+            "iter_median_s",
+            "iter_min_s",
+            "iter_p90_s",
+            "iter_total_wall_clock_s",
+            "avg_wall_clock_s",
+        )
+    }
+    ms_only.update(
+        median_ms=2500.0,
+        min_ms=2000.0,
+        p90_ms=3000.0,
+        total_wall_clock_ms=12500.0,
+        avg_wall_clock_ms=2500.0,
+        some_future_col="ignored",
+    )
+    p = tmp_path / "heavyweight.jsonl"
+    p.write_text(json.dumps(ms_only) + "\n")
+    (row,) = r.read_jsonl(p)
+    assert isinstance(row, r.ResultRow)
+    assert row.iter_median_s == 2.5
+    assert row.iter_min_s == 2.0
+    assert row.avg_wall_clock_s == 2.5
