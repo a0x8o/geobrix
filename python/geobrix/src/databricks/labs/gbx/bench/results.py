@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List
 
@@ -67,13 +67,43 @@ def write_jsonl(rows: List[ResultRow], path) -> None:
             fh.write(json.dumps(asdict(row)) + "\n")
 
 
+# Scala BenchRow (heavyweight shard) serializes millisecond-based field names that
+# don't match the canonical seconds-based ResultRow. Map ms -> s on read so the
+# heavyweight shard loads into the same dataclass as the lightweight shard.
+_MS_TO_S_FIELDS = {
+    "median_ms": "iter_median_s",
+    "min_ms": "iter_min_s",
+    "p90_ms": "iter_p90_s",
+    "total_wall_clock_ms": "iter_total_wall_clock_s",
+    "avg_wall_clock_ms": "avg_wall_clock_s",
+}
+
+# ResultRow field names (set once for cheap membership checks on read).
+_RESULTROW_FIELDS = {f.name for f in fields(ResultRow)}
+
+
+def _normalize_row(d: dict) -> dict:
+    """Coerce a raw JSONL record into ResultRow kwargs.
+
+    Heavyweight (Scala BenchRow) rows carry ms-suffixed timing fields; convert
+    those to the canonical seconds fields. Then drop any keys ResultRow does not
+    declare (forward-compat with extra columns either writer may add).
+    """
+    if any(k in d for k in _MS_TO_S_FIELDS):
+        for ms_key, s_key in _MS_TO_S_FIELDS.items():
+            if ms_key in d:
+                val = d.pop(ms_key)
+                d.setdefault(s_key, (val / 1000.0) if val is not None else 0.0)
+    return {k: v for k, v in d.items() if k in _RESULTROW_FIELDS}
+
+
 def read_jsonl(path) -> List[ResultRow]:
     out = []
     with Path(path).open() as fh:
         for line in fh:
             line = line.strip()
             if line:
-                out.append(ResultRow(**json.loads(line)))
+                out.append(ResultRow(**_normalize_row(json.loads(line))))
     return out
 
 
