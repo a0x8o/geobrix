@@ -4,9 +4,9 @@ import tempfile
 from pmtiles.reader import MmapSource, Reader
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
 
-from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
 from databricks.labs.gbx.ds.tiles._header import build_header_info
 from databricks.labs.gbx.ds.tiles.backend import PMTilesBackend
+from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
 
 PNG = b"\x89PNG\r\n\x1a\n"
 

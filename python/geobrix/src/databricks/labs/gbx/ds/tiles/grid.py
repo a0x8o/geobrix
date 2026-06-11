@@ -27,7 +27,7 @@ class SlippyGrid:
     """Web-mercator slippy-map (XYZ) grid."""
 
     def tile_bbox(self, z: int, x: int, y: int) -> BBox:
-        n = 2 ** z
+        n = 2**z
         minlon = x / n * 360.0 - 180.0
         maxlon = (x + 1) / n * 360.0 - 180.0
         lat_top = self._lat(y, n)
@@ -45,7 +45,7 @@ class SlippyGrid:
 
     def tiles_for_bbox(self, bbox: BBox, zoom: int) -> Iterable[TileKey]:
         minlon, minlat, maxlon, maxlat = bbox
-        n = 2 ** zoom
+        n = 2**zoom
         x0 = int((minlon + 180.0) / 360.0 * n)
         x1 = int((maxlon + 180.0) / 360.0 * n)
         y0 = self._lat_to_y(maxlat, n)

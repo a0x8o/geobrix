@@ -95,7 +95,7 @@ def test_light_vs_heavy_single_archive(spark_with_jar, tmp_path):
     assert light, "light produced no tiles"
     assert heavy, "heavy produced no tiles"
     assert set(light.keys()) == set(heavy.keys()), (
-        f"tile-key mismatch: light-only={set(light)-set(heavy)}, "
-        f"heavy-only={set(heavy)-set(light)}"
+        f"tile-key mismatch: light-only={set(light) - set(heavy)}, "
+        f"heavy-only={set(heavy) - set(light)}"
     )
     assert light == heavy, "decoded tile bytes differ between light and heavy"

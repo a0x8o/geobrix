@@ -68,9 +68,7 @@ def test_adaptive_subdivides_dense_cells():
         _bin, idx = _write_scratch(d, rows)
         entries = read_entries(idx, d)
         # target 2 per shard -> base z6 cell (4 tiles) must subdivide
-        groups = assign_shards(
-            entries, shard_zoom=6, grid=g, target_tiles_per_shard=2
-        )
+        groups = assign_shards(entries, shard_zoom=6, grid=g, target_tiles_per_shard=2)
         assert all(len(v) <= 2 for v in groups.values())
         # variable zoom: at least one shard deeper than 6
         assert any(k[0] > 6 for k in groups)

@@ -1,10 +1,7 @@
-from pmtiles.tile import TileType, Compression
+from pmtiles.tile import Compression, TileType
 
+from databricks.labs.gbx.ds.tiles._header import build_header_info, sniff_tile_type
 from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
-from databricks.labs.gbx.ds.tiles._header import (
-    sniff_tile_type,
-    build_header_info,
-)
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 8
@@ -22,9 +19,7 @@ def test_sniff_known_types():
 def test_build_header_info_zoom_and_bbox():
     g = SlippyGrid()
     tiles = [(6, 32, 21), (6, 33, 21), (7, 64, 42)]
-    info = build_header_info(
-        tiles, g, TileType.PNG, Compression.NONE, {"name": "demo"}
-    )
+    info = build_header_info(tiles, g, TileType.PNG, Compression.NONE, {"name": "demo"})
     assert info.min_zoom == 6
     assert info.max_zoom == 7
     minlon, minlat, maxlon, maxlat = info.bbox

@@ -12,19 +12,14 @@ from typing import Dict, Iterator, List, Optional
 
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pyspark.sql.datasource import DataSource, DataSourceWriter, WriterCommitMessage
-from pyspark.sql.types import (
-    BinaryType,
-    IntegerType,
-    StructField,
-    StructType,
-)
+from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
 from databricks.labs.gbx.ds.tiles import shard as _shard
 from databricks.labs.gbx.ds.tiles._header import build_header_info, sniff_tile_type
 from databricks.labs.gbx.ds.tiles.backend import PMTilesBackend
 from databricks.labs.gbx.ds.tiles.catalog import (
-    STACManifestCatalog,
     ShardInfo,
+    STACManifestCatalog,
     TileJSONCatalog,
 )
 from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
@@ -82,7 +77,9 @@ class PMTilesGbxDataSource(DataSource):
         assert_input_schema(schema)
         path = self.options.get("path")
         if not path:
-            raise ValueError("pmtiles_gbx writer requires an output path (.save(path)).")
+            raise ValueError(
+                "pmtiles_gbx writer requires an output path (.save(path))."
+            )
         return PMTilesGbxWriter(path, dict(self.options), overwrite)
 
 
@@ -101,15 +98,15 @@ class PMTilesGbxWriter(DataSourceWriter):
             raise ValueError(f"unknown catalog {self.catalog_kind!r}")
         tt = opts.get("tiletype")
         self.tile_type_override = _TILETYPE[tt.lower()] if tt else None
-        self.tile_compression = _COMPRESSION[opts.get("tilecompression", "none").lower()]
+        self.tile_compression = _COMPRESSION[
+            opts.get("tilecompression", "none").lower()
+        ]
         self.metadata = json.loads(opts["metadata"]) if opts.get("metadata") else {}
         self.grid = SlippyGrid()
         # For single-archive mode path is a .pmtiles file; scratch must live
         # beside it (in parent dir), not inside it.
         _scratch_base = (
-            os.path.dirname(self.path) or "."
-            if self.shard_zoom == 0
-            else self.path
+            os.path.dirname(self.path) or "." if self.shard_zoom == 0 else self.path
         )
         self.scratch_dir = os.path.join(_scratch_base, "_scratch")
 
@@ -174,7 +171,11 @@ class PMTilesGbxWriter(DataSourceWriter):
         tiles = [(e.z, e.x, e.y) for e in entries]
         sample = next(iter(_shard.stream_sorted(entries[:1])))[1]
         info = build_header_info(
-            tiles, self.grid, self._tile_type(sample), self.tile_compression, self.metadata
+            tiles,
+            self.grid,
+            self._tile_type(sample),
+            self.tile_compression,
+            self.metadata,
         )
         PMTilesBackend().assemble(_shard.stream_sorted(entries), info, tmp_path)
         # Remove the directory Spark created, then put the file in its place.
@@ -195,7 +196,10 @@ class PMTilesGbxWriter(DataSourceWriter):
             sample = next(iter(_shard.stream_sorted(group[:1])))[1]
             tiles = [(e.z, e.x, e.y) for e in group]
             info = build_header_info(
-                tiles, self.grid, self._tile_type(sample), self.tile_compression,
+                tiles,
+                self.grid,
+                self._tile_type(sample),
+                self.tile_compression,
                 self.metadata,
             )
             if key == _shard.OVERVIEW:
@@ -206,9 +210,7 @@ class PMTilesGbxWriter(DataSourceWriter):
             out_path = os.path.join(tileset, rel)
             os.makedirs(os.path.dirname(out_path), exist_ok=True)
             PMTilesBackend().assemble(_shard.stream_sorted(group), info, out_path)
-            shard_infos.append(
-                ShardInfo(rel, info.min_zoom, info.max_zoom, info.bbox)
-            )
+            shard_infos.append(ShardInfo(rel, info.min_zoom, info.max_zoom, info.bbox))
         if self.catalog_kind != "none":
             _CATALOGS[self.catalog_kind]().write(shard_infos, tileset)
 

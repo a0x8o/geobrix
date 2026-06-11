@@ -2,8 +2,6 @@
 
 import os
 
-import pytest
-
 from databricks.labs.gbx.bench.readers import run_pmtiles_write
 
 

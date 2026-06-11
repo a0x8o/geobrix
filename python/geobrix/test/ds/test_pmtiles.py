@@ -46,9 +46,10 @@ def test_sharded_with_overview_and_catalog(spark, tmp_path):
     catalog = json.load(open(os.path.join(tileset, "catalog.json")))
     assert catalog["type"] == "FeatureCollection"
     # body tile reads back from its shard
-    assert _read_tile(
-        os.path.join(tileset, "6", "32", "21.pmtiles"), 6, 32, 21
-    ) is not None
+    assert (
+        _read_tile(os.path.join(tileset, "6", "32", "21.pmtiles"), 6, 32, 21)
+        is not None
+    )
     # overview tile reads back from overview archive
     assert _read_tile(os.path.join(tileset, "overview.pmtiles"), 3, 4, 2) is not None
     # scratch cleaned up
@@ -77,7 +78,9 @@ def test_adaptive_sharding_option(spark, tmp_path):
                 z = rel.split(os.sep)[0]
                 if z.isdigit():
                     deep.append(int(z))
-    assert any(z > 6 for z in deep), f"expected a shard deeper than z6; got zooms {deep}"
+    assert any(
+        z > 6 for z in deep
+    ), f"expected a shard deeper than z6; got zooms {deep}"
 
 
 def test_append_mode_rejected(spark, tmp_path):
@@ -88,6 +91,4 @@ def test_append_mode_rejected(spark, tmp_path):
     import pytest
 
     with pytest.raises(Exception):
-        _rows(spark, [(6, 32, 21)]).write.format("pmtiles_gbx").mode("append").save(
-            out
-        )
+        _rows(spark, [(6, 32, 21)]).write.format("pmtiles_gbx").mode("append").save(out)

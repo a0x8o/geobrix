@@ -516,9 +516,9 @@ def run_pmtiles_write(
     png_header = b"\x89PNG\r\n\x1a\n"
     z = max(1, (max(1, n_tiles) - 1).bit_length() // 2 + 1)
     # Ensure side^2 covers n_tiles.
-    while (2 ** z) ** 2 < n_tiles:
+    while (2**z) ** 2 < n_tiles:
         z += 1
-    side = 2 ** z
+    side = 2**z
     rows_data = []
     for i in range(n_tiles):
         x = i % side

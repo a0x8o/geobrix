@@ -22,8 +22,8 @@ from typing import Dict, Iterator, Sequence, Tuple
 from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
 from pyspark.sql.types import StringType, StructField, StructType
 
-from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.ds import _encode, _listing
+from databricks.labs.gbx.pyrx import _serde
 
 
 def reader_schema() -> StructType:
