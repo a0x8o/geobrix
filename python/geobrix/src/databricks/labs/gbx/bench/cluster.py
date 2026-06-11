@@ -581,6 +581,7 @@ if HEAVYWEIGHT:
     _sh.rmtree(_wh, ignore_errors=True)
     _wr = _rd.run_format_write(spark, _wsrc, _wh, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                                write_api="heavyweight", read_fmt="raster_gbx", write_fmt="gtiff_gdal",
+                               mode="append",  # heavy gdal writer is append-only (overwrite -> truncate error)
                                options={"filterRegex": r".*\\.tif$"}, where="cluster")
     _sink([_wr]); hw.append(_wr); _reader_rows.append(_wr)
 if _reader_rows:

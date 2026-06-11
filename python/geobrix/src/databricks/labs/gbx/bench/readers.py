@@ -343,10 +343,15 @@ def run_format_write(
     write_api: str,
     read_fmt: str = "raster_gbx",
     write_fmt: str = "gtiff_gbx",
+    mode: str = "overwrite",
     options: Optional[Dict[str, str]] = None,
     where: str = "venv",
 ) -> "ResultRow":
     """Time spark.write.format(write_fmt).save(out_path) on a pre-read input DataFrame.
+
+    ``mode`` is the Spark write mode: the light gtiff_gbx writer supports
+    "overwrite"; the heavy gtiff_gdal writer is append-only ("overwrite" raises
+    UNSUPPORTED_FEATURE truncate), so pass mode="append" for it.
 
     Reads the input directory once via ``read_fmt`` (same reader for both tiers so
     write cost is isolated), caches it, then times repeated ``write.format(write_fmt)``
@@ -410,7 +415,7 @@ def run_format_write(
         )
 
     def _job():
-        w = df.write.format(write_fmt).mode("overwrite")
+        w = df.write.format(write_fmt).mode(mode)
         if options:
             for k, v in options.items():
                 w = w.option(k, str(v))
