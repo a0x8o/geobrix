@@ -86,8 +86,11 @@ Scala `rasterx/ds/` tree:
 - **`writer.py`** — `RasterGbxWriter`, the DSv2 write path; enforces the exact
   `(source, tile)` schema like the GDAL writer. Write format: `gtiff_gbx`.
 - **`register.py`** — `register(spark)` that calls `spark.dataSource.register(...)`
-  for each source, mirroring `functions.register`. Attempted opportunistically
-  on `pyrx` import, guarded for Serverless / no-active-session.
+  for each source, mirroring `functions.register` (the explicit, documented entry
+  point — call surface `pyrx.ds.register.register(spark)`). Also attempted
+  opportunistically on `pyrx.ds` import, guarded for no-active-session. (Not on
+  bare `pyrx` import — `pyrx/__init__` does not import `ds`, to avoid a circular
+  import during package init.)
 
 ### Named-reader pattern (`dsExtraMap` mirror)
 
@@ -218,6 +221,18 @@ spec).
   `file_gdb_gbx`) via pyogrio — own spec.
 - `pygx` grid I/O.
 - These are named only to validate the `*_gbx` naming convention.
+
+### Known limitations (follow-up)
+
+- **Colormaps / per-band masks not propagated.** The tile re-encode carries band
+  data + nodata/dtype/crs/transform, but not source colormaps or per-band
+  masks/alpha. Sources relying on those will differ structurally from the heavy
+  reader. Tracked for a follow-up; the catch-all otherwise handles any
+  rasterio-readable driver.
+- **On-disk size keys the split.** Tile count is derived from `os.path.getsize`
+  (matching heavy's `Files.size` for on-disk sources). Multi-file/VRT or remote
+  sources, where the heavy `memSize` differs from a single file size, may tile
+  differently — out of scope for the on-disk corpus this targets.
 
 ## Verify-during-design checklist — RESOLVED (2026-06-11)
 
