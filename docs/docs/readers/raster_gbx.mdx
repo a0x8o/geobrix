@@ -41,6 +41,23 @@ unchanged — swapping tiers is a one-line `format(...)` change.
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
   source="docs/tests/python/readers/raster_gbx_read_examples.py" />
 
-`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See
-[Choosing an Execution Tier](../api/execution-tiers) for when to use the
-lightweight vs heavyweight readers.
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset.
+
+## Performance vs the heavyweight reader
+
+The lightweight reader trades raw throughput for a JAR-free, Serverless-compatible
+path. On a representative distributed benchmark (1000 GeoTIFF tiles, 1024² px):
+
+| Reading 1000 tiles | `raster_gbx` (lightweight) | `gdal` (heavyweight) |
+|---|---|---|
+| wall-clock | ~20 s | ~9 s |
+
+The lightweight reader is roughly **2× slower for reads**: each tile's bytes cross
+the Python ↔ JVM boundary, whereas the heavyweight reader stays in the JVM. Prefer
+the lightweight reader when you need a JAR-free or Serverless path; prefer the
+heavyweight reader for read-heavy pipelines at large scale. (Relative performance
+is the takeaway — absolute numbers depend on cluster size and data.) The
+lightweight **writer**, by contrast, is *faster* than heavyweight — see the
+[Lightweight Raster Writer](../writers/raster_gbx).
+
+See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff.
