@@ -1,13 +1,42 @@
-"""Shared fixtures for the gbx.ds DataSource tests."""
+"""Shared fixtures for the gbx.ds DataSource tests.
+
+Also guards the real third-party ``pmtiles`` package against shadowing: pytest's
+default ``prepend`` importmode re-inserts the test root (``test/``) on sys.path,
+and the repo's ``test/pmtiles/`` package would otherwise shadow the real
+``pmtiles`` PyPI package for any test under ``test/ds/`` that imports it
+(framework + pmtiles_gbx tests). Pre-importing the real package here — with the
+test root temporarily removed — caches it in ``sys.modules`` before any later
+re-insertion can shadow it.
+"""
 
 import logging
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
+
+
+def _guard_real_pmtiles() -> None:
+    """Cache the real third-party ``pmtiles`` in sys.modules before any test
+    module imports it, so the repo's ``test/pmtiles/`` package cannot shadow it
+    under pytest's ``prepend`` importmode."""
+    test_root = str(Path(__file__).resolve().parents[1])  # .../python/geobrix/test
+    saved = [p for p in sys.path if p == test_root]
+    sys.path = [p for p in sys.path if p != test_root]
+    try:
+        import pmtiles  # noqa: F401
+        import pmtiles.reader  # noqa: F401
+        import pmtiles.tile  # noqa: F401
+        import pmtiles.writer  # noqa: F401
+    finally:
+        sys.path = saved + sys.path
+
+
+_guard_real_pmtiles()
 
 # Ensure the PySpark worker uses the same Python as the driver.  Without this
 # a local run against a system python3 silently picks the wrong interpreter
