@@ -61,6 +61,7 @@ def test_serverless_scan_includes_ds_subpackage():
         "raster.py",
         "gtiff.py",
         "writer.py",
+        "_write.py",
         "register.py",
         "_encode.py",
         "_listing.py",

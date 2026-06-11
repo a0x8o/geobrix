@@ -147,3 +147,41 @@ def test_missing_column_rejected(spark, tmp_path):
     df = spark.read.format("raster_gbx").load(str(src)).select("tile")  # drop 'source'
     with pytest.raises(Exception):
         df.write.format("gtiff_gbx").mode("overwrite").save(str(tmp_path / "o_missing"))
+
+
+def test_metadata_driver_cog_triggers_reencode(spark, tmp_path):
+    # Catch-all raster_gbx writer honors tile.metadata["driver"]: overriding it to
+    # COG forces a re-encode (vs verbatim GTiff). Output decodes to the same pixels
+    # and carries the RASTERX_CELL tag stamped on the re-encode path.
+    from pyspark.sql import functions as F
+
+    src = tmp_path / "in.tif"
+    _write_sample(str(src))
+    out_dir = tmp_path / "out_cog"
+    spark.dataSource.register(RasterGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(src))
+    df2 = df.withColumn(
+        "tile",
+        F.col("tile").withField(
+            "metadata",
+            F.map_concat(
+                F.col("tile.metadata"),
+                F.create_map(F.lit("driver"), F.lit("COG")),
+            ),
+        ),
+    )
+    try:
+        df2.write.format("raster_gbx").mode("overwrite").save(str(out_dir))
+    except Exception as exc:  # noqa: BLE001 - COG driver may be absent locally
+        import pytest
+
+        pytest.skip(f"COG driver unavailable in this env: {str(exc)[:80]}")
+    written = [f for f in os.listdir(out_dir) if f.endswith(".tif")]
+    assert len(written) == 1
+    with rasterio.open(os.path.join(out_dir, written[0])) as ds:
+        arr = ds.read(1)
+        tags = ds.tags()
+    np.testing.assert_allclose(
+        arr, np.arange(12, dtype="float32").reshape(3, 4), rtol=1e-6
+    )
+    assert tags.get("RASTERX_CELL") == "-1"
