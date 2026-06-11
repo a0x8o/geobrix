@@ -25,6 +25,8 @@ Options:
   --measured <n>        Measured iters (default 5)
   --heavyweight-only    Skip the lightweight leg
   --lightweight-only    Skip the heavyweight leg (use on ARM clusters)
+  --benchmark-readers   Also run reader benchmarks (raster_gbx vs gdal)
+  --readers-only        Run ONLY the reader benchmark (no fn benchmarks)
   --no-wait             Submit without blocking on completion
   --help, -h            Show help
 

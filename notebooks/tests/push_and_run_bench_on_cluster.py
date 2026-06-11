@@ -28,6 +28,7 @@ Usage:
               --truncate-results (clear only this run_id + this invocation's tier(s)),
               --truncate-all (empty the whole table -> only the current run remains)
 """
+
 from __future__ import annotations
 
 import json
@@ -163,13 +164,24 @@ def _expected_rows(
     row_counts: str,
     lightweight: bool,
     heavyweight: bool,
+    benchmark_readers: bool = False,
+    readers_only: bool = False,
 ) -> int:
     """Best-effort total rows this run will stream, for an 'N of EXPECTED' progress
     display. Only reliable for a LIGHTWEIGHT-ONLY run: the lightweight fn set + corpus
     are known host-side. The heavyweight fn count is decided in Scala (BenchDispatch),
     not visible here, so any run that includes heavy returns None (count shown without a
     denominator) rather than a misleading number."""
+    # Reader rows: 1 per tier that is active (light + heavy = up to 2).
+    reader_rows = (1 if lightweight else 0) + (1 if heavyweight else 0)
+
+    if readers_only:
+        return reader_rows or None
+
     if not lightweight or heavyweight:
+        # heavyweight included -> fn count unknown -> return None, but add reader rows if requested
+        if benchmark_readers and reader_rows:
+            return None  # still unknown due to heavyweight fn count
         return None
     try:
         sys.path.insert(0, "python/geobrix/src")
@@ -189,6 +201,8 @@ def _expected_rows(
         if n_size is None:
             return None  # can't be exact -> don't show a misleading denominator
         total += sum(1 for f in fns if "pure-core" in f.modes) * n_size
+    if benchmark_readers:
+        total += reader_rows
     return total or None
 
 
@@ -212,6 +226,10 @@ def main() -> int:
     if explain_only:
         heavyweight = False
         lightweight = True
+    # --benchmark-readers: also run the reader benchmark (raster_gbx vs gdal) on-cluster.
+    # --readers-only: ONLY run the reader benchmark, skip all fn benchmarks.
+    benchmark_readers = "--benchmark-readers" in sys.argv
+    readers_only = "--readers-only" in sys.argv
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -356,6 +374,10 @@ def main() -> int:
         redo_functions=redo_functions,
         #  --explain-only: print/persist spark-path physical plans, no timing/no rows.
         explain_only=explain_only,
+        #  --benchmark-readers: also run reader benchmark (raster_gbx vs gdal).
+        benchmark_readers=benchmark_readers,
+        #  --readers-only: ONLY run the reader benchmark, skip fn benchmarks.
+        readers_only=readers_only,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
@@ -421,10 +443,14 @@ def main() -> int:
     # Require pool >= the largest requested row count. (Skipped for --explain-only, which
     # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool.)
     if cfg["modes"] in ("spark-path", "both") and not cfg.get("explain_only"):
-        _max_rc = max((int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0)
+        _max_rc = max(
+            (int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0
+        )
         try:
             _cj = json.loads(
-                w.files.download(f"{corpus}/corpus.json").contents.read().decode("utf-8")
+                w.files.download(f"{corpus}/corpus.json")
+                .contents.read()
+                .decode("utf-8")
             )
             _pool = len(_cj.get("row_pool", {}).get("tiles", []))
         except Exception as _e:
@@ -538,7 +564,14 @@ def main() -> int:
         if on
     ]
     expected = _expected_rows(
-        functions, sel, modes, row_counts, lightweight, heavyweight
+        functions,
+        sel,
+        modes,
+        row_counts,
+        lightweight,
+        heavyweight,
+        benchmark_readers=benchmark_readers,
+        readers_only=readers_only,
     )
     # "27 (of 83)" when we know the total this run will stream, else just "27".
     of = f" (of {expected})" if expected else ""

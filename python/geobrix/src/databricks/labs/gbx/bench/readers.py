@@ -6,6 +6,9 @@ the local filesystem without Spark overhead.
 
 Spark-path: register the raster_gbx data source and time
 spark.read.format("raster_gbx").load(path).count() over a corpus directory.
+
+Cluster format-read: generic spark.read.format(...).load(path).count() wrapper
+for comparing light (raster_gbx) vs heavy (gdal) readers on the same cluster.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from databricks.labs.gbx.bench.results import ResultRow
 from databricks.labs.gbx.bench.runner import capture_env, peak_rss_mb, time_iters
@@ -58,7 +61,7 @@ def run_pure_local_reader(
                 ResultRow(
                     run_id=run_id,
                     api="lightweight",
-                    fn="raster_gbx_read",
+                    fn="raster_read",
                     category="reader",
                     mode="pure-core",
                     tile_px=0,
@@ -88,7 +91,7 @@ def run_pure_local_reader(
                 ResultRow(
                     run_id=run_id,
                     api="lightweight",
-                    fn="raster_gbx_read",
+                    fn="raster_read",
                     category="reader",
                     mode="pure-core",
                     tile_px=0,
@@ -154,7 +157,7 @@ def run_spark_path_reader(
             ResultRow(
                 run_id=run_id,
                 api="lightweight",
-                fn="raster_gbx_read",
+                fn="raster_read",
                 category="reader",
                 mode="spark-path",
                 tile_px=0,
@@ -190,7 +193,7 @@ def run_spark_path_reader(
             ResultRow(
                 run_id=run_id,
                 api="lightweight",
-                fn="raster_gbx_read",
+                fn="raster_read",
                 category="reader",
                 mode="spark-path",
                 tile_px=0,
@@ -214,6 +217,119 @@ def run_spark_path_reader(
             )
         ]
     return out
+
+
+def run_format_read(
+    spark,
+    path: str,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    fmt: str,
+    options: Optional[Dict[str, str]] = None,
+    where: str = "venv",
+    size_mib: int = 16,
+) -> "ResultRow":
+    """Time spark.read.format(fmt).load(path).count() on-cluster.
+
+    For fmt=="raster_gbx": registers the light data source first.
+    For fmt=="gdal": ensures the heavyweight GDAL driver is initialised.
+    Returns a single ResultRow (mode="spark-path", category="reader").
+    """
+    env = capture_env(where)
+
+    if fmt == "raster_gbx":
+        from databricks.labs.gbx.pyrx.ds.register import register
+
+        register(spark)
+    elif fmt == "gdal":
+        try:
+            from databricks.labs.gbx.rasterx import functions as _rx
+
+            _rx.register(spark)
+        except Exception:  # noqa: BLE001
+            pass  # best-effort GDAL init; failure surfaces in the timed call
+
+    def _job():
+        reader = spark.read.format(fmt)
+        if options:
+            for k, v in options.items():
+                reader = reader.option(k, str(v))
+        if fmt == "raster_gbx":
+            reader = reader.option("sizeInMB", str(size_mib))
+        return reader.load(path).count()
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        try:
+            actual_rows = _job()
+        except Exception:  # noqa: BLE001
+            actual_rows = 0
+        actual_rows = int(actual_rows)
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="raster_read",
+            category="reader",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=actual_rows,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / actual_rows / 1000.0) if (ms and actual_rows) else 0.0,
+            per_tile_avg_ms=(ms / actual_rows) if (ms and actual_rows) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(
+                (actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0
+            ),
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"{fmt} over {os.path.basename(path.rstrip('/\\'))}",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="raster_read",
+            category="reader",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[:200],
+            output_fingerprint="",
+            **env,
+        )
 
 
 def _list_tifs(corpus_dir: str) -> List[str]:

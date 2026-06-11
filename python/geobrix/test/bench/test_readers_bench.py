@@ -35,7 +35,7 @@ def test_pure_local_reader_bench_emits_result(tmp_path):
     assert len(rows) == 1
     r = rows[0]
     assert r.api == "lightweight"
-    assert r.fn == "raster_gbx_read"
+    assert r.fn == "raster_read"
     assert r.mode == "pure-core"
     assert r.iter_median_s >= 0.0
     assert r.status == "ok"

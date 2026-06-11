@@ -170,6 +170,10 @@ LIGHTWEIGHT, HEAVYWEIGHT = {lightweight!r}, {heavyweight!r}
 # they can be harvested after the run. Diagnostic only -- no rows are produced.
 EXPLAIN_ONLY = {explain_only!r}
 EXPLAIN_DIR = OUT + "/explain"
+# --benchmark-readers: also run the reader benchmark (raster_gbx vs gdal) on the cluster.
+# --readers-only: ONLY run the reader benchmark, skip all fn benchmarks.
+BENCHMARK_READERS = {benchmark_readers!r}
+READERS_ONLY = {readers_only!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -549,6 +553,31 @@ _CELL_HEAVY_SPARK = """# (d) Heavyweight spark-path
 show_section("heavyweight", "spark-path", run_heavy("spark-path"))
 """
 
+_CELL_READERS = """# Reader benchmark: light raster_gbx vs heavy gdal (both on-cluster)
+from databricks.labs.gbx.bench import readers as _rd
+_rows_dir = f"{CORPUS}/rows"
+_reader_rows = []
+if LIGHTWEIGHT:
+    _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="lightweight", fmt="raster_gbx",
+                             options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_r]); lw.append(_r); _reader_rows.append(_r)
+if HEAVYWEIGHT:
+    _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="heavyweight", fmt="gdal", where="cluster")
+    _sink([_r]); hw.append(_r); _reader_rows.append(_r)
+if _reader_rows:
+    _df = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'reader'"
+    )
+    try:
+        display(_df)
+    except Exception:
+        _df.show(100, truncate=False)
+    _md = results.summarize(_reader_rows)
+    _show_md(f"reader benchmark -- {RUN_ID}", _md)
+"""
+
 _EPILOGUE = """# Wrap-up: durable jsonl shards + per-tier summaries + heavy-vs-light comparison.
 all_rows = lw + hw
 if lw:
@@ -637,6 +666,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         lightweight=bool(cfg.get("lightweight")),
         heavyweight=bool(cfg.get("heavyweight")),
         explain_only=bool(cfg.get("explain_only")),
+        benchmark_readers=bool(cfg.get("benchmark_readers")),
+        readers_only=bool(cfg.get("readers_only")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -651,6 +682,9 @@ def build_bench_notebook(cfg: dict) -> dict:
     if heavy:
         setup += _HEAVY_HELPERS  # run_heavy (references HeavyBenchMain)
 
+    benchmark_readers = bool(cfg.get("benchmark_readers"))
+    readers_only = bool(cfg.get("readers_only"))
+
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
     # (light, heavy) then spark-path (light, heavy).
@@ -662,14 +696,17 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if light and do_pure:
-        cells.append(_cell(_CELL_LIGHT_PURE))
-    if heavy and do_pure:
-        cells.append(_cell(_CELL_HEAVY_PURE))
-    if light and do_spark:
-        cells.append(_cell(_CELL_LIGHT_SPARK))
-    if heavy and do_spark:
-        cells.append(_cell(_CELL_HEAVY_SPARK))
+    if not readers_only:
+        if light and do_pure:
+            cells.append(_cell(_CELL_LIGHT_PURE))
+        if heavy and do_pure:
+            cells.append(_cell(_CELL_HEAVY_PURE))
+        if light and do_spark:
+            cells.append(_cell(_CELL_LIGHT_SPARK))
+        if heavy and do_spark:
+            cells.append(_cell(_CELL_HEAVY_SPARK))
+    if benchmark_readers or readers_only:
+        cells.append(_cell(_CELL_READERS))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)
