@@ -174,6 +174,10 @@ EXPLAIN_DIR = OUT + "/explain"
 # --readers-only: ONLY run the reader benchmark, skip all fn benchmarks.
 BENCHMARK_READERS = {benchmark_readers!r}
 READERS_ONLY = {readers_only!r}
+# --benchmark-pmtiles: also run the pmtiles writer benchmark (pmtiles_gbx vs pmtiles).
+# --pmtiles-only: ONLY run the pmtiles benchmark, skip all fn benchmarks.
+BENCHMARK_PMTILES = {benchmark_pmtiles!r}
+PMTILES_ONLY = {pmtiles_only!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -596,6 +600,89 @@ if _reader_rows:
     _show_md(f"reader benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_PMTILES = """# PMTiles benchmark: light pmtiles_gbx vs heavy pmtiles (both on-cluster) + parity check
+from databricks.labs.gbx.bench import readers as _rd
+from pmtiles.reader import MmapSource, Reader as _PMReader
+import glob as _glob
+import os as _os
+_pmtiles_rows = []
+_pl = _ph = None
+if LIGHTWEIGHT:
+    _pl = "/local_disk0/bench_pmtiles_light.pmtiles"
+    if _os.path.exists(_pl):
+        _os.remove(_pl)
+    _r = _rd.run_pmtiles_write(spark, _pl, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               n_tiles=1000, shard_zoom=0, write_fmt="pmtiles_gbx",
+                               where="cluster")
+    _sink([_r]); lw.append(_r); _pmtiles_rows.append(_r)
+    _ph_light = _pl
+if HEAVYWEIGHT:
+    _ph = "/local_disk0/bench_pmtiles_heavy"
+    import shutil as _sh
+    _sh.rmtree(_ph, ignore_errors=True)
+    _r = _rd.run_pmtiles_write(spark, _ph, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               n_tiles=1000, shard_zoom=0, write_fmt="pmtiles",
+                               where="cluster")
+    _sink([_r]); hw.append(_r); _pmtiles_rows.append(_r)
+# Parity check: decode all tiles from both archives and compare (z,x,y) key sets.
+if LIGHTWEIGHT and HEAVYWEIGHT and _pl and _ph:
+    def _decode_any(path):
+        # Return {(z,x,y): bytes} for every tile in path (file or dir of *.pmtiles).
+        import os as _os2
+        if _os2.path.isfile(path):
+            files = [path]
+        else:
+            files = sorted(_glob.glob(_os2.path.join(path, "**", "*.pmtiles"), recursive=True))
+        tiles = {}
+        for _pf in files:
+            with open(_pf, "rb") as _fh:
+                _src = MmapSource(_fh)
+                _rdr = _PMReader(_src)
+                for _z in range(10):
+                    for _entry in _rdr.get_tile(z=_z, x=0, y=0) and [] or []:
+                        pass
+                # Walk all tiles via metadata zoom range.
+                _meta = _rdr.metadata()
+                _zmin = int(_meta.get("minzoom", 0))
+                _zmax = int(_meta.get("maxzoom", 9))
+                for _z in range(_zmin, _zmax + 1):
+                    _side = 2 ** _z
+                    for _x in range(_side):
+                        for _y in range(_side):
+                            _b = _rdr.get_tile(_z, _x, _y)
+                            if _b is not None:
+                                tiles[(_z, _x, _y)] = bytes(_b)
+        return tiles
+    try:
+        _lt = _decode_any(_pl)
+        _ht = _decode_any(_ph)
+        _lk = set(_lt.keys())
+        _hk = set(_ht.keys())
+        if _lk == _hk:
+            print(f"PMTILES PARITY: PASS ({len(_lk)} tiles matched between light and heavy)")
+        else:
+            _only_l = _lk - _hk
+            _only_h = _hk - _lk
+            print(
+                f"PMTILES PARITY: FAIL -- light-only keys: {sorted(_only_l)[:10]}, "
+                f"heavy-only keys: {sorted(_only_h)[:10]} "
+                f"(light={len(_lk)}, heavy={len(_hk)} tiles)"
+            )
+    except Exception as _pe:
+        print(f"PMTILES PARITY: ERROR (parity check raised) -- {_pe}")
+if _pmtiles_rows:
+    _df = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'writer' "
+        f"AND fn IN ('pmtiles_gbx', 'pmtiles')"
+    )
+    try:
+        display(_df)
+    except Exception:
+        _df.show(100, truncate=False)
+    _md = results.summarize(_pmtiles_rows)
+    _show_md(f"pmtiles benchmark -- {RUN_ID}", _md)
+"""
+
 _EPILOGUE = """# Wrap-up: durable jsonl shards + per-tier summaries + heavy-vs-light comparison.
 all_rows = lw + hw
 if lw:
@@ -686,6 +773,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         explain_only=bool(cfg.get("explain_only")),
         benchmark_readers=bool(cfg.get("benchmark_readers")),
         readers_only=bool(cfg.get("readers_only")),
+        benchmark_pmtiles=bool(cfg.get("benchmark_pmtiles")),
+        pmtiles_only=bool(cfg.get("pmtiles_only")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -702,6 +791,8 @@ def build_bench_notebook(cfg: dict) -> dict:
 
     benchmark_readers = bool(cfg.get("benchmark_readers"))
     readers_only = bool(cfg.get("readers_only"))
+    benchmark_pmtiles = bool(cfg.get("benchmark_pmtiles"))
+    pmtiles_only = bool(cfg.get("pmtiles_only"))
 
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
@@ -714,7 +805,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if not readers_only:
+    if not readers_only and not pmtiles_only:
         if light and do_pure:
             cells.append(_cell(_CELL_LIGHT_PURE))
         if heavy and do_pure:
@@ -725,6 +816,8 @@ def build_bench_notebook(cfg: dict) -> dict:
             cells.append(_cell(_CELL_HEAVY_SPARK))
     if benchmark_readers or readers_only:
         cells.append(_cell(_CELL_READERS))
+    if benchmark_pmtiles or pmtiles_only:
+        cells.append(_cell(_CELL_PMTILES))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)

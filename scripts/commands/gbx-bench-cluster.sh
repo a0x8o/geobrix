@@ -27,6 +27,8 @@ Options:
   --lightweight-only    Skip the heavyweight leg (use on ARM clusters)
   --benchmark-readers   Also run reader benchmarks (raster_gbx vs gdal)
   --readers-only        Run ONLY the reader benchmark (no fn benchmarks)
+  --benchmark-pmtiles   Also run PMTiles writer benchmark (pmtiles_gbx vs pmtiles)
+  --pmtiles-only        Run ONLY the PMTiles benchmark (no fn benchmarks)
   --no-wait             Submit without blocking on completion
   --help, -h            Show help
 
