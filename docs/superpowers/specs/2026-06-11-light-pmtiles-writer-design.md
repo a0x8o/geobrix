@@ -83,16 +83,29 @@ labels carry the tier signal, so the path need not). With:
   `quadbin` pip package, already in `[light]` — for the COG path later). Pure
   Python; fixes the heavy `rst_xyzpyramid` CRS-unit issue by being explicit about
   units. The keystone reused by every tiled writer.
-- **`shard.py`** — partition tiles by parent (at `shard_zoom`) and the generic
-  **two-phase scratch→driver-merge** orchestration: per-partition write to a
-  shared scratch shard keyed by parent-tile; driver groups by parent and hands
-  each group to the backend to assemble one output shard. Backend-agnostic.
+- **`shard.py`** — the generic **two-phase, entries-driven** orchestration:
+  `write()` (executor) streams tile bytes to a per-partition **indexed scratch**
+  (an append file + an `(tileid → offset, len)` entries index, like the heavy
+  writer) — *no shard assignment at write-time*. `commit()` (driver) reads only the
+  **entries metadata** (cheap; no tile bytes on the driver), assigns each tile to a
+  shard, then assembles each shard by streaming its tiles' bytes from the partition
+  scratch via offsets. Shard assignment is pluggable:
+  - **fixed** — `parent(z,x,y, shardZoom)` (default).
+  - **adaptive** (designed-in, near-term) — walk the quadtree, subdividing any cell
+    whose tile count exceeds `targetTilesPerShard` (sparse→shallow, dense→deep),
+    bounding per-shard size. Enabled purely by the entries-driven commit (no
+    re-read of bytes to count).
+  Tiles with `z < shardZoom` route to the **overview** shard (its own
+  `overview.pmtiles`). Backend-agnostic.
 - **`catalog.py`** — `CatalogWriter` protocol `write(shard_entries, out_dir) ->
-  catalog_path`. First impl **`TileJSONCatalog`** (a `tilejson`/`mosaic.json`
-  over the per-shard `.pmtiles` with their bounds/min-max-zoom). Designed so
-  **`VRTCatalog`** (GDAL virtual raster over COG shards — the DE "single Volume
-  path", generated as pure-Python VRT XML from each shard's bounds/transform)
-  slots in for the COG backend later.
+  catalog_path`. Default impl **`STACManifestCatalog`** — a GeoJSON/STAC-style
+  manifest where each shard is an item with its bbox polygon, min/max zoom, and a
+  relative URL to the `.pmtiles` (best for spatial discovery; frontend- and
+  DE-friendly). Plus **`TileJSONCatalog`** (option). Designed so **`VRTCatalog`**
+  (GDAL virtual raster over COG shards — the DE "single Volume path", pure-Python
+  VRT XML from each shard's bounds/transform) and a "meta-PMTiles" catalog slot in
+  later. (Full STAC-spec compliance is a flagged future deepening — STAC is the
+  intended long-term direction.)
 - **`backend.py`** — `TileArchiveBackend` protocol `assemble(sorted_tiles_iter,
   header_info, out_path)`. First impl **`PMTilesBackend`** (uses the Protomaps
   `pmtiles` library: `Writer(open(out,'wb')).write_tile(tileid, bytes)` +
@@ -130,28 +143,55 @@ labels carry the tier signal, so the path need not). With:
   - `mode` — `overwrite` (default, clears prior output + scratch); `append`
     rejected (a finalized archive can't be appended to).
   - `shardZoom` — **default `6` ⇒ SHARDED** (the real-world default): partition
-    tiles by their parent at `shardZoom`, emitting one `<z>_<x>_<y>.pmtiles` per
-    *populated* parent under `path/` (a directory) + a catalog. Guidance:
+    tiles by their parent at `shardZoom`, emitting one `{z}/{x}/{y}.pmtiles` per
+    *populated* parent under `path/tileset/` + a catalog. Guidance:
     `shardZoom ≈ maxZoom − 8` (Z6 suits max-zoom ~14); tune for ~100 MB–2 GB
-    shards. Tiles with `z < shardZoom` (global low-zoom overviews) collect into a
-    single overview shard.
+    shards. Tiles with `z < shardZoom` route to `overview.pmtiles` (see below).
   - **`shardZoom = 0` ⇒ single archive** — one parent (the whole world) = one
     `.pmtiles` at `path`, no catalog (the merge/simple case).
-  - `catalog` — `tilejson` (default, sharded) | `none`.
+  - `targetTilesPerShard` — **adaptive sharding** (designed-in, near-term; default
+    `None` = fixed `shardZoom`): when set, `commit()` walks the quadtree from
+    `shardZoom` and subdivides any cell whose tile count exceeds the target
+    (sparse Sahara → shallow Z4 shard, dense Manhattan → deep Z8 shard), bounding
+    per-shard size. Cheap because shard assignment runs off the **entries index**,
+    not the tile bytes (see flow). The catalog records each shard's actual zoom.
+  - `catalog` — `stac` (default, sharded — a GeoJSON/STAC-style manifest) |
+    `tilejson` | `none`. (Full STAC-spec compliance + a meta-PMTiles catalog are
+    future deepenings; STAC is the intended long-term direction.)
   - `tileType` — default auto-sniff (PNG/JPEG/WebP/MVT; must agree within a shard);
     override available.
   - `tileCompression` — default none/passthrough.
   - `metadata` — JSON string → archive metadata.
-- **Sharded flow (default):** `write(iterator)` (executor) writes each tile to a
-  scratch shard keyed by `grid.parent(z,x,y,shardZoom)` (low-zoom `z<shardZoom`
-  tiles → the overview shard); `commit(messages)` (driver) merges per-parent
-  scratch fragments, assembles one `.pmtiles` per populated parent (tiles sorted by
-  tileid), then `TileJSONCatalog.write(...)` emits the catalog. Shards are
-  **bounded + non-overlapping** (each parent owns a disjoint tile set). `abort`
-  cleans scratch + partials.
+- **Sharded flow (default) — entries-driven:**
+  - `write(iterator)` (executor) appends every tile's bytes to a **per-partition
+    indexed scratch** (a bytes file + an `(z,x,y,tileid → offset, len)` entries
+    index) — *no shard assignment at write-time*. The `WriterCommitMessage` carries
+    only the entries-index location, not bytes.
+  - `commit(messages)` (driver) reads only the **entries metadata** (cheap; tile
+    bytes never land on the driver), assigns each tile to a shard — fixed
+    `grid.parent(z,x,y,shardZoom)` or adaptive `targetTilesPerShard` — and routes
+    `z < shardZoom` tiles to the overview. For each shard it streams that shard's
+    tiles' bytes from the partition scratch (via offsets), sorted by tileid, into
+    `PMTilesBackend.assemble`, then `STACManifestCatalog.write(...)` emits the
+    catalog. Shards are **bounded + non-overlapping** (disjoint tile sets).
+  - Because assembly is centralized in `commit()` (driver streams from scratch,
+    one writer per output file), no two tasks ever write the same archive — this
+    sidesteps the multi-worker overview-shard write race a naive design would hit.
+  - `abort` cleans scratch + partials.
+- **Overview (`overview.pmtiles`):** v1 packages the input's `z < shardZoom` rows
+  into a separate `tileset/overview.pmtiles` (its own archive, browser-cached once).
+  Generating low zooms by **bottom-up downsample from the Z6 shards** (avoiding a
+  re-read of source) is deferred to the raster-pyramid phase, where resampling
+  semantics (incl. the 1-tile resampling buffer at shard edges) live.
 - **Single-archive (`shardZoom=0`):** the same machinery with one implicit world
   shard → per-partition scratch → driver sorts by tileid → `PMTilesBackend.assemble`
   → one `.pmtiles`, no catalog.
+- **Output layout (sharded):**
+  ```
+  path/tileset/{z}/{x}/{y}.pmtiles   # one per populated parent (Z≥shardZoom)
+  path/tileset/overview.pmtiles      # Z<shardZoom global overview
+  path/tileset/catalog.json          # STAC/GeoJSON manifest (or tilejson)
+  ```
 - **Scratch** lives under the output parent (shared Volume), executor-write /
   driver-read; pure-Python `open`/`os` (Serverless-safe; no `_jvm`/`.rdd`).
 - **Parity:** valid archive(s) the `pmtiles` reader (and heavy reader) decode to
@@ -161,13 +201,19 @@ labels carry the tier signal, so the path need not). With:
 
 - **Framework units (no Spark):** `SlippyGrid` (tile_bbox, parent, tiles_for_bbox,
   buffered_bbox) against known web-mercator values; `_header.sniff_tile_type` +
-  bounds/zoom math; `TileJSONCatalog.write` output shape (valid tilejson over fake
-  shard entries); `PMTilesBackend.assemble` round-trips via the `pmtiles` reader.
+  bounds/zoom math; entries-driven shard assignment — fixed `parent()` grouping and
+  adaptive `targetTilesPerShard` subdivision (sparse→shallow, dense→deep) over a
+  synthetic entries index; `STACManifestCatalog.write` output shape (valid
+  GeoJSON/STAC manifest: one item per shard with bbox polygon, zoom range, relative
+  URL) and `TileJSONCatalog.write` shape; `PMTilesBackend.assemble` round-trips via
+  the `pmtiles` reader.
 - **Writer round-trip (local Spark):** single-archive — write `(z,x,y,bytes)` →
   one `.pmtiles` → read back, same tiles/type/zoom. Sharded (`shardZoom`) — write →
-  directory of per-parent `.pmtiles` + a tilejson; assert shards are
-  non-overlapping, cover all input tiles, each reads back correctly, and the
-  catalog references them with correct bounds.
+  `tileset/{z}/{x}/{y}.pmtiles` + `overview.pmtiles` + `catalog.json`; assert shards
+  are non-overlapping, cover all input tiles, `z<shardZoom` rows land in the
+  overview, each archive reads back correctly, and the catalog references them with
+  correct bounds. Adaptive — same input with `targetTilesPerShard` set yields
+  variable-zoom shards (dense areas subdivided) all reading back correctly.
 - **Multi-partition, strict schema, mode (`append` rejected / `overwrite`
   replaces), empty input, Serverless guard** (the no-`_jvm`/`.conf.set`/`.rdd`
   source scan, currently over `pyrx/`, extended to cover the new `gbx/ds/`).
@@ -184,8 +230,9 @@ labels carry the tier signal, so the path need not). With:
 - New `docs/docs/writers/pmtiles_gbx.mdx` (Lightweight → Writers → Named, beside
   `gtiff_gbx`) + doc-test `docs/tests/python/writers/pmtiles_gbx_examples.py`:
   build a small pyramid (`rst_xyzpyramid`/`st_asmvt`), write single-archive **and**
-  sharded+tilejson, round-trip read. Sidebar + `writers/overview.mdx`; cross-link
-  the heavy `pmtiles`, the upstream tile producers, and the spatial-sharding model.
+  sharded (`tileset/` + `overview.pmtiles` + STAC `catalog.json`), round-trip read.
+  Sidebar + `writers/overview.mdx`; cross-link the heavy `pmtiles`, the upstream
+  tile producers, and the spatial-sharding model.
 
 ## Out of scope (designed-for, built later)
 
@@ -200,6 +247,10 @@ labels carry the tier signal, so the path need not). With:
   is deliberately tier-neutral so their backends plug in — but the PMTiles-first
   phase doesn't require them (it packages pre-made tiles + uses the `quadbin` pip
   pkg directly).
+- **Full STAC-spec compliance + meta-PMTiles catalog** — v1 ships a GeoJSON/STAC-
+  *style* manifest; a spec-conformant STAC Collection/Items catalog (the intended
+  long-term direction, of special interest) and a "base PMTiles whose tiles are
+  pointers" catalog come later.
 - A light PMTiles **reader**, light **MBTiles** writer, Tippecanoe/GeoJSON→PMTiles.
 
 (The `pyrx/ds/` → `gbx/ds/` migration is now **in scope** as a precursor step — see
@@ -210,11 +261,14 @@ Architecture/Registration — not deferred.)
 1. `pmtiles` lib `HeaderDict` fields `finalize()` requires; confirm round-trip via
    the `pmtiles` reader. `Writer.write_tile` requires ascending tileid (commit
    sorts); whether it dedups identical content itself.
-2. `tilejson` vs `mosaic.json` shape — pick the catalog format MapLibre/Leaflet
-   consume directly; per-shard bounds from `grid.tile_bbox` of the shard's parent.
-3. Sharded output layout: directory-at-`path` with `<z>_<x>_<y>.pmtiles` + catalog;
-   scratch naming that won't collide and is cleaned on commit/abort; executor-write/
-   driver-read on a Volume (FUSE).
+2. **Catalog shape:** the GeoJSON/STAC manifest (default) — one feature/item per
+   shard with bbox polygon (from `grid.tile_bbox` of the shard's parent), min/max
+   zoom, and a relative `.pmtiles` URL; plus the `tilejson` option. Confirm both are
+   consumable (STAC by catalog tooling, tilejson by MapLibre/Leaflet). Note the
+   path to full STAC-spec compliance without locking v1 to it.
+3. Sharded output layout: `path/tileset/{z}/{x}/{y}.pmtiles` + `overview.pmtiles` +
+   `catalog.json`; scratch naming that won't collide and is cleaned on commit/abort;
+   executor-write/driver-read on a Volume (FUSE).
 4. `SlippyGrid` math validated against known tile→lon/lat values (and consistent
    with `rst_xyzpyramid`'s tiling so upstream tiles land in the right shards).
 5. Backend/catalog/grid protocols kept minimal + documented so COG/VRT/quadbin slot
@@ -222,12 +276,19 @@ Architecture/Registration — not deferred.)
 6. `tileCompression`: who gzips (the `pmtiles` lib vs us); match the header byte to
    the actual bytes (default none/passthrough).
 7. Empty-input + empty-shard behavior (valid empty archive or skip with a note).
-8. **Default `shardZoom=6` + the overview shard**: confirm `shardZoom` is known at
-   `write()` (a fixed default/option, since the global zoom range isn't available
-   pre-write), low-zoom `z<shardZoom` tiles route to one overview shard, and the
-   default is documented as tune-for-your-pyramid (`≈ maxZoom−8`). `shardZoom=0`
-   collapses to a single archive.
-9. **Migration (precursor):** `pyrx/ds/` → `gbx/ds/` moves `raster.py`, `gtiff.py`,
+8. **Entries-driven commit:** confirm `write()` needs no `shardZoom`/global zoom
+   range (it only appends bytes + an entries index per partition), and that
+   `commit()` can do all shard assignment from entries metadata without loading tile
+   bytes on the driver. This is the property that lets both fixed and adaptive
+   sharding work and that centralizes assembly (one writer per file ⇒ no overview
+   write race). Default `shardZoom=6`; `z<shardZoom` → `overview.pmtiles`;
+   `shardZoom=0` → single archive; default documented as tune-for-your-pyramid
+   (`≈ maxZoom−8`).
+9. **Adaptive sharding (`targetTilesPerShard`):** the quadtree subdivision over the
+   entries index produces bounded, variable-zoom, non-overlapping shards, and the
+   catalog records each shard's actual zoom. Validate sparse→shallow / dense→deep on
+   a skewed synthetic distribution.
+10. **Migration (precursor):** `pyrx/ds/` → `gbx/ds/` moves `raster.py`, `gtiff.py`,
    `writer.py`, `_write.py`, `_encode.py`, `_listing.py`, `register.py`; update the
    `pyrx._serde`/`_env`/`core.tiling` imports (those stay in `pyrx`), the doc-test
    `register` imports + `.mdx` register notes, the bench `cluster.py` reference, the
