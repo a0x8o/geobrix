@@ -55,6 +55,31 @@ def test_sharded_with_overview_and_catalog(spark, tmp_path):
     assert not os.path.isdir(os.path.join(out, "_scratch"))
 
 
+def test_adaptive_sharding_option(spark, tmp_path):
+    """targetTilesPerShard (camelCase option) must reach the writer despite
+    PySpark lowercasing option keys, and subdivide dense cells to deeper shards."""
+    register(spark)
+    out = str(tmp_path / "adaptive_out")
+    # 4 z8 tiles under one z6 parent (6,32,21), in distinct z7 children.
+    tiles = [(8, 128, 84), (8, 129, 84), (8, 130, 86), (8, 131, 86)]
+    _rows(spark, tiles).write.format("pmtiles_gbx").mode("overwrite").option(
+        "shardZoom", "6"
+    ).option("targetTilesPerShard", "2").save(out)
+
+    tileset = os.path.join(out, "tileset")
+    # at least one shard deeper than the base shardZoom of 6 (dense -> subdivided)
+    deep = []
+    for root, _dirs, files in os.walk(tileset):
+        for f in files:
+            if f.endswith(".pmtiles"):
+                # rel path is {z}/{x}/{y}.pmtiles
+                rel = os.path.relpath(os.path.join(root, f), tileset)
+                z = rel.split(os.sep)[0]
+                if z.isdigit():
+                    deep.append(int(z))
+    assert any(z > 6 for z in deep), f"expected a shard deeper than z6; got zooms {deep}"
+
+
 def test_append_mode_rejected(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "appendme")

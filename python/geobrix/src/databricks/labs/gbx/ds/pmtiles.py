@@ -94,7 +94,7 @@ class PMTilesGbxWriter(DataSourceWriter):
         self.path = path
         self.overwrite = overwrite
         self.shard_zoom = int(opts.get("shardzoom", "6"))
-        tps = opts.get("targettilesperhard")
+        tps = opts.get("targettilespershard")
         self.target_tiles_per_shard = int(tps) if tps else None
         self.catalog_kind = opts.get("catalog", "stac").lower()
         if self.catalog_kind not in _CATALOGS and self.catalog_kind != "none":
