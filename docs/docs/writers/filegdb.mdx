@@ -47,7 +47,7 @@ use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoi
 via the native GDAL (`osgeo`), writing a File Geodatabase is **constrained to a classic x86
 cluster carrying the heavyweight GDAL natives** — it does **not** run on Serverless or ARM,
 the same compute limits as the heavyweight tier. (FileGDB **reading** is fully lightweight and
-runs anywhere.) For vector output on Serverless/ARM, use `gpkg_gbx` or `geojson_gbx`. See the
+runs anywhere.) For vector output on Serverless/ARM, reference the other writers. See the
 [Benchmarking](../api/benchmarking) page for timings and methodology.
 :::
 
@@ -121,3 +121,14 @@ write parallelism.
 <CodeFromTest code={vectorWriteExamples} language="python" functionName="WRITE_FILE_GDB_GBX"
   source="docs/tests/python/writers/vector_gbx_write_examples.py"
   testFile="docs/tests/python/writers/test_vector_gbx_write_examples.py" />
+
+## Typical pipeline: export a table to a single file
+
+Export a table of vector data to a File Geodatabase — no `coalesce` needed (the writer merges partitions into a single file on commit). The output path must end in `.gdb`. Requires the native GDAL init script (see the hybrid warning above):
+
+```python
+df = spark.table("main.geo.parcels")  # vector data in a (Delta) table
+df.write.format("file_gdb_gbx").mode("overwrite").save("/Volumes/main/geo/exports/parcels.gdb")
+```
+
+Each partition is written concurrently, then merged into one output file. See [Benchmarking](../api/benchmarking) for light-vs-heavy export figures.

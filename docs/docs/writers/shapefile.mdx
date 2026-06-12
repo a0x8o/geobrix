@@ -115,3 +115,14 @@ write parallelism.
 <CodeFromTest code={vectorWriteExamples} language="python" functionName="WRITE_SHAPEFILE_GBX"
   source="docs/tests/python/writers/vector_gbx_write_examples.py"
   testFile="docs/tests/python/writers/test_vector_gbx_write_examples.py" />
+
+## Typical pipeline: export a table to a single file
+
+Export a table of vector data to a Shapefile — no `coalesce` needed (the writer merges partitions into a single file on commit):
+
+```python
+df = spark.table("main.geo.parcels")  # vector data in a (Delta) table
+df.write.format("shapefile_gbx").mode("overwrite").save("/Volumes/main/geo/exports/parcels.shp")
+```
+
+Each partition is written concurrently, then merged into one output file. See [Benchmarking](../api/benchmarking) for light-vs-heavy export figures.

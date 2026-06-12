@@ -34,6 +34,17 @@ the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and meth
 
 It is the lightweight counterpart of the heavyweight `file_gdb_ogr` reader, supporting Python and SQL bindings (not Scala).
 
+### Typical pipeline: ingest into a table
+
+The common pattern is to land File Geodatabase directories in a table for downstream analytics — on Databricks a managed table is **Delta**:
+
+```python
+df = spark.read.format("file_gdb_gbx").load("/Volumes/main/geo/raw/")  # a folder of .gdb directories
+df.write.mode("overwrite").saveAsTable("main.geo.parcels")              # Delta table on Databricks
+```
+
+Reading a folder fans the files across the cluster (one partition per file), so ingest scales with the data — unlike a single-node `pyogrio.read_*` that parses one file on one machine. See [Benchmarking](../api/benchmarking) for light-vs-heavy ingest figures.
+
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight · file_gdb_ogr">
 
