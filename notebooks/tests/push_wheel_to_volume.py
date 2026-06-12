@@ -70,13 +70,10 @@ def main() -> int:
             shutil.rmtree(dist)
         dist.mkdir(parents=True)
         print("Building wheel (python3 -m build)...")
-        # `python -m build` spins up an isolated env and pip-installs the build backend
-        # (setuptools/wheel). Locally and in GitHub CI, direct PyPI is firewalled -- point
-        # that install at the Databricks PyPI proxy so isolation works (on a cluster, direct
-        # PyPI is reachable; setdefault lets an explicit override or cluster env win).
+        # The build's pip index comes from the AMBIENT environment (PIP_INDEX_URL /
+        # pip.conf). If your network firewalls public PyPI, set PIP_INDEX_URL to your
+        # mirror before running -- we do not hardcode one here.
         build_env = dict(os.environ)
-        build_env.setdefault("PIP_INDEX_URL", "https://pypi-proxy.dev.databricks.com/simple/")
-        build_env.setdefault("PIP_TRUSTED_HOST", "pypi-proxy.dev.databricks.com")
         # Prefer the project venv (.venv-pyrx, Python 3.12) for the build: it has a coherent
         # build backend, so `--no-isolation` builds without any PyPI fetch (the ambient
         # `python` may be an unrelated interpreter with a mismatched setuptools/packaging that

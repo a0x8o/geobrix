@@ -74,10 +74,10 @@ pyproj==3.7.2
 ```bash
 bash scripts/commands/gbx-docker-exec.sh "cd /root/geobrix/python/geobrix && \
   uv pip compile --generate-hashes --python-version 3.12 \
-  --index-url https://pypi-proxy.dev.databricks.com/simple \
+  --index-url "$PIP_INDEX_URL" \
   --output-file requirements-pyrx-ci.txt requirements-pyrx-ci.in && \
   uv pip compile --generate-hashes --python-version 3.12 \
-  --index-url https://pypi-proxy.dev.databricks.com/simple \
+  --index-url "$PIP_INDEX_URL" \
   --output-file requirements-dev-container.txt requirements-dev-container.in"
 ```
 
