@@ -444,7 +444,16 @@ class VectorGbxWriter(DataSourceWriter):
         try:
             if not frags:
                 return
+            import pyarrow as pa
+
             tables = [feather.read_table(f) for f in frags]
+            # Merge all partition fragments into ONE Arrow table so the local write is a
+            # single pass. pyogrio's append path (append=True per fragment) re-encodes the
+            # growing file for some drivers -- GeoJSON especially -- which is ~quadratic in
+            # fragment count. One concatenated write keeps single-file export fast (and is
+            # why no coalesce is needed: the writer always emits a single merged file).
+            if len(tables) > 1:
+                tables = [pa.concat_tables(tables)]
             geom_type, crs = self._infer_geom_crs(tables)
             # Write to driver-local disk first (supports random I/O for SQLite/
             # FileGDB/Shapefile sidecars), then copy to the Volume target with

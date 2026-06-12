@@ -745,7 +745,11 @@ if VECTOR_SCALE:
         ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",   {"multi": "false"}),
         ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", {}),
         ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",      {}),
-        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/copies",  {}),
+        # FileGDB reads the single seed.gdb.zip for BOTH tiers: the heavy OGR reader opens
+        # one FileGDB datasource, not a directory of them. (light *_gbx CAN dir-read a folder
+        # of .gdb.zip -- a light-only capability noted in the docs.) Single-archive keeps the
+        # light-vs-heavy comparison fair and avoids the heavy dir-read error.
+        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/seed.gdb.zip",  {}),
     ]
     # Materialize the writer-source Delta table once (untimed) so all writer legs share it.
     if LIGHTWEIGHT:
