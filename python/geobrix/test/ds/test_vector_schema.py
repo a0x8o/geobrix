@@ -5,7 +5,6 @@ from pyspark.sql.types import (
     IntegerType,
     LongType,
     StringType,
-    StructType,
 )
 
 from databricks.labs.gbx.ds.vector import (

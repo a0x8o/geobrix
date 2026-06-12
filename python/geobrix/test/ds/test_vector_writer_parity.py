@@ -6,7 +6,6 @@ vector writer); this is the writer's correctness gate. Skips unless sample
 data is mounted."""
 
 import os
-from pathlib import Path
 
 import pytest
 

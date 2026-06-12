@@ -1,19 +1,20 @@
 import pytest
-from shapely import Point, LineString, Polygon, to_wkb
-from shapely import from_wkb as _from_wkb
-
-from databricks.labs.gbx.ds.vector import (
-    _geometry_type_of,
-    _srid_to_crs,
-    _writer_col_roles,
-)
-from databricks.labs.gbx.ds.register import register
 from pyspark.sql.types import (
     BinaryType,
     IntegerType,
     StringType,
     StructField,
     StructType,
+)
+from shapely import LineString, Point, Polygon
+from shapely import from_wkb as _from_wkb
+from shapely import to_wkb
+
+from databricks.labs.gbx.ds.register import register
+from databricks.labs.gbx.ds.vector import (
+    _geometry_type_of,
+    _srid_to_crs,
+    _writer_col_roles,
 )
 
 
@@ -52,8 +53,9 @@ def _wkb_df(spark):
         ("b", 20, bytearray(to_wkb(Point(-0.1, 51.5))), "4326", ""),
     ]
     return spark.createDataFrame(
-        rows, schema="name string, pop int, geom_0 binary, "
-        "geom_0_srid string, geom_0_srid_proj string"
+        rows,
+        schema="name string, pop int, geom_0 binary, "
+        "geom_0_srid string, geom_0_srid_proj string",
     )
 
 
@@ -86,9 +88,9 @@ def test_multi_partition_merge(spark, tmp_path):
         "geom_0_srid string, geom_0_srid_proj string",
     ).repartition(4)
     assert df.rdd.getNumPartitions() == 4
-    df.write.format("ogr_gbx").mode("overwrite").option(
-        "driverName", "GeoJSON"
-    ).save(out)
+    df.write.format("ogr_gbx").mode("overwrite").option("driverName", "GeoJSON").save(
+        out
+    )
     back = spark.read.format("ogr_gbx").load(out)
     assert back.count() == 50
     assert {r["name"] for r in back.collect()} == {str(i) for i in range(50)}
@@ -161,14 +163,19 @@ def _ogr_can_create(driver: str) -> bool:
 
         import pyarrow as pa
         import pyogrio
-        from shapely import Point as _P, to_wkb as _twkb
+        from shapely import Point as _P
+        from shapely import to_wkb as _twkb
 
         d = tempfile.mkdtemp()
         path = d + ("/t.gdb" if driver == "OpenFileGDB" else "/t.out")
         tbl = pa.table({"g": [_twkb(_P(0, 0))]})
         pyogrio.write_arrow(
-            tbl, path, driver=driver, geometry_name="g",
-            geometry_type="Point", crs="EPSG:4326",
+            tbl,
+            path,
+            driver=driver,
+            geometry_name="g",
+            geometry_type="Point",
+            crs="EPSG:4326",
         )
         return True
     except Exception:

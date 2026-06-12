@@ -686,7 +686,9 @@ def run_vector_write(
             back = spark.read.format(fmt).load(_last)
             # Derive geometry column name from the schema: the geom col has a sibling
             # "<col>_srid" field.  Use the first such pair found.
-            _srid_fields = [f.name for f in back.schema.fields if f.name.endswith("_srid")]
+            _srid_fields = [
+                f.name for f in back.schema.fields if f.name.endswith("_srid")
+            ]
             if _srid_fields:
                 _gcol = _srid_fields[0][: -len("_srid")]
                 import pyspark.sql.functions as _F

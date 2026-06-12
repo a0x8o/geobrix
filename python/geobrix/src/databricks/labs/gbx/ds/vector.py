@@ -10,7 +10,13 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
-from pyspark.sql.datasource import DataSource, DataSourceReader, DataSourceWriter, InputPartition, WriterCommitMessage
+from pyspark.sql.datasource import (
+    DataSource,
+    DataSourceReader,
+    DataSourceWriter,
+    InputPartition,
+    WriterCommitMessage,
+)
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -320,8 +326,8 @@ class OgrGbxWriter(DataSourceWriter):
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")
-        self.geom_col, self.srid_col, self.proj_col, self.attr_cols = (
-            _writer_col_roles(schema)
+        self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
+            schema
         )
         self._col_order = [f.name for f in schema.fields]
         self._geom_is_wkb = any(
@@ -331,9 +337,7 @@ class OgrGbxWriter(DataSourceWriter):
         parent = os.path.dirname(self.path) or "."
         self.scratch_dir = os.path.join(parent, "_vec_scratch")
         if not self.overwrite and self._target_exists():
-            raise ValueError(
-                "ogr_gbx does not support append; use .mode('overwrite')."
-            )
+            raise ValueError("ogr_gbx does not support append; use .mode('overwrite').")
 
     def _target_exists(self) -> bool:
         return os.path.exists(self.path) and (
@@ -400,8 +404,16 @@ class OgrGbxWriter(DataSourceWriter):
         geom_type, crs = self.geometry_type_override, None
         for tbl in tables:
             g = tbl.column(self.geom_col).to_pylist()
-            s = tbl.column(self.srid_col).to_pylist() if self.srid_col in tbl.column_names else []
-            p = tbl.column(self.proj_col).to_pylist() if self.proj_col in tbl.column_names else []
+            s = (
+                tbl.column(self.srid_col).to_pylist()
+                if self.srid_col in tbl.column_names
+                else []
+            )
+            p = (
+                tbl.column(self.proj_col).to_pylist()
+                if self.proj_col in tbl.column_names
+                else []
+            )
             for i, gv in enumerate(g):
                 if gv is None:
                     continue

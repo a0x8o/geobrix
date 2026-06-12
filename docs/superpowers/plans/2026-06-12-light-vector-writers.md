@@ -22,8 +22,8 @@
 - **`python/geobrix/test/ds/test_vector_writer.py`** (CREATE) — unit + local-Spark round-trip / merge / CRS / mode tests.
 - **`python/geobrix/test/ds/test_vector_writer_parity.py`** (CREATE) — Docker integration round-trip against the real corpus (`@pytest.mark.integration`).
 - **`python/geobrix/test/pyrx/test_serverless_no_spark_config.py`** (MODIFY) — `vector.py` is already in the scanned list (readers); confirm it still passes after the writer additions.
-- **`bench/readers.py`** (MODIFY) — add `run_vector_write(spark, light_fmt, path, out_dir)` returning `(seconds, roundtrip_ok)`.
-- **`bench/cluster.py`** (MODIFY) — extend `_CELL_VECTOR` to call the writer timing + round-trip per format.
+- **`python/geobrix/src/databricks/labs/gbx/bench/readers.py`** (MODIFY) — add `run_vector_write(spark, light_fmt, path, out_dir)` returning `(seconds, roundtrip_ok)`.
+- **`python/geobrix/src/databricks/labs/gbx/bench/cluster.py`** (MODIFY) — extend `_CELL_VECTOR` to call the writer timing + round-trip per format.
 - **`docs/docs/writers/vector.mdx`** (CREATE) — lightweight-only vector writer page (a `:::note` that heavy has no vector writer).
 - **`docs/docs/writers/overview.mdx`** (MODIFY) — add the vector writer to the lightweight Available-Writers table.
 - **`docs/tests/python/api/vectorx_functions_*.py`** area / **`docs/tests/python/writers/`** (CREATE doc-test) — a real write→read round-trip exercised by `gbx:test:python-docs`.
@@ -791,12 +791,12 @@ Co-authored-by: Isaac"
 ## Task 9: Bench — vector writer timing + round-trip gate
 
 **Files:**
-- Modify: `bench/readers.py` (add `run_vector_write`)
-- Modify: `bench/cluster.py` (`_CELL_VECTOR` calls the writer path)
+- Modify: `python/geobrix/src/databricks/labs/gbx/bench/readers.py` (add `run_vector_write`)
+- Modify: `python/geobrix/src/databricks/labs/gbx/bench/cluster.py` (`_CELL_VECTOR` calls the writer path)
 
-- [ ] **Step 1: Add `run_vector_write` to `bench/readers.py`**
+- [ ] **Step 1: Add `run_vector_write` to `python/geobrix/src/databricks/labs/gbx/bench/readers.py`**
 
-Read `bench/readers.py` first to match the existing `run_format_read`/`run_pmtiles_write` style (timing helper, return shape). Then add:
+Read `python/geobrix/src/databricks/labs/gbx/bench/readers.py` first to match the existing `run_format_read`/`run_pmtiles_write` style (timing helper, return shape). Then add:
 
 ```python
 def run_vector_write(spark, fmt, src_path, out_path, warmups=1, measured=1):
@@ -826,9 +826,9 @@ def run_vector_write(spark, fmt, src_path, out_path, warmups=1, measured=1):
     return times[len(times) // 2], ok
 ```
 
-- [ ] **Step 2: Wire into `_CELL_VECTOR` in `bench/cluster.py`**
+- [ ] **Step 2: Wire into `_CELL_VECTOR` in `python/geobrix/src/databricks/labs/gbx/bench/cluster.py`**
 
-Read `bench/cluster.py`'s `_CELL_VECTOR` block. After the existing reader parity per format, add a writer leg guarded by the existing `BENCHMARK_VECTOR` flag — for each corpus format, call `run_vector_write` and record `light_write_s` + `roundtrip_ok` into the same results row the readers use. Keep the heavy columns null for the writer leg (no heavy vector writer).
+Read `python/geobrix/src/databricks/labs/gbx/bench/cluster.py`'s `_CELL_VECTOR` block. After the existing reader parity per format, add a writer leg guarded by the existing `BENCHMARK_VECTOR` flag — for each corpus format, call `run_vector_write` and record `light_write_s` + `roundtrip_ok` into the same results row the readers use. Keep the heavy columns null for the writer leg (no heavy vector writer).
 
 - [ ] **Step 3: Smoke-test the bench cell locally (no cluster)**
 
@@ -849,12 +849,34 @@ Co-authored-by: Isaac"
 
 ---
 
-## Task 10: Docs — lightweight-only vector writer page
+## Task 10: Docs — lightweight-only vector writer page + concurrency framing
 
 **Files:**
 - Create: `docs/docs/writers/vector.mdx`
-- Modify: `docs/docs/writers/overview.mdx` (add the row)
+- Modify: `docs/docs/writers/overview.mdx` (add the row + a prominent concurrency/perf section)
+- Modify: `docs/docs/readers/overview.mdx` (add the same concurrency/perf section)
 - Create: a doc-test under `docs/tests/python/writers/` exercised by `gbx:test:python-docs`
+
+**User directive — make the distributed advantage a "big deal" (esp. on the overview pages).**
+The light readers/writers are NOT single-node rasterio/pyogrio wrappers — they are Spark
+DataSource V2 connectors that parallelize across the cluster. State this prominently and
+concretely (factual, not marketing) in BOTH overview pages' lightweight tab, e.g. an
+admonition / "Why this scales" subsection covering:
+- **Readers — partitioned parallel reads:** vector readers slice features by `chunkSize`
+  into partitions read concurrently across executors; raster readers split large files by
+  `sizeInMB`. A single-node `pyogrio.read_*` / `rasterio.open` call reads one file
+  sequentially on one machine; these readers fan the work across the cluster and yield a
+  distributed DataFrame ready for joins/aggregations with no driver-side `collect`. This
+  scales past a single machine's memory.
+- **Writers — per-partition parallel writes + driver merge:** each executor writes its
+  partition concurrently to a scratch fragment; the driver merges into the final output
+  (two-phase). A single-node `pyogrio.write_*` serializes one file on one machine.
+- **PMTiles writer — distributed spatial sharding:** partitions tiles into bounded
+  per-shard archives written in parallel, then catalogs them — horizontal scaling vs a
+  single memory-bound archive on one node. The merge is FUSE/object-store-safe (sequential,
+  no `os.rename`) so it works on UC Volumes / DBFS.
+Keep it concrete and tie each claim to the actual mechanism/option. No internal vocab
+(no "wave"); no empty superlatives — describe the mechanism, let it speak.
 
 - [ ] **Step 1: Write the doc-test (the doc's source of truth)**
 
