@@ -14,6 +14,14 @@ import geojsonGbx from '!!raw-loader!../../tests/python/readers/geojson_gbx_exam
 
 Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
 
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, so choose by
+compute and scale, not output: the lightweight tier needs **no JAR or init script** and
+runs on Serverless, standard, and ARM compute; the heavyweight tier uses **native GDAL on
+the JVM** and tends to pull ahead on large workloads. See the
+[Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · geojson_gbx">
 

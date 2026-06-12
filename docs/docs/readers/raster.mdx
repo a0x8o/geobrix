@@ -22,6 +22,14 @@ reader (`gdal`). They emit the same schema, so swapping is a one-line
 > HDF5, COG, …); the lightweight reader covers the common raster path. The pairing
 > is a corresponding *general raster reader* per tier, not a feature-identical one.
 
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, so choose by
+compute and scale, not output: the lightweight tier needs **no JAR or init script** and
+runs on Serverless, standard, and ARM compute; the heavyweight tier uses **native GDAL on
+the JVM** and tends to pull ahead on large workloads. See the
+[Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · raster_gbx">
 

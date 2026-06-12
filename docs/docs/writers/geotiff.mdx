@@ -16,6 +16,12 @@ writer with the GeoTIFF driver forced) and the **heavyweight** `gtiff_gdal` writ
 (the GDAL writer restricted to the GTiff driver) are interchangeable — see
 [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
 
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) writers run on **Serverless / standard / ARM with no JAR**; the
+heavyweight raster/PMTiles writers use **native GDAL on the JVM**. Pick by your compute and
+data scale. See the [Benchmarking](../api/benchmarking) page for timings and methodology.
+:::
+
 ## Schema
 
 **Input schema — exactly `(source, tile)`:**
