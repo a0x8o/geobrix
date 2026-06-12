@@ -1,0 +1,49 @@
+---
+sidebar_position: 6
+sidebar_label: GeoJSON
+---
+
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import vectorWriteExamples from '!!raw-loader!../../tests/python/writers/vector_gbx_write_examples.py';
+
+# GeoJSON Writer
+
+`geojson_gbx` — pyogrio-backed, pure-Python DataSource V2 writer with the OGR
+driver preset to `GeoJSON`. It round-trips with the matching `geojson_gbx` reader;
+the schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared across all
+lightweight vector readers and writers.
+
+:::note No heavyweight equivalent
+The heavyweight tier has no vector writer. GDAL/OGR can write GeoJSON but
+those write paths are not implemented in the heavyweight tier. This writer is
+lightweight-only.
+:::
+
+:::note Register first
+Call `register(spark)` once before using any `*_gbx` format (see the
+[Writers Overview](./overview)).
+:::
+
+## How it scales
+
+Unlike a single-node `pyogrio.write_*` call that serializes one file on one machine, the
+`geojson_gbx` writer runs as a Spark DataSource V2 two-phase write: **each partition is
+written concurrently** by its executor to a scratch fragment, then the driver **merges the
+fragments into one output file**. The merge is sequential and rename-free, so it is safe on
+FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
+write parallelism.
+
+## Options
+
+| Option | Default | Behavior |
+|---|---|---|
+| `driverName` | `GeoJSON` (preset) | OGR driver. Preset by this named writer; override only if needed. |
+| `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
+| `geometryType` | inferred from the data | Override the OGR geometry type. |
+| `layerName` | driver default | Output layer name where supported. |
+
+## Example
+
+<CodeFromTest code={vectorWriteExamples} language="python" functionName="WRITE_GEOJSON_GBX"
+  source="docs/tests/python/writers/vector_gbx_write_examples.py"
+  testFile="docs/tests/python/writers/test_vector_gbx_write_examples.py" />
