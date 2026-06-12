@@ -190,3 +190,36 @@ def test_file_gdb_writer_roundtrip(spark, tmp_path):
     _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
     back = spark.read.format("file_gdb_gbx").load(out)
     assert back.count() == 2
+
+
+def test_classic_write_path_roundtrip(spark, tmp_path):
+    # Exercise the classic pyogrio.raw.write fallback path directly (write_arrow
+    # works locally so the auto-fallback won't trigger here) to prove the
+    # arrow-table -> (geometry, field_data, fields) conversion round-trips.
+    register(spark)
+    import os
+    import tempfile
+
+    import pyarrow as pa
+
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+
+    out = str(tmp_path / "classic.gpkg")
+    w = VectorGbxWriter(out, _wkb_df(spark).schema, "GPKG", {"driverName": "GPKG"}, True)
+    tbl = pa.table(
+        {
+            "name": ["a", "b"],
+            "pop": [10, 20],
+            "geom_0": [
+                bytearray(to_wkb(Point(-73.9, 40.7))),
+                bytearray(to_wkb(Point(-0.1, 51.5))),
+            ],
+            "geom_0_srid": ["4326", "4326"],
+            "geom_0_srid_proj": ["", ""],
+        }
+    )
+    d = tempfile.mkdtemp()
+    local_out = os.path.join(d, "classic.gpkg")
+    w._write_local_classic([tbl], local_out, "Point", "EPSG:4326")
+    back = spark.read.format("gpkg_gbx").load(local_out)
+    assert back.count() == 2

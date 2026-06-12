@@ -372,7 +372,6 @@ class VectorGbxWriter(DataSourceWriter):
     # ---- driver: merge fragments into one output file ----
     def commit(self, messages: List[Optional[WriterCommitMessage]]) -> None:
         import pyarrow.feather as feather
-        import pyogrio
 
         frags = [
             m.frag_path
@@ -385,30 +384,21 @@ class VectorGbxWriter(DataSourceWriter):
                 return
             tables = [feather.read_table(f) for f in frags]
             geom_type, crs = self._infer_geom_crs(tables)
-            kw = dict(
-                driver=self.driver,
-                geometry_name=self.geom_col,
-                geometry_type=geom_type,
-                crs=crs,
-            )
-            if self.layer_name:
-                kw["layer"] = self.layer_name
             # Write to driver-local disk first (supports random I/O for SQLite/
             # FileGDB/Shapefile sidecars), then copy to the Volume target with
             # sequential byte copies (FUSE-safe). Mirrors the PMTiles writer.
             local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
             local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
-            for n, tbl in enumerate(tables):
-                out_tbl = tbl.drop_columns(
-                    [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
-                )
-                pyogrio.write_arrow(out_tbl, local_out, append=(n > 0), **kw)
+            self._write_local(tables, local_out, geom_type, crs)
+            self._finalize_sqlite(local_dir)
             # Clear any Spark-created stub at self.path, then copy everything
             # pyogrio produced in local_dir (file, sidecar set, or .gdb dir).
             self._prepare_target()
             parent = os.path.dirname(self.path) or "."
             os.makedirs(parent, exist_ok=True)
             for name in os.listdir(local_dir):
+                if name.endswith(("-wal", "-shm", "-journal")):
+                    continue  # transient SQLite sidecars -- never publish
                 src = os.path.join(local_dir, name)
                 dst = os.path.join(parent, name)
                 if os.path.isdir(src):
@@ -419,6 +409,80 @@ class VectorGbxWriter(DataSourceWriter):
             if local_dir is not None:
                 shutil.rmtree(local_dir, ignore_errors=True)
             shutil.rmtree(self.scratch_dir, ignore_errors=True)
+
+    def _drop_meta_cols(self, tbl):
+        return tbl.drop_columns(
+            [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
+        )
+
+    def _write_local(self, tables, local_out, geom_type, crs) -> None:
+        """Write the merged tables to a local path. Use the fast Arrow path; if the
+        driver lacks Arrow-write support (e.g. OpenFileGDB), fall back to the classic
+        feature-based path, which has broader OGR driver support."""
+        import pyogrio
+
+        kw = dict(
+            driver=self.driver,
+            geometry_name=self.geom_col,
+            geometry_type=geom_type,
+            crs=crs,
+        )
+        if self.layer_name:
+            kw["layer"] = self.layer_name
+        try:
+            for n, tbl in enumerate(tables):
+                pyogrio.write_arrow(
+                    self._drop_meta_cols(tbl), local_out, append=(n > 0), **kw
+                )
+        except Exception as e:  # noqa: BLE001
+            if "does not support write functionality" not in str(e):
+                raise
+            # Arrow-write path unsupported for this driver -> classic path. Start
+            # from a clean local_out so a partial Arrow attempt doesn't corrupt it.
+            if os.path.isdir(local_out):
+                shutil.rmtree(local_out, ignore_errors=True)
+            elif os.path.isfile(local_out):
+                os.remove(local_out)
+            self._write_local_classic(tables, local_out, geom_type, crs)
+
+    def _write_local_classic(self, tables, local_out, geom_type, crs) -> None:
+        import numpy as np
+        import pyogrio.raw
+
+        kw = dict(driver=self.driver, geometry_type=geom_type, crs=crs)
+        if self.layer_name:
+            kw["layer"] = self.layer_name
+        meta = {self.geom_col, self.srid_col, self.proj_col}
+        for n, tbl in enumerate(tables):
+            attr_cols = [c for c in tbl.column_names if c not in meta]
+            geometry = np.array(tbl.column(self.geom_col).to_pylist(), dtype=object)
+            field_data = [np.array(tbl.column(c).to_pylist()) for c in attr_cols]
+            pyogrio.raw.write(
+                local_out,
+                geometry=geometry,
+                field_data=field_data,
+                fields=np.array(attr_cols, dtype=object),
+                append=(n > 0),
+                **kw,
+            )
+
+    def _finalize_sqlite(self, local_dir) -> None:
+        """Make any GeoPackage in local_dir a clean, self-contained SQLite file so it
+        reads from read-only object storage (a Volume) without SQLite attempting a
+        write (journal recovery). Best-effort."""
+        import glob
+        import sqlite3
+
+        for gp in glob.glob(os.path.join(local_dir, "*.gpkg")):
+            try:
+                con = sqlite3.connect(gp)
+                con.execute("PRAGMA journal_mode=DELETE")
+                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                con.commit()
+                con.execute("VACUUM")
+                con.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _infer_geom_crs(self, tables) -> Tuple[str, Optional[str]]:
         geom_type, crs = self.geometry_type_override, None
