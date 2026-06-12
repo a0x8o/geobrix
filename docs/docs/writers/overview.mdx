@@ -10,6 +10,21 @@ import TabItem from '@theme/TabItem';
 GeoBrix provides Spark writers for geospatial file formats.
 
 <Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier ships a native Python DataSource V2 raster writer — no JAR, no init script.
+
+### Available Writers
+
+| Writer | Format Name | Description |
+|--------|-------------|-------------|
+| [Raster Writer](./raster) | `raster_gbx` | Pure-Python catch-all raster writer (no JAR; DataSource V2) |
+| [GeoTIFF Writer](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF writer (driver forced to GTiff) |
+| [PMTiles Writer](./pmtiles) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
+
+See the [Raster Writer](./raster) page for full usage, options, and the `nameCol` / `ext` controls.
+
+</TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
 Heavyweight writers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and a native Scala PMTiles encoder. They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
@@ -18,7 +33,8 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 
 | Writer | Format Name | Description |
 |--------|-------------|-------------|
-| [GDAL Writer](./gdal) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+| [Raster Writer](./raster) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+| [GeoTIFF Writer](./geotiff) | `gtiff_gdal` | Named writer for GeoTIFF files (preset `driver="GTiff"`). |
 | [PMTiles Writer](./pmtiles) | `pmtiles` | Streams a `(z, x, y, bytes)` tile set into a single PMTiles v3 archive file. |
 
 ## At a Glance
@@ -36,24 +52,10 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 
 ## Next Steps
 
-- [GDAL Writer](./gdal) — full details, options, and examples for raster output.
+- [Raster Writer](./raster) — full details, options, and examples for raster output.
+- [GeoTIFF Writer](./geotiff) — full details, options, and examples for GeoTIFF output.
 - [PMTiles Writer](./pmtiles) — full details, options, and examples for tile-pyramid output.
 - [Readers Overview](../readers/overview) — the corresponding read paths.
-
-</TabItem>
-<TabItem value="lightweight" label="Lightweight (pyrx)">
-
-The lightweight tier ships a native Python DataSource V2 raster writer — no JAR, no init script.
-
-### Available Writers
-
-| Writer | Format Name | Description |
-|--------|-------------|-------------|
-| [Lightweight Raster Writer](./raster_gbx) | `raster_gbx` | Pure-Python catch-all raster writer (no JAR; DataSource V2) |
-| [Lightweight GeoTIFF Writer](./gtiff_gbx) | `gtiff_gbx` | Pure-Python GeoTIFF writer (driver forced to GTiff) |
-| [Lightweight PMTiles Writer](./pmtiles_gbx) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
-
-See the [Lightweight Raster Writer](./raster_gbx) page for full usage, options, and the `nameCol` / `ext` controls.
 
 </TabItem>
 </Tabs>

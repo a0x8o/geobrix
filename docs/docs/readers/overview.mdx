@@ -10,6 +10,22 @@ import TabItem from '@theme/TabItem';
 GeoBrix provides Spark readers for geospatial file formats.
 
 <Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier ships native Python DataSource V2 raster readers — no JAR, no init script. Register them once per session via `gbx.ds.register`, then use like any Spark reader.
+
+### Available Readers
+
+| Reader | Format Name | Description |
+|--------|-------------|-------------|
+| [Raster Reader](./raster) | `raster_gbx` | Pure-Python catch-all raster reader (no JAR; DataSource V2) |
+| [GeoTIFF Reader](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF reader (preset `driver="GTiff"`) |
+
+See the [Raster Reader](./raster) page for full usage and options.
+
+Vector OGR readers (`shapefile_ogr`, `geojson_ogr`, etc.) are heavyweight-only in this release.
+
+</TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
 Heavyweight readers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and OGR (vector). They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed.
@@ -20,8 +36,7 @@ Heavyweight readers are implemented as Spark DataSource V2 connectors backed by 
 
 | Reader | Format Name | Description |
 |--------|-------------|-------------|
-| [GDAL Reader](./gdal) | `gdal` | Generic reader for any GDAL-supported raster format |
-| [GeoTIFF Reader](./gtiff) | `gtiff_gdal` | Named reader for GeoTIFF files (preset `driver="GTiff"`) |
+| [Raster Reader](./raster) | `gdal` / `gtiff_gdal` | GDAL-backed raster readers (generic and GeoTIFF named) |
 
 ### Vector Readers (OGR-based)
 
@@ -173,29 +188,13 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 
 ## Next Steps
 
-- [GDAL Reader](./gdal) - Generic raster reader
-- [GeoTIFF Reader](./gtiff) - Named GeoTIFF reader
+- [Raster Reader](./raster) - Generic and GeoTIFF raster readers
+- [GeoTIFF Reader](./geotiff) - Named GeoTIFF reader
 - [OGR Reader](./ogr) - Generic vector reader
 - [Shapefile Reader](./shapefile) - Named Shapefile reader
 - [GeoJSON Reader](./geojson) - Named GeoJSON reader
 - [GeoPackage Reader](./geopackage) - Named GeoPackage reader
 - [FileGDB Reader](./filegdb) - Named File Geodatabase reader
-
-</TabItem>
-<TabItem value="lightweight" label="Lightweight (pyrx)">
-
-The lightweight tier ships native Python DataSource V2 raster readers — no JAR, no init script. Register them once per session via `gbx.ds.register`, then use like any Spark reader.
-
-### Available Readers
-
-| Reader | Format Name | Description |
-|--------|-------------|-------------|
-| [Lightweight Raster Reader](./raster_gbx) | `raster_gbx` | Pure-Python catch-all raster reader (no JAR; DataSource V2) |
-| [Lightweight GeoTIFF Reader](./gtiff_gbx) | `gtiff_gbx` | Pure-Python GeoTIFF reader (preset `driver="GTiff"`) |
-
-See the [Lightweight Raster Reader](./raster_gbx) page for full usage and options.
-
-Vector OGR readers (`shapefile_ogr`, `geojson_ogr`, etc.) are heavyweight-only in this release.
 
 </TabItem>
 </Tabs>
