@@ -728,16 +728,18 @@ if _pmtiles_rows:
 _CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
 from databricks.labs.gbx.bench import readers as _rd
 if VECTOR_SCALE:
-    # Scaled corpus: 1M-seed per format.  Reader path = the copies directory (one partition
-    # per copy file, enumerated by the OgrGbxReader directory support).  Writer source = the
-    # seed file (1M rows) so the writer leg exercises a full 1M-row write.
+    # Scaled corpus: 1M-row seed per format. BOTH tiers read the single seed file (1M rows)
+    # for a fair, all-format light-vs-heavy comparison -- the heavy OGR readers cannot read a
+    # directory of shapefile/FileGDB copies, and a 1M-row file is already the at-scale unit.
+    # Writer source is the same seed (a full 1M-row write). (The replicated copies/ directory
+    # remains for an optional light-only multi-file throughput test.)
     _vscale_base = f"{CORPUS}/vector-scale"
     _vcases = [
         # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options)
-        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",  _vscale_base + "/geojson_gbx/seed.geojson",  {"multi": "false"}),
-        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", _vscale_base + "/shapefile_gbx/seed.shp",    {}),
-        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",     _vscale_base + "/gpkg_gbx/seed.gpkg",        {}),
-        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/copies", _vscale_base + "/file_gdb_gbx/seed.gdb",     {}),
+        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/seed.geojson",  _vscale_base + "/geojson_gbx/seed.geojson",  {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/seed.shp", _vscale_base + "/shapefile_gbx/seed.shp",    {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/seed.gpkg",     _vscale_base + "/gpkg_gbx/seed.gpkg",        {}),
+        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/seed.gdb", _vscale_base + "/file_gdb_gbx/seed.gdb",     {}),
     ]
 else:
     _vbase = f"{CORPUS}/vector"
