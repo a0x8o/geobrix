@@ -16,6 +16,31 @@ distributed spatial sharding) and the **heavyweight** `pmtiles` writer take the
 same input and produce decoded-tile-identical archives (verified in the
 [benchmark](../api/benchmarking#results--tiled-output-pmtiles-writer)).
 
+## Schema
+
+**Input schema — exactly `(z, x, y, bytes)`:**
+
+```
+root
+ |-- z: int
+ |-- x: int
+ |-- y: int
+ |-- bytes: binary
+```
+
+A tile pyramid: one row per tile, `bytes` being the already-encoded tile payload (PNG/JPEG/WebP/MVT/…). The writer requires exactly these four columns — extra or missing columns raise an error. Coerce your DataFrame to this shape (and column order) first:
+
+```python
+tiles.select(
+    tiles["zoom"].alias("z"),
+    tiles["tile_x"].alias("x"),
+    tiles["tile_y"].alias("y"),
+    tiles["payload"].alias("bytes"),
+).write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+**Output:** by default, spatially-sharded `.pmtiles` archives plus a catalog under the target directory; with `shardZoom=0`, a single `.pmtiles` archive file.
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · pmtiles_gbx">
 

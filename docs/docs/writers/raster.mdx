@@ -17,6 +17,34 @@ Write raster tiles from the shared `(source, tile)` schema. The **lightweight**
 **heavyweight** GDAL-backed `gdal` writer (append-only) take the same schema — see
 [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
 
+## Schema
+
+**Input schema — exactly `(source, tile)`:**
+
+```
+root
+ |-- source: string
+ |-- tile: struct
+ |    |-- cellid: bigint
+ |    |-- raster: binary
+ |    |-- metadata: map<string,string>
+```
+
+This is the exact schema the raster readers emit. The writer requires these two columns and **nothing else** — extra OR missing columns both raise an error (there is no implicit projection). The on-disk format comes from `tile.metadata` (the GDAL driver/extension recorded at read time); the `ext` option controls only the filename suffix.
+
+Typically you write a reader's output unchanged. To control output filenames, use the `nameCol` option — it overwrites the `source` value in place; **do not add a column** (that breaks the exact-schema check):
+
+```python
+# (source, tile) straight from a reader -> write as-is
+df.write.format("gtiff_gbx").mode("append").save("/Volumes/cat/sch/vol/out")
+
+# name outputs from an existing column (overwrite `source`, don't add a column):
+df.withColumn("source", df["scene_id"]) \
+  .write.format("gtiff_gbx").mode("append").save("/Volumes/cat/sch/vol/out")
+```
+
+**Output:** one raster file per input row, written under the target directory; the file format/extension is whatever `tile.metadata` records (e.g. GeoTIFF for `gtiff_gbx`).
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · raster_gbx">
 

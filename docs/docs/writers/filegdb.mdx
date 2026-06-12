@@ -37,6 +37,37 @@ use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoi
 `ST_GeomAsEWKB`, `ST_AsEWKT`, and `ST_AsGeoJSON` — those encodings are not accepted as input.
 :::
 
+## Schema
+
+**Input schema — a geometry column plus its SRID companion:**
+
+```
+root
+ |-- <geom>: binary (WKB)  or  string (WKT)   # the geometry
+ |-- <geom>_srid: string        # REQUIRED — CRS authority code, e.g. "4326" ("0" if unknown)
+ |-- <geom>_srid_proj: string   # optional — PROJ4 string, used as a CRS fallback when srid is "0"
+ |-- ...any other columns       # written as feature attributes
+```
+
+The writer locates the geometry as the column `X` that has a companion `X_srid` column, so the geometry column may be named anything (`geom_0` by convention — what the `*_gbx` readers emit). **`<geom>_srid` is required**: it identifies the geometry column and supplies the CRS. The `_srid` / `_srid_proj` columns are consumed for the CRS and are **not** written as fields. **Every other column is written as a feature attribute.**
+
+Coerce your DataFrame/table to this shape before writing:
+
+```python
+from pyspark.sql import functions as F
+
+df.select(
+    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
+    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
+    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
+    "name", "population",                      # -> written as feature attributes
+).write.format("file_gdb_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+The geometry must be WKB or WKT (see the input-geometry note above; convert a Databricks `GEOMETRY` with `ST_AsBinary`). The written file round-trips with the matching `*_gbx` reader — reading it back yields `(…attributes, geom_0, geom_0_srid, geom_0_srid_proj)`.
+
+**Output:** an ESRI File Geodatabase (a `.gdb` directory); attributes are preserved.
+
 ## How it scales
 
 Unlike a single-node `pyogrio.write_*` call that serializes one file on one machine, the
