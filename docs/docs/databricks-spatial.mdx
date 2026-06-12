@@ -14,15 +14,17 @@ Databricks provides **built-in spatial types** and **ST (spatial) and H3 (grid) 
 Examples on this page are validated under `docs/tests-dbr/` and require **Databricks Runtime 17.1+** (or Databricks SQL with ST/H3 support). They will skip when run on open-source Spark.
 :::
 
-**References:**
-- [GEOMETRY type](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type) — Euclidean X,Y (and Z); SRID or ANY
-- [GEOGRAPHY type](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type) — Lat/lon; SRID 4326 only
-- [ST geospatial functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions) — Import, export, measurements, predicates, overlay
-- [H3 geospatial functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) — Grid indexing with hexagons
+**References** (cloud-specific Databricks docs):
+- **GEOMETRY type** — Euclidean X,Y (and Z); SRID or ANY · [AWS](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/data-types/geometry-type) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/data-types/geometry-type)
+- **GEOGRAPHY type** — Lat/lon; SRID 4326 only · [AWS](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/data-types/geography-type) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/data-types/geography-type)
+- **ST geospatial functions** — Import, export, measurements, predicates, overlay · [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-st-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-st-geospatial-functions)
+- **H3 geospatial functions** — Grid indexing with hexagons · [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-h3-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-h3-geospatial-functions)
 
 ---
 
 ## GEOMETRY type
+
+**Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/data-types/geometry-type) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/data-types/geometry-type)
 
 Represents a geometric object in a coordinate reference system described by its **SRID**. X,Y (and optionally Z) units depend on the SRID. Use for projected coordinates or when SRID varies.
 
@@ -62,6 +64,8 @@ About 11000 SRID values are supported.
 
 ## GEOGRAPHY type
 
+**Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/data-types/geography-type) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/data-types/geography-type)
+
 Represents a **geographic** object; coordinates are longitude ([-180, 180]) and latitude ([-90, 90]). Only **SRID 4326** (WGS 84) is allowed.
 
 **Create and export:**
@@ -85,6 +89,8 @@ Represents a **geographic** object; coordinates are longitude ([-180, 180]) and 
 ---
 
 ## ST geospatial functions
+
+**Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-st-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-st-geospatial-functions)
 
 ST functions operate on `GEOMETRY` and/or `GEOGRAPHY`: construct values, export to WKT/GeoJSON/WKB, measure (area, length, distance), test predicates (intersects, contains), and overlay (buffer, convex hull, intersection).
 
@@ -131,6 +137,8 @@ ST functions operate on `GEOMETRY` and/or `GEOGRAPHY`: construct values, export 
 ---
 
 ## H3 geospatial functions
+
+**Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-h3-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-h3-geospatial-functions)
 
 H3 is a **global hexagonal grid** with 16 resolutions. Use it to index points and polygons to cell IDs, then aggregate or join on cells (semantic spatial join without geometry predicates).
 
@@ -193,5 +201,6 @@ H3 expressions require Photon-enabled clusters or Databricks SQL (Pro/Serverless
 ## Combining with GeoBrix
 
 - **Readers:** Use [GeoBrix readers](/docs/readers/overview) (GDAL, GeoJSON, Shapefile, etc.) to load vector/raster data; then use `st_geomfromwkb(geom_0)` or similar to get Databricks `GEOMETRY`/`GEOGRAPHY` for ST or H3.
+- **Writers:** Use [GeoBrix writers](/docs/writers/overview) to export back out — the light `*_gbx` vector writers (GeoJSON, Shapefile, GeoPackage, GeoDatabase) plus raster and PMTiles. To write a Databricks `GEOMETRY`/`GEOGRAPHY` column, coerce it to the writer's WKB + SRID input first with `st_aswkb(geom)` and `st_srid(geom)` (see the [Vector Writer](/docs/writers/vector) schema).
 - **GridX (BNG):** For British National Grid, use [GridX BNG functions](/docs/api/gridx-functions) (e.g. `bng_polyfill`, `bng_tessellate`). For a global hex grid, use Databricks H3.
 - **RasterX:** Use [Raster Functions](/docs/api/raster-functions) for raster I/O and operations; combine with ST/H3 for zonal stats or grid aggregation in SQL.
