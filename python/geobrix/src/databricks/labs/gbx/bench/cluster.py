@@ -186,6 +186,7 @@ VECTOR_ONLY = {vector_only!r}
 # tiny 4-file corpus. Requires the scaled corpus to have been generated first via
 # gbx:bench:generate-vector-corpus and staged at {{CORPUS}}/vector-scale/<fmt>/.
 VECTOR_SCALE = {vector_scale!r}
+WRITER_ROWS = {writer_rows}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -726,21 +727,63 @@ if _pmtiles_rows:
 """
 
 _CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
+# Two-leg pipeline (scaled branch):
+#   Leg 1 (reader): spark.read.format(fmt).load(copies/) -> Delta ingest table (forces
+#     materialization of the full multi-file corpus into one queryable table per format).
+#   Leg 2 (writer): read from the shared ~WRITER_ROWS Delta table -> single-file export
+#     via write.format(fmt) (no coalesce; the two-phase writer merges fragments on commit).
 from databricks.labs.gbx.bench import readers as _rd
 if VECTOR_SCALE:
     # Scaled corpus: 1M-row seed per format.  The READ path is the copies/ directory so
     # BOTH tiers enumerate N copies and read them in parallel -- a fair all-format
     # light-vs-heavy comparison.  Shapefile and FileGDB copies are self-contained zips
     # (.shp.zip / .gdb.zip) so the heavy OGR dir-read sees each copy as one file.
-    # Writer source is the per-format seed file (zipped for shapefile/FileGDB).
+    # Writer source is the shared pre-materialized Delta table (WRITER_ROWS polygons).
     _vscale_base = f"{CORPUS}/vector-scale"
     _vcases = [
-        # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options)
-        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",   _vscale_base + "/geojson_gbx/seed.geojson",  {"multi": "false"}),
-        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", _vscale_base + "/shapefile_gbx/seed.shp.zip", {}),
-        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",      _vscale_base + "/gpkg_gbx/seed.gpkg",        {}),
-        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/copies",  _vscale_base + "/file_gdb_gbx/seed.gdb.zip", {}),
+        # (light_fmt, heavy_fmt, read_path, heavy_options)
+        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",   {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",      {}),
+        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/copies",  {}),
     ]
+    # Materialize the writer-source Delta table once (untimed) so all writer legs share it.
+    if LIGHTWEIGHT:
+        from databricks.labs.gbx.bench.corpus_vector import generate_polygon_seed
+        _wsrc_tbl = "geospatial_docs.geobrix.bench_vec_wsrc"
+        generate_polygon_seed(spark, WRITER_ROWS).write.format("delta").mode("overwrite").saveAsTable(_wsrc_tbl)
+    _vrows = []
+    for _lfmt, _hfmt, _vp, _hopts in _vcases:
+        if LIGHTWEIGHT:
+            _it = f"geospatial_docs.geobrix.bench_vec_ingest_{_lfmt}"
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="lightweight", fmt=_lfmt, ingest_table=_it,
+                                     where="cluster")
+            _sink([_r]); lw.append(_r); _vrows.append(_r)
+        if HEAVYWEIGHT:
+            _it = f"geospatial_docs.geobrix.bench_vec_ingest_{_hfmt}"
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="heavyweight", fmt=_hfmt, options=(_hopts or None),
+                                     ingest_table=_it, where="cluster")
+            _sink([_r]); hw.append(_r); _vrows.append(_r)
+        if LIGHTWEIGHT and HEAVYWEIGHT:
+            # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
+            # vector bench -- record it and continue so the other formats + the writer leg run.
+            try:
+                _lc = spark.read.format(_lfmt).load(_vp).count()
+                _hr = spark.read.format(_hfmt)
+                for _k, _v in (_hopts or {}).items():
+                    _hr = _hr.option(_k, _v)
+                _hc = _hr.load(_vp).count()
+                print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
+            except Exception as _e:  # noqa: BLE001
+                print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
+        if LIGHTWEIGHT:
+            _wsrc = _wsrc_tbl
+            _w = _rd.run_vector_write(spark, _wsrc, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+                                      SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt,
+                                      src_is_table=True, where="cluster")
+            _sink([_w]); lw.append(_w); _vrows.append(_w)
 else:
     _vbase = f"{CORPUS}/vector"
     # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options).
@@ -753,33 +796,33 @@ else:
         ("gpkg_gbx",     "gpkg_ogr",     _vbase + "/nyc_complete.gpkg",    _vbase + "/nyc_complete.gpkg",    {}),
         ("file_gdb_gbx", "file_gdb_ogr", _vbase + "/NYC_Sample.gdb.zip",   _vbase + "/NYC_Sample.gdb.zip",   {}),
     ]
-_vrows = []
-for _lfmt, _hfmt, _vp, _vseed, _hopts in _vcases:
-    if LIGHTWEIGHT:
-        _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
-                                 api="lightweight", fmt=_lfmt, where="cluster")
-        _sink([_r]); lw.append(_r); _vrows.append(_r)
-    if HEAVYWEIGHT:
-        _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
-                                 api="heavyweight", fmt=_hfmt, options=(_hopts or None),
-                                 where="cluster")
-        _sink([_r]); hw.append(_r); _vrows.append(_r)
-    if LIGHTWEIGHT and HEAVYWEIGHT:
-        # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
-        # vector bench -- record it and continue so the other formats + the writer leg run.
-        try:
-            _lc = spark.read.format(_lfmt).load(_vp).count()
-            _hr = spark.read.format(_hfmt)
-            for _k, _v in (_hopts or {}).items():
-                _hr = _hr.option(_k, _v)
-            _hc = _hr.load(_vp).count()
-            print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
-        except Exception as _e:  # noqa: BLE001
-            print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
-    if LIGHTWEIGHT:
-        _w = _rd.run_vector_write(spark, _vseed, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
-                                  SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt, where="cluster")
-        _sink([_w]); lw.append(_w); _vrows.append(_w)
+    _vrows = []
+    for _lfmt, _hfmt, _vp, _vseed, _hopts in _vcases:
+        if LIGHTWEIGHT:
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="lightweight", fmt=_lfmt, where="cluster")
+            _sink([_r]); lw.append(_r); _vrows.append(_r)
+        if HEAVYWEIGHT:
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="heavyweight", fmt=_hfmt, options=(_hopts or None),
+                                     where="cluster")
+            _sink([_r]); hw.append(_r); _vrows.append(_r)
+        if LIGHTWEIGHT and HEAVYWEIGHT:
+            # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
+            # vector bench -- record it and continue so the other formats + the writer leg run.
+            try:
+                _lc = spark.read.format(_lfmt).load(_vp).count()
+                _hr = spark.read.format(_hfmt)
+                for _k, _v in (_hopts or {}).items():
+                    _hr = _hr.option(_k, _v)
+                _hc = _hr.load(_vp).count()
+                print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
+            except Exception as _e:  # noqa: BLE001
+                print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
+        if LIGHTWEIGHT:
+            _w = _rd.run_vector_write(spark, _vseed, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+                                      SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt, where="cluster")
+            _sink([_w]); lw.append(_w); _vrows.append(_w)
 if _vrows:
     _md = results.summarize(_vrows)
     _show_md(f"vector reader+writer benchmark -- {RUN_ID}", _md)
@@ -880,6 +923,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         benchmark_vector=bool(cfg.get("benchmark_vector")),
         vector_only=bool(cfg.get("vector_only")),
         vector_scale=bool(cfg.get("vector_scale")),
+        writer_rows=int(cfg.get("writer_rows", 14000000)),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section

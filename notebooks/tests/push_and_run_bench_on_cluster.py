@@ -261,6 +261,7 @@ def main() -> int:
     benchmark_vector = "--benchmark-vector" in sys.argv
     vector_only = "--vector-only" in sys.argv
     vector_scale = "--vector-scale" in sys.argv
+    writer_rows = int(_arg("--writer-rows", "14000000"))
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -431,6 +432,8 @@ def main() -> int:
         vector_only=vector_only,
         #  --vector-scale: use the scaled 1M-seed corpus instead of the tiny 4-file corpus.
         vector_scale=vector_scale,
+        #  --writer-rows N: row count for the shared writer-source Delta table (default 14M).
+        writer_rows=writer_rows,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.

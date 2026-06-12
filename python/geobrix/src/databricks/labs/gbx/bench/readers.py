@@ -231,11 +231,16 @@ def run_format_read(
     options: Optional[Dict[str, str]] = None,
     where: str = "venv",
     size_mib: int = 16,
+    ingest_table: Optional[str] = None,
 ) -> "ResultRow":
     """Time spark.read.format(fmt).load(path).count() on-cluster.
 
     For fmt=="raster_gbx": registers the light data source first.
     For fmt=="gdal": ensures the heavyweight GDAL driver is initialised.
+    When ``ingest_table`` is set, the timed job writes the read DataFrame to
+    that Delta table (mode="overwrite") and returns its row count -- a real
+    ingest that forces materialization.  When None the behavior is unchanged
+    (plain .count()).
     Returns a single ResultRow (mode="spark-path", category="reader").
     """
     env = capture_env(where)
@@ -262,7 +267,15 @@ def run_format_read(
                 reader = reader.option(k, str(v))
         if fmt == "raster_gbx":
             reader = reader.option("sizeInMB", str(size_mib))
-        return reader.load(path).count()
+        df = reader.load(path)
+        if ingest_table:
+            # Write to a managed table.  On Databricks the default format is Delta;
+            # on local Spark it defaults to Parquet.  Either satisfies the row-count
+            # assertion -- we avoid hardcoding format("delta") so local tests work
+            # without the Delta connector.
+            df.write.mode("overwrite").saveAsTable(ingest_table)
+            return spark.table(ingest_table).count()
+        return df.count()
 
     try:
         stats = time_iters(_job, warmup, measured)
@@ -272,6 +285,11 @@ def run_format_read(
         except Exception:  # noqa: BLE001
             actual_rows = 0
         actual_rows = int(actual_rows)
+        _note = (
+            f"{fmt} -> {ingest_table}"
+            if ingest_table
+            else f"{fmt} over {os.path.basename(path.rstrip('/\\'))}"
+        )
         return ResultRow(
             run_id=run_id,
             api=api,
@@ -299,7 +317,7 @@ def run_format_read(
             ),
             peak_rss_mb=peak_rss_mb(),
             status="ok",
-            note=f"{fmt} over {os.path.basename(path.rstrip('/\\'))}",
+            note=_note,
             output_fingerprint="",
             **env,
         )
@@ -612,15 +630,19 @@ def run_vector_write(
     *,
     fmt: str,
     where: str = "venv",
+    src_is_table: bool = False,
 ) -> "ResultRow":
-    """Time coalesce(1).write.format(fmt) for a light vector writer, with read-back parity.
+    """Time write.format(fmt) for a light vector writer, with read-back parity.
 
-    Light-only: there is no heavy vector writer tier.  Reads ``src_path`` once
-    (using the same ``fmt`` light reader), caches it, then times repeated
-    ``coalesce(1).write.format(fmt).mode("overwrite").save(target)`` calls,
-    writing to a distinct ``out_dir/iter.m<i>`` per iteration to avoid
-    append/overwrite contention.  After timing, reads back the last written
-    target and asserts that the non-null geometry count equals the source count.
+    Light-only: there is no heavy vector writer tier.  When ``src_is_table``
+    is True, reads the source from a pre-existing Spark table (``src_path`` is
+    the table name); otherwise reads ``src_path`` via the ``fmt`` light reader.
+    Caches the source DataFrame, then times repeated
+    ``write.format(fmt).mode("overwrite").save(target)`` calls (no coalesce --
+    the two-phase writer merges fragments on commit), writing to a distinct
+    ``out_dir/iter.m<i>`` per iteration to avoid append/overwrite contention.
+    After timing, reads back the last written target and asserts that the
+    non-null geometry count equals the source count.
 
     Returns a single ResultRow with category="writer", mode="spark-path",
     fn="write_<fmt>", api="lightweight".  On any error returns status="error"
@@ -633,7 +655,10 @@ def run_vector_write(
 
     # Read source once and count to establish the feature count for parity.
     try:
-        df = spark.read.format(fmt).load(src_path)
+        if src_is_table:
+            df = spark.table(src_path)
+        else:
+            df = spark.read.format(fmt).load(src_path)
         df = df.cache()
         n = int(df.count())
     except Exception as e:  # noqa: BLE001
@@ -685,7 +710,7 @@ def run_vector_write(
     def _job():
         target = _targets[_iter_idx[0] % len(_targets)]
         _iter_idx[0] += 1
-        df.coalesce(1).write.format(fmt).mode("overwrite").save(target)
+        df.write.format(fmt).mode("overwrite").save(target)
 
     try:
         stats = time_iters(_job, warmup, measured)
