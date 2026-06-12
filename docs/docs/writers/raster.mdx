@@ -1,13 +1,90 @@
 ---
-sidebar_position: 2
-sidebar_label: GDAL
+sidebar_position: 1
+sidebar_label: Raster
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import rasterGbxWrite from '!!raw-loader!../../tests/python/writers/raster_gbx_write_examples.py';
 import gdalWriteExamples from '!!raw-loader!../../tests/python/writers/gdal_examples.py';
 import gdalWriteScala from '!!raw-loader!../../tests/scala/writers/GDALWriteExamples.scala';
 
-# GDAL Writer
+# Raster Writer
+
+Write raster tiles from the shared `(source, tile)` schema. The **lightweight**
+`raster_gbx` writer (`rasterio`-backed, JAR-free, supports `overwrite`) and the
+**heavyweight** GDAL-backed `gdal` writer (append-only) take the same schema — see
+[Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · raster_gbx">
+
+Pure-Python/PySpark raster writer — the lightweight tier's drop-in for the
+GDAL-backed [`gdal`](./gdal) writer. Requires the exact `(source, tile)` schema,
+the same as the heavy writer. Writer options are `path` / `nameCol` / `ext`; the
+on-disk format and compression come from `tile.metadata`, not writer options.
+
+## Write raster tiles
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_RASTER_GBX"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py"
+  testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
+
+A whole-file GeoTIFF tile is written through verbatim (no re-encode); a tile whose
+`metadata["driver"]` is non-GTiff (e.g. `COG`) is re-encoded via `rasterio`.
+
+For an explicit GeoTIFF-forced writer, see the [Lightweight GeoTIFF Writer](./gtiff_gbx).
+
+:::note Register before writing
+
+Like the lightweight readers, the lightweight writers are **not** auto-registered
+(Python Data Source V2 has no classpath auto-discovery, unlike the JAR-based
+heavyweight writers). Call `register(spark)` first, as shown above. See
+[Lightweight Raster Readers → Register](../readers/raster_gbx#register) for the
+full explanation.
+
+:::
+
+## Control filenames (`nameCol`)
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_WITH_NAMECOL"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py"
+  testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
+
+## Output format & compression
+
+<CodeFromTest code={rasterGbxWrite} language="python" functionName="ENCODING_NOTE"
+  source="docs/tests/python/writers/raster_gbx_write_examples.py" />
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `nameCol` | _unset_ | Existing string column whose value is the output filename (overwrite `source`). When unset, an opaque unique name is used. |
+| `ext` | `"tif"` | Filename suffix. Does **not** change the on-disk format. |
+
+The driver / `compression` / `blocksize` / `zlevel` / `zstd_level` are read from
+`tile.metadata` (same as the heavy [`gdal`](./gdal) writer).
+
+## Performance vs the heavyweight writer
+
+Unlike the reader, the lightweight **writer is faster** than the heavyweight one.
+On a representative distributed benchmark (1000 GeoTIFF tiles, 1024² px):
+
+| Writing 1000 tiles | `gtiff_gbx` (lightweight) | `gdal` (heavyweight) |
+|---|---|---|
+| wall-clock | ~2.5 s | ~4 s |
+
+The lightweight writer passes whole-file GeoTIFF tiles through **verbatim**, while
+the heavyweight writer re-encodes every tile — so for GeoTIFF output the
+lightweight writer is the faster path (decoded pixels are identical either way).
+Note the heavyweight `gdal` writer is **append-only**, whereas the lightweight
+writer also supports `overwrite`. (Relative performance is the takeaway — absolute
+numbers depend on cluster size and data.) For reads the tradeoff reverses — see the
+[Lightweight Raster Readers](../readers/raster_gbx) and
+[Choosing an Execution Tier](../api/execution-tiers).
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · gdal">
 
 The GDAL writer emits each row's `tile` to a raster file under a target directory. It is the counterpart to the [GDAL Reader](../readers/gdal).
 
@@ -166,3 +243,6 @@ Written rasters are standard GDAL-compatible files:
 
 - [GDAL Reader](../readers/gdal) — The corresponding read path.
 - [Raster Functions](../api/raster-functions) — Transforms to run before the write.
+
+</TabItem>
+</Tabs>
