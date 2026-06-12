@@ -29,3 +29,5 @@ def test_build_header_info_zoom_and_bbox():
     assert hd["tile_type"] == TileType.PNG
     assert hd["center_zoom"] == 6
     assert isinstance(hd["min_lon_e7"], int)
+    # directories must be declared gzipped (version-independent reader compat)
+    assert hd["internal_compression"] == Compression.GZIP

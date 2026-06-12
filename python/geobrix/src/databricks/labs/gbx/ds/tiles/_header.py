@@ -44,6 +44,12 @@ class HeaderInfo:
         return {
             "tile_type": self.tile_type,
             "tile_compression": self.tile_compression,
+            # Gzip the root/leaf directories + metadata explicitly. The PMTiles
+            # spec stores directories gzipped and readers gzip-decompress them
+            # unconditionally; relying on the pmtiles Writer's default is
+            # version-dependent (some versions default to NONE, producing an
+            # archive the reader can't parse — "Not a gzipped file").
+            "internal_compression": Compression.GZIP,
             "min_zoom": self.min_zoom,
             "max_zoom": self.max_zoom,
             "min_lon_e7": _e7(minlon),
