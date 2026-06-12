@@ -13,18 +13,30 @@
 
 ## Highlights
 
-- **Lightweight tier (`pyrx`)** — pure Python on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
-- **Heavyweight tier (`rasterx`)** — Scala + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
+### Tiers
+
+- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
+- **Heavyweight tier** — Scala (Python and SQL bindings) + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
+
+### Modules
+
 - **RasterX** — 100+ raster functions (the platform has no built-in raster): I/O & tiling, terrain, band math, focal, viewshed, vector↔raster, and raster→grid aggregation.
 - **GridX** — discrete global grids beyond H3: **British National Grid**, CARTO **Quadbin**, and **custom** user-defined grids (indexing, neighbors, tessellation, polyfill, set ops).
 - **VectorX** — augments native ST: Mapbox Vector Tile (**MVT**) encoding, **TIN** surface modeling, and legacy-Mosaic geometry migration.
-- **Readers _and_ writers** — vector (GeoJSON/Shapefile/GeoPackage/FileGDB), raster (GDAL/GeoTIFF), and **PMTiles** — in both tiers (see the tables below).
+
+### Readers & Writers
+
+_In both tiers (see the tables below)_
+
+- **Vector** (GeoJSON/Shapefile/GeoPackage/FileGDB)
+- **Raster** (GDAL/GeoTIFF)
+- **PMTiles**
 
 See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings.
 
 ## Quick start (lightweight)
 
-Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install the `light` extra:
+Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install the `[light]` extra:
 
 ```python
 %pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[light]'
@@ -70,7 +82,7 @@ Lightweight formats use the `*_gbx` suffix; heavyweight use `*_ogr` (vector) / `
 | GeoPackage | `gpkg_gbx` / `gpkg_ogr` | `gpkg_gbx` |
 | File Geodatabase | `file_gdb_gbx` / `file_gdb_ogr` | `file_gdb_gbx` ¹ |
 
-¹ FileGDB write requires a runtime whose GDAL build includes OpenFileGDB write support.
+¹ `file_gdb_gbx` write is a **hybrid**: it encodes the `.gdb` via the native GDAL (`osgeo`) from the heavyweight GDAL init script, because pyogrio's bundled GDAL ships a read-only OpenFileGDB driver. On compute with those natives it writes natively; otherwise it raises a clear error (use `gpkg_gbx` / `geojson_gbx`). FileGDB *reading* is lightweight-only.
 
 Light vector readers/writers exchange geometry as **WKB/WKT** with companion `*_srid` columns — convert to/from Databricks `GEOMETRY` with `st_geomfromwkb` / `st_aswkb` (see [Databricks Spatial](https://databrickslabs.github.io/geobrix/docs/databricks-spatial)).
 

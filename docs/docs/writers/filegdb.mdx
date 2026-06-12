@@ -8,15 +8,19 @@ import vectorWriteExamples from '!!raw-loader!../../tests/python/writers/vector_
 
 # GeoDatabase Writer
 
-`file_gdb_gbx` — pyogrio-backed, pure-Python DataSource V2 writer with the OGR
-driver preset to `OpenFileGDB`. It round-trips with the matching `file_gdb_gbx`
-reader; the schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared
-across all lightweight vector readers and writers.
+`file_gdb_gbx` — a **hybrid** writer. It uses the pure-Python DataSource V2 framework
+like the other `*_gbx` writers, but because pyogrio's bundled GDAL ships a **read-only**
+OpenFileGDB driver, it encodes the `.gdb` via the **native** GDAL (`osgeo.ogr`) supplied
+by the heavyweight GDAL init script. It round-trips with the `file_gdb_gbx` reader; the
+schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared across the
+lightweight vector readers and writers.
 
-:::note No heavyweight equivalent
-The heavyweight tier has no vector writer. GDAL/OGR can write File Geodatabases but
-those write paths are not implemented in the heavyweight tier. This writer is
-lightweight-only.
+:::note Hybrid — requires the native GDAL
+Writing a File Geodatabase needs the native GDAL Python bindings (`osgeo`) from the
+heavyweight GDAL init script — pyogrio's bundled GDAL has a read-only OpenFileGDB driver.
+On compute with those natives, `file_gdb_gbx` writes the `.gdb` natively; without them it
+raises a clear error (use `gpkg_gbx` / `geojson_gbx` instead). FileGDB **reading** is
+lightweight-only (pyogrio reads it). The output path must end in `.gdb`.
 :::
 
 :::note Register first
