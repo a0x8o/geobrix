@@ -605,22 +605,32 @@ from databricks.labs.gbx.bench import readers as _rd
 from pmtiles.reader import MmapSource, Reader as _PMReader
 import glob as _glob
 import os as _os
+import shutil as _sh
+# Both pmtiles writers are two-phase (executor-write -> driver-merge), so their
+# intermediates MUST be on a filesystem shared across driver+executors. Node-local
+# /local_disk0 fails the driver merge on a multi-node cluster. Use DBFS: light
+# (pure-Python) via the /dbfs FUSE mount (its single-archive finalize is now
+# rename-free, so sequential FUSE writes are safe); heavy (JVM) via the dbfs:
+# scheme (it cannot use UC /Volumes by direct API). Parity decodes both via FUSE.
+_DBFS_FUSE = "/dbfs/tmp/gbx_bench"
+_os.makedirs(_DBFS_FUSE, exist_ok=True)
 _pmtiles_rows = []
 _pl = _ph = None
 if LIGHTWEIGHT:
-    _pl = "/local_disk0/bench_pmtiles_light.pmtiles"
-    if _os.path.exists(_pl):
+    _pl = _DBFS_FUSE + "/pmtiles_light.pmtiles"
+    if _os.path.isdir(_pl):
+        _sh.rmtree(_pl, ignore_errors=True)
+    elif _os.path.exists(_pl):
         _os.remove(_pl)
     _r = _rd.run_pmtiles_write(spark, _pl, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                                n_tiles=1000, shard_zoom=0, write_fmt="pmtiles_gbx",
                                where="cluster")
     _sink([_r]); lw.append(_r); _pmtiles_rows.append(_r)
-    _ph_light = _pl
 if HEAVYWEIGHT:
-    _ph = "/local_disk0/bench_pmtiles_heavy"
-    import shutil as _sh
+    _ph = _DBFS_FUSE + "/pmtiles_heavy"            # FUSE path (for parity decode)
     _sh.rmtree(_ph, ignore_errors=True)
-    _r = _rd.run_pmtiles_write(spark, _ph, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+    _ph_save = "dbfs:/tmp/gbx_bench/pmtiles_heavy"  # dbfs: scheme (for the JVM writer)
+    _r = _rd.run_pmtiles_write(spark, _ph_save, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                                n_tiles=1000, shard_zoom=0, write_fmt="pmtiles",
                                where="cluster")
     _sink([_r]); hw.append(_r); _pmtiles_rows.append(_r)

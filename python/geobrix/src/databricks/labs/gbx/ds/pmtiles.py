@@ -162,12 +162,19 @@ class PMTilesGbxWriter(DataSourceWriter):
         return self.tile_type_override or sniff_tile_type(sample)
 
     def _assemble_single(self, entries: List[_shard.Entry]) -> None:
-        # PySpark DataSource V2 always creates self.path as a directory before
-        # commit() runs. For single-archive mode the user expects self.path to
-        # be a file. Write to a sibling temp file then atomically replace.
+        # PySpark DataSource V2 creates self.path as a directory before commit();
+        # single-archive mode needs it to be a file. Clear the Spark-created dir
+        # first, then assemble DIRECTLY to self.path. We avoid a tmp-file +
+        # os.rename because FUSE-mounted shared filesystems (DBFS, UC Volumes) do
+        # not reliably support rename; the PMTiles Writer writes its output file
+        # purely sequentially (its internal tile buffer is a local tempfile), so
+        # a direct sequential write to a FUSE path is safe.
         parent = os.path.dirname(self.path) or "."
         os.makedirs(parent, exist_ok=True)
-        tmp_path = self.path + "._tmp"
+        if os.path.isdir(self.path):
+            shutil.rmtree(self.path)
+        elif os.path.isfile(self.path):
+            os.remove(self.path)
         tiles = [(e.z, e.x, e.y) for e in entries]
         sample = next(iter(_shard.stream_sorted(entries[:1])))[1]
         info = build_header_info(
@@ -177,13 +184,7 @@ class PMTilesGbxWriter(DataSourceWriter):
             self.tile_compression,
             self.metadata,
         )
-        PMTilesBackend().assemble(_shard.stream_sorted(entries), info, tmp_path)
-        # Remove the directory Spark created, then put the file in its place.
-        if os.path.isdir(self.path):
-            shutil.rmtree(self.path)
-        elif os.path.isfile(self.path):
-            os.remove(self.path)
-        os.rename(tmp_path, self.path)
+        PMTilesBackend().assemble(_shard.stream_sorted(entries), info, self.path)
 
     def _assemble_sharded(self, entries: List[_shard.Entry]) -> None:
         tileset = os.path.join(self.path, "tileset")
