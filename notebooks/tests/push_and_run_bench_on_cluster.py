@@ -283,6 +283,18 @@ def main() -> int:
     fix_errors = "--no-fix-errors" not in sys.argv
 
     run_id = _arg("--run-id", "cluster")
+    # Keep reader/writer benchmarks SEPARABLE from the function benchmarks: an *-only run
+    # gets its own run_id suffix (unless --run-id was given explicitly) so its rows land in
+    # a distinct partition of the results table instead of commingling with the function
+    # rows under 'cluster'. This also makes the live "N of EXPECTED" count accurate (it
+    # polls by run_id) rather than counting leftover function rows from a prior run.
+    if "--run-id" not in sys.argv:
+        if readers_only:
+            run_id = f"{run_id}-readers"
+        elif pmtiles_only:
+            run_id = f"{run_id}-pmtiles"
+        elif vector_only:
+            run_id = f"{run_id}-vector"
     functions = _arg("--functions", "")
     sel = _arg("--set", "core")
 

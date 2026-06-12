@@ -869,8 +869,15 @@ def build_bench_notebook(cfg: dict) -> dict:
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
     # (light, heavy) then spark-path (light, heavy).
     cells = [
+        # Install deps (first run) THEN force-reinstall just the geobrix code. The wheel
+        # version is a fixed 0.4.0 string, so on a warm cluster that already has geobrix
+        # installed a plain `pip install <wheel>` is a no-op (pip sees the version
+        # satisfied) and the cluster keeps running STALE code -- e.g. a freshly added
+        # DataSource like geojson_gbx fails with DATA_SOURCE_NOT_FOUND. --force-reinstall
+        # --no-deps swaps the geobrix package every run without re-resolving heavy deps.
         # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
         _cell(f"%pip install --quiet '{cfg['wheel']}[light]' markdown"),
+        _cell(f"%pip install --quiet --force-reinstall --no-deps '{cfg['wheel']}'"),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.
