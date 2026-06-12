@@ -12,7 +12,18 @@ GeoBrix provides Spark writers for geospatial file formats.
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
-The lightweight tier ships a native Python DataSource V2 raster writer — no JAR, no init script.
+The lightweight tier ships native Python DataSource V2 writers — no JAR, no init script.
+
+:::note Register first
+Unlike the heavyweight writers (auto-discovered from the JAR), the lightweight Python
+DataSources are **not** auto-registered — call `register(spark)` once per session before
+using any `*_gbx` format:
+
+```python
+from databricks.labs.gbx.ds.register import register
+register(spark)
+```
+:::
 
 ### Available Writers
 
