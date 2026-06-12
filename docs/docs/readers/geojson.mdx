@@ -1,6 +1,6 @@
 ---
 sidebar_position: 5
-sidebar_label: GeoJSON OGR
+sidebar_label: GeoJSON
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
@@ -8,6 +8,11 @@ import geojsonExamples from '!!raw-loader!../../tests/python/readers/geojson_exa
 import geojsonScala from '!!raw-loader!../../tests/scala/readers/GeoJSONExamples.scala';
 
 # GeoJSON Reader
+
+:::note No lightweight equivalent yet
+This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
+with the light vector tier. Use the heavyweight reader documented below.
+:::
 
 The GeoJSON reader provides support for reading GeoJSON and GeoJSONSeq (newline-delimited GeoJSON) formats.
 

@@ -1,6 +1,6 @@
 ---
 sidebar_position: 7
-sidebar_label: FileGDB OGR
+sidebar_label: GeoDatabase
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
@@ -8,6 +8,11 @@ import filegdbExamples from '!!raw-loader!../../tests/python/readers/filegdb_exa
 import filegdbScala from '!!raw-loader!../../tests/scala/readers/FileGDBExamples.scala';
 
 # File GeoDatabase Reader
+
+:::note No lightweight equivalent yet
+This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
+with the light vector tier. Use the heavyweight reader documented below.
+:::
 
 Read ESRI File Geodatabase (.gdb) format - the standard multi-layer geospatial format used in ArcGIS.
 

@@ -1,6 +1,6 @@
 ---
 sidebar_position: 6
-sidebar_label: GeoPackage OGR
+sidebar_label: GeoPackage
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
@@ -8,6 +8,11 @@ import geopackageExamples from '!!raw-loader!../../tests/python/readers/geopacka
 import geopackageScala from '!!raw-loader!../../tests/scala/readers/GeoPackageExamples.scala';
 
 # GeoPackage Reader
+
+:::note No lightweight equivalent yet
+This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
+with the light vector tier. Use the heavyweight reader documented below.
+:::
 
 The GeoPackage reader provides support for reading OGC GeoPackage format, a modern SQLite-based geospatial format.
 

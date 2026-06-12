@@ -1,6 +1,6 @@
 ---
 sidebar_position: 3
-sidebar_label: OGR
+sidebar_label: Vector
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
@@ -9,6 +9,11 @@ import ogrScala from '!!raw-loader!../../tests/scala/readers/OGRExamples.scala';
 import ogrDBR from '!!raw-loader!../../tests-dbr/python/readers/ogr/examples.py';
 
 # OGR Reader
+
+:::note No lightweight equivalent yet
+This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
+with the light vector tier. Use the heavyweight reader documented below.
+:::
 
 The OGR reader provides generic support for reading vector data formats through the OGR library. This is the base reader that powers all vector format readers in GeoBrix.
 
