@@ -62,6 +62,11 @@ def test_vector_reader_parity(spark_with_jar, light_fmt, heavy_fmt, path):
         (f.name, f.dataType.simpleString()) for f in heavy.schema.fields
     ]
     assert light.count() == heavy.count()
-    lg = {bytes(r["geom_0"]) for r in light.select("geom_0").collect()}
-    hg = {bytes(r["geom_0"]) for r in heavy.select("geom_0").collect()}
+    # The geometry column is geom_0 by default but takes the source's OGR geom-field
+    # name when present (e.g. SHAPE for GPKG/FileGDB) — both tiers do this, so derive
+    # it from the schema (the column X with a matching X_srid) rather than hardcoding.
+    srid_cols = [f.name for f in light.schema.fields if f.name.endswith("_srid")]
+    geom_col = srid_cols[0][: -len("_srid")]
+    lg = {bytes(r[geom_col]) for r in light.select(geom_col).collect()}
+    hg = {bytes(r[geom_col]) for r in heavy.select(geom_col).collect()}
     assert lg == hg
