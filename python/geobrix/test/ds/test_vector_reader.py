@@ -70,6 +70,52 @@ def test_ogr_gbx_reads_directory(spark, tmp_path):
     assert df.count() == 6  # 3 files x 2 features
 
 
+def test_vector_gbx_read_yields_recordbatch_wkb(spark, tmp_path):
+    """read() must be Arrow-native: yield pyarrow.RecordBatch (not Python tuples),
+    with WKB geometry that round-trips."""
+    import pyarrow as pa
+
+    from databricks.labs.gbx.ds.vector import VectorGbxReader
+
+    p = _gj_path(str(tmp_path))
+    rdr = VectorGbxReader({"path": p})
+    parts = list(rdr.partitions())
+    batches = []
+    for part in parts:
+        for b in rdr.read(part):
+            assert isinstance(b, pa.RecordBatch)
+            batches.append(b)
+    tbl = pa.Table.from_batches(batches)
+    assert tbl.column_names == [
+        "name",
+        "pop",
+        "geom_0",
+        "geom_0_srid",
+        "geom_0_srid_proj",
+    ]
+    names = tbl.column("name").to_pylist()
+    srids = set(tbl.column("geom_0_srid").to_pylist())
+    geoms = tbl.column("geom_0").to_pylist()
+    assert set(names) == {"a", "b"}
+    assert srids == {"4326"}
+    assert all(from_wkb(bytes(g)).geom_type == "Point" for g in geoms)
+
+
+def test_vector_gbx_read_yields_recordbatch_wkt(spark, tmp_path):
+    """asWKB=false: vectorized WKB->WKT in the Arrow output."""
+    import pyarrow as pa
+
+    from databricks.labs.gbx.ds.vector import _GeoJSONReader
+
+    p = _gj_path(str(tmp_path))
+    rdr = _GeoJSONReader({"path": p, "asWKB": "false"})
+    batches = [b for part in rdr.partitions() for b in rdr.read(part)]
+    tbl = pa.Table.from_batches(batches)
+    assert pa.types.is_string(tbl.schema.field("geom_0").type)
+    for g in tbl.column("geom_0").to_pylist():
+        assert isinstance(g, str) and g.upper().startswith("POINT")
+
+
 def test_shapefile_gbx_reads_directory_of_shp_zip(spark, tmp_path):
     """A directory of copy_*.shp.zip files is enumerated and read by shapefile_gbx.
     Each .shp.zip contains a small shapefile written by the shapefile_gbx writer so

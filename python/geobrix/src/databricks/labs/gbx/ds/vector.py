@@ -53,6 +53,31 @@ _OGR_LIST_TO_SPARK = {
 }
 
 
+def _arrow_to_spark(at):
+    """Map a pyarrow attribute-column type to the Spark type the reader declares.
+    Mirrors _ogr_to_spark's targets so the per-partition output schema (derived from
+    the pyogrio Arrow table) matches schema()/_vector_schema for the same source."""
+    import pyarrow as pa
+
+    if pa.types.is_boolean(at):
+        return BooleanType()
+    if pa.types.is_int32(at) or (pa.types.is_integer(at) and at.bit_width <= 32):
+        return IntegerType()
+    if pa.types.is_integer(at):  # int64 / uint
+        return LongType()
+    if pa.types.is_floating(at):
+        return DoubleType()
+    if pa.types.is_date(at):
+        return DateType()
+    if pa.types.is_timestamp(at):
+        return TimestampType()
+    if pa.types.is_binary(at) or pa.types.is_large_binary(at):
+        return BinaryType()
+    if pa.types.is_list(at) or pa.types.is_large_list(at):
+        return ArrayType(_arrow_to_spark(at.value_type))
+    return StringType()  # string / large_string / anything else
+
+
 def _ogr_to_spark(ogr_type: str, subtype: str):
     if subtype == "OFSTBoolean":
         return BooleanType()
@@ -289,6 +314,16 @@ class VectorGbxReader(DataSourceReader):
         return parts
 
     def read(self, partition: "_ChunkPartition"):
+        """Arrow-native read: transform the pyogrio Arrow table in Arrow (rename the
+        geometry column, vectorized WKB/WKT, constant srid/proj columns, cast to the
+        declared StructType) and yield pyarrow.RecordBatch objects. No per-row Python
+        tuple construction -- that per-row loop made large reads ~10x slower than the
+        JVM reader."""
+        import numpy as np
+        import pyarrow as pa
+        import shapely
+        from pyspark.sql.pandas.types import to_arrow_schema
+
         self._gdal_readonly_safe()
         import pyogrio
 
@@ -306,21 +341,58 @@ class VectorGbxReader(DataSourceReader):
             kw["driver"] = partition.driver
         with self._staged(partition.path) as _p:
             meta, tbl = pyogrio.read_arrow(_zip_vsi(_p), **kw)
-        # Arrow table uses 'wkb_geometry' when geometry_name is empty.
-        gcol = meta.get("geometry_name") or "wkb_geometry"
-        srid, proj4 = _crs_to_srid_proj(meta.get("crs"))
-        attr_cols = [c for c in tbl.column_names if c != gcol]
-        cols = {c: tbl.column(c).to_pylist() for c in tbl.column_names}
-        geom = cols.get(gcol, [None] * tbl.num_rows)
-        for i in range(tbl.num_rows):
-            g = geom[i]
-            if g is not None and not partition.as_wkb:
-                from shapely import from_wkb as _from_wkb
 
-                g = _from_wkb(bytes(g)).wkt
-            elif g is not None:
-                g = bytes(g)
-            yield tuple(cols[c][i] for c in attr_cols) + (g, srid, proj4)
+        # Arrow table uses 'wkb_geometry' when geometry_name is empty; the declared
+        # schema names the geometry column geometry_name or 'geom_0' (see _geom_name).
+        gcol = meta.get("geometry_name") or "wkb_geometry"
+        out_gname = meta.get("geometry_name") or "geom_0"
+        srid, proj4 = _crs_to_srid_proj(meta.get("crs"))
+        n = tbl.num_rows
+
+        # Build the declared output Spark schema from THIS table's field types (so we do
+        # not re-open the file just to compute it): attrs preserved, geom typed by asWKB,
+        # srid/proj string columns -- column NAMES/ORDER match _vector_schema/schema().
+        attr_cols = [c for c in tbl.column_names if c != gcol]
+        fields: List[StructField] = [
+            StructField(c, _arrow_to_spark(tbl.schema.field(c).type), True)
+            for c in attr_cols
+        ]
+        geom_spark = BinaryType() if partition.as_wkb else StringType()
+        fields.append(StructField(out_gname, geom_spark, True))
+        fields.append(StructField(out_gname + "_srid", StringType(), True))
+        fields.append(StructField(out_gname + "_srid_proj", StringType(), True))
+        target = to_arrow_schema(StructType(fields))
+
+        if n == 0:
+            for batch in target.empty_table().to_batches():
+                yield batch
+            return
+
+        # Geometry column: keep WKB binary, or vectorized WKB->WKT (shapely 2.x).
+        wkb_arr = tbl.column(gcol).combine_chunks()
+        if partition.as_wkb:
+            geom_out = wkb_arr.cast(pa.binary())
+        else:
+            geoms = shapely.from_wkb(wkb_arr.to_numpy(zero_copy_only=False))
+            wkt = shapely.to_wkt(geoms)  # None -> None preserved
+            geom_out = pa.array(np.asarray(wkt, dtype=object), type=pa.string())
+
+        srid_out = pa.array([srid] * n, type=pa.string())
+        proj_out = pa.array([proj4] * n, type=pa.string())
+
+        out_cols = [tbl.column(c) for c in attr_cols] + [geom_out, srid_out, proj_out]
+        out_names = attr_cols + [out_gname, out_gname + "_srid", out_gname + "_srid_proj"]
+        out_table = pa.Table.from_arrays(
+            [
+                c.combine_chunks() if isinstance(c, pa.ChunkedArray) else c
+                for c in out_cols
+            ],
+            names=out_names,
+        )
+        # Cast to the declared schema's Arrow types for guaranteed PySpark alignment.
+        out = out_table.cast(target, safe=False)
+        for batch in out.to_batches():
+            yield batch
 
 
 class VectorGbxDataSource(DataSource):
