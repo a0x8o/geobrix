@@ -133,3 +133,53 @@ def test_append_mode_rejected(spark, tmp_path):
             "driverName", "GeoJSON"
         ).save(out)
     assert "append" in str(ei.value).lower()
+
+
+@pytest.mark.parametrize(
+    "fmt,target",
+    [
+        ("geojson_gbx", "named.geojson"),
+        ("gpkg_gbx", "named.gpkg"),
+        ("shapefile_gbx", "named.shp"),
+    ],
+)
+def test_named_writer_roundtrip(spark, tmp_path, fmt, target):
+    register(spark)
+    out = str(tmp_path / target)
+    _wkb_df(spark).coalesce(1).write.format(fmt).mode("overwrite").save(out)
+    back = spark.read.format(fmt).load(out)
+    assert back.count() == 2
+    gcol = [f.name for f in back.schema.fields if f.name.endswith("_srid")][0][:-5]
+    assert {
+        _from_wkb(bytes(r[gcol])).geom_type for r in back.select(gcol).collect()
+    } == {"Point"}
+
+
+def _ogr_can_create(driver: str) -> bool:
+    try:
+        import tempfile
+
+        import pyarrow as pa
+        import pyogrio
+        from shapely import Point as _P, to_wkb as _twkb
+
+        d = tempfile.mkdtemp()
+        path = d + ("/t.gdb" if driver == "OpenFileGDB" else "/t.out")
+        tbl = pa.table({"g": [_twkb(_P(0, 0))]})
+        pyogrio.write_arrow(
+            tbl, path, driver=driver, geometry_name="g",
+            geometry_type="Point", crs="EPSG:4326",
+        )
+        return True
+    except Exception:
+        return False
+
+
+def test_file_gdb_writer_roundtrip(spark, tmp_path):
+    register(spark)
+    if not _ogr_can_create("OpenFileGDB"):
+        pytest.skip("installed GDAL OpenFileGDB driver cannot create datasets")
+    out = str(tmp_path / "out.gdb")
+    _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
+    back = spark.read.format("file_gdb_gbx").load(out)
+    assert back.count() == 2
