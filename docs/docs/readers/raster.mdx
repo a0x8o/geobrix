@@ -76,24 +76,8 @@ the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
 
 `gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./geotiff) for the named-reader page.
 
-## Performance vs the heavyweight reader
-
-The lightweight reader trades raw throughput for a JAR-free, Serverless-compatible
-path. On a representative distributed benchmark (1000 GeoTIFF tiles, 1024² px):
-
-| Reading 1000 tiles | `raster_gbx` (lightweight) | `gdal` (heavyweight) |
-|---|---|---|
-| wall-clock | ~20 s | ~9 s |
-
-The lightweight reader is roughly **2× slower for reads**: each tile's bytes cross
-the Python ↔ JVM boundary, whereas the heavyweight reader stays in the JVM. Prefer
-the lightweight reader when you need a JAR-free or Serverless path; prefer the
-heavyweight reader for read-heavy pipelines at large scale. (Relative performance
-is the takeaway — absolute numbers depend on cluster size and data.) The
-lightweight **writer**, by contrast, is *faster* than heavyweight — see the
-[Lightweight Raster Writer](../writers/raster).
-
-See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff.
+See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff and the
+[Benchmarking](../api/benchmarking) page for light-vs-heavy timings.
 
 It is the lightweight counterpart of the heavyweight `gdal` reader, supporting Python and SQL bindings (not Scala).
 

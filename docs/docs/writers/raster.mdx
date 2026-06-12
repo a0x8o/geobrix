@@ -101,23 +101,11 @@ full explanation.
 The driver / `compression` / `blocksize` / `zlevel` / `zstd_level` are read from
 `tile.metadata` (same as the heavy [`gdal`](./raster?tier=heavyweight) writer).
 
-## Performance vs the heavyweight writer
-
-Unlike the reader, the lightweight **writer is faster** than the heavyweight one.
-On a representative distributed benchmark (1000 GeoTIFF tiles, 1024² px):
-
-| Writing 1000 tiles | `gtiff_gbx` (lightweight) | `gdal` (heavyweight) |
-|---|---|---|
-| wall-clock | ~2.5 s | ~4 s |
-
-The lightweight writer passes whole-file GeoTIFF tiles through **verbatim**, while
-the heavyweight writer re-encodes every tile — so for GeoTIFF output the
-lightweight writer is the faster path (decoded pixels are identical either way).
-Note the heavyweight `gdal` writer is **append-only**, whereas the lightweight
-writer also supports `overwrite`. (Relative performance is the takeaway — absolute
-numbers depend on cluster size and data.) For reads the tradeoff reverses — see the
-[Lightweight Raster Readers](../readers/raster) and
-[Choosing an Execution Tier](../api/execution-tiers).
+The lightweight writer passes whole-file GeoTIFF tiles through **verbatim**, while the
+heavyweight writer re-encodes every tile (decoded pixels are identical either way). The
+heavyweight `gdal` writer is also **append-only**, whereas the lightweight writer supports
+`overwrite`. See [Choosing an Execution Tier](../api/execution-tiers) and the
+[Benchmarking](../api/benchmarking) page for light-vs-heavy timings.
 
 It is the lightweight counterpart of the heavyweight `gdal` writer, supporting Python and SQL bindings (not Scala).
 
