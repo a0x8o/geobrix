@@ -516,6 +516,11 @@ class VectorGbxWriter(DataSourceWriter):
         types = {f.name: f.type for f in first.schema}
 
         ds = drv.CreateDataSource(local_out)
+        if ds is None:
+            raise RuntimeError(
+                f"OpenFileGDB CreateDataSource returned None for {local_out!r}; "
+                "the FileGDB output path must end in '.gdb'."
+            )
         try:
             lyr = ds.CreateLayer(
                 self.layer_name or "layer", srs, _WKB.get(geom_type, ogr.wkbUnknown)

@@ -668,7 +668,18 @@ def run_vector_write(
         )
 
     # Build per-iteration target paths so repeated writes go to fresh directories.
-    _targets = [f"{out_dir}/iter.m{i}" for i in range(max(1, measured))]
+    # Use a format-appropriate extension -- OpenFileGDB (file_gdb_gbx) requires a
+    # `.gdb` path or GDAL's CreateDataSource returns None; the others are lenient but
+    # a natural extension keeps the round-trip realistic.
+    _ext = {
+        "geojson_gbx": ".geojson",
+        "shapefile_gbx": ".shp",
+        "gpkg_gbx": ".gpkg",
+        "file_gdb_gbx": ".gdb",
+        "vector_gbx": ".geojson",
+        "ogr_gbx": ".geojson",
+    }.get(fmt, "")
+    _targets = [f"{out_dir}/iter.m{i}{_ext}" for i in range(max(1, measured))]
     _iter_idx = [0]
 
     def _job():
