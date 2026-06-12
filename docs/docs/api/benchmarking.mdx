@@ -391,6 +391,33 @@ The spark-path numbers above are wall-clock for a whole distributed job, so they
 This repartitioning is **benchmark-harness tuning** — it lives in the bench code that runs from a repo checkout, **not** in the GeoBrix product. The lightweight **pyrx** tier never mutates Spark configuration: it only registers UDFs and builds Column expressions, so it is safe on **Serverless / Spark Connect**, where runtime `spark.conf.set(...)` and JVM-bridge access are not permitted. On Serverless you therefore can't hand-tune partitions; you rely on the platform's managed AQE and default partitioning. Treat the tuned figures above as the controlled, like-for-like comparison number — not as what a Serverless user sets by hand.
 :::
 
+## Results — tiled output (PMTiles writer)
+
+The PMTiles writer is benchmarked separately from the `rst_*` functions: it is a
+**write** that packages a tile pyramid into a `.pmtiles` archive, not a per-tile
+transform. The lightweight `pmtiles_gbx` writer and the heavyweight `pmtiles`
+writer take the same `(z, x, y, bytes)` input; the benchmark writes **1,000 tiles
+to a single archive** on each tier and verifies **decoded-tile parity** between the
+two outputs. Run it with `gbx:bench:cluster --pmtiles-only --row-counts 1000`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 1,000 synthetic PNG tiles → one
+> `.pmtiles` archive per tier · whole-job wall-clock median.
+
+| Writer | Tier | Whole-job median (1,000 tiles) | Speedup |
+|---|---|---|---|
+| `pmtiles_gbx` | lightweight | 18.4 s | — |
+| `pmtiles` | heavyweight | 20.7 s | **1.13×** (lightweight faster) |
+
+**Parity:** the two archives decode to the **same 1,000 `(z, x, y)` tiles with
+byte-identical tile data**. This is a hard gate — the benchmark fails if the tiers
+diverge — so the timing above is a like-for-like comparison of identical output.
+
+> Both writers are two-phase (executors write intermediates, the driver assembles
+> the archive), so the benchmark stages intermediates on a **shared filesystem**
+> rather than node-local disk; the lightweight writer streams its per-partition
+> scratch and assembles on the driver, the same model the sharded/mosaic output
+> uses at scale.
+
 ## Caveats
 
 - Absolute timings depend on the machine, the corpus, and the tier's install; treat the **relative** speedup and the **consistency** outcome as the durable signal, not the millisecond values.
