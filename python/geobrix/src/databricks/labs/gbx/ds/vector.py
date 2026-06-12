@@ -98,6 +98,43 @@ def _zip_vsi(path: str) -> str:
     return path
 
 
+def _geometry_type_of(wkb: bytes) -> str:
+    """OGR geometry-type name (e.g. 'Point', 'MultiPolygon') from a WKB blob."""
+    from shapely import from_wkb
+
+    return from_wkb(bytes(wkb)).geom_type
+
+
+def _srid_to_crs(srid: str, proj4: str):
+    """Inverse of the reader's CRS encoding: authority code -> 'EPSG:<code>',
+    else the PROJ4 string, else None (CRS-less)."""
+    if srid and srid != "0":
+        return f"EPSG:{srid}"
+    if proj4:
+        return proj4
+    return None
+
+
+def _writer_col_roles(schema):
+    """(geom_col, srid_col, proj_col, attr_cols) derived from the reader schema:
+    the column X paired with X_srid is the geometry; X_srid_proj is its proj4;
+    everything else is an attribute. Mirrors how the parity test finds geom."""
+    names = [f.name for f in schema.fields]
+    srid_cols = [n for n in names if n.endswith("_srid")]
+    if not srid_cols:
+        raise ValueError(
+            "vector writer input needs a geometry/'*_srid' column pair "
+            f"(from a *_gbx reader); got columns {names}"
+        )
+    srid_col = srid_cols[0]
+    geom_col = srid_col[: -len("_srid")]
+    proj_col = geom_col + "_srid_proj"
+    if geom_col not in names:
+        raise ValueError(f"no geometry column '{geom_col}' for srid '{srid_col}'")
+    attr_cols = [n for n in names if n not in (geom_col, srid_col, proj_col)]
+    return geom_col, srid_col, proj_col, attr_cols
+
+
 class _ChunkPartition(InputPartition):
     """One contiguous feature slice of one layer (picklable)."""
 
