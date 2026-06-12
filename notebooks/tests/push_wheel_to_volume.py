@@ -70,7 +70,19 @@ def main() -> int:
             shutil.rmtree(dist)
         dist.mkdir(parents=True)
         print("Building wheel (python3 -m build)...")
-        rc = subprocess.run([sys.executable, "-m", "build", str(pkg_dir)], cwd=project_root, capture_output=False)
+        # `python -m build` spins up an isolated env and pip-installs the build backend
+        # (setuptools/wheel). Locally and in GitHub CI, direct PyPI is firewalled -- point
+        # that install at the Databricks PyPI proxy so isolation works (on a cluster, direct
+        # PyPI is reachable; setdefault lets an explicit override or cluster env win).
+        build_env = dict(os.environ)
+        build_env.setdefault("PIP_INDEX_URL", "https://pypi-proxy.dev.databricks.com/simple/")
+        build_env.setdefault("PIP_TRUSTED_HOST", "pypi-proxy.dev.databricks.com")
+        rc = subprocess.run(
+            [sys.executable, "-m", "build", str(pkg_dir)],
+            cwd=project_root,
+            capture_output=False,
+            env=build_env,
+        )
         if rc.returncode != 0:
             print("Build failed", file=sys.stderr)
             return 1
