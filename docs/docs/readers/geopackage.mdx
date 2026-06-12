@@ -3,16 +3,28 @@ sidebar_position: 6
 sidebar_label: GeoPackage
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import geopackageExamples from '!!raw-loader!../../tests/python/readers/geopackage_examples.py';
 import geopackageScala from '!!raw-loader!../../tests/scala/readers/GeoPackageExamples.scala';
+import geopackageGbx from '!!raw-loader!../../tests/python/readers/geopackage_gbx_examples.py';
 
 # GeoPackage Reader
 
-:::note No lightweight equivalent yet
-This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
-with the light vector tier. Use the heavyweight reader documented below.
-:::
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · gpkg_gbx">
+
+`gpkg_gbx` is the lightweight GeoPackage reader (pyogrio-backed, no JAR). It reads OGC GeoPackage files and emits the same schema as the heavyweight `gpkg_ogr` reader.
+
+<CodeFromTest code={geopackageGbx} language="python" functionName="READ_GPKG_GBX"
+  source="docs/tests/python/readers/geopackage_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_geopackage_gbx_examples.py" />
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · gpkg_ogr">
 
 The GeoPackage reader provides support for reading OGC GeoPackage format, a modern SQLite-based geospatial format.
 
@@ -109,3 +121,6 @@ All [OGR reader options](./ogr#options) are available, e.g.:
 - [Check Examples](../examples/overview)
 - [Other Readers](./overview)
 - [Learn about VectorX](../api/vectorx-functions)
+
+</TabItem>
+</Tabs>

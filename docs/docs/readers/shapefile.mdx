@@ -3,16 +3,28 @@ sidebar_position: 4
 sidebar_label: Shapefile
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import shapefileExamples from '!!raw-loader!../../tests/python/readers/shapefile_examples.py';
 import shapefileScala from '!!raw-loader!../../tests/scala/readers/ShapefileExamples.scala';
+import shapefileGbx from '!!raw-loader!../../tests/python/readers/shapefile_gbx_examples.py';
 
 # Shapefile Reader
 
-:::note No lightweight equivalent yet
-This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
-with the light vector tier. Use the heavyweight reader documented below.
-:::
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · shapefile_gbx">
+
+`shapefile_gbx` is the lightweight Shapefile reader (pyogrio-backed, no JAR). It reads `.shp` and zipped shapefiles and emits the same schema as the heavyweight `shapefile_ogr` reader.
+
+<CodeFromTest code={shapefileGbx} language="python" functionName="READ_SHAPEFILE_GBX"
+  source="docs/tests/python/readers/shapefile_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_shapefile_gbx_examples.py" />
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · shapefile_ogr">
 
 Read ESRI Shapefile format using the `shapefile` reader.
 
@@ -84,3 +96,6 @@ Adjust records per chunk for performance:
 - [GeoPackage Reader](./geopackage)
 - [FileGDB Reader](./filegdb)
 - [API Reference](../api/overview)
+
+</TabItem>
+</Tabs>

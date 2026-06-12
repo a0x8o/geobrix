@@ -3,17 +3,29 @@ sidebar_position: 3
 sidebar_label: Vector
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import ogrExamples from '!!raw-loader!../../tests/python/readers/ogr_examples.py';
 import ogrScala from '!!raw-loader!../../tests/scala/readers/OGRExamples.scala';
 import ogrDBR from '!!raw-loader!../../tests-dbr/python/readers/ogr/examples.py';
+import ogrGbx from '!!raw-loader!../../tests/python/readers/ogr_gbx_examples.py';
 
 # OGR Reader
 
-:::note No lightweight equivalent yet
-This vector format does not have a lightweight (`pyvx`) reader yet — it is planned
-with the light vector tier. Use the heavyweight reader documented below.
-:::
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · ogr_gbx">
+
+`ogr_gbx` is the lightweight catch-all vector reader (pyogrio-backed, no JAR). It reads any OGR-supported format and emits the same schema as the heavyweight `ogr` reader.
+
+<CodeFromTest code={ogrGbx} language="python" functionName="READ_OGR_GBX"
+  source="docs/tests/python/readers/ogr_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_gbx_examples.py" />
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · ogr">
 
 The OGR reader provides generic support for reading vector data formats through the OGR library. This is the base reader that powers all vector format readers in GeoBrix.
 
@@ -166,3 +178,6 @@ For common formats, GeoBrix provides named readers for convenience (sample-data 
 - [GeoJSON Reader](./geojson)
 - [GeoPackage Reader](./geopackage)
 - [File GeoDatabase Reader](./filegdb)
+
+</TabItem>
+</Tabs>
