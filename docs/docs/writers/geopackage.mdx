@@ -24,6 +24,19 @@ Call `register(spark)` once before using any `*_gbx` format (see the
 [Writers Overview](./overview)).
 :::
 
+:::note Input geometry format
+The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
+the same encodings the `*_gbx` readers emit (controlled by the reader's `asWKB` option). The
+SRID/CRS is taken from the companion `*_srid` / `*_srid_proj` columns, so plain WKB or WKT is
+all that is needed. Extended forms (**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not**
+accepted as writer input.
+
+Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column? Convert it to a supported interchange
+format first with an [ST export function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#export):
+use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoid
+`ST_GeomAsEWKB`, `ST_AsEWKT`, and `ST_AsGeoJSON` — those encodings are not accepted as input.
+:::
+
 ## How it scales
 
 Unlike a single-node `pyogrio.write_*` call that serializes one file on one machine, the
