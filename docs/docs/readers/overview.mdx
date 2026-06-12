@@ -49,6 +49,21 @@ register(spark)
 See the [Raster Reader](./raster) page for full raster usage/options, and the vector
 reader pages for the OGR `(geom_0, geom_0_srid, geom_0_srid_proj, …attributes)` schema.
 
+## Benchmarks
+
+Each `*_gbx` lightweight reader corresponds to a `*_ogr` (or `gdal`/`gtiff_gdal`) heavyweight
+counterpart. The generic `ogr_gbx` catch-all reader pairs with the heavyweight `ogr` generic
+OGR reader; named readers such as `shapefile_gbx` pair with `shapefile_ogr`, and so on.
+
+Both tiers are benchmarked on the same cluster, same source file, same row counts. Parity
+(row-count equality between the two tiers) is a hard gate — a mismatch fails the run
+immediately. Per-format timing results are published on the [Benchmarking](../api/benchmarking)
+page; the vector-reader comparison table is in the **Results — vector readers** section (timing
+figures will be filled in once a controlled cluster run is completed).
+
+For the full methodology, raster-function results, and the PMTiles writer comparison, see the
+[Benchmarking](../api/benchmarking) page.
+
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
@@ -209,6 +224,25 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
    ```python
    df = spark.read.format("shapefile_ogr").load("/path").write.saveAsTable(...)
    ```
+
+## Reader Types Correspondence
+
+Each lightweight `*_gbx` reader maps directly to a heavyweight counterpart: `gtiff_gbx` ↔
+`gtiff_gdal`, `shapefile_gbx` ↔ `shapefile_ogr`, `geojson_gbx` ↔ `geojson_ogr`, `gpkg_gbx`
+↔ `gpkg_ogr`, `file_gdb_gbx` ↔ `file_gdb_ogr`. The **generic catch-all** pair is `ogr_gbx`
+(lightweight) ↔ `ogr` (heavyweight), used for any OGR-supported format without a named reader.
+
+## Benchmarks
+
+Each heavyweight reader is benchmarked against its `*_gbx` lightweight counterpart on the same
+cluster, same source file, same row counts. Parity (row-count equality between the two tiers)
+is a hard gate — a mismatch fails the run immediately. Per-format timing results are published
+on the [Benchmarking](../api/benchmarking) page; the vector-reader comparison table is in the
+**Results — vector readers** section (timing figures will be filled in once a controlled
+cluster run is completed).
+
+For the full methodology, raster-function results, and the PMTiles writer comparison, see the
+[Benchmarking](../api/benchmarking) page.
 
 ## Next Steps
 

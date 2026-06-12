@@ -46,6 +46,21 @@ register(spark)
 
 See the [Raster Writer](./raster) page for full usage, options, and the `nameCol` / `ext` controls.
 
+## Benchmarks
+
+Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
+median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
+1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+
+| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
+|--------|------|-------------------------------|-------|
+| `pmtiles_gbx` | Lightweight | 18.4 s | — |
+| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
+
+Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
+tile data. For the full methodology and raster-function results, see the
+[Benchmarking](../api/benchmarking) page.
+
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
@@ -71,6 +86,29 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 - **Input schema:** exactly `(z: int, x: int, y: int, bytes: binary)`.
 - **Mode:** `.mode("overwrite")` is required; default `ErrorIfExists` is rejected upstream by Spark.
 - **Output path:** the final `.pmtiles` file, not a directory. Read support is not implemented in 0.4.0.
+
+:::note No heavyweight vector writers
+The heavyweight tier writes raster (GDAL) and PMTiles only; its vector data sources are
+read-only. GDAL/OGR can write GeoJSON, Shapefile, GeoPackage, and File Geodatabase, but
+those write paths are not implemented in the heavyweight tier. For vector output, use the
+lightweight [Vector Writer](./vector) (`geojson_gbx` / `shapefile_gbx` / `gpkg_gbx` /
+`file_gdb_gbx` / `ogr_gbx`).
+:::
+
+## Benchmarks
+
+Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
+median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
+1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+
+| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
+|--------|------|-------------------------------|-------|
+| `pmtiles_gbx` | Lightweight | 18.4 s | — |
+| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
+
+Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
+tile data. For the full methodology and raster-function results, see the
+[Benchmarking](../api/benchmarking) page.
 
 ## Next Steps
 
