@@ -14,16 +14,16 @@ from path_config import SAMPLE_DATA_BASE
 # Snippet strings shown in the MDX pages (CodeFromTest functionName=...)
 # ---------------------------------------------------------------------------
 
-WRITE_OGR_GBX = """# Generic lightweight OGR vector writer (pyogrio; no JAR)
+WRITE_VECTOR_GBX = """# Generic lightweight vector writer (pyogrio; no JAR)
 from databricks.labs.gbx.ds.register import register
 register(spark)
 src = f"{SAMPLE_DATA_BASE}/nyc/boroughs/nyc_boroughs.geojson"
 df = spark.read.format("geojson_gbx").load(src)
 out = "/tmp/gbx_ogr_write_example"
-(df.coalesce(1).write.format("ogr_gbx")
+(df.coalesce(1).write.format("vector_gbx")
    .option("driverName", "GeoJSON")
    .mode("overwrite").save(out))
-back = spark.read.format("ogr_gbx").option("driverName", "GeoJSON").load(out)
+back = spark.read.format("vector_gbx").option("driverName", "GeoJSON").load(out)
 assert back.count() == df.count()"""
 
 WRITE_SHAPEFILE_GBX = """# Lightweight Shapefile writer (pyogrio; OGR driver preset to "ESRI Shapefile")
@@ -78,20 +78,20 @@ def _register(spark):
     register(spark)
 
 
-def write_ogr_gbx(spark):
-    """WRITE_OGR_GBX: generic ogr_gbx round-trip (GeoJSON driver)."""
+def write_vector_gbx(spark):
+    """WRITE_VECTOR_GBX: generic vector_gbx round-trip (GeoJSON driver)."""
     _register(spark)
     src = f"{SAMPLE_DATA_BASE}/nyc/boroughs/nyc_boroughs.geojson"
     df = spark.read.format("geojson_gbx").load(src)
     with tempfile.TemporaryDirectory() as out:
         (
             df.coalesce(1)
-            .write.format("ogr_gbx")
+            .write.format("vector_gbx")
             .option("driverName", "GeoJSON")
             .mode("overwrite")
             .save(out)
         )
-        back = spark.read.format("ogr_gbx").option("driverName", "GeoJSON").load(out)
+        back = spark.read.format("vector_gbx").option("driverName", "GeoJSON").load(out)
         assert back.count() == df.count(), f"count mismatch: {back.count()} != {df.count()}"
     return out
 

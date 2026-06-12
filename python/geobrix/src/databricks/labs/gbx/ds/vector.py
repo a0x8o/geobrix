@@ -157,13 +157,13 @@ class _ChunkPartition(InputPartition):
         self.count = count
 
 
-class OgrGbxReader(DataSourceReader):
+class VectorGbxReader(DataSourceReader):
     _DRIVER = ""  # named subclasses override
 
     def __init__(self, options: Dict[str, str]):
         self.path = options.get("path")
         if not self.path:
-            raise ValueError("ogr_gbx requires a 'path' (e.g. .load(path)).")
+            raise ValueError("vector_gbx requires a 'path' (e.g. .load(path)).")
         self.driver = options.get("driverName", "") or self._DRIVER
         self.as_wkb = options.get("asWKB", "true").lower() != "false"
         self.chunk_size = max(1, int(options.get("chunkSize", "10000")))
@@ -234,12 +234,12 @@ class OgrGbxReader(DataSourceReader):
             yield tuple(cols[c][i] for c in attr_cols) + (g, srid, proj4)
 
 
-class OgrGbxDataSource(DataSource):
+class VectorGbxDataSource(DataSource):
     @classmethod
     def name(cls) -> str:
-        return "ogr_gbx"
+        return "vector_gbx"
 
-    _READER = OgrGbxReader
+    _READER = VectorGbxReader
 
     def schema(self) -> StructType:
         return self._READER(self.options).schema()
@@ -250,29 +250,29 @@ class OgrGbxDataSource(DataSource):
     def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
         path = self.options.get("path")
         if not path:
-            raise ValueError("ogr_gbx writer requires an output path (.save(path)).")
-        return OgrGbxWriter(
+            raise ValueError("vector_gbx writer requires an output path (.save(path)).")
+        return VectorGbxWriter(
             path, schema, self._READER._DRIVER, dict(self.options), overwrite
         )
 
 
-class _ShapefileReader(OgrGbxReader):
+class _ShapefileReader(VectorGbxReader):
     _DRIVER = "ESRI Shapefile"
 
 
-class _GeoJSONReader(OgrGbxReader):
+class _GeoJSONReader(VectorGbxReader):
     _DRIVER = "GeoJSON"
 
 
-class _GpkgReader(OgrGbxReader):
+class _GpkgReader(VectorGbxReader):
     _DRIVER = "GPKG"
 
 
-class _FileGdbReader(OgrGbxReader):
+class _FileGdbReader(VectorGbxReader):
     _DRIVER = "OpenFileGDB"
 
 
-class ShapefileGbxDataSource(OgrGbxDataSource):
+class ShapefileGbxDataSource(VectorGbxDataSource):
     _READER = _ShapefileReader
 
     @classmethod
@@ -280,7 +280,7 @@ class ShapefileGbxDataSource(OgrGbxDataSource):
         return "shapefile_gbx"
 
 
-class GeoJSONGbxDataSource(OgrGbxDataSource):
+class GeoJSONGbxDataSource(VectorGbxDataSource):
     _READER = _GeoJSONReader
 
     @classmethod
@@ -288,7 +288,7 @@ class GeoJSONGbxDataSource(OgrGbxDataSource):
         return "geojson_gbx"
 
 
-class GpkgGbxDataSource(OgrGbxDataSource):
+class GpkgGbxDataSource(VectorGbxDataSource):
     _READER = _GpkgReader
 
     @classmethod
@@ -296,7 +296,7 @@ class GpkgGbxDataSource(OgrGbxDataSource):
         return "gpkg_gbx"
 
 
-class FileGdbGbxDataSource(OgrGbxDataSource):
+class FileGdbGbxDataSource(VectorGbxDataSource):
     _READER = _FileGdbReader
 
     @classmethod
@@ -309,7 +309,7 @@ class _VectorCommitMessage(WriterCommitMessage):
     frag_path: str
 
 
-class OgrGbxWriter(DataSourceWriter):
+class VectorGbxWriter(DataSourceWriter):
     """Two-phase vector writer: each partition -> one Arrow-IPC fragment in a
     shared-FS scratch dir; the driver merges fragments into one output file via
     pyogrio.write_arrow (first plain, rest append=True). Mirrors the PMTiles
@@ -321,7 +321,7 @@ class OgrGbxWriter(DataSourceWriter):
         self.driver = opts.get("drivername", "") or driver
         if not self.driver:
             raise ValueError(
-                "ogr_gbx writer requires a 'driverName' option (e.g. 'GeoJSON')."
+                "vector_gbx writer requires a 'driverName' option (e.g. 'GeoJSON')."
             )
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
@@ -337,7 +337,7 @@ class OgrGbxWriter(DataSourceWriter):
         parent = os.path.dirname(self.path) or "."
         self.scratch_dir = os.path.join(parent, "_vec_scratch")
         if not self.overwrite and self._target_exists():
-            raise ValueError("ogr_gbx does not support append; use .mode('overwrite').")
+            raise ValueError("vector_gbx does not support append; use .mode('overwrite').")
 
     def _target_exists(self) -> bool:
         return os.path.exists(self.path) and (

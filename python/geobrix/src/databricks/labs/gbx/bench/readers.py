@@ -242,7 +242,7 @@ def run_format_read(
 
     if fmt.endswith("_gbx"):
         # register() installs ALL light DataSources (raster_gbx, gtiff_gbx, pmtiles_gbx,
-        # ogr_gbx + the vector *_gbx). Registering only for fmt=="raster_gbx" left vector
+        # vector_gbx + the vector *_gbx). Registering only for fmt=="raster_gbx" left vector
         # formats (geojson_gbx, shapefile_gbx, ...) unregistered -> DATA_SOURCE_NOT_FOUND.
         from databricks.labs.gbx.ds.register import register
 

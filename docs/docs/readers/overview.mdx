@@ -40,7 +40,7 @@ register(spark)
 |--------|-------------|-------------|
 | [Raster Reader](./raster) | `raster_gbx` | Pure-Python catch-all raster reader (no JAR; DataSource V2) |
 | [GeoTIFF Reader](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF reader (preset `driver="GTiff"`) |
-| [Vector Reader](./ogr) | `ogr_gbx` | Pure-Python catch-all vector reader (pyogrio; same OGR schema) |
+| [Vector Reader](./vector) | `vector_gbx` | Pure-Python catch-all vector reader (pyogrio; same OGR schema) |
 | [Shapefile Reader](./shapefile) | `shapefile_gbx` | Pure-Python Shapefile reader (preset OGR driver) |
 | [GeoJSON Reader](./geojson) | `geojson_gbx` | Pure-Python GeoJSON reader (preset OGR driver) |
 | [GeoPackage Reader](./geopackage) | `gpkg_gbx` | Pure-Python GeoPackage reader (preset OGR driver) |
@@ -52,7 +52,7 @@ reader pages for the OGR `(geom_0, geom_0_srid, geom_0_srid_proj, …attributes)
 ## Benchmarks
 
 Each `*_gbx` lightweight reader corresponds to a `*_ogr` (or `gdal`/`gtiff_gdal`) heavyweight
-counterpart. The generic `ogr_gbx` catch-all reader pairs with the heavyweight `ogr` generic
+counterpart. The generic `vector_gbx` catch-all reader pairs with the heavyweight `ogr` generic
 OGR reader; named readers such as `shapefile_gbx` pair with `shapefile_ogr`, and so on.
 
 Both tiers are benchmarked on the same cluster, same source file, same row counts. Parity
@@ -81,7 +81,7 @@ Heavyweight readers are implemented as Spark DataSource V2 connectors backed by 
 
 | Reader | Format Name | Description |
 |--------|-------------|-------------|
-| [OGR Reader](./ogr) | `ogr` | Generic reader for any OGR-supported vector format |
+| [Vector Reader](./vector) | `ogr` | Generic reader for any OGR-supported vector format |
 | [Shapefile Reader](./shapefile) | `shapefile_ogr` | Named reader for ESRI Shapefiles |
 | [GeoJSON Reader](./geojson) | `geojson_ogr` | Named reader for GeoJSON/GeoJSONSeq |
 | [GeoPackage Reader](./geopackage) | `gpkg_ogr` | Named reader for GeoPackage |
@@ -229,7 +229,7 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 
 Each lightweight `*_gbx` reader maps directly to a heavyweight counterpart: `gtiff_gbx` ↔
 `gtiff_gdal`, `shapefile_gbx` ↔ `shapefile_ogr`, `geojson_gbx` ↔ `geojson_ogr`, `gpkg_gbx`
-↔ `gpkg_ogr`, `file_gdb_gbx` ↔ `file_gdb_ogr`. The **generic catch-all** pair is `ogr_gbx`
+↔ `gpkg_ogr`, `file_gdb_gbx` ↔ `file_gdb_ogr`. The **generic catch-all** pair is `vector_gbx`
 (lightweight) ↔ `ogr` (heavyweight), used for any OGR-supported format without a named reader.
 
 ## Benchmarks
@@ -248,7 +248,7 @@ For the full methodology, raster-function results, and the PMTiles writer compar
 
 - [Raster Reader](./raster) - Generic and GeoTIFF raster readers
 - [GeoTIFF Reader](./geotiff) - Named GeoTIFF reader
-- [OGR Reader](./ogr) - Generic vector reader
+- [Vector Reader](./vector) - Generic vector reader
 - [Shapefile Reader](./shapefile) - Named Shapefile reader
 - [GeoJSON Reader](./geojson) - Named GeoJSON reader
 - [GeoPackage Reader](./geopackage) - Named GeoPackage reader

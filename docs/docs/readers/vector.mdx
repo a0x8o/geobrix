@@ -9,20 +9,20 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 import ogrExamples from '!!raw-loader!../../tests/python/readers/ogr_examples.py';
 import ogrScala from '!!raw-loader!../../tests/scala/readers/OGRExamples.scala';
 import ogrDBR from '!!raw-loader!../../tests-dbr/python/readers/ogr/examples.py';
-import ogrGbx from '!!raw-loader!../../tests/python/readers/ogr_gbx_examples.py';
+import ogrGbx from '!!raw-loader!../../tests/python/readers/vector_gbx_examples.py';
 
-# OGR Reader
+# Vector Reader
 
 Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
 
 <Tabs groupId="gbx-tier" queryString="tier">
-<TabItem value="lightweight" label="Lightweight · ogr_gbx">
+<TabItem value="lightweight" label="Lightweight · vector_gbx">
 
-`ogr_gbx` is the lightweight catch-all vector reader (pyogrio-backed, no JAR). It reads any OGR-supported format and emits the same schema as the heavyweight `ogr` reader.
+`vector_gbx` is the lightweight catch-all vector reader (pyogrio-backed, no JAR). It reads any OGR-supported format and emits the same schema as the heavyweight `ogr` reader.
 
-<CodeFromTest code={ogrGbx} language="python" functionName="READ_OGR_GBX"
-  source="docs/tests/python/readers/ogr_gbx_examples.py"
-  testFile="docs/tests/python/readers/test_ogr_gbx_examples.py" />
+<CodeFromTest code={ogrGbx} language="python" functionName="READ_VECTOR_GBX"
+  source="docs/tests/python/readers/vector_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_vector_gbx_examples.py" />
 
 It is the lightweight counterpart of the heavyweight `ogr` reader, supporting Python and SQL bindings (not Scala).
 

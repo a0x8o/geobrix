@@ -42,7 +42,7 @@ register(spark)
 | [Raster Writer](./raster) | `raster_gbx` | Pure-Python catch-all raster writer (no JAR; DataSource V2) |
 | [GeoTIFF Writer](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF writer (driver forced to GTiff) |
 | [PMTiles Writer](./pmtiles) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
-| [Vector Writer](./ogr) | `ogr_gbx` | Pure-Python generic vector writer (pyogrio); any OGR-supported driver. |
+| [Vector Writer](./vector) | `vector_gbx` | Pure-Python generic vector writer (pyogrio); any OGR-supported driver. |
 | [Shapefile Writer](./shapefile) | `shapefile_gbx` | Pure-Python Shapefile writer (OGR driver: `ESRI Shapefile`). |
 | [GeoJSON Writer](./geojson) | `geojson_gbx` | Pure-Python GeoJSON writer (OGR driver: `GeoJSON`). |
 | [GeoPackage Writer](./geopackage) | `gpkg_gbx` | Pure-Python GeoPackage writer (OGR driver: `GPKG`). |
@@ -95,7 +95,7 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 The heavyweight tier writes raster (GDAL) and PMTiles only; its vector data sources are
 read-only. GDAL/OGR can write GeoJSON, Shapefile, GeoPackage, and File Geodatabase, but
 those write paths are not implemented in the heavyweight tier. For vector output, use the
-lightweight vector writers: [Vector](./ogr) (`ogr_gbx`), [Shapefile](./shapefile)
+lightweight vector writers: [Vector](./vector) (`vector_gbx`), [Shapefile](./shapefile)
 (`shapefile_gbx`), [GeoJSON](./geojson) (`geojson_gbx`), [GeoPackage](./geopackage)
 (`gpkg_gbx`), or [GeoDatabase](./filegdb) (`file_gdb_gbx`).
 :::

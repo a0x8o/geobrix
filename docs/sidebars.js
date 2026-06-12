@@ -53,7 +53,7 @@ const sidebars = {
           label: 'Readers',
           collapsed: false,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/ogr'] },
+            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/vector'] },
             { type: 'category', label: 'Named', collapsed: false, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
           ],
         },

@@ -8,9 +8,9 @@ import vectorWriteExamples from '!!raw-loader!../../tests/python/writers/vector_
 
 # Vector Writer
 
-`ogr_gbx` — pyogrio-backed, pure-Python DataSource V2 writer. It is the generic
+`vector_gbx` — pyogrio-backed, pure-Python DataSource V2 writer. It is the generic
 catch-all vector writer: pass any OGR-supported driver via `driverName` and it
-round-trips with the matching `ogr_gbx` reader. For common formats, use the named
+round-trips with the matching `vector_gbx` reader. For common formats, use the named
 writers instead:
 
 - [Shapefile Writer](./shapefile) — `shapefile_gbx` (OGR driver: `ESRI Shapefile`)
@@ -32,7 +32,7 @@ Call `register(spark)` once before using any `*_gbx` format (see the
 ## How it scales
 
 Unlike a single-node `pyogrio.write_*` call that serializes one file on one machine, the
-`ogr_gbx` writer runs as a Spark DataSource V2 two-phase write: **each partition is written
+`vector_gbx` writer runs as a Spark DataSource V2 two-phase write: **each partition is written
 concurrently** by its executor to a scratch fragment, then the driver **merges the
 fragments into one output file**. The merge is sequential and rename-free, so it is safe on
 FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
@@ -49,6 +49,6 @@ write parallelism.
 
 ## Example
 
-<CodeFromTest code={vectorWriteExamples} language="python" functionName="WRITE_OGR_GBX"
+<CodeFromTest code={vectorWriteExamples} language="python" functionName="WRITE_VECTOR_GBX"
   source="docs/tests/python/writers/vector_gbx_write_examples.py"
   testFile="docs/tests/python/writers/test_vector_gbx_write_examples.py" />

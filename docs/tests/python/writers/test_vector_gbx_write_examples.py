@@ -16,8 +16,8 @@ import vector_gbx_write_examples as ex  # noqa: E402
 
 
 @pytest.mark.integration
-def test_write_ogr_gbx(spark):
-    ex.write_ogr_gbx(spark)
+def test_write_vector_gbx(spark):
+    ex.write_vector_gbx(spark)
 
 
 @pytest.mark.integration

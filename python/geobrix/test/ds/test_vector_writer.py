@@ -62,11 +62,11 @@ def _wkb_df(spark):
 def test_geojson_roundtrip_single_partition(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "out.geojson")
-    _wkb_df(spark).coalesce(1).write.format("ogr_gbx").mode("overwrite").option(
+    _wkb_df(spark).coalesce(1).write.format("vector_gbx").mode("overwrite").option(
         "driverName", "GeoJSON"
     ).save(out)
 
-    back = spark.read.format("ogr_gbx").load(out)
+    back = spark.read.format("vector_gbx").load(out)
     assert back.count() == 2
     got = {r["name"]: r["pop"] for r in back.collect()}
     assert got == {"a": 10, "b": 20}
@@ -88,10 +88,10 @@ def test_multi_partition_merge(spark, tmp_path):
         "geom_0_srid string, geom_0_srid_proj string",
     ).repartition(4)
     assert df.rdd.getNumPartitions() == 4
-    df.write.format("ogr_gbx").mode("overwrite").option("driverName", "GeoJSON").save(
+    df.write.format("vector_gbx").mode("overwrite").option("driverName", "GeoJSON").save(
         out
     )
-    back = spark.read.format("ogr_gbx").load(out)
+    back = spark.read.format("vector_gbx").load(out)
     assert back.count() == 50
     assert {r["name"] for r in back.collect()} == {str(i) for i in range(50)}
 
@@ -99,10 +99,10 @@ def test_multi_partition_merge(spark, tmp_path):
 def test_crs_roundtrips(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "crs.geojson")
-    _wkb_df(spark).coalesce(1).write.format("ogr_gbx").mode("overwrite").option(
+    _wkb_df(spark).coalesce(1).write.format("vector_gbx").mode("overwrite").option(
         "driverName", "GeoJSON"
     ).save(out)
-    back = spark.read.format("ogr_gbx").load(out)
+    back = spark.read.format("vector_gbx").load(out)
     scol = [f.name for f in back.schema.fields if f.name.endswith("_srid")][0]
     assert {r[scol] for r in back.select(scol).collect()} == {"4326"}
 
@@ -116,10 +116,10 @@ def test_geometry_type_override(spark, tmp_path):
         schema="name string, geom_0 binary, geom_0_srid string, "
         "geom_0_srid_proj string",
     )
-    df.coalesce(1).write.format("ogr_gbx").mode("overwrite").option(
+    df.coalesce(1).write.format("vector_gbx").mode("overwrite").option(
         "driverName", "GeoJSON"
     ).option("geometryType", "Polygon").save(out)
-    back = spark.read.format("ogr_gbx").load(out)
+    back = spark.read.format("vector_gbx").load(out)
     gcol = [f.name for f in back.schema.fields if f.name.endswith("_srid")][0][:-5]
     assert _from_wkb(bytes(back.collect()[0][gcol])).geom_type == "Polygon"
 
@@ -127,11 +127,11 @@ def test_geometry_type_override(spark, tmp_path):
 def test_append_mode_rejected(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "exists.geojson")
-    _wkb_df(spark).coalesce(1).write.format("ogr_gbx").mode("overwrite").option(
+    _wkb_df(spark).coalesce(1).write.format("vector_gbx").mode("overwrite").option(
         "driverName", "GeoJSON"
     ).save(out)
     with pytest.raises(Exception) as ei:
-        _wkb_df(spark).write.format("ogr_gbx").mode("append").option(
+        _wkb_df(spark).write.format("vector_gbx").mode("append").option(
             "driverName", "GeoJSON"
         ).save(out)
     assert "append" in str(ei.value).lower()

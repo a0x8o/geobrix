@@ -18,7 +18,7 @@ from databricks.labs.gbx.ds.vector import (
     FileGdbGbxDataSource,
     GeoJSONGbxDataSource,
     GpkgGbxDataSource,
-    OgrGbxDataSource,
+    VectorGbxDataSource,
     ShapefileGbxDataSource,
 )
 
@@ -26,7 +26,7 @@ _SOURCES = (
     RasterGbxDataSource,
     GTiffGbxDataSource,
     PMTilesGbxDataSource,
-    OgrGbxDataSource,
+    VectorGbxDataSource,
     ShapefileGbxDataSource,
     GeoJSONGbxDataSource,
     GpkgGbxDataSource,
