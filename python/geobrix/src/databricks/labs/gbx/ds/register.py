@@ -14,9 +14,24 @@ from pyspark.sql import SparkSession
 from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
 from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 from databricks.labs.gbx.ds.raster import RasterGbxDataSource
-from databricks.labs.gbx.ds.vector import OgrGbxDataSource
+from databricks.labs.gbx.ds.vector import (
+    OgrGbxDataSource,
+    ShapefileGbxDataSource,
+    GeoJSONGbxDataSource,
+    GpkgGbxDataSource,
+    FileGdbGbxDataSource,
+)
 
-_SOURCES = (RasterGbxDataSource, GTiffGbxDataSource, PMTilesGbxDataSource, OgrGbxDataSource)
+_SOURCES = (
+    RasterGbxDataSource,
+    GTiffGbxDataSource,
+    PMTilesGbxDataSource,
+    OgrGbxDataSource,
+    ShapefileGbxDataSource,
+    GeoJSONGbxDataSource,
+    GpkgGbxDataSource,
+    FileGdbGbxDataSource,
+)
 
 
 def register(spark: Optional[SparkSession] = None) -> None:

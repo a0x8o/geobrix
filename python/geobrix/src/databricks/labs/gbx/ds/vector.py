@@ -199,3 +199,51 @@ class OgrGbxDataSource(DataSource):
 
     def reader(self, schema: StructType) -> DataSourceReader:
         return self._READER(self.options)
+
+
+class _ShapefileReader(OgrGbxReader):
+    _DRIVER = "ESRI Shapefile"
+
+
+class _GeoJSONReader(OgrGbxReader):
+    _DRIVER = "GeoJSON"
+
+
+class _GpkgReader(OgrGbxReader):
+    _DRIVER = "GPKG"
+
+
+class _FileGdbReader(OgrGbxReader):
+    _DRIVER = "OpenFileGDB"
+
+
+class ShapefileGbxDataSource(OgrGbxDataSource):
+    _READER = _ShapefileReader
+
+    @classmethod
+    def name(cls) -> str:
+        return "shapefile_gbx"
+
+
+class GeoJSONGbxDataSource(OgrGbxDataSource):
+    _READER = _GeoJSONReader
+
+    @classmethod
+    def name(cls) -> str:
+        return "geojson_gbx"
+
+
+class GpkgGbxDataSource(OgrGbxDataSource):
+    _READER = _GpkgReader
+
+    @classmethod
+    def name(cls) -> str:
+        return "gpkg_gbx"
+
+
+class FileGdbGbxDataSource(OgrGbxDataSource):
+    _READER = _FileGdbReader
+
+    @classmethod
+    def name(cls) -> str:
+        return "file_gdb_gbx"
