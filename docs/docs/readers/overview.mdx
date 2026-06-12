@@ -14,6 +14,15 @@ GeoBrix provides Spark readers for geospatial file formats.
 
 The lightweight tier ships native Python DataSource V2 readers — no JAR, no init script.
 
+:::tip Why this scales beyond a single node
+These are Spark DataSource V2 readers, not single-node `rasterio`/`pyogrio` wrappers. The
+work is **partitioned and read in parallel across the cluster** — vector readers slice
+features by `chunkSize`, raster readers split large files by `sizeInMB` — and the result is
+a distributed DataFrame ready for joins and aggregations with no driver-side `collect`. A
+single-node `pyogrio.read_*` or `rasterio.open` reads one file sequentially on one machine;
+these readers fan the same work across executors and scale past a single machine's memory.
+:::
+
 :::note Register first
 Unlike the heavyweight readers (auto-discovered from the JAR), the lightweight Python
 DataSources are **not** auto-registered — call `register(spark)` once per session before

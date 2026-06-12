@@ -14,6 +14,16 @@ GeoBrix provides Spark writers for geospatial file formats.
 
 The lightweight tier ships native Python DataSource V2 writers — no JAR, no init script.
 
+:::tip Why this scales beyond a single node
+These are Spark DataSource V2 writers, not single-node `pyogrio`/`rasterio` wrappers. **Each
+partition is written concurrently** by its executor, then the driver merges the parts into
+the final output (a two-phase write). The PMTiles writer goes further with **distributed
+spatial sharding** — partitioning tiles into bounded per-shard archives written in parallel
+and then cataloging them — which scales horizontally instead of building one memory-bound
+archive on a single node. Merges are sequential and rename-free, so they are safe on
+FUSE-mounted Unity Catalog Volumes / DBFS.
+:::
+
 :::note Register first
 Unlike the heavyweight writers (auto-discovered from the JAR), the lightweight Python
 DataSources are **not** auto-registered — call `register(spark)` once per session before
@@ -32,6 +42,7 @@ register(spark)
 | [Raster Writer](./raster) | `raster_gbx` | Pure-Python catch-all raster writer (no JAR; DataSource V2) |
 | [GeoTIFF Writer](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF writer (driver forced to GTiff) |
 | [PMTiles Writer](./pmtiles) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
+| [Vector Writer](./vector) | `geojson_gbx` / `shapefile_gbx` / `gpkg_gbx` / `file_gdb_gbx` / `ogr_gbx` | Pure-Python vector writers (pyogrio); round-trip with the `*_gbx` readers. |
 
 See the [Raster Writer](./raster) page for full usage, options, and the `nameCol` / `ext` controls.
 
