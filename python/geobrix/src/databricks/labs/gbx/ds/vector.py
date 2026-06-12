@@ -174,7 +174,16 @@ class VectorGbxReader(DataSourceReader):
     def _layer(self):
         return self.layer_name if self.layer_name else self.layer_number
 
+    @staticmethod
+    def _gdal_readonly_safe() -> None:
+        # Reading a GeoPackage (SQLite) from read-only object storage (a Volume) must
+        # not attempt a journal/checkpoint write. DELETE journal mode avoids that.
+        import pyogrio
+
+        pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
+
     def _info(self):
+        self._gdal_readonly_safe()
         import pyogrio
 
         kw: Dict = {"layer": self._layer()}
@@ -206,6 +215,7 @@ class VectorGbxReader(DataSourceReader):
         return parts
 
     def read(self, partition: "_ChunkPartition"):
+        self._gdal_readonly_safe()
         import pyogrio
 
         kw: Dict = {
@@ -418,6 +428,9 @@ class VectorGbxWriter(DataSourceWriter):
         """Write the merged tables to a local path. Use the fast Arrow path; if the
         driver lacks Arrow-write support (e.g. OpenFileGDB), fall back to the classic
         feature-based path, which has broader OGR driver support."""
+        if self.driver == "OpenFileGDB":
+            self._write_local_osgeo_gdb(tables, local_out, geom_type, crs)
+            return
         import pyogrio
 
         # Write SQLite-backed formats (GPKG) with a DELETE journal -- no WAL/-shm
@@ -448,6 +461,84 @@ class VectorGbxWriter(DataSourceWriter):
             elif os.path.isfile(local_out):
                 os.remove(local_out)
             self._write_local_classic(tables, local_out, geom_type, crs)
+
+    def _write_local_osgeo_gdb(self, tables, local_out, geom_type, crs) -> None:
+        """Hybrid FileGDB path. pyogrio's bundled GDAL has a read-only OpenFileGDB
+        driver; the native GDAL from the heavyweight GDAL init script has write. Use
+        osgeo.ogr (native) to encode the .gdb. Requires those natives -- raises a clear
+        error otherwise (FileGDB write is unavailable in a lightweight-only env)."""
+        try:
+            from osgeo import ogr, osr
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                "file_gdb_gbx writing requires the native GDAL Python bindings (osgeo) "
+                "from the heavyweight GDAL init script; pyogrio's bundled GDAL ships a "
+                "read-only OpenFileGDB driver. Install the GeoBrix GDAL natives, or write "
+                "gpkg_gbx / geojson_gbx instead."
+            ) from e
+        import pyarrow as pa
+
+        drv = ogr.GetDriverByName("OpenFileGDB")
+        if drv is None or not drv.TestCapability(ogr.ODrCCreateDataSource):
+            raise RuntimeError(
+                "native GDAL OpenFileGDB driver lacks create capability; FileGDB write "
+                "needs GDAL >= 3.6 with OpenFileGDB write (the heavyweight GDAL natives)."
+            )
+        _WKB = {
+            "Point": ogr.wkbPoint, "LineString": ogr.wkbLineString,
+            "Polygon": ogr.wkbPolygon, "MultiPoint": ogr.wkbMultiPoint,
+            "MultiLineString": ogr.wkbMultiLineString,
+            "MultiPolygon": ogr.wkbMultiPolygon,
+            "GeometryCollection": ogr.wkbGeometryCollection,
+        }
+        srs = None
+        if crs:
+            srs = osr.SpatialReference()
+            if str(crs).upper().startswith("EPSG:"):
+                srs.ImportFromEPSG(int(str(crs).split(":")[1]))
+            else:
+                srs.ImportFromProj4(str(crs))
+
+        def _ogr_type(t):
+            if pa.types.is_floating(t):
+                return ogr.OFTReal
+            if pa.types.is_boolean(t):
+                return ogr.OFTInteger
+            if pa.types.is_integer(t):
+                return ogr.OFTInteger64
+            if pa.types.is_binary(t) or pa.types.is_large_binary(t):
+                return ogr.OFTBinary
+            return ogr.OFTString  # strings + anything else
+
+        first = tables[0]
+        meta = {self.geom_col, self.srid_col, self.proj_col}
+        attr_cols = [c for c in first.column_names if c not in meta]
+        types = {f.name: f.type for f in first.schema}
+
+        ds = drv.CreateDataSource(local_out)
+        try:
+            lyr = ds.CreateLayer(
+                self.layer_name or "layer", srs, _WKB.get(geom_type, ogr.wkbUnknown)
+            )
+            for c in attr_cols:
+                lyr.CreateField(ogr.FieldDefn(c, _ogr_type(types[c])))
+            defn = lyr.GetLayerDefn()
+            for tbl in tables:
+                cols = {c: tbl.column(c).to_pylist() for c in tbl.column_names}
+                geom = cols.get(self.geom_col, [None] * tbl.num_rows)
+                for i in range(tbl.num_rows):
+                    feat = ogr.Feature(defn)
+                    for c in attr_cols:
+                        v = cols[c][i]
+                        if v is not None:
+                            feat.SetField(c, v)
+                    g = geom[i]
+                    if g is not None:
+                        feat.SetGeometry(ogr.CreateGeometryFromWkb(bytes(g)))
+                    lyr.CreateFeature(feat)
+                    feat = None
+        finally:
+            ds = None  # flush + close
 
     def _write_local_classic(self, tables, local_out, geom_type, crs) -> None:
         import numpy as np

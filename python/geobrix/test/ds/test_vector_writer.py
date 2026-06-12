@@ -183,9 +183,11 @@ def _ogr_can_create(driver: str) -> bool:
 
 
 def test_file_gdb_writer_roundtrip(spark, tmp_path):
+    import importlib.util
+
     register(spark)
-    if not _ogr_can_create("OpenFileGDB"):
-        pytest.skip("installed GDAL OpenFileGDB driver cannot create datasets")
+    if importlib.util.find_spec("osgeo") is None:
+        pytest.skip("native osgeo (heavy GDAL natives) not present; file_gdb_gbx write requires osgeo")
     out = str(tmp_path / "out.gdb")
     _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
     back = spark.read.format("file_gdb_gbx").load(out)
@@ -211,6 +213,31 @@ def test_gpkg_reads_from_readonly_dir(spark, tmp_path):
     finally:
         os.chmod(str(tmp_path), 0o755)
         os.chmod(out, 0o644)
+
+
+def test_file_gdb_osgeo_hybrid_roundtrip(spark, tmp_path):
+    import pytest
+
+    pytest.importorskip("osgeo", reason="native osgeo (heavy GDAL natives) not present")
+    register(spark)
+    out = str(tmp_path / "hybrid.gdb")
+    _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
+    back = spark.read.format("file_gdb_gbx").load(out)
+    assert back.count() == 2
+
+
+def test_file_gdb_clear_error_without_osgeo(spark, tmp_path):
+    import importlib.util
+
+    import pytest
+
+    if importlib.util.find_spec("osgeo") is not None:
+        pytest.skip("osgeo present -- the no-natives error path is not exercised")
+    register(spark)
+    out = str(tmp_path / "noosgeo.gdb")
+    with pytest.raises(Exception) as ei:
+        _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
+    assert "osgeo" in str(ei.value).lower() or "native" in str(ei.value).lower()
 
 
 def test_classic_write_path_roundtrip(spark, tmp_path):
