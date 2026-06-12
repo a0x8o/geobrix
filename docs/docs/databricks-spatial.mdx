@@ -8,7 +8,9 @@ import databricksSpatialCode from '!!raw-loader!../tests-dbr/python/databricks_s
 
 # Databricks Spatial Types and Functions
 
-Databricks provides **built-in spatial types** and **ST (spatial) and H3 (grid) functions** in Databricks SQL and Databricks Runtime 17.1+. This page gives a concise overview with runnable examples. Use these alongside GeoBrix for workflows that combine native Databricks geometry with GeoBrix raster/vector readers and GridX (e.g. BNG).
+Databricks provides **built-in spatial types** and **ST (spatial) and H3 (grid) functions** in Databricks SQL and Databricks Runtime 17.1+. This page gives a concise overview with runnable examples.
+
+GeoBrix is built to complement these native capabilities and bring more data onto them: use GeoBrix readers and writers to move vector/raster data in and out of Databricks `GEOMETRY`/`GEOGRAPHY`, then lean on the built-in ST and H3 functions — alongside GeoBrix RasterX and GridX (e.g. BNG) — for the analysis at scale.
 
 :::info Databricks Runtime required
 Examples on this page are validated under `docs/tests-dbr/` and require **Databricks Runtime 17.1+** (or Databricks SQL with ST/H3 support). They will skip when run on open-source Spark.
@@ -92,7 +94,7 @@ Represents a **geographic** object; coordinates are longitude ([-180, 180]) and 
 
 **Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-st-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-st-geospatial-functions)
 
-ST functions operate on `GEOMETRY` and/or `GEOGRAPHY`: construct values, export to WKT/GeoJSON/WKB, measure (area, length, distance), test predicates (intersects, contains), and overlay (buffer, convex hull, intersection).
+Databricks provides **~100 ST spatial SQL functions**. They operate on `GEOMETRY` and/or `GEOGRAPHY`: construct values, export to WKT/GeoJSON/WKB, measure (area, length, distance), access components, test predicates (intersects, contains), overlay (buffer, convex hull, intersection), and transform (affine, reproject by SRID).
 
 **In Python notebooks (Databricks Runtime):**
 
@@ -140,7 +142,7 @@ ST functions operate on `GEOMETRY` and/or `GEOGRAPHY`: construct values, export 
 
 **Databricks reference:** [AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) | [Azure](https://learn.microsoft.com/en-us/azure/databricks/sql/language-manual/sql-ref-h3-geospatial-functions) | [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-h3-geospatial-functions)
 
-H3 is a **global hexagonal grid** with 16 resolutions. Use it to index points and polygons to cell IDs, then aggregate or join on cells (semantic spatial join without geometry predicates).
+Databricks provides **35+ H3 functions**. H3 is a **global hexagonal grid** with 16 resolutions. Use it to index points and polygons to cell IDs, then aggregate or join on cells (semantic spatial join without geometry predicates).
 
 **In Python notebooks:**
 
