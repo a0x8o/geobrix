@@ -20,12 +20,12 @@ interchangeable — see [Choosing an Execution Tier](../api/execution-tiers#the-
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · gtiff_gbx">
 
-`gtiff_gbx` is the [`raster_gbx`](./raster_gbx) catch-all reader with the GeoTIFF
+`gtiff_gbx` is the [`raster_gbx`](./raster) catch-all reader with the GeoTIFF
 driver preset — use it to make GeoTIFF reads explicit. It is pure-Python (no JAR)
 and emits the same `(source, tile)` schema as the other readers.
 
 Register the lightweight DataSources first (see
-[Lightweight Raster Readers → Register](./raster_gbx#register)).
+[Lightweight Raster Readers → Register](./raster#register)).
 
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_GTIFF_GBX"
   source="docs/tests/python/readers/raster_gbx_read_examples.py"
@@ -90,7 +90,7 @@ This is a named GDAL Reader that presets the `driver` option to "GTiff". GeoTIFF
 
 ## Options
 
-The GeoTIFF reader inherits all [GDAL reader options](./gdal#options). Common options include:
+The GeoTIFF reader inherits all [GDAL reader options](./raster#options). Common options include:
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -201,7 +201,7 @@ GeoBrix reads compressed GeoTIFFs transparently. The compression format is autom
 
 ## Next Steps
 
-- [GDAL Reader](./gdal) - Generic raster reader for all GDAL formats
+- [GDAL Reader](./raster) - Generic raster reader for all GDAL formats
 - [Raster Functions](../api/raster-functions) - Raster processing operations
 - [Quick Start](../quick-start) - Get started with GeoBrix
 

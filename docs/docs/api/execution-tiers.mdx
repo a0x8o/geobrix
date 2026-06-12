@@ -41,7 +41,7 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 Choose **Heavyweight (rasterx)** in three cases:
 
 1. **Your environment is already JVM/GDAL-based** — you have the init script and JAR in place, or you specifically want JVM-native execution on a dedicated cluster.
-2. **You need vector OGR readers or format-specific GDAL options** — the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …) and the generic `gdal` reader with exotic driver options are heavy-only. For raster I/O, the lightweight tier ships native `raster_gbx` / `gtiff_gbx` readers and a writer (no JAR; see [Lightweight Raster Readers](../readers/raster_gbx)).
+2. **You need vector OGR readers or format-specific GDAL options** — the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …) and the generic `gdal` reader with exotic driver options are heavy-only. For raster I/O, the lightweight tier ships native `raster_gbx` / `gtiff_gbx` readers and a writer (no JAR; see [Lightweight Raster Readers](../readers/raster)).
 3. **You need GridX or VectorX** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`) or the vector-tile / TIN / legacy-geometry APIs (`gbx_st_*`). Those packages have a heavyweight tier only.
 
 The vector OGR readers and grid/vector surfaces (case 3) are the remaining heavyweight-only surfaces. Raster I/O is now available in both tiers; heavyweight's unique surface is expected to keep narrowing.

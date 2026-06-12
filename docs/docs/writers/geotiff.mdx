@@ -19,17 +19,17 @@ writer with the GeoTIFF driver forced) and the **heavyweight** `gtiff_gdal` writ
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · gtiff_gbx">
 
-`gtiff_gbx` is the [`raster_gbx`](./raster_gbx) catch-all writer with the GeoTIFF
+`gtiff_gbx` is the [`raster_gbx`](./raster) catch-all writer with the GeoTIFF
 driver forced — output is always GeoTIFF regardless of `tile.metadata`. Register
 the lightweight DataSources first (see
-[Lightweight Raster Writer](./raster_gbx)).
+[Lightweight Raster Writer](./raster)).
 
 <CodeFromTest code={rasterGbxWrite} language="python" functionName="WRITE_GTIFF_GBX"
   source="docs/tests/python/writers/raster_gbx_write_examples.py"
   testFile="docs/tests/python/writers/test_raster_gbx_write_examples.py" />
 
 `nameCol` / `ext` and the performance characteristics are the same as the
-catch-all [`raster_gbx` writer](./raster_gbx).
+catch-all [`raster_gbx` writer](./raster).
 
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight · gtiff_gdal">

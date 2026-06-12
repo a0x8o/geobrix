@@ -21,7 +21,7 @@ Write raster tiles from the shared `(source, tile)` schema. The **lightweight**
 <TabItem value="lightweight" label="Lightweight · raster_gbx">
 
 Pure-Python/PySpark raster writer — the lightweight tier's drop-in for the
-GDAL-backed [`gdal`](./gdal) writer. Requires the exact `(source, tile)` schema,
+GDAL-backed [`gdal`](./raster?tier=heavyweight) writer. Requires the exact `(source, tile)` schema,
 the same as the heavy writer. Writer options are `path` / `nameCol` / `ext`; the
 on-disk format and compression come from `tile.metadata`, not writer options.
 
@@ -34,14 +34,14 @@ on-disk format and compression come from `tile.metadata`, not writer options.
 A whole-file GeoTIFF tile is written through verbatim (no re-encode); a tile whose
 `metadata["driver"]` is non-GTiff (e.g. `COG`) is re-encoded via `rasterio`.
 
-For an explicit GeoTIFF-forced writer, see the [Lightweight GeoTIFF Writer](./gtiff_gbx).
+For an explicit GeoTIFF-forced writer, see the [Lightweight GeoTIFF Writer](./geotiff).
 
 :::note Register before writing
 
 Like the lightweight readers, the lightweight writers are **not** auto-registered
 (Python Data Source V2 has no classpath auto-discovery, unlike the JAR-based
 heavyweight writers). Call `register(spark)` first, as shown above. See
-[Lightweight Raster Readers → Register](../readers/raster_gbx#register) for the
+[Lightweight Raster Readers → Register](../readers/raster#register) for the
 full explanation.
 
 :::
@@ -63,7 +63,7 @@ full explanation.
 | `ext` | `"tif"` | Filename suffix. Does **not** change the on-disk format. |
 
 The driver / `compression` / `blocksize` / `zlevel` / `zstd_level` are read from
-`tile.metadata` (same as the heavy [`gdal`](./gdal) writer).
+`tile.metadata` (same as the heavy [`gdal`](./raster?tier=heavyweight) writer).
 
 ## Performance vs the heavyweight writer
 
@@ -80,13 +80,13 @@ lightweight writer is the faster path (decoded pixels are identical either way).
 Note the heavyweight `gdal` writer is **append-only**, whereas the lightweight
 writer also supports `overwrite`. (Relative performance is the takeaway — absolute
 numbers depend on cluster size and data.) For reads the tradeoff reverses — see the
-[Lightweight Raster Readers](../readers/raster_gbx) and
+[Lightweight Raster Readers](../readers/raster) and
 [Choosing an Execution Tier](../api/execution-tiers).
 
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight · gdal">
 
-The GDAL writer emits each row's `tile` to a raster file under a target directory. It is the counterpart to the [GDAL Reader](../readers/gdal).
+The GDAL writer emits each row's `tile` to a raster file under a target directory. It is the counterpart to the [GDAL Reader](../readers/raster).
 
 ## Format Name
 
@@ -241,7 +241,7 @@ Written rasters are standard GDAL-compatible files:
 
 ## Next Steps
 
-- [GDAL Reader](../readers/gdal) — The corresponding read path.
+- [GDAL Reader](../readers/raster) — The corresponding read path.
 - [Raster Functions](../api/raster-functions) — Transforms to run before the write.
 
 </TabItem>

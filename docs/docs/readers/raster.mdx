@@ -65,7 +65,7 @@ the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
   source="docs/tests/python/readers/raster_gbx_read_examples.py" />
 
-`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./gtiff_gbx) for the named-reader page.
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./geotiff) for the named-reader page.
 
 ## Performance vs the heavyweight reader
 
@@ -82,7 +82,7 @@ the lightweight reader when you need a JAR-free or Serverless path; prefer the
 heavyweight reader for read-heavy pipelines at large scale. (Relative performance
 is the takeaway — absolute numbers depend on cluster size and data.) The
 lightweight **writer**, by contrast, is *faster* than heavyweight — see the
-[Lightweight Raster Writer](../writers/raster_gbx).
+[Lightweight Raster Writer](../writers/raster).
 
 See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff.
 
