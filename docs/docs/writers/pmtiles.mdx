@@ -37,15 +37,44 @@ root
  |-- bytes: binary
 ```
 
-A tile pyramid: one row per tile, `bytes` being the already-encoded tile payload (PNG/JPEG/WebP/MVT/…). The writer requires exactly these four columns — extra or missing columns raise an error. Coerce your DataFrame to this shape (and column order) first:
+A tile pyramid: one row per tile, `bytes` being the already-encoded tile payload (PNG/JPEG/WebP/MVT/…). The writer requires **exactly these four columns, in this order** — extra, missing, or mis-ordered columns raise an error.
+
+What each column means:
+
+- **`z`** — zoom level. `0` is the whole world in one tile; each level up subdivides every tile into four.
+- **`x`, `y`** — the tile's **column and row in the XYZ ("slippy-map") grid**, addressed from the **upper-left (north-west) origin**: `x` increases eastward, `y` increases southward. Put differently, `(x, y)` identifies the tile by its upper-left corner. This is the Web-Mercator/XYZ convention PMTiles uses — the opposite of the TMS scheme, where `y` increases northward. So `(z, x, y) = (0, 0, 0)` is the single top-level tile, and at zoom 1 `(1, 0, 0)` is the north-west quadrant.
+- **`bytes`** — the already-encoded tile payload; its type (PNG/JPEG/WebP/MVT) is auto-detected from the leading magic bytes.
+
+If your tiles already live in a DataFrame under different names, project them to the exact shape and order:
 
 ```python
 tiles.select(
     tiles["zoom"].alias("z"),
-    tiles["tile_x"].alias("x"),
-    tiles["tile_y"].alias("y"),
+    tiles["tile_x"].alias("x"),      # column index from the NW origin (east is +)
+    tiles["tile_y"].alias("y"),      # row index from the NW origin (south is +)
     tiles["payload"].alias("bytes"),
 ).write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+Or generate the pyramid straight from rasters with GeoBrix RasterX. [`gbx_rst_xyzpyramid`](../api/raster-functions#rst_xyzpyramid) explodes a raster into one row per intersecting XYZ tile (rendering each as PNG/JPEG/WebP) and already emits a `tile: STRUCT<z, x, y, bytes>` — exactly the PMTiles schema, no manual aliasing of the tile coordinates needed:
+
+```python
+from pyspark.sql import functions as F
+from databricks.labs.gbx.rasterx.functions import rst_xyzpyramid
+
+# One row per (z, x, y) tile across zooms 0..5, as 256px PNG bytes. rst_xyzpyramid
+# emits XYZ tiles addressed from the NW origin -- the convention described above.
+tiles = (
+    rasters
+    .select(F.explode(rst_xyzpyramid("tile", F.lit(0), F.lit(5))).alias("t"))
+    .selectExpr(
+        "t.tile.z AS z",
+        "t.tile.x AS x",
+        "t.tile.y AS y",
+        "t.tile.bytes AS bytes",
+    )
+)
+tiles.write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
 ```
 
 **Output:** by default, spatially-sharded `.pmtiles` archives plus a catalog under the target directory; with `shardZoom=0`, a single `.pmtiles` archive file.
