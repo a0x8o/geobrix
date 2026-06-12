@@ -161,6 +161,16 @@ class _ChunkPartition(InputPartition):
 class VectorGbxReader(DataSourceReader):
     _DRIVER = ""  # named subclasses override
 
+    # Extensions (lower-case) recognised per OGR driver name.  A .gdb directory
+    # is always treated as a single FileGDB dataset regardless of the driver.
+    _EXT_FOR_DRIVER: Dict[str, Tuple[str, ...]] = {
+        "GeoJSON": (".geojson", ".json"),
+        "GeoJSONSeq": (".geojsonl", ".geojsons"),
+        "ESRI Shapefile": (".shp", ".shz", ".zip"),
+        "GPKG": (".gpkg",),
+        "OpenFileGDB": (".gdb",),
+    }
+
     def __init__(self, options: Dict[str, str]):
         self.path = options.get("path")
         if not self.path:
@@ -182,7 +192,24 @@ class VectorGbxReader(DataSourceReader):
 
         pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
 
-    def _info(self):
+    def _members(self) -> List[str]:
+        """Member paths to read. For a plain directory, enumerate matching vector
+        files (by driver extension). A .gdb directory is a single FileGDB dataset
+        and is returned as-is. A regular file path returns [self.path]."""
+        if not os.path.isdir(self.path) or self.path.lower().rstrip("/").endswith(".gdb"):
+            return [self.path]
+        exts: Tuple[str, ...] = self._EXT_FOR_DRIVER.get(self.driver) or ()
+        names = sorted(os.listdir(self.path))
+        members = [
+            os.path.join(self.path, n)
+            for n in names
+            if (exts and n.lower().endswith(exts)) or n.lower().rstrip("/").endswith(".gdb")
+        ]
+        return members or [self.path]
+
+    def _info_for(self, path: str):
+        """Read pyogrio metadata for the given path (with read-only in-memory
+        fallback for GPKG/SQLite on object storage)."""
         self._gdal_readonly_safe()
         import pyogrio
 
@@ -190,37 +217,42 @@ class VectorGbxReader(DataSourceReader):
         if self.driver:
             kw["driver"] = self.driver
         try:
-            return pyogrio.read_info(_zip_vsi(self.path), **kw)
+            return pyogrio.read_info(_zip_vsi(path), **kw)
         except Exception as e:  # noqa: BLE001
             if "readonly database" not in str(e):
                 raise
             # GPKG (SQLite) on read-only object storage (a Volume): GDAL attempts a
             # write on open. Read the bytes and open from an in-memory buffer
             # (read-only /vsimem/), which sidesteps the write entirely.
-            with open(self.path, "rb") as _fh:
+            with open(path, "rb") as _fh:
                 return pyogrio.read_info(_fh.read(), **kw)
 
+    def _info(self):
+        return self._info_for(self._members()[0])
+
     def schema(self) -> StructType:
-        return _vector_schema(self._info(), self.as_wkb)
+        first = self._members()[0]
+        return _vector_schema(self._info_for(first), self.as_wkb)
 
     def partitions(self) -> Sequence[InputPartition]:
-        n = int(self._info().get("features", 0) or 0)
         parts: List[_ChunkPartition] = []
-        skip = 0
-        while skip < n or (n == 0 and skip == 0):
-            parts.append(
-                _ChunkPartition(
-                    self.path,
-                    self.driver,
-                    self._layer(),
-                    self.as_wkb,
-                    skip,
-                    self.chunk_size,
+        for member in self._members():
+            n = int(self._info_for(member).get("features", 0) or 0)
+            skip = 0
+            while skip < n or (n == 0 and skip == 0):
+                parts.append(
+                    _ChunkPartition(
+                        member,
+                        self.driver,
+                        self._layer(),
+                        self.as_wkb,
+                        skip,
+                        self.chunk_size,
+                    )
                 )
-            )
-            skip += self.chunk_size
-            if n == 0:
-                break
+                skip += self.chunk_size
+                if n == 0:
+                    break
         return parts
 
     def read(self, partition: "_ChunkPartition"):

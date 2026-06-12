@@ -57,3 +57,14 @@ def test_vector_gbx_chunksize_reads_all(spark, tmp_path):
     # chunkSize=1 over 2 features -> multiple partitions; union still 2 rows
     assert df.rdd.getNumPartitions() >= 2
     assert df.count() == 2
+
+
+def test_ogr_gbx_reads_directory(spark, tmp_path):
+    register(spark)
+    d = os.path.join(str(tmp_path), "many")
+    os.makedirs(d)
+    for k in range(3):
+        with open(os.path.join(d, f"p{k}.geojson"), "w") as f:
+            json.dump(_GJ, f)
+    df = spark.read.format("geojson_gbx").load(d)
+    assert df.count() == 6  # 3 files x 2 features
