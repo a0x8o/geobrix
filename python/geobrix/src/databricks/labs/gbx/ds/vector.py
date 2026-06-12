@@ -4,9 +4,13 @@ typed attributes). Pure-Python / Serverless-safe (no JVM)."""
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+import os
+import shutil
+import uuid
+from dataclasses import dataclass
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
-from pyspark.sql.datasource import DataSource, DataSourceReader, InputPartition
+from pyspark.sql.datasource import DataSource, DataSourceReader, DataSourceWriter, InputPartition, WriterCommitMessage
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -237,6 +241,14 @@ class OgrGbxDataSource(DataSource):
     def reader(self, schema: StructType) -> DataSourceReader:
         return self._READER(self.options)
 
+    def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
+        path = self.options.get("path")
+        if not path:
+            raise ValueError("ogr_gbx writer requires an output path (.save(path)).")
+        return OgrGbxWriter(
+            path, schema, self._READER._DRIVER, dict(self.options), overwrite
+        )
+
 
 class _ShapefileReader(OgrGbxReader):
     _DRIVER = "ESRI Shapefile"
@@ -284,3 +296,141 @@ class FileGdbGbxDataSource(OgrGbxDataSource):
     @classmethod
     def name(cls) -> str:
         return "file_gdb_gbx"
+
+
+@dataclass
+class _VectorCommitMessage(WriterCommitMessage):
+    frag_path: str
+
+
+class OgrGbxWriter(DataSourceWriter):
+    """Two-phase vector writer: each partition -> one Arrow-IPC fragment in a
+    shared-FS scratch dir; the driver merges fragments into one output file via
+    pyogrio.write_arrow (first plain, rest append=True). Mirrors the PMTiles
+    writer's executor-scratch / driver-merge shape."""
+
+    def __init__(self, path, schema, driver, options, overwrite):
+        opts = {k.lower(): v for k, v in options.items()}
+        self.path = path
+        self.driver = opts.get("drivername", "") or driver
+        if not self.driver:
+            raise ValueError(
+                "ogr_gbx writer requires a 'driverName' option (e.g. 'GeoJSON')."
+            )
+        self.overwrite = overwrite
+        self.geometry_type_override = opts.get("geometrytype")
+        self.layer_name = opts.get("layername")
+        self.geom_col, self.srid_col, self.proj_col, self.attr_cols = (
+            _writer_col_roles(schema)
+        )
+        self._col_order = [f.name for f in schema.fields]
+        self._geom_is_wkb = any(
+            f.name == self.geom_col and isinstance(f.dataType, BinaryType)
+            for f in schema.fields
+        )
+        parent = os.path.dirname(self.path) or "."
+        self.scratch_dir = os.path.join(parent, "_vec_scratch")
+        if not self.overwrite and self._target_exists():
+            raise ValueError(
+                "ogr_gbx does not support append; use .mode('overwrite')."
+            )
+
+    def _target_exists(self) -> bool:
+        return os.path.exists(self.path) and (
+            os.path.isfile(self.path) or bool(os.listdir(self.path))
+        )
+
+    # ---- executor: partition rows -> one Arrow-IPC fragment ----
+    def write(self, iterator: Iterator) -> WriterCommitMessage:
+        import pyarrow as pa
+        import pyarrow.feather as feather
+        from shapely import from_wkt, to_wkb
+
+        idx = {n: i for i, n in enumerate(self._col_order)}
+        cols: Dict[str, list] = {n: [] for n in self._col_order}
+        for row in iterator:
+            for n in self._col_order:
+                v = row[idx[n]]
+                if n == self.geom_col and v is not None and not self._geom_is_wkb:
+                    v = to_wkb(from_wkt(v))  # WKT input -> WKB
+                elif n == self.geom_col and v is not None:
+                    v = bytes(v)
+                cols[n].append(v)
+        if not cols[self.geom_col]:
+            return _VectorCommitMessage(frag_path="")  # empty partition
+        os.makedirs(self.scratch_dir, exist_ok=True)
+        tbl = pa.table({n: cols[n] for n in self._col_order})
+        frag = os.path.join(self.scratch_dir, f"frag-{uuid.uuid4().hex}.arrow")
+        feather.write_feather(tbl, frag)
+        return _VectorCommitMessage(frag_path=frag)
+
+    # ---- driver: merge fragments into one output file ----
+    def commit(self, messages: List[Optional[WriterCommitMessage]]) -> None:
+        import pyarrow.feather as feather
+        import pyogrio
+
+        frags = [
+            m.frag_path
+            for m in messages
+            if isinstance(m, _VectorCommitMessage) and m.frag_path
+        ]
+        try:
+            if not frags:
+                return
+            self._prepare_target()
+            tables = [feather.read_table(f) for f in frags]
+            geom_type, crs = self._infer_geom_crs(tables)
+            kw = dict(
+                driver=self.driver,
+                geometry_name=self.geom_col,
+                geometry_type=geom_type,
+                crs=crs,
+            )
+            if self.layer_name:
+                kw["layer"] = self.layer_name
+            for n, tbl in enumerate(tables):
+                out_tbl = tbl.drop_columns(
+                    [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
+                )
+                pyogrio.write_arrow(out_tbl, self.path, append=(n > 0), **kw)
+        finally:
+            shutil.rmtree(self.scratch_dir, ignore_errors=True)
+
+    def _infer_geom_crs(self, tables) -> Tuple[str, Optional[str]]:
+        geom_type, crs = self.geometry_type_override, None
+        for tbl in tables:
+            g = tbl.column(self.geom_col).to_pylist()
+            s = tbl.column(self.srid_col).to_pylist() if self.srid_col in tbl.column_names else []
+            p = tbl.column(self.proj_col).to_pylist() if self.proj_col in tbl.column_names else []
+            for i, gv in enumerate(g):
+                if gv is None:
+                    continue
+                if geom_type is None:
+                    geom_type = _geometry_type_of(gv)
+                if crs is None:
+                    crs = _srid_to_crs(
+                        s[i] if i < len(s) else "", p[i] if i < len(p) else ""
+                    )
+                break
+            if geom_type is not None and crs is not None:
+                break
+        return geom_type or "Unknown", crs
+
+    def _prepare_target(self) -> None:
+        # PySpark may pre-create self.path as a directory; vector output is a
+        # single file (or driver-managed dir). Clear it and write directly --
+        # no os.rename (FUSE-unsafe on DBFS/Volumes); write_arrow writes
+        # sequentially so a direct write to a FUSE path is safe.
+        parent = os.path.dirname(self.path) or "."
+        os.makedirs(parent, exist_ok=True)
+        if os.path.isdir(self.path):
+            shutil.rmtree(self.path)
+        elif os.path.isfile(self.path):
+            os.remove(self.path)
+
+    def abort(self, messages: List[Optional[WriterCommitMessage]]) -> None:
+        shutil.rmtree(self.scratch_dir, ignore_errors=True)
+        if os.path.isfile(self.path):
+            os.remove(self.path)
+        elif os.path.isdir(self.path):
+            shutil.rmtree(self.path, ignore_errors=True)
