@@ -140,9 +140,21 @@ mirroring the PMTiles writer bench:
 - **Serverless guard**: the new `vector.py` (+ named module) are in the scan and
   contain no forbidden Spark-config/JVM calls.
 
-## Out of scope (later)
+## Phasing
 
-- **Vector writers** — heavy has none in 0.4.0; nothing to match.
+This spec is **Phase 1 (vector readers)** of a three-phase track:
+1. **Vector readers** (this spec) — its benchmark is *initial* (the limited sample-data
+   formats already on the Volume).
+2. **Vector writers** (follow-on spec) — net-new light capability (heavy has none);
+   pyogrio can write, so writers double as a **corpus generator** for benchmarking
+   (write vector at scale / varied formats, read back).
+3. **Scaled/final benchmarking** — light-vs-heavy reader numbers over writer-generated
+   data at scale.
+
+## Out of scope (this spec — see Phasing)
+
+- **Vector writers** — deferred to Phase 2 (data generation + net-new capability), not
+  part of this readers spec. Heavy has no vector writer to match anyway.
 - **Multi-geometry-field** sources (`geom_1`, …) — v1 is single-geom parity.
 - **GridX** readers/writers — separate tier, not part of the readers/writers section.
 - A `pyvx` *functions* API (vector transforms) — this spec is DataSource readers only.
