@@ -4,6 +4,7 @@ typed attributes). Pure-Python / Serverless-safe (no JVM)."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import tempfile
@@ -210,25 +211,44 @@ class VectorGbxReader(DataSourceReader):
         ]
         return members or [self.path]
 
+    def _needs_stage(self) -> bool:
+        """Random-access formats (GeoPackage = SQLite; FileGDB = seeked multi-file).
+        Reading these directly from object storage (a UC Volume) does poorly -- FUSE
+        does not serve random/seeked I/O well -- or triggers a read-only write attempt.
+        Stage the source to worker-local temp first and read it there."""
+        return self.driver in ("GPKG", "OpenFileGDB")
+
+    @contextlib.contextmanager
+    def _staged(self, path: str):
+        """Yield a locally-readable path. For random-access drivers, copy the source
+        (a file, or a `.gdb` directory) to worker-local temp with a sequential copy
+        (FUSE-safe), so GDAL does its seeked I/O on local disk, then clean up -- all
+        transparent to the caller. Sequential drivers (GeoJSON/Shapefile) read in place."""
+        if not self._needs_stage():
+            yield path
+            return
+        tmpd = tempfile.mkdtemp(prefix="gbx_vecstage_")
+        try:
+            local = os.path.join(tmpd, os.path.basename(path.rstrip("/")))
+            if os.path.isdir(path):
+                shutil.copytree(path, local)
+            else:
+                shutil.copy(path, local)  # sequential read of object storage -> FUSE-safe
+            yield local
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
+
     def _info_for(self, path: str):
-        """Read pyogrio metadata for the given path (with read-only in-memory
-        fallback for GPKG/SQLite on object storage)."""
+        """Read pyogrio metadata for the given path. Random-access formats are staged
+        to local temp first (see _staged) so the open does not seek over a Volume."""
         self._gdal_readonly_safe()
         import pyogrio
 
         kw: Dict = {"layer": self._layer()}
         if self.driver:
             kw["driver"] = self.driver
-        try:
-            return pyogrio.read_info(_zip_vsi(path), **kw)
-        except Exception as e:  # noqa: BLE001
-            if "readonly database" not in str(e):
-                raise
-            # GPKG (SQLite) on read-only object storage (a Volume): GDAL attempts a
-            # write on open. Read the bytes and open from an in-memory buffer
-            # (read-only /vsimem/), which sidesteps the write entirely.
-            with open(path, "rb") as _fh:
-                return pyogrio.read_info(_fh.read(), **kw)
+        with self._staged(path) as _p:
+            return pyogrio.read_info(_zip_vsi(_p), **kw)
 
     def _info(self):
         return self._info_for(self._members()[0])
@@ -240,6 +260,16 @@ class VectorGbxReader(DataSourceReader):
     def partitions(self) -> Sequence[InputPartition]:
         parts: List[_ChunkPartition] = []
         for member in self._members():
+            if self._needs_stage():
+                # Random-access formats are staged to local temp and read whole, so the
+                # per-member file is copied exactly once: one partition per member,
+                # count=0 meaning "read all features".
+                parts.append(
+                    _ChunkPartition(
+                        member, self.driver, self._layer(), self.as_wkb, 0, 0
+                    )
+                )
+                continue
             n = int(self._info_for(member).get("features", 0) or 0)
             skip = 0
             while skip < n or (n == 0 and skip == 0):
@@ -265,21 +295,17 @@ class VectorGbxReader(DataSourceReader):
         kw: Dict = {
             "layer": partition.layer,
             "skip_features": partition.skip,
-            "max_features": partition.count,
             "read_geometry": True,
             "datetime_as_string": False,
         }
+        # count==0 means "read all" (staged random-access members are read whole);
+        # otherwise it is the chunk size for sequential formats.
+        if partition.count:
+            kw["max_features"] = partition.count
         if partition.driver:
             kw["driver"] = partition.driver
-        try:
-            meta, tbl = pyogrio.read_arrow(_zip_vsi(partition.path), **kw)
-        except Exception as e:  # noqa: BLE001
-            if "readonly database" not in str(e):
-                raise
-            # GPKG (SQLite) on read-only object storage: open from an in-memory
-            # buffer (read-only /vsimem/) so GDAL does not attempt a write on open.
-            with open(partition.path, "rb") as _fh:
-                meta, tbl = pyogrio.read_arrow(_fh.read(), **kw)
+        with self._staged(partition.path) as _p:
+            meta, tbl = pyogrio.read_arrow(_zip_vsi(_p), **kw)
         # Arrow table uses 'wkb_geometry' when geometry_name is empty.
         gcol = meta.get("geometry_name") or "wkb_geometry"
         srid, proj4 = _crs_to_srid_proj(meta.get("crs"))
