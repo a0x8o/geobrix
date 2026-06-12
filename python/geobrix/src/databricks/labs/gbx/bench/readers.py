@@ -602,6 +602,220 @@ def run_pmtiles_write(
         )
 
 
+def run_vector_write(
+    spark,
+    src_path: str,
+    out_dir: str,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    fmt: str,
+    where: str = "venv",
+) -> "ResultRow":
+    """Time coalesce(1).write.format(fmt) for a light vector writer, with read-back parity.
+
+    Light-only: there is no heavy vector writer tier.  Reads ``src_path`` once
+    (using the same ``fmt`` light reader), caches it, then times repeated
+    ``coalesce(1).write.format(fmt).mode("overwrite").save(target)`` calls,
+    writing to a distinct ``out_dir/iter.m<i>`` per iteration to avoid
+    append/overwrite contention.  After timing, reads back the last written
+    target and asserts that the non-null geometry count equals the source count.
+
+    Returns a single ResultRow with category="writer", mode="spark-path",
+    fn="write_<fmt>", api="lightweight".  On any error returns status="error"
+    with the exception in ``note`` (does not raise).
+    """
+    from databricks.labs.gbx.ds.register import register
+
+    register(spark)
+    env = capture_env(where)
+
+    # Read source once and count to establish the feature count for parity.
+    try:
+        df = spark.read.format(fmt).load(src_path)
+        df = df.cache()
+        n = int(df.count())
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api="lightweight",
+            fn=f"write_{fmt}",
+            category="writer",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[:200],
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build per-iteration target paths so repeated writes go to fresh directories.
+    _targets = [f"{out_dir}/iter.m{i}" for i in range(max(1, measured))]
+    _iter_idx = [0]
+
+    def _job():
+        target = _targets[_iter_idx[0] % len(_targets)]
+        _iter_idx[0] += 1
+        df.coalesce(1).write.format(fmt).mode("overwrite").save(target)
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+
+        # Read-back parity: last written target (index measured-1, clamped to len).
+        _last = _targets[(max(1, measured) - 1) % len(_targets)]
+        try:
+            back = spark.read.format(fmt).load(_last)
+            # Derive geometry column name from the schema: the geom col has a sibling
+            # "<col>_srid" field.  Use the first such pair found.
+            _srid_fields = [f.name for f in back.schema.fields if f.name.endswith("_srid")]
+            if _srid_fields:
+                _gcol = _srid_fields[0][: -len("_srid")]
+                import pyspark.sql.functions as _F
+
+                _back_n = int(back.filter(_F.col(_gcol).isNotNull()).count())
+            else:
+                _back_n = int(back.count())
+            if _back_n != n:
+                return ResultRow(
+                    run_id=run_id,
+                    api="lightweight",
+                    fn=f"write_{fmt}",
+                    category="writer",
+                    mode="spark-path",
+                    tile_px=0,
+                    bands=0,
+                    dtype="",
+                    srid=0,
+                    rows=n,
+                    nodata_frac=0.0,
+                    warmup_iters=stats["warmup_iters"],
+                    measured_iters=stats["measured_iters"],
+                    iter_median_s=ms / 1000.0,
+                    iter_min_s=stats["iter_min_ms"] / 1000.0,
+                    iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                    iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+                    avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+                    per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+                    per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+                    throughput_mpix_s=0.0,
+                    throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+                    peak_rss_mb=peak_rss_mb(),
+                    status="error",
+                    note=f"parity FAIL: wrote {n}, read back {_back_n} ({fmt})",
+                    output_fingerprint="",
+                    **env,
+                )
+        except Exception as _pe:  # noqa: BLE001
+            return ResultRow(
+                run_id=run_id,
+                api="lightweight",
+                fn=f"write_{fmt}",
+                category="writer",
+                mode="spark-path",
+                tile_px=0,
+                bands=0,
+                dtype="",
+                srid=0,
+                rows=n,
+                nodata_frac=0.0,
+                warmup_iters=stats["warmup_iters"],
+                measured_iters=stats["measured_iters"],
+                iter_median_s=ms / 1000.0,
+                iter_min_s=stats["iter_min_ms"] / 1000.0,
+                iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+                iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+                avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+                per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+                per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+                throughput_mpix_s=0.0,
+                throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+                peak_rss_mb=peak_rss_mb(),
+                status="error",
+                note=f"readback error: {str(_pe)[:180]}",
+                output_fingerprint="",
+                **env,
+            )
+
+        return ResultRow(
+            run_id=run_id,
+            api="lightweight",
+            fn=f"write_{fmt}",
+            category="writer",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+            per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"{fmt} write+readback of {n} features",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api="lightweight",
+            fn=f"write_{fmt}",
+            category="writer",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[:200],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _list_tifs(corpus_dir: str) -> List[str]:
     """Return all *.tif / *.tiff paths under corpus_dir."""
     import glob

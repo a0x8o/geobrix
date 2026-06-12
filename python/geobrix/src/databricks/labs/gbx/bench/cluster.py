@@ -721,7 +721,7 @@ if _pmtiles_rows:
     _show_md(f"pmtiles benchmark -- {RUN_ID}", _md)
 """
 
-_CELL_VECTOR = """# Vector reader benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
+_CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
 from databricks.labs.gbx.bench import readers as _rd
 _vbase = f"{CORPUS}/vector"
 _vcases = [
@@ -745,9 +745,13 @@ for _lfmt, _hfmt, _vp in _vcases:
         _hc = spark.read.format(_hfmt).load(_vp).count()
         print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
         assert _lc == _hc, f"row-count parity FAIL for {_lfmt}: {_lc} != {_hc}"
+    if LIGHTWEIGHT:
+        _w = _rd.run_vector_write(spark, _vp, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+                                  SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt, where="cluster")
+        _sink([_w]); lw.append(_w); _vrows.append(_w)
 if _vrows:
     _md = results.summarize(_vrows)
-    _show_md(f"vector reader benchmark -- {RUN_ID}", _md)
+    _show_md(f"vector reader+writer benchmark -- {RUN_ID}", _md)
 """
 
 _EPILOGUE = """# Wrap-up: durable jsonl shards + per-tier summaries + heavy-vs-light comparison.
