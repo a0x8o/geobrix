@@ -168,6 +168,8 @@ def _expected_rows(
     readers_only: bool = False,
     benchmark_pmtiles: bool = False,
     pmtiles_only: bool = False,
+    benchmark_vector: bool = False,
+    vector_only: bool = False,
 ) -> int:
     """Best-effort total rows this run will stream, for an 'N of EXPECTED' progress
     display. Only reliable for a LIGHTWEIGHT-ONLY run: the lightweight fn set + corpus
@@ -178,12 +180,18 @@ def _expected_rows(
     reader_rows = 2 * ((1 if lightweight else 0) + (1 if heavyweight else 0))
     # PMTiles rows: 1 per active tier (1 write per tier).
     pmtiles_rows = (1 if lightweight else 0) + (1 if heavyweight else 0)
+    # Vector rows: 4 formats × up to 2 tiers (1 read per format per tier).
+    _n_vformats = 4
+    vector_rows = _n_vformats * ((1 if lightweight else 0) + (1 if heavyweight else 0))
 
     if readers_only:
         return reader_rows or None
 
     if pmtiles_only:
         return pmtiles_rows or None
+
+    if vector_only:
+        return vector_rows or None
 
     if not lightweight or heavyweight:
         # heavyweight included -> fn count unknown -> return None, but add reader rows if requested
@@ -212,6 +220,8 @@ def _expected_rows(
         total += reader_rows
     if benchmark_pmtiles:
         total += pmtiles_rows
+    if benchmark_vector:
+        total += vector_rows
     return total or None
 
 
@@ -243,6 +253,10 @@ def main() -> int:
     # --pmtiles-only: ONLY run the pmtiles benchmark, skip all fn benchmarks.
     benchmark_pmtiles = "--benchmark-pmtiles" in sys.argv
     pmtiles_only = "--pmtiles-only" in sys.argv
+    # --benchmark-vector: also run the vector reader benchmark on-cluster.
+    # --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
+    benchmark_vector = "--benchmark-vector" in sys.argv
+    vector_only = "--vector-only" in sys.argv
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -395,12 +409,19 @@ def main() -> int:
         benchmark_pmtiles=benchmark_pmtiles,
         #  --pmtiles-only: ONLY run the pmtiles benchmark, skip fn benchmarks.
         pmtiles_only=pmtiles_only,
+        #  --benchmark-vector: also run vector reader benchmark (light *_gbx vs heavy *_ogr).
+        benchmark_vector=benchmark_vector,
+        #  --vector-only: ONLY run the vector reader benchmark, skip fn benchmarks.
+        vector_only=vector_only,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
         cfg["modes"] = "spark-path"
     if pmtiles_only:
         # PMTiles writer is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if vector_only:
+        # Vector reader benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -594,6 +615,8 @@ def main() -> int:
         readers_only=readers_only,
         benchmark_pmtiles=benchmark_pmtiles,
         pmtiles_only=pmtiles_only,
+        benchmark_vector=benchmark_vector,
+        vector_only=vector_only,
     )
     # "27 (of 83)" when we know the total this run will stream, else just "27".
     of = f" (of {expected})" if expected else ""

@@ -29,6 +29,8 @@ Options:
   --readers-only        Run ONLY the reader benchmark (no fn benchmarks)
   --benchmark-pmtiles   Also run PMTiles writer benchmark (pmtiles_gbx vs pmtiles)
   --pmtiles-only        Run ONLY the PMTiles benchmark (no fn benchmarks)
+  --benchmark-vector    Also run vector reader benchmark (light *_gbx vs heavy *_ogr)
+  --vector-only         Run ONLY the vector reader benchmark (no fn benchmarks)
   --no-wait             Submit without blocking on completion
   --help, -h            Show help
 

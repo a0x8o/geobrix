@@ -418,6 +418,31 @@ diverge — so the timing above is a like-for-like comparison of identical outpu
 > scratch and assembles on the driver, the same model the sharded/mosaic output
 > uses at scale.
 
+## Results — vector readers
+
+The vector readers are benchmarked separately from the `rst_*` functions: each
+format pair (`*_gbx` lightweight vs `*_ogr` heavyweight) reads the same source
+file and row-count parity is a **hard gate** — the benchmark fails if the two
+tiers return a different row count. Run it with
+`gbx:bench:cluster --benchmark-vector` (or `--vector-only` to skip all function
+benchmarks).
+
+Four format pairs are covered:
+
+| Format (light) | Format (heavy) | Source | Whole-job median | Speedup |
+|---|---|---|---|---|
+| `geojson_gbx` | `geojson_ogr` | `nyc_boroughs.geojson` | — | — |
+| `shapefile_gbx` | `shapefile_ogr` | `nyc_subway.shp.zip` | — | — |
+| `gpkg_gbx` | `gpkg_ogr` | `nyc_complete.gpkg` | — | — |
+| `file_gdb_gbx` | `file_gdb_ogr` | `NYC_Sample.gdb.zip` | — | — |
+
+> Timing cells show "—" pending a cluster run. Figures will be filled in once a
+> controlled cluster run is completed.
+
+**Parity:** for each format, `spark.read.format(<light>).load(path).count()` must
+equal `spark.read.format(<heavy>).load(path).count()`. This is checked inline
+during the benchmark and the run fails immediately if the counts diverge.
+
 ## Caveats
 
 - Absolute timings depend on the machine, the corpus, and the tier's install; treat the **relative** speedup and the **consistency** outcome as the durable signal, not the millisecond values.

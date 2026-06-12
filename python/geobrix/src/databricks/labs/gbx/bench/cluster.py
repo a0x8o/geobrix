@@ -178,6 +178,10 @@ READERS_ONLY = {readers_only!r}
 # --pmtiles-only: ONLY run the pmtiles benchmark, skip all fn benchmarks.
 BENCHMARK_PMTILES = {benchmark_pmtiles!r}
 PMTILES_ONLY = {pmtiles_only!r}
+# --benchmark-vector: also run the vector reader benchmark (light *_gbx vs heavy *_ogr).
+# --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
+BENCHMARK_VECTOR = {benchmark_vector!r}
+VECTOR_ONLY = {vector_only!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -717,6 +721,35 @@ if _pmtiles_rows:
     _show_md(f"pmtiles benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_VECTOR = """# Vector reader benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
+from databricks.labs.gbx.bench import readers as _rd
+_vbase = f"{CORPUS}/vector"
+_vcases = [
+    ("geojson_gbx", "geojson_ogr", _vbase + "/nyc_boroughs.geojson"),
+    ("shapefile_gbx", "shapefile_ogr", _vbase + "/nyc_subway.shp.zip"),
+    ("gpkg_gbx", "gpkg_ogr", _vbase + "/nyc_complete.gpkg"),
+    ("file_gdb_gbx", "file_gdb_ogr", _vbase + "/NYC_Sample.gdb.zip"),
+]
+_vrows = []
+for _lfmt, _hfmt, _vp in _vcases:
+    if LIGHTWEIGHT:
+        _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                 api="lightweight", fmt=_lfmt, where="cluster")
+        _sink([_r]); lw.append(_r); _vrows.append(_r)
+    if HEAVYWEIGHT:
+        _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                 api="heavyweight", fmt=_hfmt, where="cluster")
+        _sink([_r]); hw.append(_r); _vrows.append(_r)
+    if LIGHTWEIGHT and HEAVYWEIGHT:
+        _lc = spark.read.format(_lfmt).load(_vp).count()
+        _hc = spark.read.format(_hfmt).load(_vp).count()
+        print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
+        assert _lc == _hc, f"row-count parity FAIL for {_lfmt}: {_lc} != {_hc}"
+if _vrows:
+    _md = results.summarize(_vrows)
+    _show_md(f"vector reader benchmark -- {RUN_ID}", _md)
+"""
+
 _EPILOGUE = """# Wrap-up: durable jsonl shards + per-tier summaries + heavy-vs-light comparison.
 all_rows = lw + hw
 if lw:
@@ -809,6 +842,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         readers_only=bool(cfg.get("readers_only")),
         benchmark_pmtiles=bool(cfg.get("benchmark_pmtiles")),
         pmtiles_only=bool(cfg.get("pmtiles_only")),
+        benchmark_vector=bool(cfg.get("benchmark_vector")),
+        vector_only=bool(cfg.get("vector_only")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -827,6 +862,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     readers_only = bool(cfg.get("readers_only"))
     benchmark_pmtiles = bool(cfg.get("benchmark_pmtiles"))
     pmtiles_only = bool(cfg.get("pmtiles_only"))
+    benchmark_vector = bool(cfg.get("benchmark_vector"))
+    vector_only = bool(cfg.get("vector_only"))
 
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
@@ -839,7 +876,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if not readers_only and not pmtiles_only:
+    if not readers_only and not pmtiles_only and not vector_only:
         if light and do_pure:
             cells.append(_cell(_CELL_LIGHT_PURE))
         if heavy and do_pure:
@@ -852,6 +889,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_READERS))
     if benchmark_pmtiles or pmtiles_only:
         cells.append(_cell(_CELL_PMTILES))
+    if benchmark_vector or vector_only:
+        cells.append(_cell(_CELL_VECTOR))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)
