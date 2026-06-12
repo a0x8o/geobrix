@@ -182,6 +182,10 @@ PMTILES_ONLY = {pmtiles_only!r}
 # --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
 BENCHMARK_VECTOR = {benchmark_vector!r}
 VECTOR_ONLY = {vector_only!r}
+# --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead of the
+# tiny 4-file corpus. Requires the scaled corpus to have been generated first via
+# gbx:bench:generate-vector-corpus and staged at {{CORPUS}}/vector-scale/<fmt>/.
+VECTOR_SCALE = {vector_scale!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -723,18 +727,32 @@ if _pmtiles_rows:
 
 _CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
 from databricks.labs.gbx.bench import readers as _rd
-_vbase = f"{CORPUS}/vector"
-# (light_fmt, heavy_fmt, path, heavy_options). The heavy geojson_ogr reader defaults to the
-# GeoJSONSeq driver, so force multi=false to read the standard FeatureCollection corpus file
-# (matching what the light geojson_gbx GeoJSON-driver reader reads) for a fair comparison.
-_vcases = [
-    ("geojson_gbx", "geojson_ogr", _vbase + "/nyc_boroughs.geojson", {"multi": "false"}),
-    ("shapefile_gbx", "shapefile_ogr", _vbase + "/nyc_subway.shp.zip", {}),
-    ("gpkg_gbx", "gpkg_ogr", _vbase + "/nyc_complete.gpkg", {}),
-    ("file_gdb_gbx", "file_gdb_ogr", _vbase + "/NYC_Sample.gdb.zip", {}),
-]
+if VECTOR_SCALE:
+    # Scaled corpus: 1M-seed per format.  Reader path = the copies directory (one partition
+    # per copy file, enumerated by the OgrGbxReader directory support).  Writer source = the
+    # seed file (1M rows) so the writer leg exercises a full 1M-row write.
+    _vscale_base = f"{CORPUS}/vector-scale"
+    _vcases = [
+        # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options)
+        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",  _vscale_base + "/geojson_gbx/seed.geojson",  {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", _vscale_base + "/shapefile_gbx/seed.shp",    {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",     _vscale_base + "/gpkg_gbx/seed.gpkg",        {}),
+        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/copies", _vscale_base + "/file_gdb_gbx/seed.gdb",     {}),
+    ]
+else:
+    _vbase = f"{CORPUS}/vector"
+    # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options).
+    # The heavy geojson_ogr reader defaults to the GeoJSONSeq driver, so force multi=false
+    # to read the standard FeatureCollection corpus file (matching the light geojson_gbx
+    # GeoJSON-driver reader) for a fair comparison.
+    _vcases = [
+        ("geojson_gbx",  "geojson_ogr",  _vbase + "/nyc_boroughs.geojson", _vbase + "/nyc_boroughs.geojson", {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vbase + "/nyc_subway.shp.zip",  _vbase + "/nyc_subway.shp.zip",   {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vbase + "/nyc_complete.gpkg",    _vbase + "/nyc_complete.gpkg",    {}),
+        ("file_gdb_gbx", "file_gdb_ogr", _vbase + "/NYC_Sample.gdb.zip",   _vbase + "/NYC_Sample.gdb.zip",   {}),
+    ]
 _vrows = []
-for _lfmt, _hfmt, _vp, _hopts in _vcases:
+for _lfmt, _hfmt, _vp, _vseed, _hopts in _vcases:
     if LIGHTWEIGHT:
         _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                                  api="lightweight", fmt=_lfmt, where="cluster")
@@ -757,7 +775,7 @@ for _lfmt, _hfmt, _vp, _hopts in _vcases:
         except Exception as _e:  # noqa: BLE001
             print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
     if LIGHTWEIGHT:
-        _w = _rd.run_vector_write(spark, _vp, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+        _w = _rd.run_vector_write(spark, _vseed, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
                                   SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt, where="cluster")
         _sink([_w]); lw.append(_w); _vrows.append(_w)
 if _vrows:
@@ -859,6 +877,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         pmtiles_only=bool(cfg.get("pmtiles_only")),
         benchmark_vector=bool(cfg.get("benchmark_vector")),
         vector_only=bool(cfg.get("vector_only")),
+        vector_scale=bool(cfg.get("vector_scale")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section

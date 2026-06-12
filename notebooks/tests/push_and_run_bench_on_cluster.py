@@ -255,8 +255,12 @@ def main() -> int:
     pmtiles_only = "--pmtiles-only" in sys.argv
     # --benchmark-vector: also run the vector reader benchmark on-cluster.
     # --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
+    # --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead
+    #   of the tiny 4-file corpus. Requires the scaled corpus staged at
+    #   {CORPUS}/vector-scale/<fmt>/. Only meaningful when benchmark_vector or vector_only.
     benchmark_vector = "--benchmark-vector" in sys.argv
     vector_only = "--vector-only" in sys.argv
+    vector_scale = "--vector-scale" in sys.argv
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -425,6 +429,8 @@ def main() -> int:
         benchmark_vector=benchmark_vector,
         #  --vector-only: ONLY run the vector reader benchmark, skip fn benchmarks.
         vector_only=vector_only,
+        #  --vector-scale: use the scaled 1M-seed corpus instead of the tiny 4-file corpus.
+        vector_scale=vector_scale,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
