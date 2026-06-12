@@ -189,7 +189,16 @@ class VectorGbxReader(DataSourceReader):
         kw: Dict = {"layer": self._layer()}
         if self.driver:
             kw["driver"] = self.driver
-        return pyogrio.read_info(_zip_vsi(self.path), **kw)
+        try:
+            return pyogrio.read_info(_zip_vsi(self.path), **kw)
+        except Exception as e:  # noqa: BLE001
+            if "readonly database" not in str(e):
+                raise
+            # GPKG (SQLite) on read-only object storage (a Volume): GDAL attempts a
+            # write on open. Read the bytes and open from an in-memory buffer
+            # (read-only /vsimem/), which sidesteps the write entirely.
+            with open(self.path, "rb") as _fh:
+                return pyogrio.read_info(_fh.read(), **kw)
 
     def schema(self) -> StructType:
         return _vector_schema(self._info(), self.as_wkb)
@@ -227,7 +236,15 @@ class VectorGbxReader(DataSourceReader):
         }
         if partition.driver:
             kw["driver"] = partition.driver
-        meta, tbl = pyogrio.read_arrow(_zip_vsi(partition.path), **kw)
+        try:
+            meta, tbl = pyogrio.read_arrow(_zip_vsi(partition.path), **kw)
+        except Exception as e:  # noqa: BLE001
+            if "readonly database" not in str(e):
+                raise
+            # GPKG (SQLite) on read-only object storage: open from an in-memory
+            # buffer (read-only /vsimem/) so GDAL does not attempt a write on open.
+            with open(partition.path, "rb") as _fh:
+                meta, tbl = pyogrio.read_arrow(_fh.read(), **kw)
         # Arrow table uses 'wkb_geometry' when geometry_name is empty.
         gcol = meta.get("geometry_name") or "wkb_geometry"
         srid, proj4 = _crs_to_srid_proj(meta.get("crs"))
