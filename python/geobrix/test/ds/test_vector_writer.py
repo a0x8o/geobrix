@@ -192,6 +192,27 @@ def test_file_gdb_writer_roundtrip(spark, tmp_path):
     assert back.count() == 2
 
 
+def test_gpkg_reads_from_readonly_dir(spark, tmp_path):
+    # GPKG written by the writer must read back even when the file/dir are
+    # read-only (simulating a read-only Volume) -- i.e. no WAL that forces a
+    # reader-side checkpoint write.
+    import os
+    import stat
+
+    register(spark)
+    out = str(tmp_path / "ro.gpkg")
+    _wkb_df(spark).coalesce(1).write.format("gpkg_gbx").mode("overwrite").save(out)
+    # make the output file + its dir read-only
+    os.chmod(out, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    os.chmod(str(tmp_path), stat.S_IRUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP)
+    try:
+        back = spark.read.format("gpkg_gbx").load(out)
+        assert back.count() == 2
+    finally:
+        os.chmod(str(tmp_path), 0o755)
+        os.chmod(out, 0o644)
+
+
 def test_classic_write_path_roundtrip(spark, tmp_path):
     # Exercise the classic pyogrio.raw.write fallback path directly (write_arrow
     # works locally so the auto-fallback won't trigger here) to prove the

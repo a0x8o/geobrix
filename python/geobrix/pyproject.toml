@@ -79,7 +79,7 @@ light = [
     "pmtiles>=3.4,<4",
     # OGR-free vector reading for the light *_gbx vector DataSources. pyogrio
     # bundles its own libgdal; pyproj (pulled by pyogrio) maps CRS->srid/proj4.
-    "pyogrio>=0.8,<1",
+    "pyogrio>=0.12,<1",
     "pyproj>=3.6",
     "scikit-image>=0.22,<1",
     "xarray-spatial>=0.4,<1",

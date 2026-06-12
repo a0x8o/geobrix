@@ -390,7 +390,6 @@ class VectorGbxWriter(DataSourceWriter):
             local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
             local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
             self._write_local(tables, local_out, geom_type, crs)
-            self._finalize_sqlite(local_dir)
             # Clear any Spark-created stub at self.path, then copy everything
             # pyogrio produced in local_dir (file, sidecar set, or .gdb dir).
             self._prepare_target()
@@ -421,6 +420,11 @@ class VectorGbxWriter(DataSourceWriter):
         feature-based path, which has broader OGR driver support."""
         import pyogrio
 
+        # Write SQLite-backed formats (GPKG) with a DELETE journal -- no WAL/-shm
+        # sidecars -- so the output reads back from read-only object storage (a
+        # Volume) without the reader attempting a checkpoint (write). Harmless for
+        # non-SQLite drivers. (GDAL config is process-global; set per write.)
+        pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
         kw = dict(
             driver=self.driver,
             geometry_name=self.geom_col,
@@ -465,24 +469,6 @@ class VectorGbxWriter(DataSourceWriter):
                 append=(n > 0),
                 **kw,
             )
-
-    def _finalize_sqlite(self, local_dir) -> None:
-        """Make any GeoPackage in local_dir a clean, self-contained SQLite file so it
-        reads from read-only object storage (a Volume) without SQLite attempting a
-        write (journal recovery). Best-effort."""
-        import glob
-        import sqlite3
-
-        for gp in glob.glob(os.path.join(local_dir, "*.gpkg")):
-            try:
-                con = sqlite3.connect(gp)
-                con.execute("PRAGMA journal_mode=DELETE")
-                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                con.commit()
-                con.execute("VACUUM")
-                con.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     def _infer_geom_crs(self, tables) -> Tuple[str, Optional[str]]:
         geom_type, crs = self.geometry_type_override, None
