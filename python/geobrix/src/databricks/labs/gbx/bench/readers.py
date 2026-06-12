@@ -329,7 +329,7 @@ def run_format_read(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
@@ -412,7 +412,7 @@ def run_format_write(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
@@ -482,7 +482,7 @@ def run_format_write(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
@@ -596,7 +596,7 @@ def run_pmtiles_write(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
@@ -662,7 +662,7 @@ def run_vector_write(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
@@ -752,7 +752,7 @@ def run_vector_write(
                 throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
                 peak_rss_mb=peak_rss_mb(),
                 status="error",
-                note=f"readback error: {str(_pe)[:180]}",
+                note=f"readback error: {str(_pe)[-450:]}",
                 output_fingerprint="",
                 **env,
             )
@@ -812,7 +812,7 @@ def run_vector_write(
             throughput_rows_s=0.0,
             peak_rss_mb=0.0,
             status="error",
-            note=str(e)[:200],
+            note=str(e)[-500:],
             output_fingerprint="",
             **env,
         )
