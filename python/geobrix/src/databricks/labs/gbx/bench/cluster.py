@@ -764,13 +764,17 @@ if VECTOR_SCALE:
                                      api="lightweight", fmt=_lfmt, ingest_table=_it,
                                      where="cluster")
             _sink([_r]); lw.append(_r); _vrows.append(_r)
-        if HEAVYWEIGHT:
+        # The heavy OGR FileGDB reader reads native Esri .gdb/.gdb.zip but not the GeoBrix-
+        # generated .gdb.zip archive -- skip its heavy leg (FileGDB heavy-read is reported as
+        # native-archive-only; light reads the generated corpus, incl. a directory of them).
+        _heavy_ok = _hfmt != "file_gdb_ogr"
+        if HEAVYWEIGHT and _heavy_ok:
             _it = f"geospatial_docs.geobrix.bench_vec_ingest_{_hfmt}"
             _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
                                      api="heavyweight", fmt=_hfmt, options=(_hopts or None),
                                      ingest_table=_it, where="cluster")
             _sink([_r]); hw.append(_r); _vrows.append(_r)
-        if LIGHTWEIGHT and HEAVYWEIGHT:
+        if LIGHTWEIGHT and HEAVYWEIGHT and _heavy_ok:
             # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
             # vector bench -- record it and continue so the other formats + the writer leg run.
             try:
