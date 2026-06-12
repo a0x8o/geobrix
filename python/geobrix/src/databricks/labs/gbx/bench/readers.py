@@ -240,7 +240,10 @@ def run_format_read(
     """
     env = capture_env(where)
 
-    if fmt == "raster_gbx":
+    if fmt.endswith("_gbx"):
+        # register() installs ALL light DataSources (raster_gbx, gtiff_gbx, pmtiles_gbx,
+        # ogr_gbx + the vector *_gbx). Registering only for fmt=="raster_gbx" left vector
+        # formats (geojson_gbx, shapefile_gbx, ...) unregistered -> DATA_SOURCE_NOT_FOUND.
         from databricks.labs.gbx.ds.register import register
 
         register(spark)
@@ -272,7 +275,7 @@ def run_format_read(
         return ResultRow(
             run_id=run_id,
             api=api,
-            fn="raster_read",
+            fn=f"read_{fmt}",
             category="reader",
             mode="spark-path",
             tile_px=0,
@@ -304,7 +307,7 @@ def run_format_read(
         return ResultRow(
             run_id=run_id,
             api=api,
-            fn="raster_read",
+            fn=f"read_{fmt}",
             category="reader",
             mode="spark-path",
             tile_px=0,

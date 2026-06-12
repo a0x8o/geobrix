@@ -877,7 +877,10 @@ def build_bench_notebook(cfg: dict) -> dict:
         # --no-deps swaps the geobrix package every run without re-resolving heavy deps.
         # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
         _cell(f"%pip install --quiet '{cfg['wheel']}[light]' markdown"),
-        _cell(f"%pip install --quiet --force-reinstall --no-deps '{cfg['wheel']}'"),
+        _cell(
+            f"%pip install --quiet --force-reinstall --no-deps --no-cache-dir "
+            f"'{cfg['wheel']}'"
+        ),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.
