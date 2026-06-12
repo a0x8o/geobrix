@@ -2,16 +2,23 @@ import json
 import os
 
 from shapely import from_wkb
+
 from databricks.labs.gbx.ds.register import register
 
 _GJ = {
     "type": "FeatureCollection",
     "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::4326"}},
     "features": [
-        {"type": "Feature", "properties": {"name": "a", "pop": 10},
-         "geometry": {"type": "Point", "coordinates": [-73.9, 40.7]}},
-        {"type": "Feature", "properties": {"name": "b", "pop": 20},
-         "geometry": {"type": "Point", "coordinates": [-0.1, 51.5]}},
+        {
+            "type": "Feature",
+            "properties": {"name": "a", "pop": 10},
+            "geometry": {"type": "Point", "coordinates": [-73.9, 40.7]},
+        },
+        {
+            "type": "Feature",
+            "properties": {"name": "b", "pop": 20},
+            "geometry": {"type": "Point", "coordinates": [-0.1, 51.5]},
+        },
     ],
 }
 

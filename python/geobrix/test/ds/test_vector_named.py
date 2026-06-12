@@ -1,8 +1,8 @@
 import json
 import os
 
-from databricks.labs.gbx.ds.register import register
 from databricks.labs.gbx.ds import vector as V
+from databricks.labs.gbx.ds.register import register
 
 
 def test_named_drivers_preset():
@@ -20,8 +20,18 @@ def test_geojson_gbx_reads(spark, tmp_path):
     register(spark)
     p = os.path.join(str(tmp_path), "pts.geojson")
     with open(p, "w") as f:
-        json.dump({"type": "FeatureCollection",
-                   "features": [{"type": "Feature", "properties": {"k": 1},
-                                 "geometry": {"type": "Point", "coordinates": [0, 0]}}]}, f)
+        json.dump(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"k": 1},
+                        "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    }
+                ],
+            },
+            f,
+        )
     df = spark.read.format("geojson_gbx").load(p)
     assert "geom_0" in df.columns and df.count() == 1

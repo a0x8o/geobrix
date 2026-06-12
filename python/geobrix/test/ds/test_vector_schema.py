@@ -1,7 +1,18 @@
 from pyspark.sql.types import (
-    BinaryType, BooleanType, DoubleType, IntegerType, LongType, StringType, StructType,
+    BinaryType,
+    BooleanType,
+    DoubleType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructType,
 )
-from databricks.labs.gbx.ds.vector import _ogr_to_spark, _vector_schema, _crs_to_srid_proj
+
+from databricks.labs.gbx.ds.vector import (
+    _crs_to_srid_proj,
+    _ogr_to_spark,
+    _vector_schema,
+)
 
 
 def test_ogr_to_spark_map():

@@ -15,11 +15,11 @@ from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
 from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 from databricks.labs.gbx.ds.raster import RasterGbxDataSource
 from databricks.labs.gbx.ds.vector import (
-    OgrGbxDataSource,
-    ShapefileGbxDataSource,
+    FileGdbGbxDataSource,
     GeoJSONGbxDataSource,
     GpkgGbxDataSource,
-    FileGdbGbxDataSource,
+    OgrGbxDataSource,
+    ShapefileGbxDataSource,
 )
 
 _SOURCES = (

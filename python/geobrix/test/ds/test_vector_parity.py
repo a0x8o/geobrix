@@ -14,10 +14,13 @@ pytestmark = pytest.mark.integration
 
 _HERE = Path(__file__).resolve()
 _JARS = sorted((_HERE.parents[3] / "lib").glob("geobrix-*-jar-with-dependencies.jar"))
-SAMPLE = os.environ.get(
-    "GBX_SAMPLE_DATA_ROOT",
-    "/Volumes/main/default/test-data",
-).rstrip("/") + "/geobrix-examples"
+SAMPLE = (
+    os.environ.get(
+        "GBX_SAMPLE_DATA_ROOT",
+        "/Volumes/main/default/test-data",
+    ).rstrip("/")
+    + "/geobrix-examples"
+)
 
 _CASES = [
     ("geojson_gbx", "geojson_ogr", f"{SAMPLE}/nyc/boroughs/nyc_boroughs.geojson"),
