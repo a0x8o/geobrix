@@ -50,52 +50,20 @@ const sidebars = {
         'writers/overview',
         {
           type: 'category',
-          label: 'Lightweight',
+          label: 'Readers',
           collapsed: false,
           items: [
-            {
-              type: 'category',
-              label: 'Readers',
-              collapsed: false,
-              items: [
-                { type: 'category', label: 'General', collapsed: false, items: ['readers/raster_gbx'] },
-                { type: 'category', label: 'Named', collapsed: false, items: ['readers/gtiff_gbx'] },
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Writers',
-              collapsed: false,
-              items: [
-                { type: 'category', label: 'General', collapsed: false, items: ['writers/raster_gbx'] },
-                { type: 'category', label: 'Named', collapsed: false, items: ['writers/gtiff_gbx', 'writers/pmtiles_gbx'] },
-              ],
-            },
+            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/ogr'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
           ],
         },
         {
           type: 'category',
-          label: 'Heavyweight',
+          label: 'Writers',
           collapsed: false,
           items: [
-            {
-              type: 'category',
-              label: 'Readers',
-              collapsed: false,
-              items: [
-                { type: 'category', label: 'General', collapsed: false, items: ['readers/gdal', 'readers/ogr'] },
-                { type: 'category', label: 'Named', collapsed: false, items: ['readers/gtiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Writers',
-              collapsed: false,
-              items: [
-                { type: 'category', label: 'General', collapsed: false, items: ['writers/gdal'] },
-                { type: 'category', label: 'Named', collapsed: false, items: ['writers/pmtiles'] },
-              ],
-            },
+            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles'] },
           ],
         },
       ],
