@@ -1,5 +1,6 @@
 import logging
 import os
+import zipfile
 
 import pytest
 from shapely import from_wkb
@@ -38,6 +39,17 @@ def test_transcode_vector_seed(spark, tmp_path):
     out = transcode_vector_seed(spark, seed, fmts, str(tmp_path / "vec"))
     for fmt in fmts:
         assert fmt in out
+    # shapefile_gbx seed must be a .shp.zip (self-contained archive for dir-read parity)
+    assert out["shapefile_gbx"].endswith(".shp.zip"), (
+        f"expected .shp.zip for shapefile_gbx, got {out['shapefile_gbx']}"
+    )
+    # The .shp.zip archive must contain at least the .shp component at the zip root
+    with zipfile.ZipFile(out["shapefile_gbx"]) as zf:
+        names = zf.namelist()
+    assert any(n.endswith(".shp") for n in names), f".shp missing from zip: {names}"
+    assert not any("/" in n for n in names), f"zip entries should be flat (no subdir): {names}"
+    # All three formats must read back via their *_gbx reader
+    for fmt in fmts:
         back = spark.read.format(fmt).load(out[fmt])
         assert back.count() == 100
 
@@ -56,6 +68,22 @@ def test_replicate_vector_seed(spark, tmp_path):
     assert sorted(os.listdir(copies_dir)) == [f"copy_{i}.geojson" for i in range(5)]
 
 
+def test_replicate_vector_seed_shp_zip(spark, tmp_path):
+    """A .shp.zip seed (compound extension) is copied with the full .shp.zip ext."""
+    from databricks.labs.gbx.bench.corpus_vector import replicate_vector_seed
+
+    seed = str(tmp_path / "seed.shp.zip")
+    with open(seed, "wb") as fh:
+        # minimal valid zip (empty archive)
+        with zipfile.ZipFile(fh, "w") as zf:
+            zf.writestr("seed.shp", b"")
+    copies_dir = str(tmp_path / "copies_shp")
+    paths = replicate_vector_seed(seed, 3, copies_dir)
+    assert len(paths) == 3
+    assert all(os.path.exists(p) for p in paths)
+    assert sorted(os.listdir(copies_dir)) == [f"copy_{i}.shp.zip" for i in range(3)]
+
+
 def test_build_vector_corpus(spark, tmp_path):
     from databricks.labs.gbx.bench.corpus_vector import build_vector_corpus
     from databricks.labs.gbx.ds.register import register
@@ -65,10 +93,14 @@ def test_build_vector_corpus(spark, tmp_path):
         spark,
         rows=50,
         copies=3,
-        formats=["geojson_gbx", "gpkg_gbx"],
+        formats=["geojson_gbx", "gpkg_gbx", "shapefile_gbx"],
         out_base=str(tmp_path / "vc"),
     )
-    for fmt in ("geojson_gbx", "gpkg_gbx"):
+    for fmt in ("geojson_gbx", "gpkg_gbx", "shapefile_gbx"):
         assert os.path.exists(out[fmt]["seed"])
         assert len(out[fmt]["copies"]) == 3
         assert spark.read.format(fmt).load(out[fmt]["seed"]).count() == 50
+    # shapefile copies must all be .shp.zip files
+    for copy_path in out["shapefile_gbx"]["copies"]:
+        assert copy_path.endswith(".shp.zip"), f"expected .shp.zip copy, got {copy_path}"
+        assert os.path.exists(copy_path)

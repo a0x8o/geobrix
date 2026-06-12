@@ -68,3 +68,33 @@ def test_ogr_gbx_reads_directory(spark, tmp_path):
             json.dump(_GJ, f)
     df = spark.read.format("geojson_gbx").load(d)
     assert df.count() == 6  # 3 files x 2 features
+
+
+def test_shapefile_gbx_reads_directory_of_shp_zip(spark, tmp_path):
+    """A directory of copy_*.shp.zip files is enumerated and read by shapefile_gbx.
+    Each .shp.zip contains a small shapefile written by the shapefile_gbx writer so
+    the round-trip exercises the actual path the scaled bench uses."""
+    import zipfile
+
+    from databricks.labs.gbx.bench.corpus_vector import (
+        generate_polygon_seed,
+        transcode_vector_seed,
+    )
+
+    register(spark)
+    n_features = 10
+    seed_df = generate_polygon_seed(spark, n_features)
+    seeds = transcode_vector_seed(spark, seed_df, ["shapefile_gbx"], str(tmp_path / "seeds"))
+    shp_zip = seeds["shapefile_gbx"]
+    assert shp_zip.endswith(".shp.zip")
+
+    # Build a copies directory with 2 copies of the seed .shp.zip
+    copies_dir = str(tmp_path / "copies")
+    os.makedirs(copies_dir)
+    import shutil
+
+    for i in range(2):
+        shutil.copy(shp_zip, os.path.join(copies_dir, f"copy_{i}.shp.zip"))
+
+    df = spark.read.format("shapefile_gbx").load(copies_dir)
+    assert df.count() == n_features * 2  # 2 copies × n_features features each

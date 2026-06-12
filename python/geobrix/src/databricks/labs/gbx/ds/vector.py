@@ -163,12 +163,15 @@ class VectorGbxReader(DataSourceReader):
 
     # Extensions (lower-case) recognised per OGR driver name.  A .gdb directory
     # is always treated as a single FileGDB dataset regardless of the driver.
+    # OpenFileGDB includes .gdb.zip and .zip so a directory of copy_*.gdb.zip files
+    # is enumerated by _members(); _zip_vsi() prefixes /vsizip/ for .zip paths so
+    # each archive is opened correctly by pyogrio / GDAL.
     _EXT_FOR_DRIVER: Dict[str, Tuple[str, ...]] = {
         "GeoJSON": (".geojson", ".json"),
         "GeoJSONSeq": (".geojsonl", ".geojsons"),
         "ESRI Shapefile": (".shp", ".shz", ".zip"),
         "GPKG": (".gpkg",),
-        "OpenFileGDB": (".gdb",),
+        "OpenFileGDB": (".gdb", ".gdb.zip", ".zip"),
     }
 
     def __init__(self, options: Dict[str, str]):

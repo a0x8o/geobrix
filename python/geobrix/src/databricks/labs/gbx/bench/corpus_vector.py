@@ -2,12 +2,18 @@
 vector-writer schema, transcodes it to each format via the *_gbx writers, and
 replicates each seed into a per-format directory on the bench Volume. Runs locally
 (small scale) and on the bench cluster (full scale). FileGDB writing needs the
-heavyweight GDAL natives (native osgeo) -- cluster only."""
+heavyweight GDAL natives (native osgeo) -- cluster only.
+
+Shapefile and FileGDB seeds+copies are stored as self-contained zip archives
+(.shp.zip / .gdb.zip) so both the light (*_gbx) and heavy (*_ogr) readers can read
+a directory of copies -- the heavy OGR dir-read requires each entry to be a single
+self-contained file."""
 
 from __future__ import annotations
 
 import os
 import shutil
+import zipfile
 from typing import List
 
 
@@ -38,6 +44,9 @@ def generate_polygon_seed(spark, n_rows: int, srid: str = "4326"):
 
 _EXT = {
     "geojson_gbx": "geojson",
+    # shapefile_gbx and file_gdb_gbx produce .shp.zip / .gdb.zip after transcode_vector_seed
+    # zips the raw writer output; the _EXT values below are the intermediate extensions
+    # produced by the *_gbx writers before zipping.
     "shapefile_gbx": "shp",
     "gpkg_gbx": "gpkg",
     "file_gdb_gbx": "gdb",
@@ -45,10 +54,45 @@ _EXT = {
 }
 
 
+def _zip_shapefile(seed_dir: str, stem: str) -> str:
+    """Zip the shapefile component files (seed.*) from seed_dir into seed_dir/stem.shp.zip.
+    The archive is flat: each component sits at the zip root (no subdirectory), matching
+    what /vsizip/…/seed.shp.zip expects for ESRI Shapefile.  Removes the loose files after
+    zipping.  Returns the zip path."""
+    zip_path = os.path.join(seed_dir, f"{stem}.shp.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in os.listdir(seed_dir):
+            if name.startswith(stem + ".") and not name.endswith(".zip"):
+                zf.write(os.path.join(seed_dir, name), arcname=name)
+                os.remove(os.path.join(seed_dir, name))
+    return zip_path
+
+
+def _zip_gdb(gdb_path: str) -> str:
+    """Zip seed.gdb/ into seed.gdb.zip such that the archive contains the seed.gdb/
+    directory at its root (arcname = seed.gdb/<relpath>).  /vsizip/…/seed.gdb.zip then
+    exposes the .gdb for OpenFileGDB.  Removes the original .gdb directory after zipping.
+    Returns the zip path."""
+    gdb_name = os.path.basename(gdb_path.rstrip("/"))  # e.g. "seed.gdb"
+    zip_path = gdb_path + ".zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, _dirnames, filenames in os.walk(gdb_path):
+            for fname in filenames:
+                full = os.path.join(dirpath, fname)
+                relpath = os.path.relpath(full, start=os.path.dirname(gdb_path))
+                zf.write(full, arcname=os.path.join(gdb_name, os.path.relpath(full, gdb_path)))
+    shutil.rmtree(gdb_path)
+    return zip_path
+
+
 def transcode_vector_seed(spark, seed_df, formats: List[str], out_base: str) -> dict:
     """Write the seed DataFrame to each format's seed file via the *_gbx writers.
     Returns {fmt: seed_path}. The seed is cached so each write reuses it. FileGDB
-    requires the native osgeo (heavyweight GDAL natives)."""
+    requires the native osgeo (heavyweight GDAL natives).
+
+    Shapefile and FileGDB outputs are zipped into self-contained archives (.shp.zip
+    and .gdb.zip respectively) so both the light and heavy readers can dir-read a
+    directory of copies -- the heavy OGR dir-read needs each entry to be one file."""
     seed_df = seed_df.cache()
     seed_df.count()  # materialize the cache
     out: dict = {}
@@ -59,34 +103,35 @@ def transcode_vector_seed(spark, seed_df, formats: List[str], out_base: str) -> 
         if fmt in ("vector_gbx", "ogr_gbx"):
             writer = writer.option("driverName", "GeoJSON")
         writer.save(path)
+        if fmt == "shapefile_gbx":
+            seed_dir = os.path.dirname(path)
+            path = _zip_shapefile(seed_dir, "seed")
+        elif fmt == "file_gdb_gbx" and os.path.isdir(path):
+            path = _zip_gdb(path)
         out[fmt] = path
     return out
 
 
 def replicate_vector_seed(seed_path: str, n_copies: int, copies_dir: str) -> List[str]:
-    """Copy a per-format seed (a file, a `.shp` + sidecars, or a `.gdb` dir) ``n_copies``
-    times into ``copies_dir`` as ``copy_<i>.<ext>``. Sequential copies (FUSE-safe).
-    Returns the copy paths."""
+    """Copy the per-format seed n_copies times into copies_dir as copy_<i>.<ext>.
+    Sequential copies (FUSE-safe). Returns the copy paths.
+
+    Seeds for shapefile_gbx / file_gdb_gbx are single .shp.zip / .gdb.zip archives
+    produced by transcode_vector_seed, so every format is a single file copy.  A bare
+    .gdb directory (non-zipped) is accepted as a fallback and tree-copied."""
     os.makedirs(copies_dir, exist_ok=True)
     base = os.path.basename(seed_path.rstrip("/"))
-    stem, _, ext = base.partition(".")
+    # Preserve the full extension after the first dot (e.g. "shp.zip", "gdb.zip",
+    # "geojson", "gpkg") so copy_0.shp.zip / copy_0.gdb.zip are named correctly.
+    dot = base.find(".")
+    ext = base[dot + 1:] if dot != -1 else ""
     paths: List[str] = []
     for i in range(n_copies):
         dst = os.path.join(copies_dir, f"copy_{i}.{ext}" if ext else f"copy_{i}")
-        if os.path.isdir(seed_path):  # FileGDB .gdb directory
+        if os.path.isdir(seed_path):  # fallback: bare .gdb directory (non-zipped)
             shutil.copytree(seed_path, dst, dirs_exist_ok=True)
         else:
             shutil.copy(seed_path, dst)
-            # Shapefile sidecars (.shx/.dbf/.prj) share the stem -- copy them too.
-            src_dir = os.path.dirname(seed_path) or "."
-            src_stem = base.split(".")[0]
-            for sib in os.listdir(src_dir):
-                if sib.startswith(src_stem + ".") and sib != base:
-                    sib_ext = sib[len(src_stem) + 1 :]
-                    shutil.copy(
-                        os.path.join(src_dir, sib),
-                        os.path.join(copies_dir, f"copy_{i}.{sib_ext}"),
-                    )
         paths.append(dst)
     return paths
 
