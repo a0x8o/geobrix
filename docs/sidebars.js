@@ -62,8 +62,8 @@ const sidebars = {
           label: 'Writers',
           collapsed: false,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles'] },
+            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster', 'writers/vector'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geopackage', 'writers/filegdb'] },
           ],
         },
       ],
