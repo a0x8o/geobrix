@@ -661,23 +661,32 @@ if LIGHTWEIGHT and HEAVYWEIGHT and _pl and _ph:
                             if _b is not None:
                                 tiles[(_z, _x, _y)] = bytes(_b)
         return tiles
+    _verdict_path = "/dbfs/tmp/gbx_bench/parity_verdict.txt"
     try:
         _lt = _decode_any(_pl)
         _ht = _decode_any(_ph)
         _lk = set(_lt.keys())
         _hk = set(_ht.keys())
-        if _lk == _hk:
-            print(f"PMTILES PARITY: PASS ({len(_lk)} tiles matched between light and heavy)")
+        if _lk == _hk and all(_lt[_k] == _ht[_k] for _k in _lk):
+            _verdict = f"PMTILES PARITY: PASS ({len(_lk)} tiles, keys+bytes equal)"
+        elif _lk == _hk:
+            _bad = [_k for _k in _lk if _lt[_k] != _ht[_k]]
+            _verdict = (f"PMTILES PARITY: FAIL bytes differ on {len(_bad)} tile(s) "
+                        f"e.g. {sorted(_bad)[:5]} ({len(_lk)} tiles)")
         else:
-            _only_l = _lk - _hk
-            _only_h = _hk - _lk
-            print(
-                f"PMTILES PARITY: FAIL -- light-only keys: {sorted(_only_l)[:10]}, "
-                f"heavy-only keys: {sorted(_only_h)[:10]} "
-                f"(light={len(_lk)}, heavy={len(_hk)} tiles)"
-            )
+            _verdict = (f"PMTILES PARITY: FAIL keyset differs -- light-only "
+                        f"{sorted(_lk - _hk)[:5]}, heavy-only {sorted(_hk - _lk)[:5]} "
+                        f"(light={len(_lk)}, heavy={len(_hk)})")
     except Exception as _pe:
-        print(f"PMTILES PARITY: ERROR (parity check raised) -- {_pe}")
+        _verdict = f"PMTILES PARITY: ERROR -- {type(_pe).__name__}: {_pe}"
+    print(_verdict)
+    try:
+        with open(_verdict_path, "w") as _vf:
+            _vf.write(_verdict)
+    except Exception as _we:
+        print(f"(could not write verdict file: {_we})")
+    # Hard gate: a parity mismatch or decode error fails the bench run.
+    assert _verdict.startswith("PMTILES PARITY: PASS"), _verdict
 if _pmtiles_rows:
     _df = spark.sql(
         f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'writer' "
