@@ -15,12 +15,13 @@ by the heavyweight GDAL init script. It round-trips with the `file_gdb_gbx` read
 schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared across the
 lightweight vector readers and writers.
 
-:::note Hybrid — requires the native GDAL
+:::warning Hybrid — requires the native GDAL
 Writing a File Geodatabase needs the native GDAL Python bindings (`osgeo`) from the
-heavyweight GDAL init script — pyogrio's bundled GDAL has a read-only OpenFileGDB driver.
-On compute with those natives, `file_gdb_gbx` writes the `.gdb` natively; without them it
-raises a clear error (use `gpkg_gbx` / `geojson_gbx` instead). FileGDB **reading** is
-lightweight-only (pyogrio reads it). The output path must end in `.gdb`.
+heavyweight GDAL init script (see [Installation](/docs/installation)) — pyogrio's bundled
+GDAL ships a read-only OpenFileGDB driver. On compute with those natives, `file_gdb_gbx`
+writes the `.gdb` natively; without them it raises a clear error (use `gpkg_gbx` /
+`geojson_gbx` instead). FileGDB **reading** is lightweight-only (pyogrio reads it). The
+output path must end in `.gdb`.
 :::
 
 :::note Register first
