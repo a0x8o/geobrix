@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
@@ -378,10 +379,10 @@ class VectorGbxWriter(DataSourceWriter):
             for m in messages
             if isinstance(m, _VectorCommitMessage) and m.frag_path
         ]
+        local_dir = None
         try:
             if not frags:
                 return
-            self._prepare_target()
             tables = [feather.read_table(f) for f in frags]
             geom_type, crs = self._infer_geom_crs(tables)
             kw = dict(
@@ -392,12 +393,31 @@ class VectorGbxWriter(DataSourceWriter):
             )
             if self.layer_name:
                 kw["layer"] = self.layer_name
+            # Write to driver-local disk first (supports random I/O for SQLite/
+            # FileGDB/Shapefile sidecars), then copy to the Volume target with
+            # sequential byte copies (FUSE-safe). Mirrors the PMTiles writer.
+            local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
+            local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
             for n, tbl in enumerate(tables):
                 out_tbl = tbl.drop_columns(
                     [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
                 )
-                pyogrio.write_arrow(out_tbl, self.path, append=(n > 0), **kw)
+                pyogrio.write_arrow(out_tbl, local_out, append=(n > 0), **kw)
+            # Clear any Spark-created stub at self.path, then copy everything
+            # pyogrio produced in local_dir (file, sidecar set, or .gdb dir).
+            self._prepare_target()
+            parent = os.path.dirname(self.path) or "."
+            os.makedirs(parent, exist_ok=True)
+            for name in os.listdir(local_dir):
+                src = os.path.join(local_dir, name)
+                dst = os.path.join(parent, name)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy(src, dst)  # sequential -> FUSE-safe
         finally:
+            if local_dir is not None:
+                shutil.rmtree(local_dir, ignore_errors=True)
             shutil.rmtree(self.scratch_dir, ignore_errors=True)
 
     def _infer_geom_crs(self, tables) -> Tuple[str, Optional[str]]:
