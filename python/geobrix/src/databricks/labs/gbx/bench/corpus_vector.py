@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import zipfile
 from typing import List
 
@@ -57,30 +58,54 @@ _EXT = {
 def _zip_shapefile(seed_dir: str, stem: str) -> str:
     """Zip the shapefile component files (seed.*) from seed_dir into seed_dir/stem.shp.zip.
     The archive is flat: each component sits at the zip root (no subdirectory), matching
-    what /vsizip/…/seed.shp.zip expects for ESRI Shapefile.  Removes the loose files after
-    zipping.  Returns the zip path."""
+    what /vsizip/…/seed.shp.zip expects for ESRI Shapefile.
+
+    The zip is built on driver-local disk then sequential-copied to the target: UC Volumes
+    are object storage, and ``zipfile.close()`` seeks back to write the central directory,
+    which fails on a FUSE mount (``OSError: [Errno 5]``).  Removes the loose component files
+    after.  Returns the zip path."""
     zip_path = os.path.join(seed_dir, f"{stem}.shp.zip")
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name in os.listdir(seed_dir):
-            if name.startswith(stem + ".") and not name.endswith(".zip"):
+    components = [
+        n
+        for n in os.listdir(seed_dir)
+        if n.startswith(stem + ".") and not n.endswith(".zip")
+    ]
+    local_dir = tempfile.mkdtemp(prefix="gbx_zipshp_")
+    try:
+        local_zip = os.path.join(local_dir, f"{stem}.shp.zip")
+        with zipfile.ZipFile(local_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in components:
                 zf.write(os.path.join(seed_dir, name), arcname=name)
-                os.remove(os.path.join(seed_dir, name))
+        shutil.copy(local_zip, zip_path)  # sequential -> FUSE-safe
+    finally:
+        shutil.rmtree(local_dir, ignore_errors=True)
+    for name in components:
+        os.remove(os.path.join(seed_dir, name))
     return zip_path
 
 
 def _zip_gdb(gdb_path: str) -> str:
     """Zip seed.gdb/ into seed.gdb.zip such that the archive contains the seed.gdb/
     directory at its root (arcname = seed.gdb/<relpath>).  /vsizip/…/seed.gdb.zip then
-    exposes the .gdb for OpenFileGDB.  Removes the original .gdb directory after zipping.
-    Returns the zip path."""
+    exposes the .gdb for OpenFileGDB.
+
+    Built on driver-local disk then sequential-copied to the target (FUSE-safe -- see
+    _zip_shapefile).  Removes the original .gdb directory after.  Returns the zip path."""
     gdb_name = os.path.basename(gdb_path.rstrip("/"))  # e.g. "seed.gdb"
     zip_path = gdb_path + ".zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for dirpath, _dirnames, filenames in os.walk(gdb_path):
-            for fname in filenames:
-                full = os.path.join(dirpath, fname)
-                relpath = os.path.relpath(full, start=os.path.dirname(gdb_path))
-                zf.write(full, arcname=os.path.join(gdb_name, os.path.relpath(full, gdb_path)))
+    local_dir = tempfile.mkdtemp(prefix="gbx_zipgdb_")
+    try:
+        local_zip = os.path.join(local_dir, gdb_name + ".zip")
+        with zipfile.ZipFile(local_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            for dirpath, _dirnames, filenames in os.walk(gdb_path):
+                for fname in filenames:
+                    full = os.path.join(dirpath, fname)
+                    zf.write(
+                        full, arcname=os.path.join(gdb_name, os.path.relpath(full, gdb_path))
+                    )
+        shutil.copy(local_zip, zip_path)  # sequential -> FUSE-safe
+    finally:
+        shutil.rmtree(local_dir, ignore_errors=True)
     shutil.rmtree(gdb_path)
     return zip_path
 
