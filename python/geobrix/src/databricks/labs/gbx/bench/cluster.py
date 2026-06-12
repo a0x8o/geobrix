@@ -740,6 +740,18 @@ if VECTOR_SCALE:
     # (.shp.zip / .gdb.zip) so the heavy OGR dir-read sees each copy as one file.
     # Writer source is the shared pre-materialized Delta table (WRITER_ROWS polygons).
     _vscale_base = f"{CORPUS}/vector-scale"
+    # Fresh Delta state each run: drop the writer-source + per-format ingest tables so each
+    # timed ingest is a clean CREATE (not an overwrite of a prior version) and nothing lingers
+    # in the catalog between repeat benchmarks. Dropped again at the end (cleanup).
+    _bench_tbls = ["geospatial_docs.geobrix.bench_vec_wsrc"] + [
+        f"geospatial_docs.geobrix.bench_vec_ingest_{_f}"
+        for _f in (
+            "geojson_gbx", "geojson_ogr", "shapefile_gbx", "shapefile_ogr",
+            "gpkg_gbx", "gpkg_ogr", "file_gdb_gbx", "file_gdb_ogr",
+        )
+    ]
+    for _t in _bench_tbls:
+        spark.sql(f"DROP TABLE IF EXISTS {_t}")
     _vcases = [
         # (light_fmt, heavy_fmt, read_path, heavy_options)
         ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",   {"multi": "false"}),
@@ -792,6 +804,9 @@ if VECTOR_SCALE:
                                       SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt,
                                       src_is_table=True, where="cluster")
             _sink([_w]); lw.append(_w); _vrows.append(_w)
+    # Cleanup: drop the bench Delta tables so nothing lingers in the catalog between runs.
+    for _t in _bench_tbls:
+        spark.sql(f"DROP TABLE IF EXISTS {_t}")
 else:
     _vbase = f"{CORPUS}/vector"
     # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options).
