@@ -47,6 +47,10 @@ rio-cogeo==7.0.2
 # --- PMTiles tile-archive output (pmtiles_gbx writer) ---
 pmtiles==3.7.0
 
+# --- OGR-free vector reading (light *_gbx vector DataSources) ---
+pyogrio==0.12.1
+pyproj==3.7.2
+
 # --- discrete global grids: raster->H3/quadbin aggregation ---
 h3==4.4.2
 quadbin==0.2.2

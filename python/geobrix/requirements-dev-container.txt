@@ -1993,7 +1993,9 @@ pyogrio==0.12.1 \
     --hash=sha256:f4011b63f9d6c278ee6605971ffabe30b0e8f5992ec2c6df8c70ecfa68a5d02b \
     --hash=sha256:fc882779075982b93064b3bf3d8642514a6df00d9dd752493b104817072cfb01 \
     --hash=sha256:feaff42bbe8087ca0b30e33b09d1ce049ca55fe83ad83db1139ef37d1d04f30c
-    # via geopandas
+    # via
+    #   -r requirements-dev-container.in
+    #   geopandas
 pyparsing==3.3.2 \
     --hash=sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d \
     --hash=sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc
@@ -2057,6 +2059,7 @@ pyproj==3.7.2 \
     --hash=sha256:f9428b318530625cb389b9ddc9c51251e172808a4af79b82809376daaeabe5e9 \
     --hash=sha256:fc52ba896cfc3214dc9f9ca3c0677a623e8fdd096b257c14a31e719d21ff3fdd
     # via
+    #   -r requirements-dev-container.in
     #   geopandas
     #   morecantile
     #   rioxarray
