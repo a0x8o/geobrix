@@ -3,7 +3,64 @@ sidebar_position: 3
 sidebar_label: PMTiles
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import pmtilesEx from '!!raw-loader!../../tests/python/writers/pmtiles_gbx_examples.py';
+
 # PMTiles Writer
+
+Package a tile pyramid (`(z, x, y, bytes)`) into [PMTiles](https://docs.protomaps.com/pmtiles/)
+archives. The **lightweight** `pmtiles_gbx` writer (pure-Python, Serverless-safe,
+distributed spatial sharding) and the **heavyweight** `pmtiles` writer take the
+same input and produce decoded-tile-identical archives (verified in the
+[benchmark](../api/benchmarking#results--tiled-output-pmtiles-writer)).
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · pmtiles_gbx">
+
+Pure-Python, JAR-free, Serverless-safe writer that packages a tile pyramid
+(`(z, x, y, bytes)`) into [PMTiles](https://docs.protomaps.com/pmtiles/) archives
+using distributed **spatial sharding**: each populated parent tile becomes one
+bounded, non-overlapping `.pmtiles` shard, plus a global `overview.pmtiles` and a
+catalog over the shards.
+
+## Sharded output (default)
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="WRITE_PMTILES_SHARDED"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+Output layout:
+
+```
+OUT_DIR/tileset/{z}/{x}/{y}.pmtiles   # one per populated parent (Z >= shardZoom)
+OUT_DIR/tileset/overview.pmtiles      # Z < shardZoom global overview
+OUT_DIR/tileset/catalog.json          # STAC/GeoJSON manifest
+```
+
+## Single archive
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="WRITE_PMTILES_SINGLE"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+## Options
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="OPTIONS_NOTE"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+## Spatial sharding
+
+The writer treats tiled output as immutable, spatially-indexed shards: partition
+the world by a grid, emit one bounded `.pmtiles` per parent tile, and deliver a
+catalog over the shards rather than one merged file. This keeps shards
+independently regenerable and lets a browser fetch only the shard for the area in
+view. Set `shardZoom=0` for a single merged archive.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · pmtiles">
 
 The PMTiles writer streams a per-tile `(z, x, y, bytes)` row set into a single [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) archive file. It is the write-only counterpart of the [`gbx_pmtiles_agg` UDAF](../api/pmtiles-functions#pmtiles_agg) — both share the same native-Scala encoder, but the DataSource avoids the Spark cell-size ceiling by performing a partitioned streaming commit with no in-memory consolidation.
 
@@ -128,3 +185,6 @@ PMTiles is designed to be served as a single static file with HTTP `Range` reque
 - [PMTiles Function Reference](../api/pmtiles-functions) — Concepts, schema contract, and serving notes.
 - [Raster Functions](../api/raster-functions#rst_xyzpyramid) — Generate per-tile PNG bytes with `gbx_rst_xyzpyramid`.
 - [VectorX Function Reference](../api/vectorx-functions#st_asmvt_pyramid) — Generate per-tile MVT bytes with `gbx_st_asmvt_pyramid`.
+
+</TabItem>
+</Tabs>
