@@ -43,12 +43,12 @@ use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoi
 :::
 
 :::tip Benchmark & tradeoff
-The lightweight (`*_gbx`) writers need **no JAR or init script** and are the **only** option
-on Serverless, standard (shared), and ARM clusters. The heavyweight raster/PMTiles writers
-require a **classic x86 cluster** (JAR + GDAL init script); where available they use native
-GDAL on the JVM. So your compute usually decides the tier — then data scale. See the
+**`file_gdb_gbx` writing is the exception among the lightweight writers.** Because it encodes
+via the native GDAL (`osgeo`), writing a File Geodatabase is **constrained to a classic x86
+cluster carrying the heavyweight GDAL natives** — it does **not** run on Serverless or ARM,
+the same compute limits as the heavyweight tier. (FileGDB **reading** is fully lightweight and
+runs anywhere.) For vector output on Serverless/ARM, use `gpkg_gbx` or `geojson_gbx`. See the
 [Benchmarking](../api/benchmarking) page for timings and methodology.
-`file_gdb_gbx` is a hybrid (it encodes via the native GDAL `osgeo`); see the warning above.
 :::
 
 ## Schema
