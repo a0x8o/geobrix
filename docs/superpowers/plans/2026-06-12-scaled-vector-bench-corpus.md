@@ -526,22 +526,25 @@ Expected: `run_id=cluster-vector` rows for each format's reader (light vs heavy,
 
 ---
 
-## Task 8: Fill the benchmark numbers in the docs
+## Task 8: Fill the benchmark numbers — CENTRAL Benchmarking page only
+
+**Decision (user, 2026-06-12):** benchmarks are **consolidated to the single
+[Benchmarking](../api/benchmarking) page**, NOT duplicated per page. The per-format reader/
+writer pages keep ONLY their prominent `Benchmark & tradeoff` note + link (already in place
+— do NOT add per-page numbers). So this task touches `benchmarking.mdx` alone.
 
 **Files:**
-- Modify: `docs/docs/api/benchmarking.mdx` (vector reader + writer results tables — replace the `—` placeholders with the Task-7 numbers)
-- Modify: the 15 reader/writer `Benchmark & tradeoff` callouts — add the representative scaled figure for that format (light vs heavy median at 1M) where solid; keep the compute-tier framing (light = Serverless/ARM/no-JAR; heavy = classic x86; FileGDB-write hybrid caveat).
+- Modify: `docs/docs/api/benchmarking.mdx` (vector reader + writer results tables — replace the `—` placeholders with the Task-7 numbers).
 
-- [ ] **Step 1** — put the Task-7 per-format numbers into `benchmarking.mdx`'s vector tables (method: 1M polygons, ×100 copies, cluster, median of measured iters).
-- [ ] **Step 2** — add one concrete figure to each per-format page callout (e.g. "GeoPackage read: ~Xs light vs ~Ys heavy at 1M features"). Keep it honest + tied to the methodology; link to `../api/benchmarking`.
-- [ ] **Step 3** — `cd docs && npm run build` → SUCCESS; `grep -rn -iE "wave [0-9]+" docs/docs/` empty.
-- [ ] **Step 4: Commit**
+- [ ] **Step 1** — put the Task-7 per-format numbers into `benchmarking.mdx`'s vector reader + writer tables: light vs heavy median + throughput where both tiers have an implementation (readers: all 4 formats; writers: light `*_gbx` for all, heavy only for PMTiles/raster — vector heavy has no writer; FileGDB writer is the native-osgeo hybrid). Method line: 1M-polygon seed, ×100 copies, cluster, median of measured iters.
+- [ ] **Step 2** — `cd docs && npm run build` → SUCCESS; `grep -rn -iE "wave [0-9]+" docs/docs/` empty. Confirm the 15 per-page `Benchmark & tradeoff` callouts are UNCHANGED (note + link only).
+- [ ] **Step 3: Commit**
 
 ```bash
 cd /Users/mjohns/IdeaProjects/geobrix
 chmod -R u+rwX .git/objects
-git add docs/docs/api/benchmarking.mdx docs/docs/readers docs/docs/writers
-git commit -m "docs(bench): fill scaled vector reader/writer numbers (1M polygons)
+git add docs/docs/api/benchmarking.mdx
+git commit -m "docs(bench): fill scaled vector reader/writer numbers on the Benchmarking page
 
 Co-authored-by: Isaac"
 ```
