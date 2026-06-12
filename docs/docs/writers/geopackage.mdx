@@ -38,9 +38,11 @@ use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoi
 :::
 
 :::tip Benchmark & tradeoff
-The lightweight (`*_gbx`) writers run on **Serverless / standard / ARM with no JAR**; the
-heavyweight raster/PMTiles writers use **native GDAL on the JVM**. Pick by your compute and
-data scale. See the [Benchmarking](../api/benchmarking) page for timings and methodology.
+The lightweight (`*_gbx`) writers need **no JAR or init script** and are the **only** option
+on Serverless, standard (shared), and ARM clusters. The heavyweight raster/PMTiles writers
+require a **classic x86 cluster** (JAR + GDAL init script); where available they use native
+GDAL on the JVM. So your compute usually decides the tier — then data scale. See the
+[Benchmarking](../api/benchmarking) page for timings and methodology.
 :::
 
 ## Schema
