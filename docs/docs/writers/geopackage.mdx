@@ -64,6 +64,22 @@ df.select(
 ).write.format("gpkg_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
 ```
 
+**From a Databricks `GEOMETRY` / `GEOGRAPHY` column.** Databricks native spatial types are not
+a writer input format directly — export them to WKB plus an SRID first. Use `ST_AsWKB` (the
+equivalent of `ST_AsBinary`) for the geometry column and `ST_SRID` for the CRS, casting the
+SRID to a string:
+
+```python
+df.selectExpr(
+    "ST_AsWKB(my_geom) AS geom_0",                     # GEOMETRY/GEOGRAPHY -> WKB
+    "CAST(ST_SRID(my_geom) AS STRING) AS geom_0_srid",  # SRID -> string
+    "'' AS geom_0_srid_proj",
+    "name", "population",                              # -> feature attributes
+).write.format("gpkg_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+See [Databricks Spatial](/docs/databricks-spatial) for the full ST function reference.
+
 The geometry must be WKB or WKT (see the input-geometry note above; convert a Databricks `GEOMETRY` with `ST_AsBinary`). The written file round-trips with the matching `*_gbx` reader — reading it back yields `(…attributes, geom_0, geom_0_srid, geom_0_srid_proj)`.
 
 **Output:** a GeoPackage `.gpkg` (SQLite) file; attribute names/types and the layer are preserved (set the layer name with `layerName`).
