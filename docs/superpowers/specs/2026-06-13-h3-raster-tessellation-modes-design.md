@@ -1,9 +1,8 @@
 # H3 raster tessellation — pedigree, current behavior, and multi-mode design notes
 
-> **Status:** background + design notes (2026-06-13), captured before brainstorm/spec. This is
-> foundational pedigree for GeoBrix's H3 raster functions and the basis for a planned multi-mode
-> tessellation design. Preserve it — much of this is institutional history (Mosaic → Databricks
-> native) that is otherwise easily lost.
+> **Status:** APPROVED design (2026-06-13). Sections 1–5 are the grounding background (pedigree +
+> current behavior); sections 6–10 are the approved design. Much of §1–5 is institutional history
+> (Mosaic → Databricks-native) — preserve it. Next step after this doc: writing-plans.
 
 ## 1. Why this matters — lineage / pedigree
 
@@ -103,51 +102,99 @@ nodata keep-test admits a fringe ring beyond the covering set. **Light is the co
 set.** This is a heavy correctness issue, *not* caused by the recent UDTF conversion (which only
 changed the call form, not the cell math).
 
-## 6. Design direction — MULTIPLE MODES, in BOTH tiers
+## 6. Approved design — `rst_h3_tessellate` modes (light + heavy aligned)
 
-The decision (MLJ): don't pick "one right answer" — **expose multiple tessellation modes, available
-in both the light and heavy tiers** (light's mode added to heavy; heavy's pioneered mode added to
-light), swappable and consistently named. Candidate modes:
+Scope (MLJ): `rst_h3_tessellate` ONLY — the one diverging function. `rst_h3_rastertogrid*` already
+agrees light↔heavy and is out of scope. Two named modes, **identical in both tiers by construction**
+(both tiers call the same H3 v4 primitive per mode); the alignment deletes both tiers' hand-rolled
+approximations rather than patching them separately.
 
-1. **Covering-set + hexagon-clip ("tessellate-as-WKB", the pioneered technique)** — the **true
-   covering set** (every overlapping cell) × each cell **clipped to its hexagon** → WKB chip. The
-   distinguished, Databricks-native-aligned mode (`h3_coverash3` + `h3_tessellateaswkb`). Likely the
-   default.
-2. **Polyfill / centroid (single-assignment)** — **explicitly NOT ruled out** (MLJ). Centroid-
-   containment so a cell is owned by **exactly one** tile, based on where its centroid lands across
-   adjacent tiles → **no double-counting at tile boundaries**. Many users (not familiar with the
-   pioneered covering technique) will *expect* this standard polyfill behavior; it's the natural
-   single-assignment model. This is also already the *de facto* selection model of the
-   `rastertogrid` family (pixel-centroid → one cell).
-3. (The existing light "all-touched covering" set is mode #1's selection; the rastertogrid
-   data-driven pixel-centroid binning is its own family — relate it to #2's single-assignment idea.)
+### 6.1 The `mode` parameter
+- Optional trailing **string** param `mode ∈ {"covering", "centroid"}`, **default `"covering"`** —
+  matching geobrix's string-enum convention for multi-choice params (`algorithm`, `operation`,
+  `split_point_finder`, `format`). A boolean (`useCentroid`) was rejected: modes may grow (e.g.
+  area-weighted) and a boolean can't extend without a breaking change.
+- **Backward compatible.** SQL is positional-only: heavy `FunctionBuilder` registers arity **2**
+  (default `Literal("covering")`) **and 3**, so existing `(tile, resolution)` calls keep working;
+  `(tile, resolution, 'centroid')` selects the new mode. Python wrappers (light + heavy):
+  `mode: ColLike = "covering"` (positional or `mode=` kwarg; SQL positional only).
+- **Validation** follows the rasterx pattern: Scala `require(AllowedSet.contains(...))` + Python
+  `ValueError` on a `{"covering","centroid"}` miss, message listing the valid values.
 
-**Cross-tier goal:** both tiers offer the same modes (a `mode`/`containment` parameter on
-`rst_h3_tessellate`, same names/values both tiers), so light↔heavy stays a drop-in swap and parity
-tests assert per-mode equality.
+### 6.2 `covering` mode (default) — the pioneered tessellate-as-WKB technique
+- **Cell selection:** the **true covering set** of the tile's 4326 bbox via H3 v4
+  `polygonToCellsExperimental(bbox, res, ContainmentOverlapping)` — every cell that *overlaps* the tile.
+- **Per-cell output:** raster **clipped to the cell's hexagon** with **`all_touched=True`** (boundary
+  pixels included), applied consistently in any prune AND the clip (fixes light's prune-vs-clip
+  asymmetry; matches heavy's `CUTLINE_ALL_TOUCHED=TRUE`). One tile-struct chip per cell.
+- **Semantics:** full coverage of the tile; border cells/pixels are **shared with neighboring tiles**
+  (overlap accepted — union across tiles reconstructs a full cell).
+- Replaces heavy's polyfill-on-buffered-bbox + nodata keep-test (removing the disjoint-fringe
+  over-inclusion) AND light's seed+grid_disk+prune approximation → identical cells by construction.
 
-## 7. Correctness items to fold into the mode work
+### 6.3 `centroid` mode (new, additive) — pixel-centroid single-assignment
+- **Assignment:** each **pixel** → the single H3 cell whose hexagon contains the pixel's centroid
+  (per-pixel `pointToCellID`/`latlng_to_cell` — the **same selection `rst_h3_rastertogrid*` already
+  uses**).
+- **Per-cell output:** one tile-struct chip per cell holding **only its assigned pixels** (others
+  nodata). The cell set emerges from the pixels (cells with ≥1 assigned pixel); no bbox/covering step.
+- **Semantics:** a **partition** — every pixel assigned exactly once, **nothing dropped, no
+  double-count across tiles** (a pixel belongs to exactly one hexagon globally). The de-duped binning
+  case ("assign a set of rasters/tiles to H3 cells without double-counting").
+- This is **pixel**-centroid, NOT cell-centroid selection (which would drop border pixels — rejected).
 
-- For the **covering** mode, use the **true covering set** (H3 v4 `ContainmentOverlapping`) rather
-  than: heavy's polyfill-on-buffered-bbox (over-includes disjoint fringe) OR light's
-  ring+prune approximation. That makes both tiers **identical by construction** and removes the
-  ~2.4% divergence + the buffer hack.
-- Reconcile light's `all_touched` **prune-vs-clip asymmetry** (prune True, clip False).
-- `rastertogrid` **CRS handling** (hard-assumes 4326) — document the requirement and/or reproject.
-- `getBufferRadius` **MatchError risk** (no default arm) — only relevant if any buffer path remains.
+### 6.4 CRS
+- Both modes, both tiers reproject the tile extent / pixel coords to **EPSG:4326** internally for the
+  H3 lookups (current tessellate behavior — kept). (`rastertogrid`'s hard-4326 assumption is separate
+  and out of scope.)
 
-## 8. Open questions (for the brainstorm/spec)
+### 6.5 Cross-tier alignment + "no harm"
+- Both tiers call the **same H3 v4 primitives** per mode → identical cell sets + chips by construction.
+- `covering` (default) is the **corrected** existing behavior — heavy drops its disjoint fringe, light
+  drops its approximation. The 0.4.0 H3 capabilities are unreleased WIP, so this is a fix, not a
+  back-compat break. `centroid` is purely **additive**. Existing capability is **fixed + extended**.
 
-- Exact mode set, parameter name/values, and **default** (lean: covering-set+clip, to match the
-  pioneered technique + native `h3_tessellateaswkb`).
-- Does the **polyfill/centroid** mode apply to `rst_h3_tessellate` only, or also define a
-  single-assignment variant relevant to the `rastertogrid` family?
-- **Per-cell output per mode**: hexagon-clipped chip (WKB/raster) vs scalar measure vs cell-id only.
-- Should `rastertogrid` gain covering-set / area-weighted variants, or stay pixel-centroid binning?
-- Scope of heavy changes (Scala + JAR rebuild + tessellate re-bench) and light changes; **per-mode
-  cross-tier parity tests**. Quadbin equivalents (`Quadbin.polyfillBbox` exists but is unused).
+## 7. Implementation scope
 
-## 9. Next step
+- **Heavy (Scala):** `RST_H3_Tessellate` (+ `RasterTessellate` / `H3`) — add `modeExpr`; covering path
+  → `ContainmentOverlapping` covering set (replace polyfill+buffer; the `getBufferRadius` MatchError
+  risk disappears); centroid path → per-pixel `pointToCellID` assignment → per-cell chip;
+  `FunctionBuilder` arity 2+3; Scala API + heavy Python binding `mode="covering"`; validation.
+  **Verify the bundled H3-Java version exposes `polygonToCellsExperimental(ContainmentOverlapping)`**
+  (H3 v4). JAR rebuild + tessellate re-bench.
+- **Light (pyrx):** `pyrx/core/tessellate.py` + the `rst_h3_tessellate` UDTF/wrapper — add `mode`;
+  covering path → the h3-py v4 overlapping-containment call (verify exact API:
+  `polygon_to_cells_experimental(..., contain='overlap')` or equivalent) replacing seed+grid_disk+prune;
+  centroid path → per-pixel `latlng_to_cell` → per-cell chip; fix the `all_touched` asymmetry; validation.
+- `registered_functions.txt` name unchanged (`gbx_rst_h3_tessellate`); update the `function-info.json`
+  usage example + docstrings to show the `mode` arg.
 
-Take this through a short **brainstorm → spec** (it's a cross-tier behavior change + new option),
-then implement subagent-driven. This notes doc is the grounding input.
+## 8. Testing
+
+- **Per-mode light-vs-heavy parity** on a border-containing tile (the regime that exposed the
+  divergence): for EACH mode, assert light and heavy produce the **same cell set** AND the **same
+  per-cell chip pixels** — passing by construction (same H3 primitive). Replaces the strict-equality
+  fan-out bench leg that the divergence tripped.
+- **Covering:** cell set == the true overlapping set (vs a `ContainmentOverlapping` oracle); no
+  disjoint cells.
+- **Centroid:** assert a **partition** — every input pixel appears in exactly one cell's chip; the
+  union of chips == all valid pixels; no pixel in two chips.
+- Spark-free light core unit tests for both modes; the fan-out bench's `h3_tessellate` leg compares
+  per-mode (default covering).
+
+## 9. Docs — H3 explainer page (deliverable; outline to refine with MLJ)
+
+A dedicated H3 page explaining how H3 raster handling works. Draft outline (to refine before writing):
+- **Lineage:** Mosaic → Databricks-native `h3_coverash3` / `h3_tessellateaswkb`; GeoBrix as
+  origin-of / complement-to the native technique.
+- **The two tessellation modes** — `covering` (full coverage, shareable across tiles; the pioneered
+  chip technique) vs `centroid` (pixel-centroid single-assignment partition, de-duped) — with a
+  "when to use which" guide and a visual of the border behavior (overlap vs partition).
+- **Relationship to `rst_h3_rastertogrid*`** — same centroid selection, measure vs chip output.
+- **CRS expectations** (4326 internally for tessellate; the rastertogrid 4326 contract).
+- **Cross-tier parity** (light ≡ heavy by construction).
+
+## 10. Status / next
+
+**Approved design (2026-06-13).** Next: **writing-plans** → subagent-driven implementation (heavy
+Scala + JAR + light + per-mode parity tests + the explainer page).
