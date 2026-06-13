@@ -4,7 +4,7 @@ import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.gdal
 import org.gdal.ogr.ogr.{CreateGeometryFromWkb, GetDriverByName}
 import org.gdal.ogr.{Feature, FieldDefn}
-import org.gdal.ogr.ogrConstants.{OFTString, wkbUnknown}
+import org.gdal.ogr.ogrConstants.{OFSTBoolean, OFTInteger, OFTInteger64, OFTReal, OFTString, wkbUnknown}
 import org.gdal.osr.SpatialReference
 
 import java.nio.file.{Files, Paths}
@@ -21,9 +21,11 @@ import scala.util.Try
   * driver produces exactly one tile at `0/0/0.pbf` and we return its raw bytes. All
   * intermediate state lives in `/vsimem/<uuid>/` and is unlinked before returning.
   *
-  * Attribute fields are all encoded as `OFTString` in v0.4.0 (per Wave 1 scope); native
-  * int/double preservation is deferred. Field schema is derived from the first non-null
-  * attrs map.
+  * Attribute fields carry native OGR value types: the field type is inferred from the first
+  * non-null value's Scala runtime type (Int → `OFTInteger`, Long → `OFTInteger64`,
+  * Double/Float → `OFTReal`, Boolean → `OFTInteger`+`OFSTBoolean` subtype, else `OFTString`),
+  * matching the light `pyvx` tier. Field schema (the set of field names) is derived from the
+  * first non-null attrs map.
   *
   * GDAL resource management (per "GDAL resource management" in CLAUDE.md): every
   * OGR `Feature` and `Geometry` allocated inside the loop is `.delete()`'d immediately,
@@ -40,7 +42,7 @@ object MvtWriter {
       *
       * @param layerName MVT layer name (e.g. "roads")
       * @param extent    Tile extent in pixels; defaults to 4096 (MVT v2)
-      * @param features  Per-feature (WKB bytes, attrs Map[fieldName -> Any (stringified)])
+      * @param features  Per-feature (WKB bytes, attrs Map[fieldName -> Any (native-typed)])
       * @return MVT protobuf bytes; empty Array[Byte] if no features were written
       *         (e.g. empty input or all geometries failed to parse).
       */
@@ -92,8 +94,8 @@ object MvtWriter {
                 throw new RuntimeException(s"Failed to create MVT layer '$layerName'")
             }
 
-            // Derive field schema from the first non-null attrs map. All fields are OFTString
-            // in v0.4.0 (numeric/boolean preservation deferred). Use a stable key ordering.
+            // Derive field schema (names) from the first non-null attrs map. Use a stable
+            // key ordering.
             val schema: Seq[String] = features
                 .iterator
                 .map(_._2)
@@ -101,8 +103,22 @@ object MvtWriter {
                 .map(_.keys.toSeq)
                 .getOrElse(Seq.empty)
 
+            // Infer each field's OGR type from the first non-null value across all features.
             schema.foreach { fieldName =>
-                val fd = new FieldDefn(fieldName, OFTString)
+                val firstVal = features
+                    .iterator
+                    .flatMap { case (_, attrs) => Option(attrs).flatMap(_.get(fieldName)) }
+                    .find(_ != null)
+                val (ogrType, subType): (Int, Option[Int]) = firstVal match {
+                    case Some(_: Int) | Some(_: java.lang.Integer)     => (OFTInteger, None)
+                    case Some(_: Long) | Some(_: java.lang.Long)       => (OFTInteger64, None)
+                    case Some(_: Double) | Some(_: java.lang.Double)
+                       | Some(_: Float) | Some(_: java.lang.Float)     => (OFTReal, None)
+                    case Some(_: Boolean) | Some(_: java.lang.Boolean) => (OFTInteger, Some(OFSTBoolean))
+                    case _                                             => (OFTString, None)
+                }
+                val fd = new FieldDefn(fieldName, ogrType)
+                subType.foreach(fd.SetSubType)
                 layer.CreateField(fd)
                 fd.delete()
             }
@@ -121,7 +137,7 @@ object MvtWriter {
                             if (attrs != null) {
                                 schema.foreach { fieldName =>
                                     attrs.get(fieldName).foreach { v =>
-                                        if (v != null) feat.SetField(fieldName, v.toString)
+                                        setTypedField(feat, fieldName, v)
                                     }
                                 }
                             }
@@ -164,6 +180,28 @@ object MvtWriter {
         gdal.RmdirRecursive(rootPath)
 
         bytes
+    }
+
+    /**
+      * Set one OGR feature field using the typed setter that matches the value's Scala runtime
+      * type, so the MVT encodes native int/long/double/bool values (not stringified). Long uses
+      * the index-based `SetFieldInteger64` overload (no `(String, Long)` setter exists in the
+      * SWIG bindings); booleans map to 0/1 (the field carries the `OFSTBoolean` subtype). Null
+      * is skipped; any other type falls back to `toString`.
+      */
+    private def setTypedField(feat: Feature, fieldName: String, v: Any): Unit = v match {
+        case null                                    => // skip
+        case i: Int                                  => feat.SetField(fieldName, i)
+        case i: java.lang.Integer                    => feat.SetField(fieldName, i.intValue)
+        case l: Long                                 => feat.SetFieldInteger64(feat.GetFieldIndex(fieldName), l)
+        case l: java.lang.Long                       => feat.SetFieldInteger64(feat.GetFieldIndex(fieldName), l.longValue)
+        case d: Double                               => feat.SetField(fieldName, d)
+        case d: java.lang.Double                     => feat.SetField(fieldName, d.doubleValue)
+        case f: Float                                => feat.SetField(fieldName, f.toDouble)
+        case f: java.lang.Float                      => feat.SetField(fieldName, f.doubleValue)
+        case b: Boolean                              => feat.SetField(fieldName, if (b) 1 else 0)
+        case b: java.lang.Boolean                    => feat.SetField(fieldName, if (b.booleanValue) 1 else 0)
+        case other                                   => feat.SetField(fieldName, other.toString)
     }
 
     @volatile private var nativeLoaded: Boolean = false

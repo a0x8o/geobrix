@@ -5,6 +5,7 @@ import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SilentSparkSession
+import org.gdal.ogr.ogrConstants
 import org.locationtech.jts.geom.{Coordinate, GeometryFactory}
 
 /** Spark-session test for [[ST_AsMvtPyramid]] — confirms the generator integrates with
@@ -49,5 +50,42 @@ class ST_AsMvtPyramidTest extends PlanTest with SilentSparkSession {
             assert(bytes != null && bytes.nonEmpty)
             assert(new String(bytes, "UTF-8").contains("regions"))
         }
+    }
+
+    test("st_asmvt_pyramid encodes numeric attributes with native MVT value types") {
+        spark.sparkContext.setLogLevel("ERROR")
+        vectorx.functions.register(spark)
+        import vectorx.functions._
+
+        val gf = new GeometryFactory()
+        val coords = Array(
+            new Coordinate(-30.0, 10.0),
+            new Coordinate(30.0, 10.0),
+            new Coordinate(30.0, 20.0),
+            new Coordinate(-30.0, 20.0),
+            new Coordinate(-30.0, 10.0)
+        )
+        val poly = gf.createPolygon(coords)
+        val df = spark.createDataFrame(Seq(
+            (JTS.toWKB(poly), 42, 3.5)
+        )).toDF("geom_wkb", "pop", "h")
+
+        val out = df.select(
+            st_asmvt_pyramid(col("geom_wkb"), struct(col("pop"), col("h")), 2, 2, "regions").alias("t")
+        ).collect()
+        assert(out.nonEmpty)
+
+        val bytes = out.head.getStruct(0).getAs[Array[Byte]]("mvt_bytes")
+        assert(bytes != null && bytes.nonEmpty)
+
+        val types = MvtTestUtil.readFieldTypes(bytes, "regions", Seq("pop", "h"))
+        assert(
+          types("pop") == ogrConstants.OFTInteger || types("pop") == ogrConstants.OFTInteger64,
+          s"expected pop to be integer, got OGR type ${types("pop")}"
+        )
+        assert(
+          types("h") == ogrConstants.OFTReal,
+          s"expected h to be real, got OGR type ${types("h")}"
+        )
     }
 }

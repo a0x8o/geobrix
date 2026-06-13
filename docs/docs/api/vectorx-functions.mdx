@@ -76,7 +76,7 @@ Aggregator that encodes a group of features into a single MVT protobuf blob for 
 
 **Parameters:**
 - `geomWkb` (`BINARY`) — Feature geometry in **tile-local coordinates** as WKB. Compose any `ST_Intersection` against the tile envelope and coordinate translation upstream.
-- `attrs` (`STRUCT<...>`) — Per-feature attributes. All fields are stringified in 0.4.0.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. Integer, long, double, and boolean fields are encoded as native MVT value types; other types are encoded as strings.
 - `layerName` (`STRING`) — MVT layer name.
 
 **Returns:** `BINARY` — the MVT protobuf bytes for one layer of the tile.
@@ -101,7 +101,6 @@ df.groupBy("z", "x", "y").agg(
 **Composability:** The `BINARY` output is the natural input to `gbx_pmtiles_agg` for packaging multiple `(z, x, y)` tiles into a single PMTiles file.
 
 **Limitations in 0.4.0:**
-- All attributes are stringified (numeric/boolean preservation deferred).
 - Caller composes any `ST_Simplify` upstream.
 - Caller composes tile-coordinate transform upstream.
 
@@ -115,7 +114,7 @@ Generator that explodes one feature into one row per intersecting `(z, x, y)` ti
 
 **Parameters:**
 - `geomWkb` (`BINARY`) — Feature geometry in **EPSG:4326 lon/lat** as WKB. The function performs the per-tile clip and tile-local coordinate transform; no upstream `ST_Intersection` required.
-- `attrs` (`STRUCT<...>`) — Per-feature attributes. All fields are stringified in 0.4.0.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. Integer, long, double, and boolean fields are encoded as native MVT value types; other types are encoded as strings.
 - `minZoom`, `maxZoom` (`INT`) — Inclusive zoom-level range (`0..20`).
 - `layerName` (`STRING`) — MVT layer name (constant per call).
 - `extent` (`INT`, optional) — MVT tile extent in pixels; default `4096` (MVT v2 standard).
@@ -144,7 +143,6 @@ df.select(
 **Limitations in 0.4.0:**
 - Single-feature input per row. Multi-feature aggregation per tile requires the aggregator pattern above.
 - `max_z <= 20`; total tile count across the zoom range capped at 10^6 (mirrors `gbx_rst_xyzpyramid`).
-- Attributes are stringified.
 - Inputs must be in EPSG:4326; reproject upstream for other CRS.
 
 ## Triangulation and elevation
