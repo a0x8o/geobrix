@@ -13,6 +13,11 @@
 
 <img src="resources/images/geobrix_vision.png" width="70%" />
 
+## Tiers
+
+- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
+- **Heavyweight tier** — Scala (Python and SQL bindings) + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
+
 ## Packages
 
 <img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
@@ -21,30 +26,7 @@
 - **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex).
 - **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST.
 
-All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names.
-
-## Highlights
-
-### Tiers
-
-- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
-- **Heavyweight tier** — Scala (Python and SQL bindings) + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
-
-### Modules
-
-- **RasterX** — 100+ raster functions (the platform has no built-in raster): I/O & tiling, terrain, band math, focal, viewshed, vector↔raster, and raster→grid aggregation.
-- **GridX** — discrete global grids beyond H3: **British National Grid**, CARTO **Quadbin**, and **custom** user-defined grids (indexing, neighbors, tessellation, polyfill, set ops).
-- **VectorX** — augments native ST: Mapbox Vector Tile (**MVT**) encoding, **TIN** surface modeling, and legacy-Mosaic geometry migration.
-
-### Readers & Writers
-
-_In both tiers (see the tables below)_
-
-- **Vector** (GeoJSON/Shapefile/GeoPackage/FileGDB)
-- **Raster** (GDAL/GeoTIFF)
-- **PMTiles**
-
-See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings.
+All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names. See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings. 
 
 ## Quick start (lightweight)
 
