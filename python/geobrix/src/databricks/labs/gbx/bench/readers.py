@@ -1197,7 +1197,7 @@ FANOUT_FUNCTIONS = [
 # flattens the heavy tier to the SAME granularity as the light flat UDTF rows:
 #   * polygonize  -> heavy ARRAY<struct>           -> explode  (single)
 #   * gridcount   -> heavy ARRAY<ARRAY<struct>>    -> explode∘explode (double)
-#   * 5 generators-> heavy CollectionGenerator     -> LATERAL VIEW explode(gbx_..)
+#   * 5 tilers    -> heavy CollectionGenerator     -> LATERAL VIEW gbx_.. (no explode)
 #   * xyzpyramid  -> heavy CollectionGenerator emits flat rows -> LATERAL VIEW (no explode)
 
 
@@ -1271,7 +1271,7 @@ def _fanout_spec(fn: str, scale: float):
         )
         heavy = (
             "SELECT t.* FROM _fanout_bench_ras "
-            f"LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, {res})) e AS t"
+            f"LATERAL VIEW gbx_rst_h3_tessellate(tile, {res}) t AS tile"
         )
         return tile_kwargs, light, heavy
 
@@ -1287,7 +1287,7 @@ def _fanout_spec(fn: str, scale: float):
             )
             heavy = (
                 "SELECT t.* FROM _fanout_bench_ras "
-                f"LATERAL VIEW explode(gbx_rst_retile(tile, {tw}, {th})) e AS t"
+                f"LATERAL VIEW gbx_rst_retile(tile, {tw}, {th}) t AS tile"
             )
         else:
             overlap = 8
@@ -1297,7 +1297,7 @@ def _fanout_spec(fn: str, scale: float):
             )
             heavy = (
                 "SELECT t.* FROM _fanout_bench_ras "
-                f"LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap})) e AS t"
+                f"LATERAL VIEW gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap}) t AS tile"
             )
         return tile_kwargs, light, heavy
 
@@ -1312,7 +1312,7 @@ def _fanout_spec(fn: str, scale: float):
         )
         heavy = (
             "SELECT t.* FROM _fanout_bench_ras "
-            f"LATERAL VIEW explode(gbx_rst_maketiles(tile, {size_mb})) e AS t"
+            f"LATERAL VIEW gbx_rst_maketiles(tile, {size_mb}) t AS tile"
         )
         return tile_kwargs, light, heavy
 
@@ -1325,7 +1325,7 @@ def _fanout_spec(fn: str, scale: float):
         )
         heavy = (
             "SELECT t.* FROM _fanout_bench_ras "
-            "LATERAL VIEW explode(gbx_rst_separatebands(tile)) e AS t"
+            "LATERAL VIEW gbx_rst_separatebands(tile) t AS tile"
         )
         return tile_kwargs, light, heavy
 
@@ -1357,7 +1357,7 @@ def run_fanout_udtf(
         * heavy = its Scala counterpart, flattened to match:
             - ARRAY<struct>        (polygonize)  -> single ``explode``
             - ARRAY<ARRAY<struct>> (gridcount)   -> double ``explode``
-            - CollectionGenerator  (5 tilers)    -> ``LATERAL VIEW explode(gbx_..)``
+            - CollectionGenerator  (5 tilers)    -> ``LATERAL VIEW gbx_.. (no explode)``
             - CollectionGenerator emitting flat rows (xyzpyramid) -> ``LATERAL VIEW``
 
     ``api`` controls which tier is timed:
