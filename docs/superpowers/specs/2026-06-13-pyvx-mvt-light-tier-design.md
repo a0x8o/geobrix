@@ -130,7 +130,17 @@ Output tiles compose with the existing `gbx_pmtiles_agg` writer for end-to-end p
 
 ## Risks
 
-- **UDTF on Serverless/Connect** — primary risk; de-risked by the first plan task + the 2A fallback.
+- **UDTF on Serverless/Connect** — **RESOLVED (2026-06-13): use approach 2B.**
+  Spike (Task 1) confirmed both conditions of the decision rule:
+  1. **Local run passed** — trivial `Fan` UDTF registered via `spark.udtf.register`, executed via
+     `LATERAL`, yielded all expected rows under PySpark 4.0.0 / Python 3.12 (`PYSPARK_PYTHON` must
+     match driver version; worker picked up system Python 3.10 until env vars were set).
+  2. **Platform support confirmed** — Databricks docs list Python UDTFs as Public Preview on
+     Serverless (DBR 14.3+) and supported over Databricks Connect / Spark Connect (16.4+); Unity
+     Catalog UDTFs supported from DBR 17.1+. Our target (DBR 17.3 LTS) clears both thresholds.
+     Sources: https://docs.databricks.com/aws/en/udf/python-udtf and
+     https://docs.databricks.com/aws/en/dev-tools/databricks-connect/python/udf
+  Task 5 will implement `st_asmvt_pyramid` as a Python UDTF (2B). The 2A fallback is retired.
 - **Encoder byte differences** — handled by decoded-feature parity (not raw-byte) comparison.
 - **Heavy MVT test churn** — switching heavy to native types will change existing Scala MVT
   assertions; updating them is in scope.
