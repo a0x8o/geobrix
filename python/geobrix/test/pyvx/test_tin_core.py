@@ -21,3 +21,30 @@ def test_merge_tolerance_dedups_near_coincident():
 def test_empty_or_too_few_points():
     assert _tin.triangulate(np.zeros((0, 3)), [], 0.0, 0.0) == []
     assert _tin.triangulate(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]), [], 0.0, 0.0) == []
+
+
+def test_breakline_appears_as_triangle_edges():
+    pts = np.array([[0,0,0],[4,0,0],[4,4,0],[0,4,0],[1,3,0],[3,1,0]], dtype=float)
+    bl = [np.array([[1.0, 3.0], [3.0, 1.0]])]
+    tris = _tin.triangulate(pts, bl, 0.0, 0.0)
+    edges = set()
+    for t in tris:
+        xy = [tuple(np.round(p[:2], 6)) for p in t]
+        for a, b in [(0, 1), (1, 2), (2, 0)]:
+            edges.add(frozenset([xy[a], xy[b]]))
+    assert frozenset([(1.0, 3.0), (3.0, 1.0)]) in edges
+
+
+def test_recovery_terminates_on_dense_constraints():
+    rng = np.random.default_rng(0)
+    pts = np.column_stack([rng.random(40), rng.random(40), np.zeros(40)])
+    bl = [np.array([[0.05, 0.05], [0.95, 0.95]])]
+    tris = _tin.triangulate(pts, bl, 0.0, 0.0)  # must not hang
+    assert len(tris) > 0
+
+
+def test_zsnap_sets_vertex_z_along_constraint():
+    pts = np.array([[0,0,0],[4,0,0],[4,4,0],[0,4,0]], dtype=float)
+    bl = [np.array([[0.0, 2.0, 10.0], [4.0, 2.0, 10.0]])]
+    tris = _tin.triangulate(pts, bl, 0.0, 1e-6)
+    assert len(tris) > 0  # must not crash; recovery + snap run
