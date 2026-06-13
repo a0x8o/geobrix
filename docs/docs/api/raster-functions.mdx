@@ -778,7 +778,7 @@ Produce multiple tiles or bands (5 total).
 Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning one row per cell via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
-**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column): Column` — Tessellate raster to H3 cells.
+**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column, mode: Column = "covering"): Column` — Tessellate raster to H3 cells. `mode` is `"covering"` (default — every overlapping cell, clipped) or `"centroid"` (pixel-centroid single-assignment partition). See [H3 Raster Tessellation](./h3-raster-tessellation) for the full mode guide.
 
 **SQL:**
 

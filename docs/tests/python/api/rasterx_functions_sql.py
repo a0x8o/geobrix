@@ -1062,38 +1062,31 @@ rst_merge_sql_example_output = """
 # ============================================================================
 
 def rst_h3_tessellate_sql_example():
-    """Tessellate raster to H3 grid"""
+    """Tessellate raster to H3 grid (covering or centroid mode)"""
     return """
--- Tessellate and explode H3 cells
-SELECT
-    path,
-    h3_tile.cellid as h3_cell,
-    h3_tile as tile,
-    gbx_rst_avg(h3_tile) as avg_value
-FROM rasters
-LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 7)) AS h3_tile;
+-- covering mode (default): every overlapping H3 cell, clipped to its hexagon
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;
 
--- Count cells per raster
-SELECT
-    path,
-    SIZE(gbx_rst_h3_tessellate(tile, 7)) as num_cells
-FROM rasters;
+-- centroid mode: pixel-centroid single-assignment partition (no double-count)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid') t;
+
+-- backward-compatible two-argument form (covering)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7) t;
 """
 
 
 rst_h3_tessellate_sql_example_output = """
-+----+------------------+------------------------------------------------------------+---------+
-|path|h3_cell           |tile                                                        |avg_value|
-+----+------------------+------------------------------------------------------------+---------+
-|... |599686042433355775|{599686042433355775, <raster bytes>, {driver -> GTiff, ...}}|0.42     |
-+----+------------------+------------------------------------------------------------+---------+
-
-+----+---------+
-|path|num_cells|
-+----+---------+
-|... |12       |
-+----+---------+
-"""
++------+------------------+--------------+
+|source|cellid            |raster        |
++------+------------------+--------------+
+|...   |599686042433355775|<raster bytes>|
++------+------------------+--------------+"""
 
 
 def rst_h3_rastertogridavg_sql_example():

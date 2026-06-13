@@ -92,6 +92,7 @@ const sidebars = {
             },
             'api/raster-functions',
             'api/raster-functions-heavyweight',
+            'api/h3-raster-tessellation',
             'api/gridx-functions',
             'api/vectorx-functions',
             'api/pmtiles-functions',
