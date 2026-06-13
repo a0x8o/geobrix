@@ -18,6 +18,12 @@ TILE_SCHEMA = StructType(
     ]
 )
 
+# TIN triangulate output: one 2D-WKB triangle (Polygon) per row.
+TRIANGLE_SCHEMA = StructType([StructField("triangle", BinaryType(), False)])
+
+# Elevation/interpolation output: one WKB elevation point per row.
+ELEVATION_SCHEMA = StructType([StructField("elevation_point", BinaryType(), False)])
+
 # Python native types that map to a native MVT Value; everything else -> str().
 _NATIVE = (bool, int, float, str)
 
