@@ -20,7 +20,7 @@ from pathlib import Path
 import mapbox_vector_tile as mvt
 import pytest
 from shapely import to_wkb
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 
 pytestmark = pytest.mark.integration
 
@@ -71,6 +71,14 @@ def _feats(blob: bytes, layer: str = "layer") -> dict:
     return {round(p["properties"]["id"]): p["properties"] for p in mvt.decode(blob)[layer]["features"]}
 
 
+def _geoms(blob: bytes, layer: str = "layer") -> dict:
+    """Return {id_value: geometry_type_str} keyed on the 'id' property."""
+    return {
+        round(p["properties"]["id"]): p["geometry"]["type"]
+        for p in mvt.decode(blob)[layer]["features"]
+    }
+
+
 def test_light_vs_heavy_asmvt_decoded_parity(spark_with_jar):
     """Decoded features from pyvx and vectorx st_asmvt must match exactly.
 
@@ -118,4 +126,58 @@ def test_light_vs_heavy_asmvt_decoded_parity(spark_with_jar):
         )
 
         # string parity
+        assert lf[k]["name"] == hf[k]["name"], f"name mismatch for key {k}: {lf[k]['name']} vs {hf[k]['name']}"
+
+
+def test_light_vs_heavy_asmvt_small_polygon_parity(spark_with_jar):
+    """THE coordinate-contract gate: a small tile-local POLYGON must survive in BOTH tiers.
+
+    Both tiers take geometry already in tile-local [0, extent] pixel space. A 40-unit box
+    centred at (2048, 2048) is far smaller than one z0 world pixel — under the old heavy
+    world-coordinate interpretation it collapsed sub-pixel and the OGR MVT driver dropped it,
+    yielding 0 heavy features while light kept 1. With the tile-local [0,extent] contract the
+    decoded feature sets (geometry present + native-typed props) must match.
+    """
+    from databricks.labs.gbx.pyvx import functions as vx
+    from databricks.labs.gbx.vectorx import functions as hx
+    from pyspark.sql import functions as f
+
+    spark = spark_with_jar
+    vx.register(spark)
+    hx.register(spark)
+
+    # Mix a small polygon with a point so we prove polygons specifically survive.
+    poly = Polygon([(2028, 2028), (2068, 2028), (2068, 2068), (2028, 2068), (2028, 2028)])
+    rows = [
+        (bytearray(to_wkb(poly)), 1, 1.0, "block"),
+        (bytearray(to_wkb(Point(1024.0, 1024.0))), 2, 2.0, "dot"),
+    ]
+    df = spark.createDataFrame(rows, "geom binary, id int, h double, name string")
+
+    light_blob = bytes(
+        df.agg(vx.st_asmvt(f.col("geom"), f.struct("id", "h", "name"), "layer")).collect()[0][0]
+    )
+    heavy_blob = bytes(
+        df.agg(hx.st_asmvt(f.col("geom"), f.struct("id", "h", "name"), "layer")).collect()[0][0]
+    )
+
+    lf, hf = _feats(light_blob), _feats(heavy_blob)
+    lg, hg = _geoms(light_blob), _geoms(heavy_blob)
+
+    # The polygon (id=1) must be present in BOTH tiers — the core proof.
+    assert 1 in lf, f"light dropped the polygon feature; present={set(lf.keys())}"
+    assert 1 in hf, f"heavy dropped the polygon feature (sub-pixel collapse bug); present={set(hf.keys())}"
+
+    assert lf.keys() == hf.keys(), f"feature key mismatch: light={set(lf.keys())} heavy={set(hf.keys())}"
+
+    # The polygon decodes as a polygon in both tiers.
+    assert lg[1] == "Polygon", f"light id=1 not a Polygon: {lg[1]}"
+    assert hg[1] == "Polygon", f"heavy id=1 not a Polygon: {hg[1]}"
+
+    for k in lf:
+        assert lf[k]["id"] == hf[k]["id"], f"id mismatch for key {k}: {lf[k]['id']} vs {hf[k]['id']}"
+        assert isinstance(lf[k]["id"], int) and isinstance(hf[k]["id"], int)
+        assert abs(float(lf[k]["h"]) - float(hf[k]["h"])) < 1e-9, (
+            f"h mismatch for key {k}: {lf[k]['h']} vs {hf[k]['h']}"
+        )
         assert lf[k]["name"] == hf[k]["name"], f"name mismatch for key {k}: {lf[k]['name']} vs {hf[k]['name']}"

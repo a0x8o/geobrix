@@ -110,7 +110,7 @@ object MvtPyramidBuilder {
                     val inter =
                         try { g.intersection(tileEnv) } catch { case _: Throwable => null }
                     if (inter == null || inter.isEmpty) None
-                    else Some((JTS.toWKB(toWorldWebMerc(inter, lonMin, latMin, lonMax, latMax)), attrs))
+                    else Some((JTS.toWKB(toTileLocal(inter, lonMin, latMin, lonMax, latMax, extent)), attrs))
                 }
                 if (clipped.nonEmpty) {
                     val bytes = MvtWriter.encode(layerName, extent, clipped)
@@ -123,31 +123,36 @@ object MvtPyramidBuilder {
         out.toArray
     }
 
-    /** Affine transform: the per-tile lon/lat clip is remapped into the world-tile (0/0/0) bbox
-     *  in EPSG:3857 metres. [[MvtWriter.encode]] is hardcoded to write a single MVT at z=0/x=0/y=0
-     *  with EXTENT-scaled tile-local coords; by feeding it a per-tile clip rescaled to the world
-     *  bbox we get a valid MVT whose tile-local extent matches the source `(z, x, y)`. The MVT
-     *  driver handles the Y-flip from EPSG:3857 (y-up) to MVT tile-local (y-down) itself.
+    /** Affine transform: the per-tile lon/lat clip is remapped into MVT tile-local pixel space
+     *  `[0, extent]` for this tile (origin upper-left, y-down), mirroring the light pyramid's
+     *  `_to_tile_local`. [[MvtWriter.encode]] takes that tile-local geometry and handles the
+     *  `[0,extent]`→web-mercator world mapping the OGR driver needs internally, so both tiers
+     *  share one coordinate contract.
+     *
+     *    sx = extent / (lonMax - lonMin) ; tile-local x = (lon - lonMin) * sx
+     *    sy = extent / (latMax - latMin) ; tile-local y = (latMax - lat) * sy   // y flipped (top=0)
      *
      *  Mutates a defensive copy of the input geometry; the original is left alone.
      */
-    private def toWorldWebMerc(
+    private def toTileLocal(
         g: Geometry,
         lonMin: Double,
         latMin: Double,
         lonMax: Double,
-        latMax: Double
+        latMax: Double,
+        extent: Int
     ): Geometry = {
-        val worldSpan = TileMath.WEBMERC_MAX - TileMath.WEBMERC_MIN
-        val sx = worldSpan / (lonMax - lonMin)
-        val sy = worldSpan / (latMax - latMin)
+        val sx = extent.toDouble / (lonMax - lonMin)
+        val sy = extent.toDouble / (latMax - latMin)
         val transformed = g.copy()
         val coords = transformed.getCoordinates
         var i = 0
         while (i < coords.length) {
             val c = coords(i)
-            c.x = TileMath.WEBMERC_MIN + (c.x - lonMin) * sx
-            c.y = TileMath.WEBMERC_MIN + (c.y - latMin) * sy
+            val lon = c.x
+            val lat = c.y
+            c.x = (lon - lonMin) * sx
+            c.y = (latMax - lat) * sy
             i += 1
         }
         transformed.geometryChanged()

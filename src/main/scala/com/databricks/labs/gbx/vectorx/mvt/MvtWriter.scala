@@ -1,6 +1,8 @@
 package com.databricks.labs.gbx.vectorx.mvt
 
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+import com.databricks.labs.gbx.rasterx.tile.TileMath
+import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.gdal
 import org.gdal.ogr.ogr.{CreateGeometryFromWkb, GetDriverByName}
 import org.gdal.ogr.{Feature, FieldDefn}
@@ -16,10 +18,21 @@ import scala.util.Try
   * Helper that wraps GDAL's OGR MVT driver to encode a list of `(geom_wkb, attrs_map)` tuples
   * into a single Mapbox Vector Tile (MVT) protobuf blob.
   *
-  * Caller passes geometries in **tile-local coordinates** (post-clip, post-transform); the
-  * writer just packages them. With `MINZOOM=0`, `MAXZOOM=0`, `EXTENT=4096`, the GDAL MVT
-  * driver produces exactly one tile at `0/0/0.pbf` and we return its raw bytes. All
-  * intermediate state lives in `/vsimem/<uuid>/` and is unlinked before returning.
+  * Caller passes geometries in **tile-local pixel coordinates `[0, extent]`** — the standard
+  * MVT contract: x ∈ [0, extent] left→right, y ∈ [0, extent] top→bottom (origin upper-left,
+  * y-down), matching the light `pyvx` tier (which feeds `[0,extent]` straight to
+  * `mapbox_vector_tile.encode(..., y_coord_down=True)`).
+  *
+  * The OGR MVT *creation* driver does geographic tiling — it interprets layer geometry as
+  * EPSG:3857 metres and bins into web-mercator tiles, so it will NOT honor raw `[0,extent]`
+  * input (a tiny tile-local polygon collapses sub-pixel into a single z0 world tile and gets
+  * dropped). To make the driver round-trip tile-local coords 1:1, we affine-map each input
+  * coordinate from `[0, extent]` into the full web-mercator z0 world extent before handing it
+  * to the driver; the driver's z0/EXTENT quantization then maps it straight back to the
+  * original `[0,extent]` tile-local value (±1 from integer quantization). With `MINZOOM=0`,
+  * `MAXZOOM=0`, `EXTENT=extent`, the driver produces exactly one tile at `0/0/0.pbf` and we
+  * return its raw bytes. All intermediate state lives in `/vsimem/<uuid>/` and is unlinked
+  * before returning.
   *
   * Attribute fields carry native OGR value types: the field type is inferred from the first
   * non-null value's Scala runtime type (Int → `OFTInteger`, Long → `OFTInteger64`,
@@ -129,7 +142,13 @@ object MvtWriter {
                     // GDAL 3.x can throw or return null on malformed WKB depending on
                     // exception-mode config — handle both so a single bad feature can't
                     // sink the whole tile.
-                    val geom = Try(CreateGeometryFromWkb(wkb)).toOption.orNull
+                    // Map the WKB from tile-local [0, extent] into the web-mercator z0 world
+                    // extent before parsing, so the driver's z0/EXTENT quantization round-trips
+                    // it back to the original tile-local value. Done on the JTS geometry (the
+                    // OGR Geometry API has no convenient per-coordinate affine), then re-WKB'd.
+                    val worldWkb = Try(tileLocalToWorld(wkb, extent)).toOption.orNull
+                    val geom = if (worldWkb == null) null
+                               else Try(CreateGeometryFromWkb(worldWkb)).toOption.orNull
                     if (geom != null) {
                         val feat = new Feature(layer.GetLayerDefn())
                         try {
@@ -180,6 +199,36 @@ object MvtWriter {
         gdal.RmdirRecursive(rootPath)
 
         bytes
+    }
+
+    /**
+      * Affine-map a WKB geometry from tile-local pixel space `[0, extent]` (origin upper-left,
+      * y-down) into the full web-mercator z0 world extent (EPSG:3857 metres). With the layer SRS
+      * set to EPSG:3857 and `MINZOOM=MAXZOOM=0`, the OGR MVT driver quantizes this single z0
+      * world tile back onto the `[0, extent]` integer grid (and re-applies its own y-flip), so a
+      * round-trip recovers the original tile-local coordinates (±1 from integer quantization).
+      *
+      *   world_x = WEBMERC_MIN + (u / extent) * worldSpan
+      *   world_y = WEBMERC_MAX - (v / extent) * worldSpan   // v=0 (top) → WEBMERC_MAX (north)
+      *
+      * Returns the re-encoded WKB, or `null` if the input fails to parse.
+      */
+    private def tileLocalToWorld(wkb: Array[Byte], extent: Int): Array[Byte] = {
+        val g = JTS.fromWKB(wkb)
+        if (g == null || g.isEmpty) return null
+        val worldSpan = TileMath.WEBMERC_MAX - TileMath.WEBMERC_MIN
+        val coords = g.getCoordinates
+        var i = 0
+        while (i < coords.length) {
+            val c = coords(i)
+            val u = c.x
+            val v = c.y
+            c.x = TileMath.WEBMERC_MIN + (u / extent.toDouble) * worldSpan
+            c.y = TileMath.WEBMERC_MAX - (v / extent.toDouble) * worldSpan
+            i += 1
+        }
+        g.geometryChanged()
+        JTS.toWKB(g)
     }
 
     /**

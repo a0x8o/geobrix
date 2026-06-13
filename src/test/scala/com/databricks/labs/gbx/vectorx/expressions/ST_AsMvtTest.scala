@@ -58,6 +58,44 @@ object MvtTestUtil {
             Try(gdal.Unlink(path))
         }
     }
+
+    /** Re-read MVT bytes through the OGR MVT driver and return, for the given layer, the count
+     *  of features whose geometry is a non-empty polygon (i.e. survived encoding) plus the total
+     *  feature count. Proves that a small tile-local polygon was not dropped sub-pixel. */
+    def readPolygonFeatureCount(
+        mvtBytes: Array[Byte],
+        layerName: String
+    ): (Int, Int) = {
+        GDALManager.initOgr()
+        val uuid = java.util.UUID.randomUUID().toString.replace("-", "_")
+        val path = s"/vsimem/gbx_mvt_poly_$uuid.pbf"
+        gdal.FileFromMemBuffer(path, mvtBytes)
+        val ds = ogr.Open(s"MVT:$path", false)
+        try {
+            require(ds != null, s"OGR MVT driver failed to open $path: ${gdal.GetLastErrorMsg()}")
+            val layer = ds.GetLayerByName(layerName)
+            require(layer != null, s"layer '$layerName' not found in re-read MVT")
+            layer.ResetReading()
+            var total = 0
+            var polys = 0
+            var feat = layer.GetNextFeature()
+            while (feat != null) {
+                total += 1
+                val g = feat.GetGeometryRef()
+                if (g != null) {
+                    val gt = g.GetGeometryType()
+                    val isPoly = gt == ogrConstants.wkbPolygon || gt == ogrConstants.wkbMultiPolygon
+                    if (isPoly && !g.IsEmpty && g.Area() > 0.0) polys += 1
+                }
+                feat.delete()
+                feat = layer.GetNextFeature()
+            }
+            (polys, total)
+        } finally {
+            if (ds != null) ds.delete()
+            Try(gdal.Unlink(path))
+        }
+    }
 }
 
 class ST_AsMvtTest extends PlanTest with SilentSparkSession {
@@ -163,6 +201,38 @@ class ST_AsMvtTest extends PlanTest with SilentSparkSession {
           types("h") == ogrConstants.OFTReal,
           s"expected h to be real, got OGR type ${types("h")}"
         )
+    }
+
+    test("st_asmvt encodes a small tile-local polygon (40-unit box) without dropping it") {
+        spark.sparkContext.setLogLevel("ERROR")
+        vectorx.functions.register(spark)
+        import vectorx.functions._
+
+        // A 40-unit square centred at (2048, 2048) in tile-local [0, 4096] pixel space. Under the
+        // pre-fix world-coordinate interpretation this collapsed sub-pixel and the MVT driver
+        // dropped it (0 features). With the tile-local [0,extent] contract it must survive and
+        // decode back as a non-empty polygon feature.
+        val gf = new GeometryFactory()
+        val box = gf.createPolygon(Array(
+            new Coordinate(2028.0, 2028.0),
+            new Coordinate(2068.0, 2028.0),
+            new Coordinate(2068.0, 2068.0),
+            new Coordinate(2028.0, 2068.0),
+            new Coordinate(2028.0, 2028.0)
+        ))
+        val df = spark.createDataFrame(Seq(
+            (JTS.toWKB(box), "block", 7L)
+        )).toDF("geom_wkb", "name", "id")
+
+        val mvtBytes = df.agg(
+            st_asmvt(col("geom_wkb"), struct(col("name"), col("id")), lit("shapes")).as("mvt")
+        ).collect().head.getAs[Array[Byte]]("mvt")
+
+        assert(mvtBytes != null && mvtBytes.nonEmpty, "small tile-local polygon produced empty MVT")
+
+        val (polys, total) = MvtTestUtil.readPolygonFeatureCount(mvtBytes, "shapes")
+        assert(total >= 1, s"expected >= 1 feature in re-read MVT, got $total")
+        assert(polys >= 1, s"expected >= 1 non-empty polygon feature, got $polys (total $total)")
     }
 
 }
