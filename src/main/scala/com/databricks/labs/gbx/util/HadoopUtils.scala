@@ -46,22 +46,43 @@ object HadoopUtils {
         listHadoopFiles(inPath, hadoopConf)
     }
 
-    /** Lists non-directory files under inPath using the given Hadoop config. */
+    /** Spark/Hadoop convention: a name starting with '_' or '.' is a marker or hidden file
+      * (e.g. `_SUCCESS`, `_committed_*`, `.crc`), NOT data. Skip these when enumerating a
+      * directory so a reader pointed at a writer's output dir doesn't try to open `_SUCCESS`
+      * as a dataset (mirrors Spark's default PathFilter). */
+    private def isDataFile(path: Path): Boolean = {
+        val n = path.getName
+        !n.startsWith("_") && !n.startsWith(".")
+    }
+
+    /** Lists non-directory data files under inPath using the given Hadoop config
+      * (marker/hidden files like `_SUCCESS` are skipped). */
     def listHadoopFiles(inPath: String, hconf: SerializableConfiguration): Seq[String] = {
         val path = new Path(new URI(cleanPath(inPath)))
         val fs = path.getFileSystem(hconf.value)
         fs.listStatus(path)
-            .filterNot(_.isDirectory)
+            .filter(st => !st.isDirectory && isDataFile(st.getPath))
             .map(_.getPath.toString)
     }
 
-    /** Returns the first file (by name) under inPath; used for schema inference from a single file. */
+    /** Returns the first data file (by listing order) under inPath; used for schema inference
+      * from a single file. Marker/hidden files (`_SUCCESS`, `.crc`, ...) are skipped so a
+      * directory of writer output infers schema from a real shard, not the `_SUCCESS` marker. */
     def getFirstFile(inPath: String, hconf: SerializableConfiguration): String = {
         val path = new Path(new URI(cleanPath(inPath)))
         val fs = path.getFileSystem(hconf.value)
         val status = fs.getFileStatus(path)
         if (status.isDirectory) {
-            fs.listFiles(path, false).next().getPath.toString
+            val it = fs.listFiles(path, false)
+            var first: String = null
+            while (first == null && it.hasNext) {
+                val st = it.next()
+                if (isDataFile(st.getPath)) first = st.getPath.toString
+            }
+            if (first == null) {
+                throw new IllegalArgumentException(s"No data files found under directory: $inPath")
+            }
+            first
         } else {
             path.toString
         }
