@@ -1279,7 +1279,7 @@ is heavy-only."
 
 - [ ] **Step 3: Geometry-input consistency audit**
 
-Verify every `gbx_st_*` geom-accepting function shares the `parse_geom` contract (WKB/EWKB/WKT/EWKT): the TIN `points`/`breaklines`/`grid_origin` (done in T8/T9) and the existing `st_asmvt` geom input. If heavy `gbx_st_asmvt` accepts WKT/EWKT (not just WKB), update `_asmvt_udf` in `functions.py` to route its geom through `_geom.parse_geom` (decode → re-`to_wkb` for mapbox-vector-tile) and add a test that `st_asmvt` accepts a WKT geom. Document the accepted-encodings contract once on the VectorX page.
+Verify every `gbx_st_*` geom-accepting function shares the `parse_geom` contract (WKB/EWKB/WKT/EWKT): the TIN `points`/`breaklines`/`grid_origin` (done in T8/T9) **and the MVT functions `st_asmvt` + `st_asmvt_pyramid`** (both decode geom WKB today — `_asmvt_udf` and `_mvt.pyramid_tiles`/`_AsMvtPyramidUDTF`). Route their geom inputs through `_geom.parse_geom` (decode → the encoder re-`to_wkb`s as needed), and add tests that both `st_asmvt` and `st_asmvt_pyramid` accept a WKT geom (and EWKB). Verify against heavy `gbx_st_asmvt`/`gbx_st_asmvt_pyramid` accepted encodings. Document the accepted-encodings contract once on the VectorX page.
 
 - [ ] **Step 4: Build docs + checks**
 
