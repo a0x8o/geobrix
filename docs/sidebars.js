@@ -81,7 +81,15 @@ const sidebars = {
           collapsed: false,
           items: [
             'api/execution-tiers',
-            'api/benchmarking',
+            {
+              type: 'category',
+              label: 'Performance & Benchmarking',
+              collapsed: false,
+              items: [
+                'api/performance',
+                'api/benchmarking',
+              ],
+            },
             'api/raster-functions',
             'api/raster-functions-heavyweight',
             'api/gridx-functions',
