@@ -15,9 +15,9 @@ import scala.collection.mutable.ArrayBuffer
  *  origin upper-left, Y flipped) and handed to [[MvtWriter.encode]] which wraps the GDAL OGR
  *  MVT driver.
  *
- *  Pairs with [[com.databricks.labs.gbx.rasterx.expressions.web.RST_XYZPyramid]] (Wave 5) — the
- *  raster sibling that explodes one raster across the same zoom range. Output rows from both
- *  feed directly into the PMTiles encoder (Wave 6) for end-to-end vector or raster publishing.
+ *  Pairs with [[com.databricks.labs.gbx.rasterx.expressions.web.RST_XYZPyramid]] — the raster
+ *  sibling that explodes one raster across the same zoom range. Output rows from both feed
+ *  directly into the PMTiles encoder for end-to-end vector or raster publishing.
  *
  *  Pure, stateless object — no Spark, no GDAL globals here (GDAL native is loaded lazily by
  *  [[MvtWriter.encode]]).
