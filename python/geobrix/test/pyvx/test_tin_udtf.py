@@ -23,6 +23,20 @@ def test_st_triangulate_emits_triangles(spark):
     assert all(wkb.loads(bytes(r["triangle"])).geom_type == "Polygon" for r in rows)
 
 
+def test_st_triangulate_multipoint_element(spark):
+    # I3: a single MULTIPOINT WKB as one array element must flatten to its member
+    # points (shapely MultiPoint has .geoms, not .coords) and emit triangles —
+    # not crash on a missing .coords attribute.
+    from shapely.geometry import MultiPoint
+    mp = bytearray(to_wkb(MultiPoint([(0, 0), (1, 0), (1, 1), (0, 1)])))
+    df = spark.createDataFrame([([mp], [], 0.0, 0.0, "NONENCROACHING")],
+                               "pts array<binary>, bl array<binary>, mt double, st double, spf string")
+    df.createOrReplaceTempView("vmp")
+    rows = spark.sql("SELECT t.triangle FROM vmp, LATERAL gbx_st_triangulate(pts, bl, mt, st, spf, 'constrained') t").collect()
+    assert len(rows) == 2
+    assert all(wkb.loads(bytes(r["triangle"])).geom_type == "Polygon" for r in rows)
+
+
 def test_st_triangulate_two_arg_default_mode(spark):
     vx.register(spark)
     pts = _pts_wkb([(0, 0, 0), (1, 0, 0), (1, 1, 0)])

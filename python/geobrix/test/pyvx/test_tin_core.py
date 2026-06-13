@@ -35,6 +35,21 @@ def test_breakline_appears_as_triangle_edges():
     assert frozenset([(1.0, 3.0), (3.0, 1.0)]) in edges
 
 
+def test_breakline_endpoint_not_a_mass_point_becomes_edge():
+    # C1/T1: breakline midpoints are NOT among the corner mass points, yet the
+    # constraint segment must still appear as a triangle edge (heavy CDT adds
+    # every breakline coord as a site).
+    pts = np.array([[0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]], dtype=float)
+    bl = [np.array([[0.0, 2.0], [4.0, 2.0]])]  # midpoints, not corners
+    tris = _tin.triangulate(pts, bl, 0.0, 0.0)
+    edges = set()
+    for t in tris:
+        xy = [tuple(np.round(p[:2], 6)) for p in t]
+        for a, b in [(0, 1), (1, 2), (2, 0)]:
+            edges.add(frozenset([xy[a], xy[b]]))
+    assert frozenset([(0.0, 2.0), (4.0, 2.0)]) in edges
+
+
 def test_recovery_terminates_on_dense_constraints():
     rng = np.random.default_rng(0)
     pts = np.column_stack([rng.random(40), rng.random(40), np.zeros(40)])
@@ -44,10 +59,39 @@ def test_recovery_terminates_on_dense_constraints():
 
 
 def test_zsnap_sets_vertex_z_along_constraint():
-    pts = np.array([[0,0,0],[4,0,0],[4,4,0],[0,4,0]], dtype=float)
+    # T5: a vertex lying ON the constraint line must have its Z overwritten with
+    # the interpolated breakline Z (10.0), not the mass-point Z (0.0).
+    pts = np.array([[0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]], dtype=float)
     bl = [np.array([[0.0, 2.0, 10.0], [4.0, 2.0, 10.0]])]
     tris = _tin.triangulate(pts, bl, 0.0, 1e-6)
     assert len(tris) > 0  # must not crash; recovery + snap run
+    # The breakline endpoints (0,2) and (4,2) became vertices (C1); on the
+    # constraint line their Z must be snapped to 10.0.
+    snapped = []
+    for t in tris:
+        for v in t:
+            if abs(v[1] - 2.0) < 1e-9 and (abs(v[0]) < 1e-9 or abs(v[0] - 4.0) < 1e-9):
+                snapped.append(v[2])
+    assert snapped, "expected vertices on the constraint line"
+    assert all(abs(z - 10.0) < 1e-9 for z in snapped)
+
+
+def test_interpolate_z_on_edge_at_utm_magnitude():
+    # I2: barycentric tolerance must be scale-aware. At BNG/UTM magnitudes the
+    # absolute 1e-12 tol is effectively zero (orient2d is an area ~coord^2), so a
+    # cell center dead-on a triangle edge gets spuriously dropped. Must interpolate.
+    bx, by = 530000.0, 180000.0
+    pts = np.array([
+        [bx, by, 0.0],
+        [bx + 100.0, by, 10.0],
+        [bx + 100.0, by + 100.0, 20.0],
+        [bx, by + 100.0, 10.0],
+    ], dtype=float)
+    tris = _tin.triangulate(pts, [], 0.0, 0.0)
+    # Point exactly on the diagonal edge shared by the two triangles.
+    z = _tin.interpolate_z(tris, bx + 50.0, by + 50.0)
+    assert z is not None
+    assert abs(z - 10.0) < 1e-6
 
 
 def test_grid_bbox_centers_column_major():

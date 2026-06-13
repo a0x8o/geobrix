@@ -35,3 +35,9 @@ def test_parse_geom_ewkb_srid_roundtrip():
 
 def test_parse_geom_none():
     assert parse_geom(None) is None
+
+
+def test_parse_geom_empty_string():
+    # I4: empty / whitespace-only string must be None, not a from_wkt parse error.
+    assert parse_geom("") is None
+    assert parse_geom("   ") is None

@@ -4,6 +4,7 @@ scipy Delaunay + Sloan constraint recovery (constrained, no Steiner points),
 Z-snap to breaklines, barycentric Z interpolation, and grid generators.
 Heavy parity target: vectorx.jts.InterpolateElevation (mode="constrained").
 """
+
 from typing import List, Sequence
 
 import numpy as np
@@ -11,10 +12,17 @@ from scipy.spatial import Delaunay
 
 
 def _merge_vertices(pts: np.ndarray, tol: float) -> np.ndarray:
-    """Snap near-coincident XY vertices (within tol) to a single representative."""
-    if tol <= 0.0 or len(pts) == 0:
+    """Drop coincident XY vertices, keeping the first occurrence.
+
+    With ``tol > 0`` near-coincident vertices (within tol) snap to one
+    representative; with ``tol <= 0`` only EXACT duplicates (rounded at machine
+    eps) are dropped so coincident breakline/mass-point coords don't double-site
+    the Delaunay input. Keep-first preserves the Z of whichever row comes first.
+    """
+    if len(pts) == 0:
         return pts
-    keys = np.round(pts[:, :2] / tol).astype(np.int64)
+    scale = tol if tol > 0.0 else 1e-12
+    keys = np.round(pts[:, :2] / scale).astype(np.int64)
     _, idx = np.unique(keys, axis=0, return_index=True)
     return pts[np.sort(idx)]
 
@@ -29,8 +37,25 @@ def triangulate(
 
     breaklines: sequence of (N,2|3) constraint polylines whose segments are forced
     as triangle edges (Sloan recovery). Empty -> plain Delaunay.
+
+    Every breakline coordinate is added as a triangulation site (matching heavy
+    ``JTSConformingDelaunayTriangulationBuilder.create`` -> ``createVertices``), so
+    a breakline endpoint that isn't a mass point still becomes a vertex and the
+    constraint can be enforced. Breaklines are prepended (sites-first) so the
+    keep-first dedup retains breakline Z on coincident coordinates.
     """
-    pts = _merge_vertices(np.asarray(points, dtype=float), merge_tolerance)
+    pts = np.asarray(points, dtype=float)
+    if breaklines:
+        bl_coords = []
+        for bl in breaklines:
+            b = np.asarray(bl, dtype=float)
+            if b.shape[1] < 3:
+                b = np.column_stack([b[:, 0], b[:, 1], np.zeros(len(b))])
+            bl_coords.append(b[:, :3])
+        pts = np.vstack(
+            bl_coords + [pts]
+        )  # breaklines first -> keep-first keeps breakline Z
+    pts = _merge_vertices(pts, merge_tolerance)
     if len(pts) < 3:
         return []
     tri = Delaunay(pts[:, :2])
@@ -50,8 +75,10 @@ def _orient2d(a, b, c) -> float:
 
 
 def _segments_intersect(p1, p2, p3, p4) -> bool:
-    d1 = _orient2d(p3, p4, p1); d2 = _orient2d(p3, p4, p2)
-    d3 = _orient2d(p1, p2, p3); d4 = _orient2d(p1, p2, p4)
+    d1 = _orient2d(p3, p4, p1)
+    d2 = _orient2d(p3, p4, p2)
+    d3 = _orient2d(p1, p2, p3)
+    d4 = _orient2d(p1, p2, p4)
     return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
 
@@ -67,7 +94,11 @@ def _recover_constraints(xy: np.ndarray, simplices: np.ndarray, tri, breaklines)
     triangles = [list(s) for s in simplices.tolist()]
 
     def edges_of(t):
-        return [frozenset((t[0], t[1])), frozenset((t[1], t[2])), frozenset((t[2], t[0]))]
+        return [
+            frozenset((t[0], t[1])),
+            frozenset((t[1], t[2])),
+            frozenset((t[2], t[0])),
+        ]
 
     def build_adj():
         adj = {}
@@ -79,19 +110,24 @@ def _recover_constraints(xy: np.ndarray, simplices: np.ndarray, tri, breaklines)
     for bl in breaklines:
         seg_pts = np.asarray(bl, dtype=float)
         for k in range(len(seg_pts) - 1):
-            ia = _vertex_index(xy, seg_pts[k]); ib = _vertex_index(xy, seg_pts[k + 1])
+            ia = _vertex_index(xy, seg_pts[k])
+            ib = _vertex_index(xy, seg_pts[k + 1])
             if ia < 0 or ib < 0 or ia == ib:
                 continue
             target = frozenset((ia, ib))
             budget = 50 * len(triangles) + 100
-            while target not in build_adj() and budget > 0:
+            while budget > 0:
                 budget -= 1
+                # Build adjacency once per iteration (membership test + flip scan
+                # both read it), not twice.
                 adj = build_adj()
+                if target in adj:
+                    break  # constraint already an edge
                 flipped = False
                 for e, ts in adj.items():
                     if len(ts) != 2:
                         continue
-                    (u, v) = tuple(e)
+                    u, v = tuple(e)
                     if not _segments_intersect(xy[ia], xy[ib], xy[u], xy[v]):
                         continue
                     t0, t1 = triangles[ts[0]], triangles[ts[1]]
@@ -99,12 +135,25 @@ def _recover_constraints(xy: np.ndarray, simplices: np.ndarray, tri, breaklines)
                     w1 = next(x for x in t1 if x not in e)
                     if not _segments_intersect(xy[w0], xy[w1], xy[u], xy[v]):
                         continue  # quad not convex -> flip would be invalid
+                    # Strict-progress guard (guarantees termination): only flip when
+                    # the NEW diagonal (w0,w1) no longer crosses the constraint, so
+                    # each flip strictly reduces the crossing-edge count. Without
+                    # this the new edge can re-cross and oscillate back next pass.
+                    new_edge = frozenset((w0, w1))
+                    if new_edge != target and _segments_intersect(
+                        xy[ia], xy[ib], xy[w0], xy[w1]
+                    ):
+                        continue
                     triangles[ts[0]] = [w0, w1, u]
                     triangles[ts[1]] = [w0, w1, v]
                     flipped = True
                     break
                 if not flipped:
-                    break  # cannot recover this segment with convex flips; leave as-is
+                    # A full scan found NO convex-flippable intersecting edge: a
+                    # genuine stall (recovering this segment would need a Steiner
+                    # point). Leave it -- the parity posture accepts "where
+                    # recoverable" -- and move on to the next segment.
+                    break
             if budget <= 0:
                 raise RuntimeError("Sloan constraint recovery did not terminate")
     return np.array(triangles, dtype=np.int64)
@@ -130,6 +179,10 @@ def grid_geom(origin_x, origin_y, cols, rows, cell_x, cell_y):
 def interpolate_z(triangles, x, y):
     """Barycentric Z at (x,y) within the TIN. None if outside all triangles."""
     p = np.array([x, y])
+    # Relative tolerance on the normalized barycentric coords: invariant to coord
+    # magnitude, so a point dead-on an edge at BNG/UTM scales (~1e5-1e6) is NOT
+    # spuriously dropped by an absolute epsilon that vanishes against the area.
+    eps = 1e-9
     for t in triangles:
         a, b, c = t[0, :2], t[1, :2], t[2, :2]
         d = _orient2d(a, b, c)
@@ -138,7 +191,7 @@ def interpolate_z(triangles, x, y):
         l1 = _orient2d(p, b, c) / d
         l2 = _orient2d(a, p, c) / d
         l3 = 1.0 - l1 - l2
-        if l1 >= -1e-12 and l2 >= -1e-12 and l3 >= -1e-12:
+        if l1 >= -eps and l2 >= -eps and l3 >= -eps:
             z = l1 * t[0, 2] + l2 * t[1, 2] + l3 * t[2, 2]
             return None if np.isnan(z) else float(z)
     return None

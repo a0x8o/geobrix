@@ -3,6 +3,7 @@
 Signatures mirror databricks.labs.gbx.vectorx.functions so light <-> heavy is a
 one-line import swap. Register once with vx.register(spark), then use on columns.
 """
+
 from typing import Union
 
 import pandas as pd
@@ -11,7 +12,7 @@ from pyspark.sql import functions as f
 from pyspark.sql.functions import pandas_udf, udtf
 from pyspark.sql.types import BinaryType
 
-from . import _env, _mvt, _legacy, _tin
+from . import _env, _legacy, _mvt, _tin
 
 ColLike = Union[Column, str, bool, int, float, bytes]
 
@@ -59,7 +60,9 @@ def _mvt_tile_return():
 
 @udtf(returnType=_mvt_tile_return())
 class _AsMvtPyramidUDTF:
-    def eval(self, geom_wkb, attrs, min_z: int, max_z: int, layer_name=None, extent=None):
+    def eval(
+        self, geom_wkb, attrs, min_z: int, max_z: int, layer_name=None, extent=None
+    ):
         ln = "layer" if layer_name is None else str(layer_name)
         ex = _mvt.DEFAULT_EXTENT if extent is None else int(extent)
         # Yield incrementally — never build the full list (fan-out OOM guard).
@@ -87,6 +90,19 @@ def _geoms_from_array(arr):
     return out
 
 
+def _all_xyz(geom):
+    """Recursively flatten any geometry to a list of (x, y, z) coordinate tuples.
+
+    Handles multi-part geometries (MULTIPOINT/MULTILINESTRING/etc. expose
+    ``.geoms``, not ``.coords``) and pads 2D coordinates with z=0.0. Used to
+    extract triangulation/elevation sites from the points array, so a single
+    MULTIPOINT element doesn't crash on a missing ``.coords``.
+    """
+    if hasattr(geom, "geoms"):
+        return [c for g in geom.geoms for c in _all_xyz(g)]
+    return [(c[0], c[1], c[2] if len(c) == 3 else 0.0) for c in geom.coords]
+
+
 def _validate_mode(mode):
     m = (mode or "constrained").lower()
     if m == "conforming":
@@ -107,7 +123,15 @@ def _triangulate_schema():
 
 @udtf(returnType=_triangulate_schema())
 class _TriangulateUDTF:
-    def eval(self, points, breaklines, merge_tolerance, snap_tolerance, split_point_finder, mode=None):
+    def eval(
+        self,
+        points,
+        breaklines,
+        merge_tolerance,
+        snap_tolerance,
+        split_point_finder,
+        mode=None,
+    ):
         _validate_mode(mode)
         import numpy as np
         from shapely import to_wkb
@@ -116,12 +140,11 @@ class _TriangulateUDTF:
         pt_geoms = _geoms_from_array(points)
         if not pt_geoms:
             return
-        coords = np.array(
-            [[c[0], c[1], (c[2] if len(c) == 3 else 0.0)] for g in pt_geoms for c in g.coords],
-            dtype=float,
-        )
+        coords = np.array([xyz for g in pt_geoms for xyz in _all_xyz(g)], dtype=float)
         bls = [np.array(g.coords, dtype=float) for g in _geoms_from_array(breaklines)]
-        for t in _tin.triangulate(coords, bls, float(merge_tolerance), float(snap_tolerance)):
+        for t in _tin.triangulate(
+            coords, bls, float(merge_tolerance), float(snap_tolerance)
+        ):
             yield (to_wkb(Polygon([(p[0], p[1]) for p in t])),)
 
 
@@ -137,20 +160,17 @@ def _elevation_schema():
 
 def _emit_elevation(points, breaklines, mt, st, spf, mode, cell_iter, srid):
     _validate_mode(mode)
-    from shapely import to_wkb, set_srid
-    from shapely.geometry import Point
     import numpy as np
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import Point
 
     pt_geoms = _geoms_from_array(points)
     if not pt_geoms:
         return
-    coords = np.array(
-        [[c[0], c[1], (c[2] if len(c) == 3 else 0.0)] for g in pt_geoms for c in g.coords],
-        dtype=float,
-    )
+    coords = np.array([xyz for g in pt_geoms for xyz in _all_xyz(g)], dtype=float)
     bls = [np.array(g.coords, dtype=float) for g in _geoms_from_array(breaklines)]
     tris = _tin.triangulate(coords, bls, float(mt), float(st))
-    for (x, y) in cell_iter:
+    for x, y in cell_iter:
         z = _tin.interpolate_z(tris, x, y)
         if z is None:
             continue
@@ -162,30 +182,79 @@ def _emit_elevation(points, breaklines, mt, st, spf, mode, cell_iter, srid):
 
 @udtf(returnType=_elevation_schema())
 class _InterpElevBBoxUDTF:
-    def eval(self, points, breaklines, merge_tolerance, snap_tolerance, split_point_finder,
-             xmin, ymin, xmax, ymax, width_px, height_px, srid, mode=None):
+    def eval(
+        self,
+        points,
+        breaklines,
+        merge_tolerance,
+        snap_tolerance,
+        split_point_finder,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width_px,
+        height_px,
+        srid,
+        mode=None,
+    ):
         yield from _emit_elevation(
-            points, breaklines, merge_tolerance, snap_tolerance, split_point_finder, mode,
-            _tin.grid_bbox(float(xmin), float(ymin), float(xmax), float(ymax),
-                           int(width_px), int(height_px)),
+            points,
+            breaklines,
+            merge_tolerance,
+            snap_tolerance,
+            split_point_finder,
+            mode,
+            _tin.grid_bbox(
+                float(xmin),
+                float(ymin),
+                float(xmax),
+                float(ymax),
+                int(width_px),
+                int(height_px),
+            ),
             int(srid),
         )
 
 
 @udtf(returnType=_elevation_schema())
 class _InterpElevGeomUDTF:
-    def eval(self, points, breaklines, merge_tolerance, snap_tolerance, split_point_finder,
-             grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y, mode=None):
+    def eval(
+        self,
+        points,
+        breaklines,
+        merge_tolerance,
+        snap_tolerance,
+        split_point_finder,
+        grid_origin,
+        grid_cols,
+        grid_rows,
+        cell_size_x,
+        cell_size_y,
+        mode=None,
+    ):
         from shapely import get_srid
+
         from ._geom import parse_geom
 
         og = parse_geom(grid_origin)
         ox, oy = (og.x, og.y) if og is not None else (0.0, 0.0)
         srid = get_srid(og) if og is not None else 0
         yield from _emit_elevation(
-            points, breaklines, merge_tolerance, snap_tolerance, split_point_finder, mode,
-            _tin.grid_geom(ox, oy, int(grid_cols), int(grid_rows),
-                           float(cell_size_x), float(cell_size_y)),
+            points,
+            breaklines,
+            merge_tolerance,
+            snap_tolerance,
+            split_point_finder,
+            mode,
+            _tin.grid_geom(
+                ox,
+                oy,
+                int(grid_cols),
+                int(grid_rows),
+                float(cell_size_x),
+                float(cell_size_y),
+            ),
             int(srid),
         )
 
@@ -232,8 +301,14 @@ def st_asmvt_pyramid(
     )
 
 
-def st_triangulate(points_geom, breaklines_geom, merge_tolerance, snap_tolerance,
-                   split_point_finder, mode: ColLike = "constrained"):
+def st_triangulate(
+    points_geom,
+    breaklines_geom,
+    merge_tolerance,
+    snap_tolerance,
+    split_point_finder,
+    mode: ColLike = "constrained",
+):
     """Constrained Delaunay triangulation. Invoke via SQL LATERAL:
     SELECT t.* FROM <df>, LATERAL gbx_st_triangulate(points, breaklines, mt, st, spf, mode) t
     mode='conforming' is heavy-only."""
@@ -242,22 +317,45 @@ def st_triangulate(points_geom, breaklines_geom, merge_tolerance, snap_tolerance
     )
 
 
-def st_interpolateelevationbbox(points_geom, breaklines_geom, merge_tolerance, snap_tolerance,
-                                split_point_finder, xmin, ymin, xmax, ymax, width_px, height_px,
-                                srid, mode: ColLike = "constrained"):
+def st_interpolateelevationbbox(
+    points_geom,
+    breaklines_geom,
+    merge_tolerance,
+    snap_tolerance,
+    split_point_finder,
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    width_px,
+    height_px,
+    srid,
+    mode: ColLike = "constrained",
+):
     """Interpolate barycentric Z over the constrained TIN at bbox grid centers. Invoke via SQL LATERAL:
     SELECT t.* FROM <df>, LATERAL gbx_st_interpolateelevationbbox(
         points, breaklines, mt, st, spf, xmin, ymin, xmax, ymax, width_px, height_px, srid, mode) t
-    One POINT Z WKB per in-hull cell (outside-hull dropped). mode='conforming' is heavy-only."""
+    One POINT Z WKB per in-hull cell (outside-hull dropped). mode='conforming' is heavy-only.
+    """
     raise NotImplementedError(
         "Light st_interpolateelevationbbox has no Python Column form; "
         "invoke the registered UDTF via SQL LATERAL."
     )
 
 
-def st_interpolateelevationgeom(points_geom, breaklines_geom, merge_tolerance, snap_tolerance,
-                                split_point_finder, grid_origin, grid_cols, grid_rows,
-                                cell_size_x, cell_size_y, mode: ColLike = "constrained"):
+def st_interpolateelevationgeom(
+    points_geom,
+    breaklines_geom,
+    merge_tolerance,
+    snap_tolerance,
+    split_point_finder,
+    grid_origin,
+    grid_cols,
+    grid_rows,
+    cell_size_x,
+    cell_size_y,
+    mode: ColLike = "constrained",
+):
     """Interpolate barycentric Z over the constrained TIN at origin-grid centers. Invoke via SQL LATERAL:
     SELECT t.* FROM <df>, LATERAL gbx_st_interpolateelevationgeom(
         points, breaklines, mt, st, spf, origin, cols, rows, cell_x, cell_y, mode) t
