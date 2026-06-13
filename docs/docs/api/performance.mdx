@@ -77,6 +77,12 @@ These functions are Python UDTFs registered via `spark.udtf.register(...)`. Each
 | SQL name | Python name | Output per input tile |
 |---|---|---|
 | `gbx_rst_polygonize` | `rst_polygonize` | One row per contiguous polygon in the raster |
+| `gbx_rst_separatebands` | `rst_separatebands` | One row per band in the multi-band tile |
+| `gbx_rst_retile` | `rst_retile` | One row per retiled region |
+| `gbx_rst_tooverlappingtiles` | `rst_tooverlappingtiles` | One row per overlapping tile |
+| `gbx_rst_maketiles` | `rst_maketiles` | One row per subdivided tile |
+| `gbx_rst_h3_tessellate` | `rst_h3_tessellate` | One row per H3 cell covering the tile |
+| `gbx_rst_xyzpyramid` | `rst_xyzpyramid` | One row per intersecting XYZ tile across the zoom range |
 | `gbx_rst_h3_rastertogridavg` | `rst_h3_rastertogridavg` | One row per H3 cell covering the tile |
 | `gbx_rst_h3_rastertogridcount` | `rst_h3_rastertogridcount` | One row per H3 cell |
 | `gbx_rst_h3_rastertogridmax` | `rst_h3_rastertogridmax` | One row per H3 cell |
@@ -233,13 +239,7 @@ These functions are `pandas_udf`-backed (Arrow batch) scalar transforms: one inp
 
 | SQL name | Python name |
 |---|---|
-| `gbx_rst_separatebands` | `rst_separatebands` |
-| `gbx_rst_retile` | `rst_retile` |
-| `gbx_rst_tooverlappingtiles` | `rst_tooverlappingtiles` |
-| `gbx_rst_maketiles` | `rst_maketiles` |
-| `gbx_rst_h3_tessellate` | `rst_h3_tessellate` |
 | `gbx_rst_tilexyz` | `rst_tilexyz` |
-| `gbx_rst_xyzpyramid` | `rst_xyzpyramid` |
 | `gbx_rst_rasterize` | `rst_rasterize` |
 | `gbx_rst_gridfrompoints` | `rst_gridfrompoints` |
 | `gbx_rst_dtmfromgeoms` | `rst_dtmfromgeoms` |
@@ -271,6 +271,18 @@ Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `
 </TabItem>
 
 </Tabs>
+
+---
+
+## Streaming vs consolidated returns
+
+Not every fan-out function is a streaming UDTF. The choice follows directly from where the cost is:
+
+**Stream (UDTF)** when one input row fans out to many output rows and the consumer needs them as individual rows. A consolidated `ARRAY<...>` return there carries a triple cost: buffer the whole fan-out in worker memory before returning it, serialize the nested array across the JVM↔Python boundary, then explode it again downstream. For large fan-out this is the bottleneck — and it scales with fan-out size.
+
+The clearest example is `rst_separatebands` on hyperspectral or multispectral rasters. Each band-tile carries its own raster bytes. A consolidated return buffers all band-tiles per input row: on a 200-band AVIRIS scene that is 200 × tile-bytes held simultaneously in one worker, with proportional ser/de cost at the JVM boundary. The streaming UDTF yields one band-tile at a time — O(1) worker memory regardless of band count. The same logic applies to fine-resolution tessellation (`rst_h3_tessellate` at high H3 resolution), deep XYZ pyramids (`rst_xyzpyramid` across many zoom levels), and retiling (`rst_retile`, `rst_tooverlappingtiles`, `rst_maketiles`) where output tile count scales with input raster size.
+
+**Consolidate** when the collection is the actual answer: aggregations (`*_agg`) produce one result per group — the consolidation IS the reduction. The only consolidated returns in GeoBrix's lightweight tier are the `*_agg` reductions; every fan-out generator is a streaming UDTF.
 
 ---
 

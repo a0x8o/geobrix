@@ -772,10 +772,10 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_h3_tessellate
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning an `ARRAY<tile>` (one per cell, `cellid` = H3 cell id) — `explode()` for one row per cell. The heavyweight tier emits the cells as separate generator rows.
+Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning one row per cell via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_h3_tessellate(tile: Column, resolution: Column): Column` — Tessellate raster to H3 cells.
@@ -786,10 +786,10 @@ Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell a
 
 ### rst_maketiles
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). It derives a square tile size from the MB budget and always partitions; it does not honor the heavyweight `size_in_mb = -1` (single tile) or `0` (64 MB) sentinels or the power-of-four split, so tile counts and dimensions differ.
+Powered by **rasterio**. Streams one tile row per subdivided region via streaming UDTF. It derives a square tile size from the MB budget and always partitions; it does not honor the heavyweight `size_in_mb = -1` (single tile) or `0` (64 MB) sentinels or the power-of-four split, so tile counts and dimensions differ.
 :::
 
 **Signature:** `rst_maketiles(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Subdivide into smaller tiles.
@@ -800,10 +800,10 @@ Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `e
 
 ### rst_retile
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+Powered by **rasterio**. Streams one tile row per retiled region via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Retile to uniform dimensions.
@@ -814,10 +814,10 @@ Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `e
 
 ### rst_separatebands
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of single-band tiles in a single row — call `explode()` to get one row per band (the heavyweight tier emits the bands as separate rows).
+Powered by **rasterio**. Streams one band-tile row per band via streaming UDTF — O(1) worker memory regardless of band count (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_separatebands(tile: Column): Column` — Split multi-band into array of bands.
@@ -828,10 +828,10 @@ Powered by **rasterio**. Returns an `ARRAY` of single-band tiles in a single row
 
 ### rst_tooverlappingtiles
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+Powered by **rasterio**. Streams one tile row per overlapping region via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_tooverlappingtiles(tile: Column, tileWidth: Column, tileHeight: Column, overlap: Column): Column` — Create overlapping tiles.
@@ -1352,10 +1352,10 @@ Powered by **rio-tiler** + **morecantile**. Out-of-extent tiles return a transpa
 
 ### rst_xyzpyramid
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rio-tiler** + **morecantile**. Returns an `ARRAY<struct(z, x, y, bytes)>` in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). Bounded by `max_z <= 20` and at most 1,000,000 candidate tiles.
+Powered by **rio-tiler** + **morecantile**. Streams one XYZ tile row per intersecting tile via streaming UDTF. Bounded by `max_z <= 20` and at most 1,000,000 candidate tiles.
 :::
 
 **Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
