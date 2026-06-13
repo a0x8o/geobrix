@@ -545,8 +545,10 @@ These functions are streaming Python UDTFs on the lightweight tier (one input ti
 
 Across the converted fan-out functions, light runs **at parity or faster** than the heavyweight JVM generators for `rst_retile` and `rst_separatebands` — with decoded-row parity as a hard gate for every result in the table. The streaming-UDTF model amortizes the JVM↔Python boundary across the full fan-out (the boundary is paid once per input tile, not once per output row), which is why the at-scale cost difference is smaller than for scalar transforms. See the [Performance page](./execution-tiers) for the streaming-UDTF architecture.
 
-> **`rst_h3_tessellate` benchmarks are pending** a covering/centroid `mode` redesign — light and heavy
-> currently diverge on border-cell assignment (~2.4%) and numbers will be added once the redesign lands.
+> **`rst_h3_tessellate` numbers are pending a cluster re-bench.** The covering/centroid `mode` work has
+> landed — light and heavy now agree on cell assignment for both modes (test-enforced cross-tier parity;
+> see the [H3 tessellation explainer](./h3-raster-tessellation)) — and timings will be added on the next
+> cluster run.
 
 </TabItem>
 
