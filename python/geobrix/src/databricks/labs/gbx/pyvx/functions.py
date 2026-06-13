@@ -11,7 +11,7 @@ from pyspark.sql import functions as f
 from pyspark.sql.functions import pandas_udf, udtf
 from pyspark.sql.types import BinaryType
 
-from . import _env, _mvt
+from . import _env, _mvt, _legacy
 
 ColLike = Union[Column, str, bool, int, float, bytes]
 
@@ -39,6 +39,11 @@ def _asmvt_udf(geom: pd.Series, attrs: pd.Series, layer: pd.Series) -> bytes:
         if g is not None and len(bytes(g)) > 0
     ]
     return _mvt.encode_layer(feats, layer_name=layer_name)
+
+
+def _legacyaswkb_impl(geom):
+    """Scalar: decode a legacy Mosaic struct row to ISO WKB (Z + holes)."""
+    return _legacy.legacy_to_wkb(geom)
 
 
 # --- st_asmvt_pyramid: Python UDTF ----------------------------------------------------------
@@ -71,6 +76,8 @@ def register(spark: SparkSession = None) -> None:
         spark = SparkSession.builder.getOrCreate()
     spark.udf.register("gbx_st_asmvt", _asmvt_udf)
     spark.udtf.register("gbx_st_asmvt_pyramid", _AsMvtPyramidUDTF)
+    _env.assert_tin_available()
+    spark.udf.register("gbx_st_legacyaswkb", _legacyaswkb_impl, BinaryType())
 
 
 def st_asmvt_pyramid(
@@ -110,3 +117,8 @@ def st_asmvt(geom_wkb: ColLike, attrs: ColLike, layer_name: ColLike) -> Column:
     if isinstance(layer_name, str):
         layer_name = f.lit(layer_name)
     return _asmvt_udf(_col(geom_wkb), _col(attrs), _col(layer_name))
+
+
+def st_legacyaswkb(geom: ColLike) -> Column:
+    """Decode a legacy Mosaic geometry struct to ISO WKB (Z + holes preserved)."""
+    return f.call_function("gbx_st_legacyaswkb", _col(geom))
