@@ -1388,10 +1388,17 @@ Powered by **rasterio** (`rasterio.features`).
 <Tier both/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** (`rasterio.features`).
+Powered by **rasterio** (`rasterio.features`). In pyrx, `gbx_rst_polygonize` is a
+streaming Python UDTF — invoke it as a SQL LATERAL table function to stream polygon
+rows without buffering (avoids OOM on rasters with unbounded polygon fan-out):
+
+```sql
+SELECT t.geom_wkb, t.value
+FROM <table>, LATERAL gbx_rst_polygonize(tile, band, connectedness) t
+```
 :::
 
-**Signature:** `rst_polygonize(tile: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
+**Signature (heavyweight):** `rst_polygonize(tile: Column, band: Column, connectedness: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
 
 **SQL:**
 

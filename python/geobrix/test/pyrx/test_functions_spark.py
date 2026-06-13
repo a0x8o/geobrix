@@ -289,12 +289,12 @@ def test_rst_polygonize(spark):
         src = mf.read()
     df = spark.createDataFrame([(src,)], ["raster"])
     df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
-    # rst_polygonize returns ARRAY<struct(geom_wkb, value)>; explode and inspect.
-    rows = (
-        df.select(f.explode(prx.rst_polygonize("tile")).alias("p"))
-        .select(f.col("p.value").alias("v"), f.col("p.geom_wkb").alias("g"))
-        .collect()
-    )
+    # rst_polygonize is a streaming UDTF — invoke via SQL LATERAL.
+    df.createOrReplaceTempView("ras")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.geom_wkb AS g, t.value AS v FROM ras, LATERAL gbx_rst_polygonize(tile, 1, 4) t"
+    ).collect()
     vals = [r["v"] for r in rows]
     assert 5.0 in vals
     assert all(r["g"] is not None for r in rows)

@@ -51,10 +51,10 @@ def test_register_enables_tile_returning_sql_composition(spark):
 def test_register_enables_polygonize_sql(spark):
     prx.register(spark)
     _tile_view(spark, epsg=4326)
-    # polygonize SQL UDF requires explicit band and connectedness args (no SQL defaults).
-    n = spark.sql("SELECT size(gbx_rst_polygonize(tile, 1, 4)) AS n FROM t").first()[
-        "n"
-    ]
+    # polygonize is a LATERAL UDTF; count rows it yields.
+    n = spark.sql(
+        "SELECT COUNT(*) AS n FROM t, LATERAL gbx_rst_polygonize(tile, 1, 4) p"
+    ).first()["n"]
     assert n >= 1
 
 

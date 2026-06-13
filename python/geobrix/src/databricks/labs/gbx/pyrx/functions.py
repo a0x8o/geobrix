@@ -8,7 +8,7 @@ Swap-compatible with ``databricks.labs.gbx.rasterx.functions``:
 import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
-from pyspark.sql.functions import pandas_udf
+from pyspark.sql.functions import pandas_udf, udtf
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -69,6 +69,8 @@ def register(spark: SparkSession = None) -> None:
         spark = SparkSession.builder.getOrCreate()
     for name, udf_obj in SQL_REGISTRY.items():
         spark.udf.register(name, udf_obj)
+    # UDTFs must use spark.udtf.register (not spark.udf.register).
+    spark.udtf.register("gbx_rst_polygonize", _RstPolygonizeUDTF)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------
@@ -1587,36 +1589,50 @@ def rst_dtmfromgeoms(
     )
 
 
-_POLYGONIZE_SCHEMA = ArrayType(
-    StructType(
-        [
-            StructField("geom_wkb", BinaryType(), nullable=False),
-            StructField("value", DoubleType(), nullable=False),
-        ]
-    )
+_POLYGONIZE_ROW_SCHEMA = StructType(
+    [
+        StructField("geom_wkb", BinaryType(), nullable=False),
+        StructField("value", DoubleType(), nullable=False),
+    ]
 )
 
 
-@f.udf(_POLYGONIZE_SCHEMA)
-def _polygonize_udf(tile, band, connectedness):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
+@udtf(returnType=_POLYGONIZE_ROW_SCHEMA)
+class _RstPolygonizeUDTF:
+    """Streaming UDTF: yield one (geom_wkb, value) row per contiguous value region.
 
-    _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        pairs = features.polygonize(ds, int(band), int(connectedness))
-    return [{"geom_wkb": g, "value": v} for g, v in pairs]
+    Uses rasterio.features.shapes as a lazy generator — never buffers the full
+    polygon list (unbounded fan-out OOM guard).
+    """
+
+    def eval(self, tile, band, connectedness):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for g, v in features.polygonize(ds, int(band), int(connectedness)):
+                yield (g, v)
 
 
 def rst_polygonize(
     tile: ColLike, band: ColLike = 1, connectedness: ColLike = 4
-) -> Column:
+) -> None:
     """Extract vector polygons from a raster's contiguous equal-value regions.
 
-    Returns ARRAY<struct(geom_wkb BINARY, value DOUBLE)>; NoData excluded.
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.geom_wkb, t.value
+        FROM <df>, LATERAL gbx_rst_polygonize(tile, band, connectedness) t
+
+    Returns one row per contiguous equal-value region; NoData pixels excluded.
+    Each row: geom_wkb BINARY (WKB geometry), value DOUBLE (pixel value).
     """
-    return _polygonize_udf(_col(tile), _col(band), _col(connectedness))
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_polygonize(tile, band, connectedness) t"
+    )
 
 
 # --- Tier 1e2: tiling UDFs (separatebands, retile, tooverlappingtiles) ------
@@ -3120,7 +3136,8 @@ _sql_tile_ops = {
     "gbx_rst_rasterize": _rasterize_udf,
     "gbx_rst_gridfrompoints": _gridfrompoints_udf,
     "gbx_rst_dtmfromgeoms": _dtmfromgeoms_udf,
-    "gbx_rst_polygonize": _polygonize_udf,
+    # gbx_rst_polygonize is a UDTF registered separately in register() via
+    # spark.udtf.register — UDTFs cannot go through spark.udf.register.
     "gbx_rst_ndvi": _ndvi_udf,
     "gbx_rst_ndwi": _ndwi_udf,
     "gbx_rst_nbr": _nbr_udf,
