@@ -223,6 +223,8 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
 
     // Generators
     def rst_h3_tessellate(tileExpr: Column, resolution: Column): Column = ColumnAdapter(RST_H3_Tessellate.name, Seq(tileExpr, resolution))
+    def rst_h3_tessellate(tileExpr: Column, resolution: Column, mode: String): Column =
+        ColumnAdapter(RST_H3_Tessellate.name, Seq(tileExpr, resolution, lit(mode)))
     def rst_maketiles(tileExpr: Column, tileWidth: Column, tileHeight: Column): Column =
         ColumnAdapter(RST_MakeTiles.name, Seq(tileExpr, tileWidth, tileHeight))
     def rst_retile(tileExpr: Column, tileWidth: Column, tileHeight: Column): Column =
@@ -295,6 +297,8 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
     def rst_fromfile(path: String, driver: String): Column = rst_fromfile(lit(path), lit(driver))
     def rst_fromfile(path: Column, driver: String): Column = rst_fromfile(path, lit(driver))
     def rst_h3_tessellate(tileExpr: Column, resolution: Int): Column = rst_h3_tessellate(tileExpr, lit(resolution))
+    def rst_h3_tessellate(tileExpr: Column, resolution: Int, mode: String): Column =
+        rst_h3_tessellate(tileExpr, lit(resolution), mode)
     def rst_maketiles(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =
         rst_maketiles(tileExpr, lit(tileWidth), lit(tileHeight))
     def rst_retile(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =

@@ -15,12 +15,13 @@ import org.scalatest.matchers.should.Matchers._
 class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
 
     var ds: Dataset = _
+    private var tifPath: String = _
 
     override def beforeAll(): Unit = {
         GDALManager.loadSharedObjects(Iterable.empty[String])
         GDALManager.configureGDAL("/tmp", "/tmp", logCPL = true, CPL_DEBUG = "OFF")
         gdal.AllRegister()
-        val tifPath = this.getClass
+        tifPath = this.getClass
             .getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
             .toString
             .replace("file:/", "/")
@@ -31,9 +32,13 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         if (ds != null) ds.delete()
     }
 
-    /** Collects the emitted cell IDs from the covering tessellation, releasing each chip dataset. */
-    private def tessellateCells(resolution: Int): Seq[Long] = {
-        val iter = RasterTessellate.tessellateH3Iter(ds, Map.empty, resolution)
+    /** Opens a fresh handle to the test raster. tessellateH3Iter.close() unlinks its input, so each
+      * tessellation needs its own dataset (the suite-level `ds` is kept alive only for bbox checks). */
+    private def freshDs(): Dataset = gdal.Open(tifPath)
+
+    /** Collects the emitted cell IDs from the tessellation (fresh ds per call), releasing each chip dataset. */
+    private def tessellateCells(resolution: Int, mode: String = "covering"): Seq[Long] = {
+        val iter = RasterTessellate.tessellateH3Iter(freshDs(), Map.empty, resolution, mode)
         try {
             iter.map { case (cell, resDs, _) =>
                 RasterDriver.releaseDataset(resDs)
@@ -43,6 +48,31 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
             case ac: AutoCloseable => ac.close()
             case _                 =>
         }
+    }
+
+    /** Counts valid (non-nodata) pixels across all bands of a chip dataset. */
+    private def validPixelCount(chip: Dataset): Long = {
+        val xSize = chip.GetRasterXSize
+        val ySize = chip.GetRasterYSize
+        val nPix = xSize * ySize
+        var total = 0L
+        var b = 1
+        while (b <= chip.getRasterCount) {
+            val band = chip.GetRasterBand(b)
+            val maskBuf = new Array[Byte](nPix)
+            band.GetMaskBand().ReadRaster(0, 0, xSize, ySize, maskBuf)
+            var i = 0
+            while (i < nPix) { if (maskBuf(i) != 0) total += 1; i += 1 }
+            b += 1
+        }
+        total
+    }
+
+    /** Counts valid (non-nodata) pixels across all bands of a fresh source dataset. */
+    private def sourceValidPixelCount(): Long = {
+        val src = freshDs()
+        try validPixelCount(src)
+        finally src.delete()
     }
 
     test("tessellateH3Iter covering emits only cells whose hexagon overlaps the raster bbox") {
@@ -72,6 +102,45 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         ) {
             disjoint shouldBe empty
         }
+    }
+
+    test("default mode equals explicit covering (same non-empty cell set); centroid emits cells") {
+        val resolution = 3
+        val defaultCells = tessellateCells(resolution).toSet
+        val coveringCells = tessellateCells(resolution, "covering").toSet
+        val centroidCells = tessellateCells(resolution, "centroid").toSet
+
+        defaultCells should not be empty
+        defaultCells shouldBe coveringCells
+        centroidCells should not be empty
+    }
+
+    test("centroid mode single-assigns every valid pixel to exactly one cell (partition)") {
+        val resolution = 3
+        val totalValid = sourceValidPixelCount()
+        totalValid should be > 0L
+
+        val iter = RasterTessellate.tessellateH3Iter(freshDs(), Map.empty, resolution, "centroid")
+        var emittedValid = 0L
+        val emittedCells = scala.collection.mutable.ListBuffer.empty[Long]
+        try {
+            iter.foreach { case (cell, resDs, _) =>
+                emittedCells += cell
+                emittedValid += validPixelCount(resDs)
+                RasterDriver.releaseDataset(resDs)
+            }
+        } finally iter match {
+            case ac: AutoCloseable => ac.close()
+            case _                 =>
+        }
+
+        // Each valid source pixel lands in exactly one cell's chip: the chips partition the
+        // valid pixels, so the summed per-chip valid count equals the source valid count.
+        withClue(s"emitted=$emittedValid expected=$totalValid across ${emittedCells.length} cells: ") {
+            emittedValid shouldBe totalValid
+        }
+        // No cell emitted twice.
+        emittedCells.length shouldBe emittedCells.distinct.length
     }
 
 }
