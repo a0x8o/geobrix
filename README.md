@@ -7,9 +7,21 @@
 [![python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE)
 
-**GeoBrix** is a high-performance spatial library for Databricks that fills the gaps around the platform's **native** spatial — raster, discrete global grids, and vector format I/O — and is built to drive you *deeper* into Databricks-native [`GEOMETRY`/`GEOGRAPHY` and ST/H3 functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial), not replace them. It is the modern successor to [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (now in maintenance).
+**GeoBrix** is a high-performance spatial library for Databricks that delivers the next generation of *product-augmenting* capabilities — raster, discrete global grids, and vector format I/O — and is built to drive you *deeper* into Databricks-native [`GEOMETRY`/`GEOGRAPHY` and ST/H3 functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial), not replace them. It is the modern successor to [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (now in maintenance).
 
 > **Full docs:** **https://databrickslabs.github.io/geobrix/** — this README is the 2-minute tour.
+
+<img src="resources/images/geobrix_vision.png" width="70%" />
+
+## Packages
+
+<img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
+
+- **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster).
+- **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex).
+- **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST.
+
+All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names.
 
 ## Highlights
 
@@ -86,22 +98,6 @@ Lightweight formats use the `*_gbx` suffix; heavyweight use `*_ogr` (vector) / `
 ¹ `file_gdb_gbx` write is a **hybrid**: it encodes the `.gdb` via the native GDAL (`osgeo`) from the heavyweight GDAL init script, because pyogrio's bundled GDAL ships a read-only OpenFileGDB driver. On compute with those natives it writes natively; otherwise it raises a clear error (use `gpkg_gbx` / `geojson_gbx`). FileGDB *reading* is lightweight-only.
 
 Light vector readers/writers exchange geometry as **WKB/WKT** with companion `*_srid` columns — convert to/from Databricks `GEOMETRY` with `st_geomfromwkb` / `st_aswkb` (see [Databricks Spatial](https://databrickslabs.github.io/geobrix/docs/databricks-spatial)).
-
-## Packages
-
-<img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
-
-- **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster).
-- **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex).
-- **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST.
-
-All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names — see [docs](https://databrickslabs.github.io/geobrix/).
-
-<img src="resources/images/geobrix_vision.png" width="70%" />
-
-## Background
-
-Now that the platform's built-in [Spatial SQL functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial) (~100 ST + 35+ H3) reached public preview in DBR 17.1 (and now [GA](https://www.databricks.com/blog/geospatial-unbounded-spatial-sql-ga-aibi-maps-delta-sharing-and-iceberg-v3)), GeoBrix delivers the next generation of *product-augmenting* capabilities — modernized from the popular [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) project to work with the [Data Intelligence Platform](https://www.databricks.com/product/data-intelligence-platform). Mosaic is in maintenance (targets DBR 13.3, retired at [EoS Aug 2026](https://docs.databricks.com/aws/en/release-notes/runtime/#supported-databricks-runtime-lts-releases)); GeoBrix is the path forward on modern runtimes and native spatial. See [Background](https://databrickslabs.github.io/geobrix/) for the full story.
 
 ## Known limitations
 
