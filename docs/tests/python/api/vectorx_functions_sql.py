@@ -12,6 +12,15 @@ SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;
 """
 
 
+st_legacyaswkb_sql_example_output = """
++--------+
+|wkb     |
++--------+
+|[BINARY]|
++--------+
+"""
+
+
 def st_asmvt_sql_example():
     """Aggregate features into a Mapbox Vector Tile (MVT) protobuf blob (SQL).
 
