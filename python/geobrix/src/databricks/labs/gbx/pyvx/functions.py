@@ -8,7 +8,7 @@ from typing import Union
 import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
-from pyspark.sql.functions import pandas_udf
+from pyspark.sql.functions import pandas_udf, udtf
 from pyspark.sql.types import BinaryType
 
 from . import _env, _mvt
@@ -41,13 +41,59 @@ def _asmvt_udf(geom: pd.Series, attrs: pd.Series, layer: pd.Series) -> bytes:
     return _mvt.encode_layer(feats, layer_name=layer_name)
 
 
+# --- st_asmvt_pyramid: Python UDTF ----------------------------------------------------------
+# Returns one (z, x, y, mvt_bytes) row per tile the input feature intersects.
+# Defined before use so the helper is available when the @udtf decorator runs at import.
+
+
+def _mvt_tile_return():
+    from ._serde import TILE_SCHEMA
+
+    return TILE_SCHEMA
+
+
+@udtf(returnType=_mvt_tile_return())
+class _AsMvtPyramidUDTF:
+    def eval(self, geom_wkb, attrs, min_z: int, max_z: int, layer_name=None, extent=None):
+        ln = "layer" if layer_name is None else str(layer_name)
+        ex = _mvt.DEFAULT_EXTENT if extent is None else int(extent)
+        # Yield incrementally — never build the full list (fan-out OOM guard).
+        for z, x, y, blob in _mvt.pyramid_tiles(
+            geom_wkb, attrs, int(min_z), int(max_z), ln, ex
+        ):
+            yield (z, x, y, blob)
+
+
 def register(spark: SparkSession = None) -> None:
     """Register the pyvx MVT SQL functions (Serverless-safe: udf/udtf only)."""
     _env.assert_mvt_available()
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
     spark.udf.register("gbx_st_asmvt", _asmvt_udf)
-    # st_asmvt_pyramid registration is added in Task 5.
+    spark.udtf.register("gbx_st_asmvt_pyramid", _AsMvtPyramidUDTF)
+
+
+def st_asmvt_pyramid(
+    geom_wkb: ColLike,
+    attrs: ColLike,
+    min_z: ColLike,
+    max_z: ColLike,
+    layer_name: Union[ColLike, None] = None,
+    extent: Union[ColLike, None] = None,
+):
+    """Generator: one (z,x,y,mvt_bytes) row per intersecting tile across [min_z,max_z].
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function:
+
+        SELECT t.* FROM features, LATERAL gbx_st_asmvt_pyramid(geom, attrs, 0, 12, 'layer', 4096) t
+
+    The output schema (z,x,y,mvt_bytes) matches the heavyweight generator and feeds
+    gbx_pmtiles_agg downstream.
+    """
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_st_asmvt_pyramid(geom, attrs, min_z, max_z, layer, extent) t"
+    )
 
 
 def st_asmvt(geom_wkb: ColLike, attrs: ColLike, layer_name: ColLike) -> Column:
