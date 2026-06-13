@@ -527,9 +527,32 @@ This repartitioning is **benchmark-harness tuning** — it lives in the bench co
 
 </TabItem>
 
-<TabItem value="vector" label="Vector (soon)">
+<TabItem value="vector" label="Vector">
 
-VectorX function benchmarks (e.g. `gbx_st_asmvt`, TIN / elevation surface modeling) are coming soon.
+### MVT encoding (`st_asmvt`)
+
+The `st_asmvt` aggregator encodes a group of tile-local features into one Mapbox Vector Tile (MVT)
+protobuf blob. The benchmark groups **500 synthetic features into 10 tiles** and times the
+`groupBy("z","x","y").agg(st_asmvt(geom, attrs, "layer"))` whole-job wall-clock on each tier, then
+**decodes both tiers' tiles and asserts feature-level parity** (geometry + native-typed attributes
+match). Run it with `gbx:bench:cluster --mvt-only`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 20 workers · 500 features → 10 tiles · whole-job
+> wall-clock median, one measured iteration.
+
+| Tier | Function | Median (500 feat → 10 tiles) | Ratio |
+|---|---|---|---|
+| lightweight | `pyvx.st_asmvt` | 0.589 s | **~1.06×** (≈ parity) |
+| heavyweight | `vectorx.st_asmvt` | 0.555 s | — |
+
+The pure-Python lightweight aggregator (a grouped-aggregate pandas UDF over `mapbox-vector-tile`)
+runs **at parity with the heavyweight JVM/OGR aggregator** (~6% apart). Both encode attributes with
+**native protobuf value types** and take features in tile-local `[0, extent]` coordinates, so the
+decoded tiles are **feature-equivalent** — a hard parity gate; the benchmark fails if the tiers
+diverge. Tiles compose with `gbx_pmtiles_agg` for end-to-end publishing.
+
+> TIN / elevation surface-modeling benchmarks (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`)
+> come in a later phase.
 
 </TabItem>
 
