@@ -93,31 +93,6 @@ This is a named OGR Reader that uses the [OpenFileGDB](https://gdal.org/en/stabl
   outputConstant="SQL_FILEGDB_output"
 />
 
-## Options
-
-### `layerName`
-
-**Default:** `""` (first feature class)
-
-Specify which feature class (layer) to read from the geodatabase:
-
-<CodeFromTest
-  code={filegdbExamples}
-  language="python"
-  functionName="READ_WITH_LAYER"
-  source="docs/tests/python/readers/filegdb_examples.py"
-  testFile="docs/tests/python/readers/test_filegdb_examples.py"
-  outputConstant="READ_WITH_LAYER_output"
-/>
-
-### Other Options
-
-All [OGR reader options](./vector#options) are available, e.g.:
-
-- `layerN` - Layer index to read (0-based)
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")
-
 ## Output Schema
 
 File Geodatabases typically use `SHAPE` as the geometry column name:
@@ -167,3 +142,39 @@ The OpenFileGDB driver provides read-only access. You cannot create, modify, or 
 
 </TabItem>
 </Tabs>
+
+## Options
+
+File Geodatabases contain multiple feature classes (layers); both tiers expose a layer selector. The OpenFileGDB driver is preset on both named readers.
+
+### Lightweight (`file_gdb_gbx`)
+
+- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
+- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
+- `layerNumber` - Feature-class index to read (default: `"0"`, first feature class).
+- `layerName` - Feature-class name to read; takes precedence over `layerNumber` when set.
+
+### Heavyweight (`file_gdb_ogr`)
+
+#### `layerName`
+
+**Default:** `""` (first feature class)
+
+Specify which feature class (layer) to read from the geodatabase:
+
+<CodeFromTest
+  code={filegdbExamples}
+  language="python"
+  functionName="READ_WITH_LAYER"
+  source="docs/tests/python/readers/filegdb_examples.py"
+  testFile="docs/tests/python/readers/test_filegdb_examples.py"
+  outputConstant="READ_WITH_LAYER_output"
+/>
+
+#### Other Options
+
+All [OGR reader options](./vector#options) are available, e.g.:
+
+- `layerN` - Layer index to read (0-based)
+- `chunkSize` - Records per chunk (default: "10000")
+- `asWKB` - Output as WKB vs WKT (default: "true")

@@ -114,32 +114,6 @@ Experience varies across GDAL formats. Not all formats are available by defaultâ
   outputConstant="SQL_OGR_output"
 />
 
-## Options
-
-### `driverName`
-
-**Default:** Auto-detected from file extension if not specified
-
-Explicitly specify the OGR driver to use (regardless of extension).
-
-<CodeFromTest
-  code={ogrExamples}
-  language="python"
-  functionName="READ_WITH_DRIVER"
-  source="docs/tests/python/readers/ogr_examples.py"
-  testFile="docs/tests/python/readers/test_ogr_examples.py"
-  outputConstant="READ_WITH_DRIVER_output"
-/>
-
-### Other Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading |
-| `layerN` | `"0"` | Layer index for multi-layer formats (0-based) |
-| `layerName` | `""` | Layer name for multi-layer formats (overrides `layerN`) |
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text) |
-
 ## Output Schema
 
 ```
@@ -205,3 +179,41 @@ For common formats, GeoBrix provides named readers for convenience (sample-data 
 
 </TabItem>
 </Tabs>
+
+## Options
+
+### Lightweight (`vector_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driverName` | _required_ | OGR driver name (e.g. `GPKG`, `ESRI Shapefile`). Required on the generic `vector_gbx`; preset on the named `*_gbx` readers. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index for multi-layer formats (0-based). |
+| `layerName` | `""` | Layer name for multi-layer formats (overrides `layerNumber`). |
+
+### Heavyweight (`ogr`)
+
+#### `driverName`
+
+**Default:** Auto-detected from file extension if not specified
+
+Explicitly specify the OGR driver to use (regardless of extension).
+
+<CodeFromTest
+  code={ogrExamples}
+  language="python"
+  functionName="READ_WITH_DRIVER"
+  source="docs/tests/python/readers/ogr_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_examples.py"
+  outputConstant="READ_WITH_DRIVER_output"
+/>
+
+#### Other Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading |
+| `layerN` | `"0"` | Layer index for multi-layer formats (0-based) |
+| `layerName` | `""` | Layer name for multi-layer formats (overrides `layerN`) |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text) |

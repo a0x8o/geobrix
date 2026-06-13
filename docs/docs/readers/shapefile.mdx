@@ -95,11 +95,32 @@ Read ESRI Shapefile format using the `shapefile` reader.
   outputConstant="SQL_SHAPEFILE_output"
 />
 
+## Next Steps
+
+- [GeoJSON Reader](./geojson)
+- [GeoPackage Reader](./geopackage)
+- [FileGDB Reader](./filegdb)
+- [API Reference](../api/overview)
+
+</TabItem>
+</Tabs>
+
 ## Options
+
+### Lightweight (`shapefile_gbx`)
+
+The ESRI Shapefile driver is preset. Available options:
+
+- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
+- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
+- `layerNumber` - Layer index to read (default: `"0"`).
+- `layerName` - Layer name to read; takes precedence over `layerNumber` when set.
+
+### Heavyweight (`shapefile_ogr`)
 
 For the full list of options (chunkSize, driverName, layerN, asWKB, etc.), see [OGR reader options](./vector#options).
 
-### Chunk Size
+#### Chunk Size
 
 Adjust records per chunk for performance:
 
@@ -111,13 +132,3 @@ Adjust records per chunk for performance:
   testFile="docs/tests/python/readers/test_shapefile_examples.py"
   outputConstant="READ_WITH_OPTIONS_output"
 />
-
-## Next Steps
-
-- [GeoJSON Reader](./geojson)
-- [GeoPackage Reader](./geopackage)
-- [FileGDB Reader](./filegdb)
-- [API Reference](../api/overview)
-
-</TabItem>
-</Tabs>

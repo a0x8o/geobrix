@@ -64,17 +64,7 @@ the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
   testFile="docs/tests/python/readers/test_raster_gbx_read_examples.py"
   outputConstant="READ_RASTER_GBX_output" />
 
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
-| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
-
-<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
-  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
-
-`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./geotiff) for the named-reader page.
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./geotiff) for the named-reader page. See the page-level [Options](#options) section below for the available reader options.
 
 See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff and the
 [Benchmarking](../api/benchmarking) page for light-vs-heavy timings.
@@ -159,34 +149,6 @@ Experience varies across GDAL formats. Not all formats are available by defaultâ
   testFile="docs/tests/python/readers/test_gdal_examples.py"
   outputConstant="SQL_GDAL_output"
 />
-
-## Options
-
-### `driver`
-
-**Default:** Auto-detected from file extension if not specified
-
-Explicitly specify the GDAL driver to use (regardless of extension).
-
-<CodeFromTest
-  code={gdalExamples}
-  language="python"
-  functionName="READ_WITH_DRIVER"
-  source="docs/tests/python/readers/gdal_examples.py"
-  testFile="docs/tests/python/readers/test_gdal_examples.py"
-  outputConstant="READ_WITH_DRIVER_output"
-/>
-
-### Other Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing) |
-| `filterRegex` | `".*"` | Filter files by regex when reading from directory |
-| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g., HDF, NetCDF) |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
-| `retile` | `"false"` | Retile rasters for optimal processing |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled) |
 
 ## Output Schema
 
@@ -305,3 +267,45 @@ The `hrrr-weather` dataset is included in the **complete** sample-data bundle, n
 
 </TabItem>
 </Tabs>
+
+## Options
+
+### Lightweight (`raster_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset.
+
+### Heavyweight (`gdal`)
+
+#### `driver`
+
+**Default:** Auto-detected from file extension if not specified
+
+Explicitly specify the GDAL driver to use (regardless of extension).
+
+<CodeFromTest
+  code={gdalExamples}
+  language="python"
+  functionName="READ_WITH_DRIVER"
+  source="docs/tests/python/readers/gdal_examples.py"
+  testFile="docs/tests/python/readers/test_gdal_examples.py"
+  outputConstant="READ_WITH_DRIVER_output"
+/>
+
+#### Other Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing) |
+| `filterRegex` | `".*"` | Filter files by regex when reading from directory |
+| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g., HDF, NetCDF) |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
+| `retile` | `"false"` | Retile rasters for optimal processing |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled) |

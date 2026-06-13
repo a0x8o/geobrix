@@ -184,13 +184,6 @@ OUT_DIR = "/Volumes/main/default/test-data/geobrix-examples/out/writer-docs-exam
 dbutils.fs.mkdirs(OUT_DIR)   # safe on Volumes (parent dirs are ok)
 ```
 
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ext` | `"tif"` | Filename suffix appended to each written file. Does **not** change the on-disk format; that is driven by `tile.metadata["driver"]`. |
-| `nameCol` | _unset_ | Name of an existing string column whose value becomes the output filename (without extension). Must be one of the two table columns — in practice, overwrite `source` (see below). When unset, names are `MurmurHash3(tile)_pid_tid`. |
-
 ## Output encoding (from tile metadata)
 
 The output **driver, compression, and block layout are read from
@@ -272,3 +265,20 @@ Written rasters are standard GDAL-compatible files:
 
 </TabItem>
 </Tabs>
+
+## Options
+
+Both tiers require the exact `(source, tile)` schema and take the same two writer options. The on-disk driver, compression, and block layout come from `tile.metadata`, not from writer options (see [Output encoding](#output-encoding-from-tile-metadata)).
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ext` | `"tif"` | Filename suffix appended to each written file. Does **not** change the on-disk format; that is driven by `tile.metadata["driver"]`. |
+| `nameCol` | _unset_ | Name of an existing string column whose value becomes the output filename (without extension). Must be one of the two table columns — in practice, overwrite `source` (see [Filename Control](#filename-control)). When unset, an opaque unique name is used. |
+
+### Lightweight (`raster_gbx`)
+
+Supports `.mode("overwrite")`. Passes whole-file GeoTIFF tiles through verbatim; re-encodes non-GTiff tiles (e.g. `COG`) via `rasterio`.
+
+### Heavyweight (`gdal`)
+
+Append-only — `.mode("overwrite")` is not supported. Re-encodes every tile through native GDAL (decoded pixels are identical to the lightweight output).

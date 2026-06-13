@@ -97,28 +97,6 @@ This is a named GDAL Reader that presets the `driver` option to "GTiff". GeoTIFF
   outputConstant="SQL_GTIFF_output"
 />
 
-## Options
-
-The GeoTIFF reader inherits all [GDAL reader options](./raster#options). Common options include:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `readSubdatasets` | `"false"` | Read subdatasets if present |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
-| `retile` | `"false"` | Retile rasters for optimal processing |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling) |
-
-### Example with Options
-
-<CodeFromTest
-  code={gtiffExamples}
-  language="python"
-  functionName="READ_WITH_OPTIONS"
-  source="docs/tests/python/readers/gtiff_examples.py"
-  testFile="docs/tests/python/readers/test_gtiff_examples.py"
-  outputConstant="READ_WITH_OPTIONS_output"
-/>
-
 ## Output Schema
 
 ```
@@ -216,3 +194,38 @@ GeoBrix reads compressed GeoTIFFs transparently. The compression format is autom
 
 </TabItem>
 </Tabs>
+
+## Options
+
+Both named readers preset the GeoTIFF driver and inherit their respective generic raster reader's options.
+
+### Lightweight (`gtiff_gbx`)
+
+Inherits the [lightweight `raster_gbx` options](./raster#options):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+### Heavyweight (`gtiff_gdal`)
+
+Inherits all [heavyweight `gdal` reader options](./raster#options). Common options include:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `readSubdatasets` | `"false"` | Read subdatasets if present |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
+| `retile` | `"false"` | Retile rasters for optimal processing |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling) |
+
+#### Example with Options
+
+<CodeFromTest
+  code={gtiffExamples}
+  language="python"
+  functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/gtiff_examples.py"
+  testFile="docs/tests/python/readers/test_gtiff_examples.py"
+  outputConstant="READ_WITH_OPTIONS_output"
+/>

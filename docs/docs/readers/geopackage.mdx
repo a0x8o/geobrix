@@ -113,11 +113,34 @@ root
  |-- <attribute_columns>: various types
 ```
 
+## Next Steps
+
+- [View API Reference](../api/overview)
+- [Check Examples](../examples/overview)
+- [Other Readers](./overview)
+- [Learn about VectorX](../api/vectorx-functions)
+
+</TabItem>
+</Tabs>
+
 ## Options
 
-### Multi-Layer Support
+GeoPackage files can contain multiple layers; both tiers expose a layer selector.
 
-GeoPackage files can contain multiple layers. Use the `layerName` option to specify which layer to read:
+### Lightweight (`gpkg_gbx`)
+
+The GPKG driver is preset. Available options:
+
+- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
+- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
+- `layerNumber` - Layer index to read (default: `"0"`).
+- `layerName` - Layer name to read; takes precedence over `layerNumber` when set.
+
+### Heavyweight (`gpkg_ogr`)
+
+#### Multi-Layer Support
+
+Use the `layerName` option to specify which layer to read:
 
 <CodeFromTest
   code={geopackageExamples}
@@ -128,7 +151,7 @@ GeoPackage files can contain multiple layers. Use the `layerName` option to spec
   outputConstant="READ_SPECIFIC_LAYER_output"
 />
 
-### Other Options
+#### Other Options
 
 All [OGR reader options](./vector#options) are available, e.g.:
 
@@ -136,13 +159,3 @@ All [OGR reader options](./vector#options) are available, e.g.:
 - `asWKB` - Output as WKB vs WKT (default: "true")
 - `layerName` - Specific layer to read
 - `layerN` - Layer index to read (0-based)
-
-## Next Steps
-
-- [View API Reference](../api/overview)
-- [Check Examples](../examples/overview)
-- [Other Readers](./overview)
-- [Learn about VectorX](../api/vectorx-functions)
-
-</TabItem>
-</Tabs>
