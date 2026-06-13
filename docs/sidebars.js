@@ -86,6 +86,7 @@ const sidebars = {
             'api/raster-functions-heavyweight',
             'api/gridx-functions',
             'api/vectorx-functions',
+            'api/vectorx-functions-lightweight',
             'api/pmtiles-functions',
           ],
         },
