@@ -525,6 +525,29 @@ The spark-path numbers above are wall-clock for a whole distributed job, so they
 This repartitioning is **benchmark-harness tuning** — it lives in the bench code that runs from a repo checkout, **not** in the GeoBrix product. The lightweight **pyrx** tier never mutates Spark configuration: it only registers UDFs and builds Column expressions, so it is safe on **Serverless / Spark Connect**, where runtime `spark.conf.set(...)` and JVM-bridge access are not permitted. On Serverless you therefore can't hand-tune partitions; you rely on the platform's managed AQE and default partitioning. Treat the tuned figures above as the controlled, like-for-like comparison number — not as what a Serverless user sets by hand.
 :::
 
+### Fan-out generators (streaming UDTFs)
+
+These functions are streaming Python UDTFs on the lightweight tier (one input tile → many output rows via `LATERAL`); the benchmark times the lightweight UDTF against the equivalent heavyweight Scala generator at matched fan-out and asserts that both tiers produce the **same flat row count** — decoded-feature parity as a hard gate.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 20 workers · synthetic fan-out corpus · whole-job
+> wall-clock, 1 measured iteration. **Parity gate:** all functions listed passed — light and heavy
+> produced the same flat row count. Run with `gbx:bench:cluster --fanout-only`.
+
+| Function | rows (fan-out) | light (s) | heavy (s) | light edge |
+|---|---|---|---|---|
+| `rst_polygonize` | 256 | 0.262 | 0.196 | heavy faster |
+| `rst_h3_rastertogridcount` | 58,123 | 0.46 | 0.35 | heavy faster |
+| `rst_xyzpyramid` | 78 | 0.774 | 0.674 | heavy faster |
+| `rst_maketiles` | 16 | 0.341 | 0.254 | heavy faster |
+| `rst_retile` | 256 | 0.528 | **0.549** | **light faster** |
+| `rst_separatebands` | 64 | **0.292** | 0.372 | **light faster** |
+| `rst_tooverlappingtiles` | 324 | 0.633 | **0.608** | heavy ~parity |
+
+Across the converted fan-out functions, light runs **at parity or faster** than the heavyweight JVM generators for `rst_retile` and `rst_separatebands` — with decoded-row parity as a hard gate for every result in the table. The streaming-UDTF model amortizes the JVM↔Python boundary across the full fan-out (the boundary is paid once per input tile, not once per output row), which is why the at-scale cost difference is smaller than for scalar transforms. See the [Performance page](./execution-tiers) for the streaming-UDTF architecture.
+
+> **`rst_h3_tessellate` benchmarks are pending** a covering/centroid `mode` redesign — light and heavy
+> currently diverge on border-cell assignment (~2.4%) and numbers will be added once the redesign lands.
+
 </TabItem>
 
 <TabItem value="vector" label="Vector">
