@@ -132,6 +132,22 @@ class ST_LegacyAsWKBTest extends AnyFunSuite {
         wkb.length should be >= 5
     }
 
+    test("ST_LegacyAsWKB eval should preserve Z for POINT Z") {
+        // POINT Z (10, 20, 30) — z must survive the WKB encoding
+        val coord = InternalCoord(Seq(10.0, 20.0, 30.0))
+        val row = InternalRow(
+          1, // POINT
+          0,
+          new GenericArrayData(Array(new GenericArrayData(Array(coord.serialize)))),
+          new GenericArrayData(Array.empty)
+        )
+
+        val wkb = ST_LegacyAsWKB.eval(row)
+        val decoded = new org.locationtech.jts.io.WKBReader().read(wkb)
+        decoded.getCoordinate.getZ should not be Double.NaN
+        decoded.getCoordinate.getZ shouldBe 30.0
+    }
+
     test("ST_LegacyAsWKB eval should round-trip through JTS") {
         // Create a simple point
         val point = gf.createPoint(new Coordinate(5.0, 10.0))
