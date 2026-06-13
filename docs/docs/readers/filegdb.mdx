@@ -23,6 +23,30 @@ available it uses native GDAL on the JVM and tends to pull ahead on large worklo
 the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
 :::
 
+## Options
+
+File Geodatabases contain multiple feature classes (layers); both tiers (lightweight `file_gdb_gbx`, heavyweight `file_gdb_ogr`) preset the OpenFileGDB driver and expose a feature-class selector. They take the same options.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `chunkSize` | `"10000"` | Records per read batch — Arrow in-memory batching on the single per-file read, not partition splitting. |
+| `layerNumber` / `layerN` | `"0"` | Feature-class index to read (0-based, first feature class) — `layerNumber` (lightweight) / `layerN` (heavyweight). |
+| `layerName` | `""` (first feature class) | Feature-class (layer) name to read; takes precedence over the index when set. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — reading a specific feature class by name:
+
+<CodeFromTest
+  code={filegdbExamples}
+  language="python"
+  functionName="READ_WITH_LAYER"
+  source="docs/tests/python/readers/filegdb_examples.py"
+  testFile="docs/tests/python/readers/test_filegdb_examples.py"
+  outputConstant="READ_WITH_LAYER_output"
+/>
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · file_gdb_gbx">
 
@@ -133,51 +157,12 @@ The OpenFileGDB driver provides read-only access. You cannot create, modify, or 
 - Topology and relationship rules are read-only
 - Some advanced ArcGIS features may not be fully supported
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [View API Reference](../api/overview)
 - [Check Examples](../examples/overview)
 - [Other Readers](./overview)
 - [Learn about VectorX](../api/vectorx-functions)
-
-</TabItem>
-</Tabs>
-
-## Options
-
-File Geodatabases contain multiple feature classes (layers); both tiers expose a layer selector. The OpenFileGDB driver is preset on both named readers.
-
-### Lightweight (`file_gdb_gbx`)
-
-The OpenFileGDB driver is preset.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
-| `layerNumber` | `"0"` | Feature-class index to read (0-based, first feature class). |
-| `layerName` | `""` | Feature-class name to read; takes precedence over `layerNumber` when set. |
-
-### Heavyweight (`file_gdb_ogr`)
-
-The OpenFileGDB driver is preset.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `layerName` | `""` (first feature class) | Feature-class (layer) name to read; takes precedence over `layerN`. |
-| `layerN` | `"0"` | Feature-class index to read (0-based). |
-| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-
-All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
-
-Example — reading a specific feature class by name:
-
-<CodeFromTest
-  code={filegdbExamples}
-  language="python"
-  functionName="READ_WITH_LAYER"
-  source="docs/tests/python/readers/filegdb_examples.py"
-  testFile="docs/tests/python/readers/test_filegdb_examples.py"
-  outputConstant="READ_WITH_LAYER_output"
-/>

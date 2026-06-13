@@ -45,6 +45,15 @@ GDAL on the JVM. So your compute usually decides the tier — then data scale. S
 [Benchmarking](../api/benchmarking) page for timings and methodology.
 :::
 
+## Options
+
+| Option | Default | Behavior |
+|---|---|---|
+| `driverName` | `GeoJSON` (preset) | OGR driver. Preset by this named writer; override only if needed. |
+| `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
+| `geometryType` | inferred from the data | Override the OGR geometry type. |
+| `layerName` | driver default | Output layer name where supported. |
+
 ## Schema
 
 **Input schema — a geometry column plus its SRID companion:**
@@ -100,15 +109,6 @@ written concurrently** by its executor to a scratch fragment, then the driver **
 fragments into one output file**. The merge is sequential and rename-free, so it is safe on
 FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
 write parallelism.
-
-## Options
-
-| Option | Default | Behavior |
-|---|---|---|
-| `driverName` | `GeoJSON` (preset) | OGR driver. Preset by this named writer; override only if needed. |
-| `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
-| `geometryType` | inferred from the data | Override the OGR geometry type. |
-| `layerName` | driver default | Output layer name where supported. |
 
 ## Example
 

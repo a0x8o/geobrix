@@ -23,6 +23,30 @@ available it uses native GDAL on the JVM and tends to pull ahead on large worklo
 the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
 :::
 
+## Options
+
+Both tiers (lightweight `shapefile_gbx`, heavyweight `shapefile_ogr`) preset the ESRI Shapefile driver and take the same options.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `chunkSize` | `"10000"` | Records per read batch — Arrow in-memory batching on the single per-file read, not partition splitting. |
+| `layerNumber` / `layerN` | `"0"` | Layer index for multi-layer formats (0-based) — `layerNumber` (lightweight) / `layerN` (heavyweight). |
+| `layerName` | `""` | Layer name (overrides the layer index when set). |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — tuning the chunk size for performance:
+
+<CodeFromTest
+  code={shapefileExamples}
+  language="python"
+  functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/shapefile_examples.py"
+  testFile="docs/tests/python/readers/test_shapefile_examples.py"
+  outputConstant="READ_WITH_OPTIONS_output"
+/>
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · shapefile_gbx">
 
@@ -95,49 +119,12 @@ Read ESRI Shapefile format using the `shapefile` reader.
   outputConstant="SQL_SHAPEFILE_output"
 />
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [GeoJSON Reader](./geojson)
 - [GeoPackage Reader](./geopackage)
 - [FileGDB Reader](./filegdb)
 - [API Reference](../api/overview)
-
-</TabItem>
-</Tabs>
-
-## Options
-
-### Lightweight (`shapefile_gbx`)
-
-The ESRI Shapefile driver is preset. Available options:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
-| `layerNumber` | `"0"` | Layer index to read (0-based). |
-| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
-
-### Heavyweight (`shapefile_ogr`)
-
-The ESRI Shapefile driver is preset.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
-| `layerN` | `"0"` | Layer index for multi-layer formats (0-based). |
-| `layerName` | `""` | Layer name (overrides `layerN`). |
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-
-All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
-
-Example — tuning the chunk size for performance:
-
-<CodeFromTest
-  code={shapefileExamples}
-  language="python"
-  functionName="READ_WITH_OPTIONS"
-  source="docs/tests/python/readers/shapefile_examples.py"
-  testFile="docs/tests/python/readers/test_shapefile_examples.py"
-  outputConstant="READ_WITH_OPTIONS_output"
-/>

@@ -31,6 +31,43 @@ available it uses native GDAL on the JVM and tends to pull ahead on large worklo
 the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
 :::
 
+## Options
+
+### Lightweight (`raster_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset.
+
+### Heavyweight (`gdal`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driver` | auto-detected from extension | Explicitly specify the GDAL driver to use (regardless of extension). |
+| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing). |
+| `filterRegex` | `".*"` | Filter files by regex when reading from a directory. |
+| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g. HDF, NetCDF). |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles. |
+| `retile` | `"false"` | Retile rasters for optimal processing. |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled). |
+
+Example — forcing the GDAL driver explicitly:
+
+<CodeFromTest
+  code={gdalExamples}
+  language="python"
+  functionName="READ_WITH_DRIVER"
+  source="docs/tests/python/readers/gdal_examples.py"
+  testFile="docs/tests/python/readers/test_gdal_examples.py"
+  outputConstant="READ_WITH_DRIVER_output"
+/>
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · raster_gbx">
 
@@ -178,6 +215,9 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 - **Named readers** (gtiff_gdal): Better for common formats, cleaner syntax
 - **GDAL**: Useful for less common formats or when you need driver-specific options
 
+</TabItem>
+</Tabs>
+
 ## Common Raster Formats Explained
 
 ### GeoTIFF - The Universal Choice
@@ -264,43 +304,3 @@ The `hrrr-weather` dataset is included in the **complete** sample-data bundle, n
 - [GeoTIFF Reader](./geotiff) - Named reader for GeoTIFF format
 - [Raster Functions](../api/raster-functions) - Raster processing operations
 - [Quick Start](../quick-start) - Get started with GeoBrix
-
-</TabItem>
-</Tabs>
-
-## Options
-
-### Lightweight (`raster_gbx`)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
-| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
-
-<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
-  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
-
-`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset.
-
-### Heavyweight (`gdal`)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `driver` | auto-detected from extension | Explicitly specify the GDAL driver to use (regardless of extension). |
-| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing). |
-| `filterRegex` | `".*"` | Filter files by regex when reading from a directory. |
-| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g. HDF, NetCDF). |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles. |
-| `retile` | `"false"` | Retile rasters for optimal processing. |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled). |
-
-Example — forcing the GDAL driver explicitly:
-
-<CodeFromTest
-  code={gdalExamples}
-  language="python"
-  functionName="READ_WITH_DRIVER"
-  source="docs/tests/python/readers/gdal_examples.py"
-  testFile="docs/tests/python/readers/test_gdal_examples.py"
-  outputConstant="READ_WITH_DRIVER_output"
-/>

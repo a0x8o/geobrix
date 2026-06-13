@@ -53,6 +53,23 @@ df.withColumn("source", df["scene_id"]) \
 
 **Output:** one raster file per input row, written under the target directory; the file format/extension is whatever `tile.metadata` records (e.g. GeoTIFF for `gtiff_gbx`).
 
+## Options
+
+Both tiers require the exact `(source, tile)` schema and take the same two writer options. The on-disk driver, compression, and block layout come from `tile.metadata`, not from writer options (see [Output encoding](#output-encoding-from-tile-metadata)).
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ext` | `"tif"` | Filename suffix appended to each written file. Does **not** change the on-disk format; that is driven by `tile.metadata["driver"]`. |
+| `nameCol` | _unset_ | Name of an existing string column whose value becomes the output filename (without extension). Must be one of the two table columns — in practice, overwrite `source` (see [Filename Control](#filename-control)). When unset, an opaque unique name is used. |
+
+### Lightweight (`raster_gbx`)
+
+Supports `.mode("overwrite")`. Passes whole-file GeoTIFF tiles through verbatim; re-encodes non-GTiff tiles (e.g. `COG`) via `rasterio`.
+
+### Heavyweight (`gdal`)
+
+Append-only — `.mode("overwrite")` is not supported. Re-encodes every tile through native GDAL (decoded pixels are identical to the lightweight output).
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · raster_gbx">
 
@@ -258,27 +275,10 @@ Written rasters are standard GDAL-compatible files:
 - **`gdalinfo <file>`** (via the [GDAL CLI](../advanced/gdal-cli)) prints metadata, geotransform, and band statistics.
 - **Read them back through GeoBrix** with `spark.read.format("gtiff_gdal").load(OUT_DIR)` — covered by the round-trip docs test.
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [GDAL Reader](../readers/raster) — The corresponding read path.
 - [Raster Functions](../api/raster-functions) — Transforms to run before the write.
-
-</TabItem>
-</Tabs>
-
-## Options
-
-Both tiers require the exact `(source, tile)` schema and take the same two writer options. The on-disk driver, compression, and block layout come from `tile.metadata`, not from writer options (see [Output encoding](#output-encoding-from-tile-metadata)).
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `ext` | `"tif"` | Filename suffix appended to each written file. Does **not** change the on-disk format; that is driven by `tile.metadata["driver"]`. |
-| `nameCol` | _unset_ | Name of an existing string column whose value becomes the output filename (without extension). Must be one of the two table columns — in practice, overwrite `source` (see [Filename Control](#filename-control)). When unset, an opaque unique name is used. |
-
-### Lightweight (`raster_gbx`)
-
-Supports `.mode("overwrite")`. Passes whole-file GeoTIFF tiles through verbatim; re-encodes non-GTiff tiles (e.g. `COG`) via `rasterio`.
-
-### Heavyweight (`gdal`)
-
-Append-only — `.mode("overwrite")` is not supported. Re-encodes every tile through native GDAL (decoded pixels are identical to the lightweight output).

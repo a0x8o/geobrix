@@ -79,6 +79,33 @@ tiles.write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/o
 
 **Output:** by default, spatially-sharded `.pmtiles` archives plus a catalog under the target directory; with `shardZoom=0`, a single `.pmtiles` archive file.
 
+## Options
+
+Both tiers are write-only and require `.mode("overwrite")` — a finalized archive cannot be appended to.
+
+### Lightweight (`pmtiles_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `shardZoom` | `"6"` | Grid zoom that partitions the world into one bounded `.pmtiles` per parent tile. `0` = a single merged archive. |
+| `targetTilesPerShard` | _unset_ | Optional cap on tiles per shard; when set, used to size shards instead of a fixed `shardZoom`. |
+| `catalog` | `"stac"` | Catalog written over the shards: `stac`, `tilejson`, or `none`. |
+| `tileType` | _auto-detect_ | Override the PMTile `tile_type`: `png`, `jpeg`/`jpg`, `webp`, `avif`, or `mvt`. |
+| `tileCompression` | `"none"` | PMTile `tile_compression` advertised in the header: `none`, `gzip`, `brotli`, or `zstd`. Tile bytes pass through unchanged. |
+| `metadata` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="OPTIONS_NOTE"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+### Heavyweight (`pmtiles`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `metadataJson` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
+| `tileType` | _auto-detect_ | Override the auto-detected PMTile `tile_type` byte: `1` = MVT, `2` = PNG, `3` = JPEG, `4` = WebP. Useful when emitting via a custom encoder that doesn't carry the standard magic bytes. |
+| `tileCompression` | `1` (none) | PMTile `tile_compression` byte advertised in the header: `1` = none, `2` = gzip, `3` = brotli, `4` = zstd. GeoBrix passes tile bytes through unchanged; set this only if you have pre-compressed your tiles upstream. |
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · pmtiles_gbx">
 
@@ -230,39 +257,12 @@ PMTiles is designed to be served as a single static file with HTTP `Range` reque
 - **No leaf directories.** If the global root directory would exceed 16,257 bytes (PMTiles spec § 4), the encoder errors out and asks you to split your input. In practice this only happens with very large pyramids (tens of millions of tiles); the limit will be relaxed in a future release.
 - **No cross-task dedup.** Identical tiles across partitions are stored multiple times in the final file. The [`gbx_pmtiles_agg`](../api/pmtiles-functions#pmtiles_agg) UDAF does per-blob SHA-256 dedup, so for known-redundant pyramids prefer the UDAF when your data fits a single Spark cell.
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [PMTiles Function Reference](../api/pmtiles-functions) — `gbx_pmtiles_agg` UDAF (the in-cell counterpart).
 - [PMTiles Function Reference](../api/pmtiles-functions) — Concepts, schema contract, and serving notes.
 - [Raster Functions](../api/raster-functions#rst_xyzpyramid) — Generate per-tile PNG bytes with `gbx_rst_xyzpyramid`.
 - [VectorX Function Reference](../api/vectorx-functions#st_asmvt_pyramid) — Generate per-tile MVT bytes with `gbx_st_asmvt_pyramid`.
-
-</TabItem>
-</Tabs>
-
-## Options
-
-Both tiers are write-only and require `.mode("overwrite")` — a finalized archive cannot be appended to.
-
-### Lightweight (`pmtiles_gbx`)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `shardZoom` | `"6"` | Grid zoom that partitions the world into one bounded `.pmtiles` per parent tile. `0` = a single merged archive. |
-| `targetTilesPerShard` | _unset_ | Optional cap on tiles per shard; when set, used to size shards instead of a fixed `shardZoom`. |
-| `catalog` | `"stac"` | Catalog written over the shards: `stac`, `tilejson`, or `none`. |
-| `tileType` | _auto-detect_ | Override the PMTile `tile_type`: `png`, `jpeg`/`jpg`, `webp`, `avif`, or `mvt`. |
-| `tileCompression` | `"none"` | PMTile `tile_compression` advertised in the header: `none`, `gzip`, `brotli`, or `zstd`. Tile bytes pass through unchanged. |
-| `metadata` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
-
-<CodeFromTest code={pmtilesEx} language="python" functionName="OPTIONS_NOTE"
-  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
-  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
-
-### Heavyweight (`pmtiles`)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `metadataJson` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
-| `tileType` | _auto-detect_ | Override the auto-detected PMTile `tile_type` byte: `1` = MVT, `2` = PNG, `3` = JPEG, `4` = WebP. Useful when emitting via a custom encoder that doesn't carry the standard magic bytes. |
-| `tileCompression` | `1` (none) | PMTile `tile_compression` byte advertised in the header: `1` = none, `2` = gzip, `3` = brotli, `4` = zstd. GeoBrix passes tile bytes through unchanged; set this only if you have pre-compressed your tiles upstream. |

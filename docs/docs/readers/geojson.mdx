@@ -23,6 +23,40 @@ available it uses native GDAL on the JVM and tends to pull ahead on large worklo
 the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
 :::
 
+## Options
+
+### Lightweight (`geojson_gbx`)
+
+The driver (`GeoJSON`) is preset; there is no `multi` switch — `geojson_gbx` reads both GeoJSON and GeoJSONSeq files.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index to read (0-based). |
+| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
+
+### Heavyweight (`geojson_ogr`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `multi` | `"true"` | `"true"` uses the [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files); `"false"` uses the [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, `layerN`, `layerName`, …) are also available.
+
+Example — reading newline-delimited GeoJSONSeq (the `multi` default):
+
+<CodeFromTest
+  code={geojsonExamples}
+  language="python"
+  functionName="READ_GEOJSONSEQ"
+  source="docs/tests/python/readers/geojson_examples.py"
+  testFile="docs/tests/python/readers/test_geojson_examples.py"
+  outputConstant="READ_GEOJSONSEQ_output"
+/>
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · geojson_gbx">
 
@@ -144,46 +178,12 @@ root
 
 **Read with:** `option("multi", "true")` (default) or omit the option
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [View API Reference](../api/overview)
 - [Check Examples](../examples/overview)
 - [Other Readers](./overview)
 - [Learn about VectorX](../api/vectorx-functions)
-
-</TabItem>
-</Tabs>
-
-## Options
-
-### Lightweight (`geojson_gbx`)
-
-The driver (`GeoJSON`) is preset; there is no `multi` switch — `geojson_gbx` reads both GeoJSON and GeoJSONSeq files.
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
-| `layerNumber` | `"0"` | Layer index to read (0-based). |
-| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
-
-### Heavyweight (`geojson_ogr`)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `multi` | `"true"` | `"true"` uses the [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files); `"false"` uses the [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection). |
-| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
-
-All other [OGR reader options](./vector#options) (`driverName`, `layerN`, `layerName`, …) are also available.
-
-Example — reading newline-delimited GeoJSONSeq (the `multi` default):
-
-<CodeFromTest
-  code={geojsonExamples}
-  language="python"
-  functionName="READ_GEOJSONSEQ"
-  source="docs/tests/python/readers/geojson_examples.py"
-  testFile="docs/tests/python/readers/test_geojson_examples.py"
-  outputConstant="READ_GEOJSONSEQ_output"
-/>
