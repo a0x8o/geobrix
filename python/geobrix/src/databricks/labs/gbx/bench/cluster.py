@@ -182,6 +182,10 @@ PMTILES_ONLY = {pmtiles_only!r}
 # --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
 BENCHMARK_VECTOR = {benchmark_vector!r}
 VECTOR_ONLY = {vector_only!r}
+# --benchmark-mvt: also run the st_asmvt benchmark (light pyvx vs heavy vectorx).
+# --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
+BENCHMARK_MVT = {benchmark_mvt!r}
+MVT_ONLY = {mvt_only!r}
 # --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead of the
 # tiny 4-file corpus. Requires the scaled corpus to have been generated first via
 # gbx:bench:generate-vector-corpus and staged at {{CORPUS}}/vector-scale/<fmt>/.
@@ -735,6 +739,144 @@ if _pmtiles_rows:
     _show_md(f"pmtiles benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_MVT = """# MVT benchmark: light pyvx st_asmvt vs heavy vectorx st_asmvt (+ decoded-feature parity)
+from databricks.labs.gbx.bench import readers as _rd
+import mapbox_vector_tile as _mvt_lib
+_mvt_rows = []
+_mvt_light_blobs = None  # {(z,x,y): bytes} decoded from light run
+_mvt_heavy_blobs = None  # {(z,x,y): bytes} decoded from heavy run
+_N_FEATURES = 500
+_N_TILES = 10
+if LIGHTWEIGHT:
+    _r = _rd.run_mvt_agg(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                         api="lightweight", n_features=_N_FEATURES, n_tiles=_N_TILES,
+                         where="cluster")
+    _sink([_r]); lw.append(_r); _mvt_rows.append(_r)
+    # Capture decoded blobs for parity: re-run the agg once (untimed) and collect.
+    if _r.status == "ok":
+        try:
+            import pyspark.sql.functions as _F_mvt
+            from shapely.geometry import box as _b
+            from shapely import to_wkb as _wkb
+            from pyspark.sql.types import (StructType, StructField, IntegerType,
+                                           BinaryType, DoubleType, StringType)
+            _z3 = 3
+            _addrs = [(_z3, i % 8, (i // 8) % 8) for i in range(_N_TILES)]
+            _rd2 = []
+            for _i in range(_N_FEATURES):
+                _tz, _tx, _ty = _addrs[_i % _N_TILES]
+                _cx = 2048 + (_i % 32) * 4; _cy = 2048 + (_i % 32) * 4
+                _g = bytes(_wkb(_b(_cx-10, _cy-10, _cx+10, _cy+10)))
+                _rd2.append((_tz, _tx, _ty, _g, _i, float(_i)*0.1, f"feat_{_i}"))
+            _sch = StructType([
+                StructField("z", IntegerType(), False), StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False), StructField("geom", BinaryType(), True),
+                StructField("id", IntegerType(), True), StructField("score", DoubleType(), True),
+                StructField("label", StringType(), True),
+            ])
+            _df2 = spark.createDataFrame(_rd2, schema=_sch).select(
+                "z","x","y","geom",
+                _F_mvt.struct(_F_mvt.col("id"), _F_mvt.col("score"), _F_mvt.col("label")).alias("attrs"),
+            ).cache(); _df2.count()
+            from databricks.labs.gbx.pyvx import functions as _vx
+            _vx.register(spark)
+            _lrows = (_df2.groupBy("z","x","y")
+                .agg(_vx.st_asmvt(_F_mvt.col("geom"), _F_mvt.col("attrs"), _F_mvt.lit("layer")).alias("mvt"))
+                .collect())
+            _mvt_light_blobs = {(r["z"], r["x"], r["y"]): bytes(r["mvt"]) for r in _lrows if r["mvt"]}
+        except Exception as _pe:
+            print(f"MVT light parity capture error: {type(_pe).__name__}: {_pe}")
+if HEAVYWEIGHT:
+    _r = _rd.run_mvt_agg(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                         api="heavyweight", n_features=_N_FEATURES, n_tiles=_N_TILES,
+                         where="cluster")
+    _sink([_r]); hw.append(_r); _mvt_rows.append(_r)
+    # Capture decoded blobs for parity.
+    if _r.status == "ok":
+        try:
+            import pyspark.sql.functions as _F_mvth
+            from shapely.geometry import box as _bh
+            from shapely import to_wkb as _wkbh
+            from pyspark.sql.types import (StructType, StructField, IntegerType,
+                                           BinaryType, DoubleType, StringType)
+            _z3h = 3
+            _addrsh = [(_z3h, i % 8, (i // 8) % 8) for i in range(_N_TILES)]
+            _rdh = []
+            for _i in range(_N_FEATURES):
+                _tz, _tx, _ty = _addrsh[_i % _N_TILES]
+                _cx = 2048 + (_i % 32) * 4; _cy = 2048 + (_i % 32) * 4
+                _g = bytes(_wkbh(_bh(_cx-10, _cy-10, _cx+10, _cy+10)))
+                _rdh.append((_tz, _tx, _ty, _g, _i, float(_i)*0.1, f"feat_{_i}"))
+            _schh = StructType([
+                StructField("z", IntegerType(), False), StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False), StructField("geom", BinaryType(), True),
+                StructField("id", IntegerType(), True), StructField("score", DoubleType(), True),
+                StructField("label", StringType(), True),
+            ])
+            _dfh = spark.createDataFrame(_rdh, schema=_schh).select(
+                "z","x","y","geom",
+                _F_mvth.struct(_F_mvth.col("id"), _F_mvth.col("score"), _F_mvth.col("label")).alias("attrs"),
+            ).cache(); _dfh.count()
+            from databricks.labs.gbx.vectorx import functions as _hx
+            _hx.register(spark)
+            _hrows = (_dfh.groupBy("z","x","y")
+                .agg(_hx.st_asmvt(_F_mvth.col("geom"), _F_mvth.col("attrs"), _F_mvth.lit("layer")).alias("mvt"))
+                .collect())
+            _mvt_heavy_blobs = {(r["z"], r["x"], r["y"]): bytes(r["mvt"]) for r in _hrows if r["mvt"]}
+        except Exception as _pe:
+            print(f"MVT heavy parity capture error: {type(_pe).__name__}: {_pe}")
+# Parity check: decode both tiers' MVT output and compare geometry+property counts.
+if LIGHTWEIGHT and HEAVYWEIGHT and _mvt_light_blobs is not None and _mvt_heavy_blobs is not None:
+    try:
+        _lk = set(_mvt_light_blobs.keys())
+        _hk = set(_mvt_heavy_blobs.keys())
+        _parity_ok = True
+        _parity_msg = []
+        if _lk != _hk:
+            _parity_ok = False
+            _parity_msg.append(
+                f"tile-key mismatch: light-only={sorted(_lk-_hk)[:3]} "
+                f"heavy-only={sorted(_hk-_lk)[:3]} (light={len(_lk)}, heavy={len(_hk)})"
+            )
+        else:
+            _feat_mismatches = []
+            for _k in sorted(_lk):
+                _ld = _mvt_lib.decode(_mvt_light_blobs[_k])
+                _hd = _mvt_lib.decode(_mvt_heavy_blobs[_k])
+                _ll = _ld.get("layer", {}).get("features", [])
+                _hl = _hd.get("layer", {}).get("features", [])
+                if len(_ll) != len(_hl):
+                    _feat_mismatches.append(f"{_k}: light={len(_ll)} heavy={len(_hl)}")
+                else:
+                    for _lf, _hf in zip(_ll, _hl):
+                        _lp = _lf.get("properties", {})
+                        _hp = _hf.get("properties", {})
+                        if _lp.get("id") != _hp.get("id"):
+                            _feat_mismatches.append(f"{_k}: id mismatch {_lp.get('id')} vs {_hp.get('id')}")
+                            break
+            if _feat_mismatches:
+                _parity_ok = False
+                _parity_msg.append("feature mismatches: " + "; ".join(_feat_mismatches[:5]))
+        if _parity_ok:
+            _verdict = f"MVT PARITY: PASS ({len(_lk)} tiles, feature counts + ids match)"
+        else:
+            _verdict = "MVT PARITY: FAIL -- " + "; ".join(_parity_msg)
+    except Exception as _pe:
+        _verdict = f"MVT PARITY: ERROR -- {type(_pe).__name__}: {_pe}"
+    print(_verdict)
+    assert _verdict.startswith("MVT PARITY: PASS"), _verdict
+if _mvt_rows:
+    _df_mvt = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'mvt'"
+    )
+    try:
+        display(_df_mvt)
+    except Exception:
+        _df_mvt.show(100, truncate=False)
+    _md = results.summarize(_mvt_rows)
+    _show_md(f"mvt benchmark -- {RUN_ID}", _md)
+"""
+
 _CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
 # Two-leg pipeline (scaled branch):
 #   Leg 1 (reader): spark.read.format(fmt).load(copies/) -> Delta ingest table (forces
@@ -963,6 +1105,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         writer_rows=int(cfg.get("writer_rows", 14000000)),
         vector_legs=str(cfg.get("vector_legs", "both")),
         vector_formats=str(cfg.get("vector_formats", "") or ""),
+        benchmark_mvt=bool(cfg.get("benchmark_mvt")),
+        mvt_only=bool(cfg.get("mvt_only")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -983,6 +1127,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     pmtiles_only = bool(cfg.get("pmtiles_only"))
     benchmark_vector = bool(cfg.get("benchmark_vector"))
     vector_only = bool(cfg.get("vector_only"))
+    benchmark_mvt = bool(cfg.get("benchmark_mvt"))
+    mvt_only = bool(cfg.get("mvt_only"))
 
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
@@ -1007,7 +1153,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if not readers_only and not pmtiles_only and not vector_only:
+    if not readers_only and not pmtiles_only and not vector_only and not mvt_only:
         if light and do_pure:
             cells.append(_cell(_CELL_LIGHT_PURE))
         if heavy and do_pure:
@@ -1022,6 +1168,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_PMTILES))
     if benchmark_vector or vector_only:
         cells.append(_cell(_CELL_VECTOR))
+    if benchmark_mvt or mvt_only:
+        cells.append(_cell(_CELL_MVT))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)

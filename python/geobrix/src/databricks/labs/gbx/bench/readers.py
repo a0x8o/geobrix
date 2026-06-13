@@ -854,6 +854,225 @@ def run_vector_write(
         )
 
 
+def run_mvt_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_features: int = 500,
+    n_tiles: int = 10,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time a grouped st_asmvt aggregation over synthetic in-memory features.
+
+    Builds ``n_features`` features distributed across ``n_tiles`` (z,x,y) keys,
+    each with a WKB polygon (tile-local coordinates) plus a mixed-type attrs struct
+    (int id, double score, str label). Registers the chosen tier, caches the
+    DataFrame, then times a ``groupBy("z","x","y").agg(st_asmvt(...))`` job to
+    completion. Returns a single ResultRow (mode="spark-path", category="mvt").
+
+    ``api`` controls which tier is registered and timed:
+        "lightweight"  → ``databricks.labs.gbx.pyvx.functions``
+        "heavyweight"  → ``databricks.labs.gbx.vectorx.functions``
+    """
+    env = capture_env(where)
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+            asmvt_fn = vx.st_asmvt
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+            asmvt_fn = hx.st_asmvt
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build a synthetic features DataFrame with n_features rows across n_tiles keys.
+    # Each tile gets roughly equal features.  Geometries are small squares in
+    # tile-local [0, 4096] coordinates (WKB); attrs is a struct with native types.
+    try:
+        from shapely.geometry import box as _box
+        from shapely import to_wkb as _to_wkb
+        import pyspark.sql.functions as _F
+        from pyspark.sql.types import (
+            StructType, StructField, IntegerType, BinaryType,
+            DoubleType, StringType,
+        )
+
+        # Build tile addresses: a small z=3 grid so (z,x,y) is always valid.
+        z = 3
+        tile_addresses = [(z, i % 8, (i // 8) % 8) for i in range(n_tiles)]
+
+        rows_data = []
+        for i in range(n_features):
+            tz, tx, ty = tile_addresses[i % n_tiles]
+            # A tiny square near the centre of the tile in pixel space.
+            cx = 2048 + (i % 32) * 4
+            cy = 2048 + (i % 32) * 4
+            geom = _box(cx - 10, cy - 10, cx + 10, cy + 10)
+            wkb = bytes(_to_wkb(geom))
+            rows_data.append((tz, tx, ty, wkb, i, float(i) * 0.1, f"feat_{i}"))
+
+        schema = StructType([
+            StructField("z", IntegerType(), False),
+            StructField("x", IntegerType(), False),
+            StructField("y", IntegerType(), False),
+            StructField("geom", BinaryType(), True),
+            StructField("id", IntegerType(), True),
+            StructField("score", DoubleType(), True),
+            StructField("label", StringType(), True),
+        ])
+        raw_df = spark.createDataFrame(rows_data, schema=schema)
+        # Pack id/score/label into a attrs struct so the aggregator gets a struct column.
+        df = raw_df.select(
+            "z", "x", "y", "geom",
+            _F.struct(
+                _F.col("id"),
+                _F.col("score"),
+                _F.col("label"),
+            ).alias("attrs"),
+        ).cache()
+        n = int(df.count())
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    def _job():
+        import pyspark.sql.functions as _F2
+
+        return (
+            df.groupBy("z", "x", "y")
+            .agg(asmvt_fn(_F2.col("geom"), _F2.col("attrs"), _F2.lit("layer")).alias("mvt"))
+            .count()
+        )
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        n_tile_groups = min(n, n_tiles)
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / n_tile_groups / 1000.0) if (ms and n_tile_groups) else 0.0,
+            per_tile_avg_ms=(ms / n_tile_groups) if (ms and n_tile_groups) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(n_tile_groups / (ms / 1000.0)) if (ms and n_tile_groups) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"st_asmvt {api} {n} features -> {n_tile_groups} tiles",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _list_tifs(corpus_dir: str) -> List[str]:
     """Return all *.tif / *.tiff paths under corpus_dir."""
     import glob

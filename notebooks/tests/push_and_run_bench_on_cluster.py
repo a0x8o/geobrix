@@ -261,6 +261,10 @@ def main() -> int:
     benchmark_vector = "--benchmark-vector" in sys.argv
     vector_only = "--vector-only" in sys.argv
     vector_scale = "--vector-scale" in sys.argv
+    # --benchmark-mvt: also run the st_asmvt benchmark (light pyvx vs heavy vectorx).
+    # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
+    benchmark_mvt = "--benchmark-mvt" in sys.argv
+    mvt_only = "--mvt-only" in sys.argv
     writer_rows = int(_arg("--writer-rows", "14000000"))
     # --vector-legs reader|writer|both: run the scaled vector reader-ingest legs, the
     # writer-export leg, or both (default). Lets each be a separate isolated cluster job.
@@ -307,6 +311,8 @@ def main() -> int:
             run_id = f"{run_id}-pmtiles"
         elif vector_only:
             run_id = f"{run_id}-vector"
+        elif mvt_only:
+            run_id = f"{run_id}-mvt"
     functions = _arg("--functions", "")
     sel = _arg("--set", "core")
 
@@ -445,6 +451,10 @@ def main() -> int:
         vector_legs=vector_legs,
         #  --vector-formats csv: restrict scaled vector run to these light formats (default all).
         vector_formats=vector_formats,
+        #  --benchmark-mvt: also run st_asmvt benchmark (light pyvx vs heavy vectorx).
+        benchmark_mvt=benchmark_mvt,
+        #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
+        mvt_only=mvt_only,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
@@ -454,6 +464,9 @@ def main() -> int:
         cfg["modes"] = "spark-path"
     if vector_only:
         # Vector reader benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if mvt_only:
+        # MVT agg benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -522,6 +535,7 @@ def main() -> int:
         cfg.get("readers_only")
         or cfg.get("pmtiles_only")
         or cfg.get("vector_only")
+        or cfg.get("mvt_only")
     )
     if (
         cfg["modes"] in ("spark-path", "both")
