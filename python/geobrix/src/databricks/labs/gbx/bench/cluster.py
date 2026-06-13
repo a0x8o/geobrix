@@ -765,8 +765,12 @@ if LIGHTWEIGHT:
             _rd2 = []
             for _i in range(_N_FEATURES):
                 _tz, _tx, _ty = _addrs[_i % _N_TILES]
-                _cx = 2048 + (_i % 32) * 4; _cy = 2048 + (_i % 32) * 4
-                _g = bytes(_wkb(_b(_cx-10, _cy-10, _cx+10, _cy+10)))
+                # Mirror run_mvt_agg's coordinate spread: squares on a 16x16 grid over
+                # the full [0,4096] extent so they survive the heavy MVT driver's
+                # quantization (a packed band collapses to sub-pixel -> empty heavy tile).
+                _slot = (_i // _N_TILES) % 256
+                _cx = 128 + (_slot % 16) * 256; _cy = 128 + (_slot // 16) * 256
+                _g = bytes(_wkb(_b(_cx-32, _cy-32, _cx+32, _cy+32)))
                 _rd2.append((_tz, _tx, _ty, _g, _i, float(_i)*0.1, f"feat_{_i}"))
             _sch = StructType([
                 StructField("z", IntegerType(), False), StructField("x", IntegerType(), False),
@@ -804,8 +808,12 @@ if HEAVYWEIGHT:
             _rdh = []
             for _i in range(_N_FEATURES):
                 _tz, _tx, _ty = _addrsh[_i % _N_TILES]
-                _cx = 2048 + (_i % 32) * 4; _cy = 2048 + (_i % 32) * 4
-                _g = bytes(_wkbh(_bh(_cx-10, _cy-10, _cx+10, _cy+10)))
+                # Mirror run_mvt_agg's coordinate spread: squares on a 16x16 grid over
+                # the full [0,4096] extent so they survive the heavy MVT driver's
+                # quantization (a packed band collapses to sub-pixel -> empty heavy tile).
+                _slot = (_i // _N_TILES) % 256
+                _cx = 128 + (_slot % 16) * 256; _cy = 128 + (_slot // 16) * 256
+                _g = bytes(_wkbh(_bh(_cx-32, _cy-32, _cx+32, _cy+32)))
                 _rdh.append((_tz, _tx, _ty, _g, _i, float(_i)*0.1, f"feat_{_i}"))
             _schh = StructType([
                 StructField("z", IntegerType(), False), StructField("x", IntegerType(), False),
@@ -848,12 +856,13 @@ if LIGHTWEIGHT and HEAVYWEIGHT and _mvt_light_blobs is not None and _mvt_heavy_b
                 if len(_ll) != len(_hl):
                     _feat_mismatches.append(f"{_k}: light={len(_ll)} heavy={len(_hl)}")
                 else:
-                    for _lf, _hf in zip(_ll, _hl):
-                        _lp = _lf.get("properties", {})
-                        _hp = _hf.get("properties", {})
-                        if _lp.get("id") != _hp.get("id"):
-                            _feat_mismatches.append(f"{_k}: id mismatch {_lp.get('id')} vs {_hp.get('id')}")
-                            break
+                    # Order-independent: the two encoders may emit features in a different
+                    # order, so compare the SET of feature ids per tile, not positionally.
+                    _lids = {_f.get("properties", {}).get("id") for _f in _ll}
+                    _hids = {_f.get("properties", {}).get("id") for _f in _hl}
+                    if _lids != _hids:
+                        _diff = sorted((_lids ^ _hids), key=lambda v: (v is None, v))[:5]
+                        _feat_mismatches.append(f"{_k}: id-set differs (sym-diff {_diff})")
             if _feat_mismatches:
                 _parity_ok = False
                 _parity_msg.append("feature mismatches: " + "; ".join(_feat_mismatches[:5]))

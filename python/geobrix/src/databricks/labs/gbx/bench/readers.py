@@ -941,10 +941,18 @@ def run_mvt_agg(
         rows_data = []
         for i in range(n_features):
             tz, tx, ty = tile_addresses[i % n_tiles]
-            # A tiny square near the centre of the tile in pixel space.
-            cx = 2048 + (i % 32) * 4
-            cy = 2048 + (i % 32) * 4
-            geom = _box(cx - 10, cy - 10, cx + 10, cy + 10)
+            # Spread each tile's squares across the FULL [0, 4096] tile extent on a
+            # coarse grid. The heavy MVT driver (OGR, EPSG:3857, single 0/0/0 tile)
+            # quantizes the whole layer to EXTENT=4096, so squares packed into a tiny
+            # coordinate band collapse to sub-pixel and the driver drops them (empty
+            # tile). Light keeps them (it treats the coords as already tile-local), so
+            # a packed band silently breaks light-vs-heavy parity. A 16x16 grid over
+            # the extent (step 256) keeps every square distinct + above the
+            # quantization floor in both tiers.
+            slot = (i // n_tiles) % 256
+            cx = 128 + (slot % 16) * 256
+            cy = 128 + (slot // 16) * 256
+            geom = _box(cx - 32, cy - 32, cx + 32, cy + 32)
             wkb = bytes(_to_wkb(geom))
             rows_data.append((tz, tx, ty, wkb, i, float(i) * 0.1, f"feat_{i}"))
 
@@ -1009,6 +1017,25 @@ def run_mvt_agg(
         )
 
     try:
+        # Guard against a tier that "succeeds" (10 groups counted) but emits all-NULL or
+        # all-empty MVT blobs -- e.g. the heavy OGR MVT driver dropping every feature to a
+        # sub-pixel collapse. Counting groups alone masks that, so validate (once, untimed)
+        # that at least one group produced a non-empty blob; a collapse becomes a status=
+        # "error" row (via the except below), not a misleading "ok".
+        import pyspark.sql.functions as _F3
+
+        _validation = (
+            df.groupBy("z", "x", "y")
+            .agg(asmvt_fn(_F3.col("geom"), _F3.col("attrs"), _F3.lit("layer")).alias("mvt"))
+            .collect()
+        )
+        _nonempty = sum(1 for _r in _validation if _r["mvt"] and len(bytes(_r["mvt"])) > 0)
+        if _nonempty == 0:
+            raise RuntimeError(
+                f"st_asmvt {api} produced {len(_validation)} group(s) but every MVT blob "
+                "is NULL/empty -- features collapsed (check coordinate extent vs the "
+                "encoder's quantization)."
+            )
         stats = time_iters(_job, warmup, measured)
         ms = stats["iter_median_ms"]
         n_tile_groups = min(n, n_tiles)
