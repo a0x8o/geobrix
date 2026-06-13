@@ -988,18 +988,20 @@ def build_bench_notebook(cfg: dict) -> dict:
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
     # (light, heavy) then spark-path (light, heavy).
     cells = [
-        # Install deps (first run) THEN force-reinstall just the geobrix code. The wheel
-        # version is a fixed 0.4.0 string, so on a warm cluster that already has geobrix
-        # installed a plain `pip install <wheel>` is a no-op (pip sees the version
-        # satisfied) and the cluster keeps running STALE code -- e.g. a freshly added
-        # DataSource like geojson_gbx fails with DATA_SOURCE_NOT_FOUND. --force-reinstall
-        # --no-deps swaps the geobrix package every run without re-resolving heavy deps.
-        # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
+        # Ensure BOTH fresh geobrix code AND the full [light] dep set every run. The wheel
+        # version is a fixed 0.4.0 string, so on a WARM cluster that already has geobrix
+        # installed, a bare `pip install '<wheel>[light]'` no-ops: pip sees geobrix==0.4.0
+        # satisfied and skips the install ENTIRELY -- including resolving the [light] extra
+        # deps. So the cluster can end up running STALE code (e.g. a freshly added DataSource
+        # -> DATA_SOURCE_NOT_FOUND) OR missing a [light] dep (e.g. shapely -> ModuleNotFound
+        # at `import bench.spec`). The old fix (`--force-reinstall --no-deps`) swapped the
+        # code but, by skipping deps, LEFT geobrix present without its extras -> the next
+        # warm run's [light] install then no-ops on those deps. Uninstalling first forces the
+        # install to actually run: fresh code from the wheel FILE + resolved [light] extras
+        # (shapely/rasterio/pyogrio/...). Deps come from pip's cache (fast); only the small
+        # geobrix wheel is re-read. `markdown` powers the displayHTML summaries (_show_md).
+        _cell("%pip uninstall -y geobrix"),
         _cell(f"%pip install --quiet '{cfg['wheel']}[light]' markdown"),
-        _cell(
-            f"%pip install --quiet --force-reinstall --no-deps --no-cache-dir "
-            f"'{cfg['wheel']}'"
-        ),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.

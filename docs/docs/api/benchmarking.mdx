@@ -162,6 +162,31 @@ Representative results across the benchmark families, organized by function grou
 
 <TabItem value="io" label="Readers & Writers">
 
+### Raster readers & writers
+
+The raster reader/writer is benchmarked the same way on both tiers: read **1,000 ×
+1024² GeoTIFF tiles** from a UC Volume (count), and write the same 1,000 tiles back
+out as GeoTIFF. Lightweight uses `raster_gbx` / `gtiff_gbx` (rasterio); heavyweight
+uses `gdal` / `gtiff_gdal` (native GDAL in the JVM). Run with
+`gbx:bench:cluster --readers-only --spark-warmup 0 --spark-measured 1`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 1,000 × 1024² GeoTIFF tiles · whole-job
+> wall-clock median, one measured iteration (I/O, not JIT-sensitive — no warm-up).
+
+| Operation | rows | light | heavy | ratio |
+|---|---|---|---|---|
+| **Read** GeoTIFF (`raster_gbx` / `gdal`) | 1,000 | 22.7 s | **9.5 s** | **2.4×** (heavy faster) |
+| **Write** GeoTIFF (`gtiff_gbx` / `gtiff_gdal`) | 1,000 | 4.7 s | **4.0 s** | **1.18×** (≈ parity) |
+
+Both tiers emit the **same tile schema**, so they are drop-in swaps. The **writer runs
+at parity** (~1.2×): the GeoTIFF encode dominates and costs about the same whether it
+runs in the JVM or via rasterio. The **reader trails ~2.4×** — the cost is moving each
+decoded tile's bytes across the Spark Python DataSource boundary (JVM↔Python ser/de),
+not the decode itself. That boundary is the structural tax of the pure-Python tier, and
+it is the trade for running where the heavyweight tier can't (Serverless, ARM, no JAR /
+init script). At scale the read still parallelizes across the cluster (~23 ms/tile here,
+spread over the workers).
+
 ### Tiled output (PMTiles writer)
 
 The PMTiles writer is benchmarked separately from the `rst_*` functions: it is a

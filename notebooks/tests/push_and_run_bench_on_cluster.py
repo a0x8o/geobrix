@@ -514,8 +514,20 @@ def main() -> int:
     # spark-path draws max(--row-counts) DISTINCT tiles from the pool; a smaller pool would
     # silently UNDER-FILL (report rows=max while processing fewer tiles -> misleading numbers).
     # Require pool >= the largest requested row count. (Skipped for --explain-only, which
-    # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool.)
-    if cfg["modes"] in ("spark-path", "both") and not cfg.get("explain_only"):
+    # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool. Also
+    # skipped for the *-only reader/writer/pmtiles/vector benchmarks: those read the WHOLE pool
+    # (or their own vector corpus), not the --row-counts function ladder, so the ladder max is
+    # irrelevant to them -- gating on it would falsely refuse a valid 1000-tile reader run.)
+    _only_run = (
+        cfg.get("readers_only")
+        or cfg.get("pmtiles_only")
+        or cfg.get("vector_only")
+    )
+    if (
+        cfg["modes"] in ("spark-path", "both")
+        and not cfg.get("explain_only")
+        and not _only_run
+    ):
         _max_rc = max(
             (int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0
         )
