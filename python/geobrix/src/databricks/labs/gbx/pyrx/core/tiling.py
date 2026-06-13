@@ -15,18 +15,21 @@ def _write(profile, data) -> bytes:
         return mf.read()
 
 
-def separate_bands(ds) -> list:
-    out = []
+def iter_separate_bands(ds):
+    """Yield one single-band GTiff byte string per band (streaming)."""
     for i in range(1, ds.count + 1):
         profile = ds.profile.copy()
         profile.update(driver="GTiff", count=1)
-        out.append(_write(profile, ds.read(i)[np.newaxis, :, :]))
-    return out
+        yield _write(profile, ds.read(i)[np.newaxis, :, :])
 
 
-def _window_tiles(ds, tile_width, tile_height, step_x, step_y) -> list:
+def separate_bands(ds) -> list:
+    return list(iter_separate_bands(ds))
+
+
+def _iter_window_tiles(ds, tile_width, tile_height, step_x, step_y):
+    """Yield one GTiff byte string per window tile (streaming, never buffered)."""
     tw, th = int(tile_width), int(tile_height)
-    out = []
     row = 0
     while row < ds.height:
         col = 0
@@ -43,25 +46,41 @@ def _window_tiles(ds, tile_width, tile_height, step_x, step_y) -> list:
                     height=h,
                     transform=ds.window_transform(win),
                 )
-                out.append(_write(profile, data))
+                yield _write(profile, data)
             col += step_x
         row += step_y
-    return out
+
+
+def _window_tiles(ds, tile_width, tile_height, step_x, step_y) -> list:
+    return list(_iter_window_tiles(ds, tile_width, tile_height, step_x, step_y))
+
+
+def iter_retile(ds, tile_width, tile_height):
+    tw, th = int(tile_width), int(tile_height)
+    return _iter_window_tiles(ds, tw, th, tw, th)
 
 
 def retile(ds, tile_width, tile_height) -> list:
-    tw, th = int(tile_width), int(tile_height)
-    return _window_tiles(ds, tw, th, tw, th)
+    return list(iter_retile(ds, tile_width, tile_height))
 
 
-def to_overlapping_tiles(ds, tile_width, tile_height, overlap) -> list:
+def _overlap_steps(tile_width, tile_height, overlap):
     # ``overlap`` is a percentage of tile size, matching heavy
     # OverlappingTiles.generateWindows: overlap_px = ceil(tile_dim * overlap / 100),
     # step = tile_dim - overlap_px. (Heavy is the v0.3.0-released contract.)
     tw, th, ov = int(tile_width), int(tile_height), int(overlap)
     overlap_w = math.ceil(tw * ov / 100.0)
     overlap_h = math.ceil(th * ov / 100.0)
-    return _window_tiles(ds, tw, th, max(1, tw - overlap_w), max(1, th - overlap_h))
+    return tw, th, max(1, tw - overlap_w), max(1, th - overlap_h)
+
+
+def iter_to_overlapping_tiles(ds, tile_width, tile_height, overlap):
+    tw, th, sx, sy = _overlap_steps(tile_width, tile_height, overlap)
+    return _iter_window_tiles(ds, tw, th, sx, sy)
+
+
+def to_overlapping_tiles(ds, tile_width, tile_height, overlap) -> list:
+    return list(iter_to_overlapping_tiles(ds, tile_width, tile_height, overlap))
 
 
 def _get_tile_size(width, height, size_bytes, size_in_mb):
@@ -96,6 +115,17 @@ def _encoded_size_bytes(ds) -> int:
     profile = ds.profile.copy()
     profile.update(driver="GTiff")
     return len(_write(profile, ds.read()))
+
+
+def iter_make_tiles(ds, size_in_mb, size_bytes=None):
+    """Streaming variant of :func:`make_tiles`; yields one GTiff byte string per tile."""
+    size_in_mb = int(size_in_mb)  # heavy casts sizeInMB to Int (truncates)
+    if size_in_mb <= 0:
+        return iter_retile(ds, ds.width, ds.height)
+    if size_bytes is None:
+        size_bytes = _encoded_size_bytes(ds)
+    tile_x, tile_y = _get_tile_size(ds.width, ds.height, size_bytes, size_in_mb)
+    return iter_retile(ds, tile_x, tile_y)
 
 
 def make_tiles(ds, size_in_mb, size_bytes=None) -> list:

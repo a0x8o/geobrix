@@ -30,16 +30,19 @@ def _cell_polygon_lonlat(cell: str) -> Polygon:
     return Polygon([(lng, lat) for lat, lng in boundary])
 
 
-def tessellate_h3(ds, resolution: int) -> list:
-    """Tessellate a raster into H3 cells; return ``[(cellid_int, gtiff_bytes)]``.
+def iter_tessellate_h3(ds, resolution: int):
+    """Streaming variant of :func:`tessellate_h3`.
+
+    Yields ``(cellid_int, gtiff_bytes)`` one cell at a time — never buffers the
+    full cell list (large-fan-out OOM guard).
 
     Args:
         ds:         Open rasterio ``DatasetReader``.
         resolution: H3 resolution in ``[0, 15]``.
 
-    Returns:
-        List of ``(cellid, raster_bytes)`` tuples, one per overlapping H3 cell
-        whose clip is non-empty. ``cellid`` is the signed int64 H3 cell id.
+    Yields:
+        ``(cellid, raster_bytes)`` tuples, one per overlapping H3 cell whose clip
+        is non-empty. ``cellid`` is the signed int64 H3 cell id.
     """
     resolution = int(resolution)
     if resolution < 0 or resolution > H3_MAX_RES:
@@ -62,7 +65,6 @@ def tessellate_h3(ds, resolution: int) -> list:
     dst_epsg = ds.crs.to_epsg() if ds.crs else None
     reproject = dst_epsg != 4326
 
-    out = []
     for cell in covered:
         cell_poly = _cell_polygon_lonlat(cell)
         if reproject:
@@ -93,5 +95,13 @@ def tessellate_h3(ds, resolution: int) -> list:
         # h3 ids fit in unsigned 64-bit; map to signed int64 for the tile struct.
         if cellid >= 2**63:
             cellid -= 2**64
-        out.append((cellid, clipped))
-    return out
+        yield (cellid, clipped)
+
+
+def tessellate_h3(ds, resolution: int) -> list:
+    """Tessellate a raster into H3 cells; return ``[(cellid_int, gtiff_bytes)]``.
+
+    List-materializing wrapper around :func:`iter_tessellate_h3` (kept for the
+    Spark-free core API and bench/parity callers).
+    """
+    return list(iter_tessellate_h3(ds, resolution))

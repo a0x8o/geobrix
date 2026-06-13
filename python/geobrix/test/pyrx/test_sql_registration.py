@@ -97,8 +97,10 @@ def test_register_enables_tilexyz_sql(spark):
 def test_register_enables_xyzpyramid_sql(spark):
     prx.register(spark)
     _rgb_tile_view(spark)
+    # xyzpyramid is a streaming UDTF; count the rows it yields.
     n = spark.sql(
-        "SELECT size(gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear')) AS n FROM t"
+        "SELECT count(*) AS n FROM t, "
+        "LATERAL gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear') p"
     ).first()["n"]
     assert n >= 1
 
@@ -584,9 +586,9 @@ def test_register_enables_index_sql(spark):
 def test_register_enables_h3_tessellate_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=8, height=8, epsg=4326)
+    # h3_tessellate is a streaming UDTF; count the cells it yields.
     n = spark.sql(
-        "SELECT count(*) AS n FROM t "
-        "LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 4)) AS cell"
+        "SELECT count(*) AS n FROM t, LATERAL gbx_rst_h3_tessellate(tile, 4) cell"
     ).first()["n"]
     assert n > 0
 

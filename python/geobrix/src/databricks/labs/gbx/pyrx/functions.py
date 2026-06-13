@@ -76,11 +76,28 @@ def register(spark: SparkSession = None) -> None:
     spark.udtf.register("gbx_rst_h3_rastertogridmax", _RstH3RasterToGridMaxUDTF)
     spark.udtf.register("gbx_rst_h3_rastertogridmin", _RstH3RasterToGridMinUDTF)
     spark.udtf.register("gbx_rst_h3_rastertogridmedian", _RstH3RasterToGridMedianUDTF)
-    spark.udtf.register("gbx_rst_quadbin_rastertogridavg", _RstQuadbinRasterToGridAvgUDTF)
-    spark.udtf.register("gbx_rst_quadbin_rastertogridcount", _RstQuadbinRasterToGridCountUDTF)
-    spark.udtf.register("gbx_rst_quadbin_rastertogridmax", _RstQuadbinRasterToGridMaxUDTF)
-    spark.udtf.register("gbx_rst_quadbin_rastertogridmin", _RstQuadbinRasterToGridMinUDTF)
-    spark.udtf.register("gbx_rst_quadbin_rastertogridmedian", _RstQuadbinRasterToGridMedianUDTF)
+    spark.udtf.register(
+        "gbx_rst_quadbin_rastertogridavg", _RstQuadbinRasterToGridAvgUDTF
+    )
+    spark.udtf.register(
+        "gbx_rst_quadbin_rastertogridcount", _RstQuadbinRasterToGridCountUDTF
+    )
+    spark.udtf.register(
+        "gbx_rst_quadbin_rastertogridmax", _RstQuadbinRasterToGridMaxUDTF
+    )
+    spark.udtf.register(
+        "gbx_rst_quadbin_rastertogridmin", _RstQuadbinRasterToGridMinUDTF
+    )
+    spark.udtf.register(
+        "gbx_rst_quadbin_rastertogridmedian", _RstQuadbinRasterToGridMedianUDTF
+    )
+    # Fan-out tiling / tessellation / pyramid UDTFs (one tile/row per output).
+    spark.udtf.register("gbx_rst_separatebands", _RstSeparateBandsUDTF)
+    spark.udtf.register("gbx_rst_retile", _RstRetileUDTF)
+    spark.udtf.register("gbx_rst_tooverlappingtiles", _RstToOverlappingTilesUDTF)
+    spark.udtf.register("gbx_rst_maketiles", _RstMakeTilesUDTF)
+    spark.udtf.register("gbx_rst_h3_tessellate", _RstH3TessellateUDTF)
+    spark.udtf.register("gbx_rst_xyzpyramid", _RstXyzPyramidUDTF)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------
@@ -1645,63 +1662,134 @@ def rst_polygonize(
     )
 
 
-# --- Tier 1e2: tiling UDFs (separatebands, retile, tooverlappingtiles) ------
-@f.udf(ArrayType(_serde.TILE_SCHEMA))
-def _separatebands_udf(tile):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
-
-    _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        parts = tiling.separate_bands(ds)
-    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+# --- Tier 1e2: tiling UDTFs (separatebands, retile, tooverlappingtiles) -----
+# All four fan out to ARRAY<tile> in the heavyweight tier; the light tier
+# streams one tile struct per row via UDTFs (eval yields each tile dict
+# incrementally from the iter_* cores — never buffers the full list).
+# Each UDTF row IS the tile struct (TILE_SCHEMA: cellid, raster, metadata).
 
 
-@f.udf(ArrayType(_serde.TILE_SCHEMA))
-def _retile_udf(tile, tile_width, tile_height):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
+@udtf(returnType=_serde.TILE_SCHEMA)
+class _RstSeparateBandsUDTF:
+    """Streaming UDTF: yield one single-band tile struct per band."""
 
-    _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        parts = tiling.retile(ds, int(tile_width), int(tile_height))
-    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+    def eval(self, tile):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
 
-
-@f.udf(ArrayType(_serde.TILE_SCHEMA))
-def _tooverlappingtiles_udf(tile, tile_width, tile_height, overlap):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
-
-    _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        parts = tiling.to_overlapping_tiles(
-            ds, int(tile_width), int(tile_height), int(overlap)
-        )
-    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for i, b in enumerate(tiling.iter_separate_bands(ds)):
+                yield _serde.build_tile(b, "GTiff", i)
 
 
-def rst_separatebands(tile: ColLike) -> Column:
-    """Split a multi-band tile into an array of single-band tiles.
+@udtf(returnType=_serde.TILE_SCHEMA)
+class _RstRetileUDTF:
+    """Streaming UDTF: yield one sub-tile struct per non-overlapping window."""
 
-    Returns ARRAY<tile struct>; explode the result to get one row per band.
-    Each output tile carries the same georeferencing and CRS as the input.
+    def eval(self, tile, tile_width, tile_height):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for i, b in enumerate(
+                tiling.iter_retile(ds, int(tile_width), int(tile_height))
+            ):
+                yield _serde.build_tile(b, "GTiff", i)
+
+
+@udtf(returnType=_serde.TILE_SCHEMA)
+class _RstToOverlappingTilesUDTF:
+    """Streaming UDTF: yield one sub-tile struct per overlapping window."""
+
+    def eval(self, tile, tile_width, tile_height, overlap):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for i, b in enumerate(
+                tiling.iter_to_overlapping_tiles(
+                    ds, int(tile_width), int(tile_height), int(overlap)
+                )
+            ):
+                yield _serde.build_tile(b, "GTiff", i)
+
+
+@udtf(returnType=_serde.TILE_SCHEMA)
+class _RstMakeTilesUDTF:
+    """Streaming UDTF: yield one sub-tile struct per power-of-4 split tile."""
+
+    def eval(self, tile, size_in_mb):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        raster = bytes(tile["raster"])
+        with _serde.open_tile(raster) as ds:
+            # Pass the encoded byte length so the power-of-4 split count matches
+            # heavy BalancedSubdivision (which keys on GDAL's in-memory file size).
+            for i, b in enumerate(
+                tiling.iter_make_tiles(ds, float(size_in_mb), size_bytes=len(raster))
+            ):
+                yield _serde.build_tile(b, "GTiff", i)
+
+
+@udtf(returnType=_serde.TILE_SCHEMA)
+class _RstH3TessellateUDTF:
+    """Streaming UDTF: yield one clipped tile struct per overlapping H3 cell."""
+
+    def eval(self, tile, resolution):
+        if tile is None or tile["raster"] is None or resolution is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for cellid, raster in tessellate_core.iter_tessellate_h3(
+                ds, int(resolution)
+            ):
+                yield _serde.build_tile(raster, "GTiff", cellid)
+
+
+def rst_separatebands(tile: ColLike) -> None:
+    """Split a multi-band tile into single-band tiles (one row per band).
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>, LATERAL gbx_rst_separatebands(tile) t
+
+    Each output row is a tile struct carrying the same georeferencing and CRS
+    as the input; one row per band.
     """
-    return _separatebands_udf(_col(tile))
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_separatebands(tile) t"
+    )
 
 
-def rst_retile(tile: ColLike, tile_width: ColLike, tile_height: ColLike) -> Column:
+def rst_retile(tile: ColLike, tile_width: ColLike, tile_height: ColLike) -> None:
     """Partition a tile into non-overlapping sub-tiles of the given pixel size.
 
     Edge tiles are narrower/shorter when the raster dimensions are not exact
-    multiples of tile_width/tile_height.  Returns ARRAY<tile struct>; explode
-    the result to get one row per sub-tile.  Each output tile carries the
-    correct windowed transform and CRS.
+    multiples of tile_width/tile_height. Each output tile carries the correct
+    windowed transform and CRS.
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>, LATERAL gbx_rst_retile(tile, tile_width, tile_height) t
+
+    Each output row is a tile struct; one row per sub-tile.
     """
-    return _retile_udf(_col(tile), _col(tile_width), _col(tile_height))
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_retile(tile, tile_width, tile_height) t"
+    )
 
 
 def rst_tooverlappingtiles(
@@ -1709,75 +1797,69 @@ def rst_tooverlappingtiles(
     tile_width: ColLike,
     tile_height: ColLike,
     overlap: ColLike,
-) -> Column:
+) -> None:
     """Partition a tile into overlapping sub-tiles.
 
-    Each tile is tile_width x tile_height pixels.  *overlap* is a **percentage**
+    Each tile is tile_width x tile_height pixels. *overlap* is a **percentage**
     of the tile size: the per-edge overlap is ``ceil(tile_width * overlap / 100)``
     pixels and the stride is ``tile_width - overlap_px`` (likewise for height).
-    Edge tiles are clamped to the raster boundary.  Returns ARRAY<tile struct>;
-    explode the result to get one row per sub-tile.
+    Edge tiles are clamped to the raster boundary.
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>,
+        LATERAL gbx_rst_tooverlappingtiles(tile, tile_width, tile_height, overlap) t
+
+    Each output row is a tile struct; one row per sub-tile.
     """
-    return _tooverlappingtiles_udf(
-        _col(tile), _col(tile_width), _col(tile_height), _col(overlap)
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, "
+        "LATERAL gbx_rst_tooverlappingtiles(tile, tile_width, tile_height, overlap) t"
     )
 
 
-@f.udf(ArrayType(_serde.TILE_SCHEMA))
-def _h3_tessellate_udf(tile, resolution):
-    if tile is None or tile["raster"] is None or resolution is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
-
-    _env.configure_gdal_env()
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        cells = tessellate_core.tessellate_h3(ds, int(resolution))
-    return [_serde.build_tile(raster, "GTiff", cellid) for cellid, raster in cells]
-
-
-def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> None:
     """Tessellate a raster into H3 cells (mirrors ``gbx_rst_h3_tessellate``).
 
     For every H3 cell overlapping the raster's extent at *resolution*, the
     raster is clipped to that cell's hexagon and one tile is produced, carrying
     the H3 cell id as its ``cellid``. Cells with an empty clip are skipped.
-    Returns ARRAY<tile struct>; explode the result to get one row per cell.
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution) t
+
+    Each output row is a tile struct; one row per overlapping H3 cell.
 
     Args:
         tile:       Tile struct column.
         resolution: H3 resolution in ``[0, 15]``.
-
-    Returns:
-        ARRAY<tile struct>; one tile per overlapping H3 cell.
     """
-    return _h3_tessellate_udf(_col(tile), _col(resolution))
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution) t"
+    )
 
 
-@f.udf(ArrayType(_serde.TILE_SCHEMA))
-def _maketiles_udf(tile, size_in_mb):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
-
-    _env.configure_gdal_env()
-    raster = bytes(tile["raster"])
-    with _serde.open_tile(raster) as ds:
-        # Pass the encoded byte length so the power-of-4 split count matches
-        # heavy BalancedSubdivision (which keys on GDAL's in-memory file size).
-        parts = tiling.make_tiles(ds, float(size_in_mb), size_bytes=len(raster))
-    return [_serde.build_tile(b, "GTiff", i) for i, b in enumerate(parts)]
-
-
-def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
-    """Split a raster into an array of tiles of approximately size_in_mb each.
+def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> None:
+    """Split a raster into tiles of approximately size_in_mb each (one row per tile).
 
     Quad-splits the raster into a power-of-4 grid (1, 4, 16, ... tiles) until
     each tile's encoded size fits within the target MB budget, then partitions
-    it into non-overlapping sub-tiles.  Returns ARRAY<tile struct>; explode the
-    result to get one row per sub-tile.  Each output tile carries the correct
+    it into non-overlapping sub-tiles. Each output tile carries the correct
     windowed transform and CRS.
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>, LATERAL gbx_rst_maketiles(tile, size_in_mb) t
+
+    Each output row is a tile struct; one row per sub-tile.
     """
-    return _maketiles_udf(_col(tile), _col(size_in_mb))
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_maketiles(tile, size_in_mb) t"
+    )
 
 
 # --- Tier 1f: terrain UDFs (slope, aspect, hillshade) ----------------------
@@ -2318,30 +2400,39 @@ def _tilexyz_udf(tile, z, x, y, format, size, resampling):
         return xyz.render_tile(ds, int(z), int(x), int(y), fmt, sz, resamp)
 
 
-_XYZPYRAMID_SCHEMA = ArrayType(
-    StructType(
-        [
-            StructField("z", IntegerType(), False),
-            StructField("x", IntegerType(), False),
-            StructField("y", IntegerType(), False),
-            StructField("bytes", BinaryType(), True),
-        ]
-    )
+_XYZPYRAMID_ROW_SCHEMA = StructType(
+    [
+        StructField("z", IntegerType(), False),
+        StructField("x", IntegerType(), False),
+        StructField("y", IntegerType(), False),
+        StructField("bytes", BinaryType(), True),
+    ]
 )
 
 
-@f.udf(_XYZPYRAMID_SCHEMA)
-def _xyzpyramid_udf(tile, min_z, max_z, format, size, resampling):
-    if tile is None or tile["raster"] is None:
-        return None
-    from databricks.labs.gbx.pyrx import _env
+@udtf(returnType=_XYZPYRAMID_ROW_SCHEMA)
+class _RstXyzPyramidUDTF:
+    """Streaming UDTF: yield one (z, x, y, bytes) row per intersecting XYZ tile.
 
-    _env.configure_gdal_env()
-    fmt = str(format) if format is not None else "PNG"
-    sz = int(size) if size is not None else 256
-    resamp = str(resampling) if resampling is not None else "bilinear"
-    with _serde.open_tile(bytes(tile["raster"])) as ds:
-        return xyz.pyramid(ds, int(min_z), int(max_z), fmt, sz, resamp)
+    Uses ``xyz.iter_pyramid`` (a lazy generator over the zoom range) — never
+    buffers the full pyramid (large-fan-out OOM guard). The zoom / render-arg /
+    tile-count guards fire up front before any tile is rendered or yielded.
+    """
+
+    def eval(self, tile, min_z, max_z, format, size, resampling):
+        if tile is None or tile["raster"] is None:
+            return
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        fmt = str(format) if format is not None else "PNG"
+        sz = int(size) if size is not None else 256
+        resamp = str(resampling) if resampling is not None else "bilinear"
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            for z, x, y, b in xyz.iter_pyramid(
+                ds, int(min_z), int(max_z), fmt, sz, resamp
+            ):
+                yield (z, x, y, b)
 
 
 def rst_tilexyz(
@@ -2384,12 +2475,21 @@ def rst_xyzpyramid(
     format: ColLike = "PNG",
     size: ColLike = 256,
     resampling: ColLike = "bilinear",
-) -> Column:
+) -> None:
     """Render every web-mercator XYZ tile intersecting the raster across a zoom range.
 
     Computes the source extent in WGS84, enumerates intersecting (z, x, y) tiles
     for each zoom in [min_z, max_z] (WebMercatorQuad TMS, Y north-down), and
     renders each via the same path as :func:`rst_tilexyz`.
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.z, t.x, t.y, t.bytes
+        FROM <df>, LATERAL gbx_rst_xyzpyramid(tile, min_z, max_z, format, size, resampling) t
+
+    Each output row is ``struct(z INT, x INT, y INT, bytes BINARY)``, one per
+    intersecting tile. Raises if the candidate tile-count across the range
+    exceeds 1,000,000.
 
     Args:
         tile:       Tile struct column.
@@ -2398,16 +2498,12 @@ def rst_xyzpyramid(
         format:     "PNG" (default), "JPEG", or "WEBP".
         size:       Output tile side in pixels, in (0, 4096]. Default 256.
         resampling: GDAL warp resampling name (default "bilinear").
-
-    Returns:
-        ARRAY<struct(z INT, x INT, y INT, bytes BINARY)>, one element per
-        intersecting tile. Explode the array to get one row per tile. Raises if
-        the candidate tile-count across the range exceeds 1,000,000.
     """
-    fmt = f.lit(format) if isinstance(format, str) else _col(format)
-    sz = f.lit(size) if isinstance(size, int) else _col(size)
-    resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
-    return _xyzpyramid_udf(_col(tile), _col(min_z), _col(max_z), fmt, sz, resamp)
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, "
+        "LATERAL gbx_rst_xyzpyramid(tile, min_z, max_z, format, size, resampling) t"
+    )
 
 
 # --- Tier 1i: raster->grid aggregation UDTFs (h3 + quadbin) -----------------
@@ -2452,11 +2548,21 @@ def _make_rastertogrid_udtf(grid, agg, flat_schema):
     return _RasterToGridUDTF
 
 
-_RstH3RasterToGridAvgUDTF = _make_rastertogrid_udtf("h3", "avg", _GRID_FLAT_DOUBLE_SCHEMA)
-_RstH3RasterToGridCountUDTF = _make_rastertogrid_udtf("h3", "count", _GRID_FLAT_INT_SCHEMA)
-_RstH3RasterToGridMaxUDTF = _make_rastertogrid_udtf("h3", "max", _GRID_FLAT_DOUBLE_SCHEMA)
-_RstH3RasterToGridMinUDTF = _make_rastertogrid_udtf("h3", "min", _GRID_FLAT_DOUBLE_SCHEMA)
-_RstH3RasterToGridMedianUDTF = _make_rastertogrid_udtf("h3", "median", _GRID_FLAT_DOUBLE_SCHEMA)
+_RstH3RasterToGridAvgUDTF = _make_rastertogrid_udtf(
+    "h3", "avg", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstH3RasterToGridCountUDTF = _make_rastertogrid_udtf(
+    "h3", "count", _GRID_FLAT_INT_SCHEMA
+)
+_RstH3RasterToGridMaxUDTF = _make_rastertogrid_udtf(
+    "h3", "max", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstH3RasterToGridMinUDTF = _make_rastertogrid_udtf(
+    "h3", "min", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstH3RasterToGridMedianUDTF = _make_rastertogrid_udtf(
+    "h3", "median", _GRID_FLAT_DOUBLE_SCHEMA
+)
 _RstQuadbinRasterToGridAvgUDTF = _make_rastertogrid_udtf(
     "quadbin", "avg", _GRID_FLAT_DOUBLE_SCHEMA
 )
@@ -3228,13 +3334,11 @@ _sql_tile_ops = {
     "gbx_rst_mapalgebra": _mapalgebra_udf,
     "gbx_rst_index": _index_udf,
     "gbx_rst_derivedband": _derivedband_udf,
-    "gbx_rst_separatebands": _separatebands_udf,
-    "gbx_rst_retile": _retile_udf,
-    "gbx_rst_tooverlappingtiles": _tooverlappingtiles_udf,
-    "gbx_rst_h3_tessellate": _h3_tessellate_udf,
-    "gbx_rst_maketiles": _maketiles_udf,
+    # gbx_rst_separatebands / retile / tooverlappingtiles / maketiles /
+    # h3_tessellate / xyzpyramid are fan-out UDTFs registered separately in
+    # register() via spark.udtf.register — UDTFs cannot go through
+    # spark.udf.register.
     "gbx_rst_tilexyz": _tilexyz_udf,
-    "gbx_rst_xyzpyramid": _xyzpyramid_udf,
 }
 
 # Grouped aggregators register the BINARY grouped-agg pandas_udf directly; SQL
