@@ -420,28 +420,65 @@ diverge — so the timing above is a like-for-like comparison of identical outpu
 
 ## Results — vector readers
 
-The vector readers are benchmarked separately from the `rst_*` functions: each
-format pair (`*_gbx` lightweight vs `*_ogr` heavyweight) reads the same source
-file and row-count parity is a **hard gate** — the benchmark fails if the two
-tiers return a different row count. Run it with
-`gbx:bench:cluster --benchmark-vector` (or `--vector-only` to skip all function
-benchmarks).
+The vector readers are benchmarked on a scaled corpus: **5 × 1,000,000-feature** files
+(≈5M polygons) per format, read from a UC Volume **into a Delta table** — the realistic
+"ingest vector files into Delta" pipeline. Each format runs light (`*_gbx`) vs heavy
+(`*_ogr`) as its own isolated job, one measured iteration (I/O is not JIT-sensitive).
+Cluster: DBR 17.3 LTS. Run with `gbx:bench:cluster --vector-only --vector-scale`.
 
-Four format pairs are covered:
-
-| Format (light) | Format (heavy) | Source | Whole-job median | Speedup |
+| Format | rows | light (`*_gbx`) | heavy (`*_ogr`) | light edge |
 |---|---|---|---|---|
-| `geojson_gbx` | `geojson_ogr` | `nyc_boroughs.geojson` | — | — |
-| `shapefile_gbx` | `shapefile_ogr` | `nyc_subway.shp.zip` | — | — |
-| `gpkg_gbx` | `gpkg_ogr` | `nyc_complete.gpkg` | — | — |
-| `file_gdb_gbx` | `file_gdb_ogr` | `NYC_Sample.gdb.zip` | — | — |
+| GeoJSON — FeatureCollection (`multi=false`) | 5M | **29.6 s** | 130.6 s | **4.4×** |
+| GeoJSON — GeoJSONSeq (`multi=true`) | 5M | **31.9 s** | 113.9 s | **3.6×** |
+| Shapefile | 5M | 27.8 s | **26.3 s** | ~par |
+| GeoPackage | 5M | **23.5 s** | 62.1 s | **2.6×** |
+| FileGDB | 1M | **13.8 s** | — | light-only on Volumes¹ |
 
-> Timing cells show "—" pending a cluster run. Figures will be filled in once a
-> controlled cluster run is completed.
+The lightweight readers are Arrow-native (columnar `pyogrio` batches — no per-row Python) and
+stage GeoPackage/FileGDB to worker-local temp for random-access reads; they **win or tie**
+every format. GeoJSON is read one partition per file in both tiers (the GeoJSON driver
+re-parses the whole `FeatureCollection` on each open, so feature-offset chunking is
+counterproductive); heavy GeoJSON's per-feature OGR→row construction is what puts it behind.
 
-**Parity:** for each format, `spark.read.format(<light>).load(path).count()` must
-equal `spark.read.format(<heavy>).load(path).count()`. This is checked inline
-during the benchmark and the run fails immediately if the counts diverge.
+¹ **FileGDB on a Volume:** the heavy OGR FileGDB reader opens a native `.gdb`/`.gdb.zip` from
+local/cluster storage but does not read one directly from a UC Volume (FileGDB's seeked
+multi-file I/O does not serve well over object storage); the lightweight reader stages it
+locally and reads it from the Volume. So FileGDB reads are light-only at Volume/directory
+scale (a single 1M archive is shown).
+
+**Parity:** for each format both tiers ingest the same files and the row counts must match
+(checked inline; the run flags any divergence).
+
+## Results — vector writers
+
+Vector writers are **lightweight-only** — the heavyweight tier has no vector writer (GDAL/OGR
+can write these formats, but those paths aren't implemented in the JVM tier). Each writes a
+**14,000,000-feature** Delta table to a **single file** (the two-phase writer merges the
+partition fragments on the driver). Run with `gbx:bench:cluster --vector-only --vector-scale
+--vector-legs writer --writer-rows 14000000`.
+
+| Format | rows | light (`*_gbx`) | throughput |
+|---|---|---|---|
+| GeoJSON | 14M | 279.1 s | ~50k rows/s |
+| Shapefile | 14M | 152.6 s | ~92k rows/s |
+| GeoPackage | 14M | 155.9 s | ~90k rows/s |
+| FileGDB | 14M | 368.3 s | ~38k rows/s |
+
+The single-file write is driver-bound (one merged output); GeoJSON is the slowest (text
+encoding) and FileGDB next (native `osgeo`, per-feature). For sharded, parallel output that
+skips the driver merge, write a directory of newline-delimited shards (`geojsonl_gbx`, one
+file per partition).
+
+**Format capacity — the limit is the *format's*, not GeoBrix's.** 14M box polygons sits
+Shapefile near its 2 GB `.shp` ceiling; the other formats carry it easily and are specified
+far higher:
+
+| Format | Ceiling | Cause |
+|---|---|---|
+| Shapefile | **2 GB** per `.shp`/`.dbf` (~15.8M box polygons) | 32-bit record offsets |
+| GeoPackage | **~17.6 TB** (billions of rows) | SQLite `page_size × max_page_count` |
+| FileGDB | **2.1 B rows** / 1 TB+ per feature class | OBJECTID is signed int32 |
+| GeoJSON | **none** (RFC 7946) | text; bounded only by disk / parse memory |
 
 ## Caveats
 
