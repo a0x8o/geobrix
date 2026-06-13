@@ -122,8 +122,16 @@ approximations rather than patching them separately.
   `ValueError` on a `{"covering","centroid"}` miss, message listing the valid values.
 
 ### 6.2 `covering` mode (default) — the pioneered tessellate-as-WKB technique
-- **Cell selection:** the **true covering set** of the tile's 4326 bbox via H3 v4
-  `polygonToCellsExperimental(bbox, res, ContainmentOverlapping)` — every cell that *overlaps* the tile.
+- **Cell selection:** the **true covering set** of the tile's 4326 bbox — every cell that *overlaps*
+  the tile.
+  - **Light:** h3-py **4.4.2** native `polygon_to_cells_experimental(shape, res, contain='overlap')`
+    (`'overlap'` = covering; `'center'` = classic polyfill).
+  - **Heavy:** H3-Java is **pinned at 3.7.0** (`<!-- H3 fixed at 3.7.0 until Photon updates -->`) — it
+    has **no v4 covering primitive**. So heavy **hand-rolls** the same set: keep polyfill + ring/buffer
+    candidate generation, then keep a cell iff its hexagon **geometrically overlaps the bbox** (a JTS
+    intersection test), replacing the current nodata keep-test. A **defensible cross-tier divergence in
+    *mechanism*** — the product ships the H3 3.7.x JAR while Python can ride the h3 4.x series — both
+    compute the identical overlapping set.
 - **Per-cell output:** raster **clipped to the cell's hexagon** with **`all_touched=True`** (boundary
   pixels included), applied consistently in any prune AND the clip (fixes light's prune-vs-clip
   asymmetry; matches heavy's `CUTLINE_ALL_TOUCHED=TRUE`). One tile-struct chip per cell.
@@ -149,19 +157,23 @@ approximations rather than patching them separately.
   and out of scope.)
 
 ### 6.5 Cross-tier alignment + "no harm"
-- Both tiers call the **same H3 v4 primitives** per mode → identical cell sets + chips by construction.
+- The two tiers compute the **same set by definition** (covering = the true overlapping set; centroid =
+  pixel-centroid assignment) — light via the h3-py v4 primitive, heavy via the 3.7.0-compatible
+  hand-rolled equivalent — and **parity is enforced by the per-mode tests** (§8), not by an identical
+  API call. Functionally equal, test-guaranteed.
 - `covering` (default) is the **corrected** existing behavior — heavy drops its disjoint fringe, light
   drops its approximation. The 0.4.0 H3 capabilities are unreleased WIP, so this is a fix, not a
   back-compat break. `centroid` is purely **additive**. Existing capability is **fixed + extended**.
 
 ## 7. Implementation scope
 
-- **Heavy (Scala):** `RST_H3_Tessellate` (+ `RasterTessellate` / `H3`) — add `modeExpr`; covering path
-  → `ContainmentOverlapping` covering set (replace polyfill+buffer; the `getBufferRadius` MatchError
-  risk disappears); centroid path → per-pixel `pointToCellID` assignment → per-cell chip;
-  `FunctionBuilder` arity 2+3; Scala API + heavy Python binding `mode="covering"`; validation.
-  **Verify the bundled H3-Java version exposes `polygonToCellsExperimental(ContainmentOverlapping)`**
-  (H3 v4). JAR rebuild + tessellate re-bench.
+- **Heavy (Scala, H3-Java 3.7.0 — NO v4 primitive):** `RST_H3_Tessellate` (+ `RasterTessellate` / `H3`)
+  — add `modeExpr`; **covering path** → hand-rolled true covering set: keep the polyfill + ring/buffer
+  candidate generation but **replace the nodata keep-test with a JTS hexagon∩bbox overlap test** (this
+  removes the disjoint-fringe over-inclusion and matches light's `contain='overlap'`); give
+  `getBufferRadius` a default match arm if the buffer path is retained; **centroid path** → per-pixel
+  `pointToCellID` assignment → per-cell chip; `FunctionBuilder` arity 2+3; Scala API + heavy Python
+  binding `mode="covering"`; validation. JAR rebuild + tessellate re-bench.
 - **Light (pyrx):** `pyrx/core/tessellate.py` + the `rst_h3_tessellate` UDTF/wrapper — add `mode`;
   covering path → the h3-py v4 overlapping-containment call (verify exact API:
   `polygon_to_cells_experimental(..., contain='overlap')` or equivalent) replacing seed+grid_disk+prune;
