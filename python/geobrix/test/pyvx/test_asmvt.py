@@ -1,0 +1,28 @@
+import mapbox_vector_tile as mvt
+from shapely import to_wkb
+from shapely.geometry import Point
+
+from databricks.labs.gbx.pyvx import functions as vx
+
+
+def test_st_asmvt_aggregates_group_to_one_tile(spark):
+    vx.register(spark)
+    rows = [
+        (0, 0, 0, bytearray(to_wkb(Point(100.0, 200.0))), "a", 1),
+        (0, 0, 0, bytearray(to_wkb(Point(300.0, 400.0))), "b", 2),
+    ]
+    df = spark.createDataFrame(rows, "z int, x int, y int, geom binary, name string, pop int")
+    from pyspark.sql import functions as f
+
+    out = (
+        df.groupBy("z", "x", "y")
+        .agg(vx.st_asmvt(f.col("geom"), f.struct("name", "pop"), "layer").alias("mvt"))
+        .collect()
+    )
+    assert len(out) == 1
+    blob = bytes(out[0]["mvt"])
+    feats = mvt.decode(blob)["layer"]["features"]
+    assert len(feats) == 2
+    pops = sorted(ff["properties"]["pop"] for ff in feats)
+    assert pops == [1, 2]
+    assert all(isinstance(ff["properties"]["pop"], int) for ff in feats)
