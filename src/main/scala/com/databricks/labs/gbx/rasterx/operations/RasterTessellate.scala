@@ -3,15 +3,30 @@ package com.databricks.labs.gbx.rasterx.operations
 import com.databricks.labs.gbx.gridx.grid.H3
 import com.databricks.labs.gbx.rasterx.gdal.GDAL
 import org.gdal.gdal.Dataset
+import org.locationtech.jts.geom.Geometry
 
 /** Tessellates a raster into H3 cells: clips by cell geometry and yields (cellId, Dataset, metadata) per cell. */
 object RasterTessellate {
 
-    /** Clips ds to the H3 cell geometry and returns (cellId, clipped Dataset, metadata); returns null if empty. */
-    def getTile(ds: Dataset, options: Map[String, String], cell: Long): (Long, Dataset, Map[String, String]) = {
+    /**
+      * Clips ds to the H3 cell geometry and returns (cellId, clipped Dataset, metadata); returns null if the
+      * cell hexagon does NOT geometrically overlap the raster bbox.
+      *
+      * The covering set is defined geometrically: keep the cell iff its H3 hexagon (WGS84, same CRS as `bbox`)
+      * intersects the raster bbox. This replaces an earlier nodata-mask keep-test (`RasterAccessors.isEmpty`
+      * on the bbox-snapped warp), which over-included a fringe of cells whose hexagons sit just outside the
+      * raster (zero geometric overlap). Matches the light tier's `contain='overlap'` covering set.
+      */
+    def getTile(
+        ds: Dataset,
+        options: Map[String, String],
+        cell: Long,
+        bbox: Geometry
+    ): (Long, Dataset, Map[String, String]) = {
         val cellGeom = H3.cellIdToGeometry(cell)
+        if (!cellGeom.intersects(bbox)) return null
         val (resDs, resMtd) = ClipToGeom.clip(ds, options, cellGeom, GDAL.WSG84)
-        if (RasterAccessors.isEmpty(resDs)) return null
+        if (resDs == null) return null
         resDs.SetMetadataItem("RASTERX_CELL_ID", cell.toString)
         resDs.FlushCache()
         (cell, resDs, resMtd)
@@ -31,6 +46,7 @@ object RasterTessellate {
             private var closed = false
             private var fetched = false
             private var _ds = ds
+            private val _bbox = bbox
             private val _cells = cells
             private var cc = 0
             private var nextTile: (Long, Dataset, Map[String, String]) = _
@@ -41,7 +57,7 @@ object RasterTessellate {
                 nextTile = null
                 while (cc < _cells.length && nextTile == null) {
                     val cell = _cells(cc)
-                    nextTile = getTile(_ds, options, cell)
+                    nextTile = getTile(_ds, options, cell, _bbox)
                     cc += 1
                 }
                 if (cc >= _cells.length && nextTile == null) close()
