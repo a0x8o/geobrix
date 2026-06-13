@@ -270,6 +270,9 @@ def main() -> int:
     # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
     benchmark_fanout = "--benchmark-fanout" in sys.argv
     fanout_only = "--fanout-only" in sys.argv
+    # --fanout-scale F: dial the synthetic fan-out size for each function (default 1.0 ->
+    #   meaningful but ~couple minutes on ~20 workers). Larger = more output rows.
+    fanout_scale = float(_arg("--fanout-scale", "1.0"))
     writer_rows = int(_arg("--writer-rows", "14000000"))
     # --vector-legs reader|writer|both: run the scaled vector reader-ingest legs, the
     # writer-export leg, or both (default). Lets each be a separate isolated cluster job.
@@ -462,10 +465,12 @@ def main() -> int:
         benchmark_mvt=benchmark_mvt,
         #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
         mvt_only=mvt_only,
-        #  --benchmark-fanout: also run fan-out UDTF benchmark (rst_polygonize + rst_h3_rastertogridcount).
+        #  --benchmark-fanout: also run fan-out UDTF benchmark (all 8 streaming UDTFs).
         benchmark_fanout=benchmark_fanout,
         #  --fanout-only: ONLY run the fanout benchmark, skip fn benchmarks.
         fanout_only=fanout_only,
+        #  --fanout-scale F: dial the synthetic fan-out size (default 1.0).
+        fanout_scale=fanout_scale,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.

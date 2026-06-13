@@ -1100,35 +1100,63 @@ def run_mvt_agg(
         )
 
 
-def _make_synthetic_geotiff(n_regions: int = 4, size: int = 64) -> bytes:
-    """Build a minimal in-memory GeoTIFF with ``n_regions`` distinct value patches.
+def _make_synthetic_geotiff(
+    n_regions: int = 4,
+    size: int = 64,
+    *,
+    bands: int = 1,
+    bounds: tuple = (-0.5, 51.3, 0.5, 51.7),
+    checkerboard: int = 0,
+) -> bytes:
+    """Build a minimal in-memory GeoTIFF with distinct value structure.
 
-    The tile is ``size x size`` pixels, single-band float32, EPSG:4326-ish.
-    Each of the n_regions regions occupies a quadrant-like block of pixels so
-    rst_polygonize has meaningful connected components to extract, and
-    rst_h3_rastertogridcount has non-trivial cells to count.  Returns raw GTiff
-    bytes suitable for putting in a tile struct.
+    The tile is ``size x size`` pixels, ``bands``-band float32, EPSG:4326.
+
+    Value structure (drives the fan-out of each consuming function):
+      * ``checkerboard > 0``: paint a ``checkerboard x checkerboard`` grid of
+        alternating integer values -- yields MANY connected components for
+        rst_polygonize and many distinct cell measures for the grid counters.
+      * otherwise: split into ``n_regions`` horizontal bands of distinct value
+        (the original behaviour) -- a handful of large components.
+
+    ``bounds`` is the WGS84 (minx, miny, maxx, maxy) extent; a wider extent
+    spans more H3 cells / XYZ tiles. ``bands`` > 1 drives rst_separatebands.
+
+    Returns raw GTiff bytes suitable for the ``raster`` field of a tile struct.
     """
     import io as _io
-    import math
 
     import numpy as np
-    import rasterio
     from rasterio.crs import CRS
     from rasterio.io import MemoryFile
     from rasterio.transform import from_bounds
 
-    data = np.zeros((size, size), dtype=np.float32)
-    # Split the raster into n_regions horizontal bands, each with a distinct value.
-    step = max(1, size // n_regions)
-    for i in range(n_regions):
-        row_start = i * step
-        row_end = (i + 1) * step if i < n_regions - 1 else size
-        data[row_start:row_end, :] = float(i + 1)
+    def _one_band(seed: float) -> "np.ndarray":
+        arr = np.zeros((size, size), dtype=np.float32)
+        if checkerboard and checkerboard > 0:
+            # Paint a checkerboard of distinct values: adjacent cells differ so
+            # polygonize sees ``checkerboard^2`` separate connected components.
+            cell = max(1, size // checkerboard)
+            last = checkerboard - 1
+            for by in range(checkerboard):
+                r0 = by * cell
+                r1 = size if by == last else (by + 1) * cell
+                for bx in range(checkerboard):
+                    c0 = bx * cell
+                    c1 = size if bx == last else (bx + 1) * cell
+                    # Distinct value per block; +seed so bands differ.
+                    val = float((by * checkerboard + bx) % 251 + 1) + seed
+                    arr[r0:r1, c0:c1] = val
+        else:
+            step = max(1, size // n_regions)
+            for i in range(n_regions):
+                row_start = i * step
+                row_end = (i + 1) * step if i < n_regions - 1 else size
+                arr[row_start:row_end, :] = float(i + 1) + seed
+        return arr
 
-    # A small WGS84 extent in London roughly; H3 resolution 7 has ~1.2km cells
-    # which are smaller than this ~50km extent, so the tile produces multiple cells.
-    transform = from_bounds(-0.5, 51.3, 0.5, 51.7, size, size)
+    minx, miny, maxx, maxy = bounds
+    transform = from_bounds(minx, miny, maxx, maxy, size, size)
     crs = CRS.from_epsg(4326)
 
     buf = _io.BytesIO()
@@ -1138,13 +1166,170 @@ def _make_synthetic_geotiff(n_regions: int = 4, size: int = 64) -> bytes:
             dtype="float32",
             width=size,
             height=size,
-            count=1,
+            count=max(1, bands),
             crs=crs,
             transform=transform,
         ) as ds:
-            ds.write(data, 1)
+            for b in range(max(1, bands)):
+                ds.write(_one_band(seed=float(b) * 0.0), b + 1)
         buf.write(mf.read())
     return buf.getvalue()
+
+
+# Fan-out functions covered by run_fanout_udtf.  Order is stable for parity loops.
+FANOUT_FUNCTIONS = [
+    "rst_polygonize",
+    "rst_h3_rastertogridcount",
+    "rst_xyzpyramid",
+    "rst_h3_tessellate",
+    "rst_retile",
+    "rst_tooverlappingtiles",
+    "rst_maketiles",
+    "rst_separatebands",
+]
+
+# Per-function synthetic-input + invocation spec.  ``scale`` (default 1.0) is the
+# tunable that dials the fan-out up/down; sizes below are the scale=1.0 defaults
+# chosen to be meaningful yet finish in a couple of minutes on ~20 workers.
+#
+# Each entry returns (tile_kwargs, light_lateral, heavy_lateral) where the LATERAL
+# fragments are the part AFTER "LATERAL" in the SQL, and ``heavy_lateral`` already
+# flattens the heavy tier to the SAME granularity as the light flat UDTF rows:
+#   * polygonize  -> heavy ARRAY<struct>           -> explode  (single)
+#   * gridcount   -> heavy ARRAY<ARRAY<struct>>    -> explode∘explode (double)
+#   * 5 generators-> heavy CollectionGenerator     -> LATERAL VIEW explode(gbx_..)
+#   * xyzpyramid  -> heavy CollectionGenerator emits flat rows -> LATERAL VIEW (no explode)
+
+
+def _fanout_spec(fn: str, scale: float):
+    """Return (tile_kwargs, light_sql, heavy_sql) for a fan-out function.
+
+    ``light_sql`` / ``heavy_sql`` are full SQL strings over the temp view
+    ``_fanout_bench_ras`` (column ``tile``) that each produce FLAT rows so the
+    two row counts are directly comparable (the flatten-both parity gate).
+    """
+    s = max(0.1, float(scale))
+
+    if fn == "rst_polygonize":
+        # Many connected components -> large polygon fan-out.
+        cb = max(2, int(round(16 * (s**0.5))))
+        size = max(64, int(round(256 * (s**0.5))))
+        tile_kwargs = dict(size=size, checkerboard=cb)
+        light = "SELECT t.* FROM _fanout_bench_ras, LATERAL gbx_rst_polygonize(tile, 1, 4) t"
+        # Heavy returns ARRAY<struct> -> single explode.
+        heavy = (
+            "SELECT p.* FROM _fanout_bench_ras "
+            "LATERAL VIEW explode(gbx_rst_polygonize(tile, 1, 4)) e AS p"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_h3_rastertogridcount":
+        # Fine H3 resolution + wide extent -> many cells.
+        res = 9 if s <= 1.0 else 10
+        # Wider extent at higher scale -> more cells.
+        span = 0.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_h3_rastertogridcount(tile, {res}) t"
+        )
+        # Heavy returns ARRAY<ARRAY<struct>> (bands x cells) -> DOUBLE explode.
+        heavy = (
+            "SELECT c.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW explode(gbx_rst_h3_rastertogridcount(tile, {res})) eb AS band_cells "
+            "LATERAL VIEW explode(band_cells) ec AS c"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_xyzpyramid":
+        # Deep zoom range over a multi-degree extent -> thousands of tiles.
+        min_z = 4
+        max_z = 9 if s <= 1.0 else 10
+        span = 1.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_xyzpyramid(tile, {min_z}, {max_z}, 'PNG', 256, 'bilinear') t"
+        )
+        # Heavy generator emits flat rows directly -> LATERAL VIEW, NO explode.
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW gbx_rst_xyzpyramid(tile, {min_z}, {max_z}, 'PNG', 256, 'bilinear') t AS tile"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_h3_tessellate":
+        res = 8 if s <= 1.0 else 9
+        span = 0.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_h3_tessellate(tile, {res}) t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, {res})) e AS t"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn in ("rst_retile", "rst_tooverlappingtiles"):
+        # Large raster with small tile size -> many tiles.
+        size = max(512, int(round(1024 * (s**0.5))))
+        tw = th = 64
+        tile_kwargs = dict(size=size)
+        if fn == "rst_retile":
+            light = (
+                "SELECT t.* FROM _fanout_bench_ras, "
+                f"LATERAL gbx_rst_retile(tile, {tw}, {th}) t"
+            )
+            heavy = (
+                "SELECT t.* FROM _fanout_bench_ras "
+                f"LATERAL VIEW explode(gbx_rst_retile(tile, {tw}, {th})) e AS t"
+            )
+        else:
+            overlap = 8
+            light = (
+                "SELECT t.* FROM _fanout_bench_ras, "
+                f"LATERAL gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap}) t"
+            )
+            heavy = (
+                "SELECT t.* FROM _fanout_bench_ras "
+                f"LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap})) e AS t"
+            )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_maketiles":
+        # Large raster + small per-tile MB budget -> many power-of-4 sub-tiles.
+        size = max(512, int(round(1024 * (s**0.5))))
+        size_mb = 1
+        tile_kwargs = dict(size=size)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_maketiles(tile, {size_mb}) t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW explode(gbx_rst_maketiles(tile, {size_mb})) e AS t"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_separatebands":
+        # MANY bands (hyperspectral / large-band case) -> large per-row fan-out.
+        nbands = max(8, int(round(64 * s)))
+        tile_kwargs = dict(size=64, bands=nbands)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, LATERAL gbx_rst_separatebands(tile) t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            "LATERAL VIEW explode(gbx_rst_separatebands(tile)) e AS t"
+        )
+        return tile_kwargs, light, heavy
+
+    raise ValueError(f"unknown fanout fn: {fn}")
 
 
 def run_fanout_udtf(
@@ -1155,23 +1340,68 @@ def run_fanout_udtf(
     *,
     api: str,
     fn: str,
+    scale: float = 1.0,
     where: str = "cluster",
 ) -> "ResultRow":
-    """Time a fan-out UDTF (rst_polygonize or rst_h3_rastertogridcount).
+    """Time one of the 8 fan-out functions, light (UDTF) vs heavy (generator/array).
 
-    Builds a single synthetic GeoTIFF tile with distinct value regions, wraps
-    it in a one-row DataFrame matching the tile struct schema, then times the
-    LATERAL SQL invocation (light) or explode-Column invocation (heavy) to
-    completion.  Returns a single ResultRow (mode="spark-path", category="fanout").
+    Builds a per-function synthetic GeoTIFF tile sized to drive ``fn`` into a
+    LARGE fan-out (the regime where streaming UDTFs help -- see ``_fanout_spec``),
+    wraps it in a one-row DataFrame matching the tile struct schema, then times
+    the flattened invocation to completion. Returns a single ResultRow
+    (mode="spark-path", category="fanout").
+
+    Both tiers are invoked via SQL and flattened to the SAME granularity so the
+    output row counts are directly comparable (flatten-both parity):
+        * light = streaming UDTF via ``LATERAL gbx_<fn>(...)`` -> already flat.
+        * heavy = its Scala counterpart, flattened to match:
+            - ARRAY<struct>        (polygonize)  -> single ``explode``
+            - ARRAY<ARRAY<struct>> (gridcount)   -> double ``explode``
+            - CollectionGenerator  (5 tilers)    -> ``LATERAL VIEW explode(gbx_..)``
+            - CollectionGenerator emitting flat rows (xyzpyramid) -> ``LATERAL VIEW``
 
     ``api`` controls which tier is timed:
-        "lightweight"  → registers pyrx UDTFs; invokes via LATERAL SQL
-        "heavyweight"  → registers rasterx; invokes via F.explode(Column)
-    ``fn`` selects the function:
-        "rst_polygonize"             → band=1, connectedness=4
-        "rst_h3_rastertogridcount"   → resolution=7
+        "lightweight"  -> registers pyrx UDTFs
+        "heavyweight"  -> registers rasterx (needs the JAR -> cluster-only)
+    ``fn`` is one of ``FANOUT_FUNCTIONS``.
+    ``scale`` dials the synthetic fan-out up/down (default 1.0).
     """
     env = capture_env(where)
+
+    # Resolve the per-function synthetic-input + invocation spec up front so a bad
+    # fn name fails loudly rather than silently benching nothing.
+    try:
+        tile_kwargs, light_sql, heavy_sql = _fanout_spec(fn, scale)
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"spec error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
 
     # Register the tier.
     try:
@@ -1225,7 +1455,9 @@ def run_fanout_udtf(
             StructType,
         )
 
-        tile_bytes = _make_synthetic_geotiff(n_regions=4, size=64)
+        tile_bytes = _make_synthetic_geotiff(**tile_kwargs)
+        _w = int(tile_kwargs.get("size", 64))
+        _bands = int(tile_kwargs.get("bands", 1))
         tile_schema = StructType(
             [
                 StructField("cellid", LongType(), nullable=False),
@@ -1237,7 +1469,16 @@ def run_fanout_udtf(
                 ),
             ]
         )
-        tile_row = (0, bytearray(tile_bytes), {"driver": "GTiff", "width": "64", "height": "64", "count": "1"})
+        tile_row = (
+            0,
+            bytearray(tile_bytes),
+            {
+                "driver": "GTiff",
+                "width": str(_w),
+                "height": str(_w),
+                "count": str(_bands),
+            },
+        )
         df = spark.createDataFrame([tile_row], schema=tile_schema)
         import pyspark.sql.functions as _F
 
@@ -1278,53 +1519,21 @@ def run_fanout_udtf(
             **env,
         )
 
-    # Build the job closure: light uses LATERAL SQL; heavy uses explode(Column).
+    # Build the job closure: both tiers go through SQL and are flattened to the
+    # SAME granularity (flatten-both parity).  ``light_sql`` is the streaming UDTF
+    # LATERAL form; ``heavy_sql`` flattens the Scala counterpart per _fanout_spec.
     try:
-        if api == "lightweight":
-            if fn == "rst_polygonize":
-                sql = (
-                    "SELECT t.* "
-                    "FROM _fanout_bench_ras, "
-                    "LATERAL gbx_rst_polygonize(tile, 1, 4) t"
-                )
-            else:  # rst_h3_rastertogridcount
-                sql = (
-                    "SELECT t.* "
-                    "FROM _fanout_bench_ras, "
-                    "LATERAL gbx_rst_h3_rastertogridcount(tile, 7) t"
-                )
+        sql = light_sql if api == "lightweight" else heavy_sql
 
-            def _job():
-                return spark.sql(sql).count()
+        def _job():
+            return spark.sql(sql).count()
 
-        else:  # heavyweight
-            from databricks.labs.gbx.rasterx import functions as rx
-
-            if fn == "rst_polygonize":
-                def _job():
-                    return (
-                        df.select(
-                            _F.explode(rx.rst_polygonize(_F.col("tile"), _F.lit(1), _F.lit(4)))
-                            .alias("poly")
-                        )
-                        .count()
-                    )
-            else:  # rst_h3_rastertogridcount
-                def _job():
-                    return (
-                        df.select(
-                            _F.explode(rx.rst_h3_rastertogridcount(_F.col("tile"), _F.lit(7)))
-                            .alias("cell")
-                        )
-                        .count()
-                    )
-
-        # Validate once (untimed): guard against 0-row output.
+        # Validate once (untimed): guard against 0-row / all-empty output.
         actual_rows = int(_job())
         if actual_rows == 0:
             raise RuntimeError(
                 f"{fn} ({api}) produced 0 output rows -- check tile content or "
-                "registration."
+                "registration (all-empty/null guard)."
             )
     except Exception as e:  # noqa: BLE001
         return ResultRow(
@@ -1366,8 +1575,8 @@ def run_fanout_udtf(
             fn=fn,
             category="fanout",
             mode="spark-path",
-            tile_px=64,
-            bands=1,
+            tile_px=_w,
+            bands=_bands,
             dtype="float32",
             srid=4326,
             rows=actual_rows,
@@ -1382,7 +1591,9 @@ def run_fanout_udtf(
             per_tile_avg_s=(ms / actual_rows / 1000.0) if (ms and actual_rows) else 0.0,
             per_tile_avg_ms=(ms / actual_rows) if (ms and actual_rows) else 0.0,
             throughput_mpix_s=0.0,
-            throughput_rows_s=(actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0,
+            throughput_rows_s=(
+                (actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0
+            ),
             peak_rss_mb=peak_rss_mb(),
             status="ok",
             note=f"{fn} {api} -> {actual_rows} output rows",
@@ -1396,8 +1607,8 @@ def run_fanout_udtf(
             fn=fn,
             category="fanout",
             mode="spark-path",
-            tile_px=64,
-            bands=1,
+            tile_px=_w,
+            bands=_bands,
             dtype="float32",
             srid=4326,
             rows=0,
