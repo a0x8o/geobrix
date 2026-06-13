@@ -1744,15 +1744,21 @@ class _RstMakeTilesUDTF:
 class _RstH3TessellateUDTF:
     """Streaming UDTF: yield one clipped tile struct per overlapping H3 cell."""
 
-    def eval(self, tile, resolution):
+    def eval(self, tile, resolution, mode=None):
         if tile is None or tile["raster"] is None or resolution is None:
             return
+        effective_mode = mode if mode is not None else "covering"
+        if effective_mode not in {"covering", "centroid"}:
+            raise ValueError(
+                f"rst_h3_tessellate: mode must be one of covering, centroid; "
+                f"got '{effective_mode}'"
+            )
         from databricks.labs.gbx.pyrx import _env
 
         _env.configure_gdal_env()
         with _serde.open_tile(bytes(tile["raster"])) as ds:
             for cellid, raster in tessellate_core.iter_tessellate_h3(
-                ds, int(resolution)
+                ds, int(resolution), mode=effective_mode
             ):
                 yield _serde.build_tile(raster, "GTiff", cellid)
 
@@ -1819,7 +1825,9 @@ def rst_tooverlappingtiles(
     )
 
 
-def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_tessellate(
+    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+) -> None:
     """Tessellate a raster into H3 cells (mirrors ``gbx_rst_h3_tessellate``).
 
     For every H3 cell overlapping the raster's extent at *resolution*, the
@@ -1829,12 +1837,18 @@ def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> None:
     Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
 
         SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution) t
+        SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution, 'centroid') t
 
     Each output row is a tile struct; one row per overlapping H3 cell.
 
     Args:
         tile:       Tile struct column.
         resolution: H3 resolution in ``[0, 15]``.
+        mode:       Tessellation mode: ``"covering"`` (default) — each H3 cell
+                    that overlaps the raster extent is clipped to its hexagon
+                    boundary; ``"centroid"`` — each valid pixel is assigned to
+                    exactly one cell by its centroid (strict partition, no
+                    overlap).
     """
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "

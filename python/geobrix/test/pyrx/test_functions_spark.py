@@ -1258,6 +1258,36 @@ def test_rst_h3_tessellate(spark):
         assert h3.is_valid_cell(h3.int_to_str(r["cid"]))
 
 
+def test_h3_tessellate_mode_sql(spark):
+    import pytest
+
+    df = _tile_df(spark, width=8, height=8, epsg=4326)
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_tessellate_mode")
+    # 2-arg (default mode) — must still work for backward compat.
+    n_default = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4) t"
+    ).count()
+    # explicit covering — same result as default.
+    n_cover = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'covering') t"
+    ).count()
+    # centroid — non-zero, may differ from covering.
+    n_centroid = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'centroid') t"
+    ).count()
+    assert n_default == n_cover and n_cover > 0 and n_centroid > 0
+    # bad mode must raise.
+    with pytest.raises(Exception):
+        spark.sql(
+            "SELECT t.* FROM _ras_tessellate_mode, "
+            "LATERAL gbx_rst_h3_tessellate(tile, 4, 'bogus') t"
+        ).count()
+
+
 def test_rst_proximity_column_api(spark):
     import numpy as np
     from rasterio.io import MemoryFile
