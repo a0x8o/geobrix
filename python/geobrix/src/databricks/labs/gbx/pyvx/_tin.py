@@ -110,6 +110,40 @@ def _recover_constraints(xy: np.ndarray, simplices: np.ndarray, tri, breaklines)
     return np.array(triangles, dtype=np.int64)
 
 
+def grid_bbox(xmin, ymin, xmax, ymax, width_px, height_px):
+    """Yield (x, y) cell centers, column-major (matches heavy pointGridBBox)."""
+    xres = (xmax - xmin) / width_px
+    yres = (ymax - ymin) / height_px
+    for i in range(int(width_px)):
+        for j in range(int(height_px)):
+            yield (xmin + (i + 0.5) * xres, ymin + (j + 0.5) * yres)
+
+
+def grid_geom(origin_x, origin_y, cols, rows, cell_x, cell_y):
+    """Yield (x, y) cell centers from origin + cell sizes (matches pointGridOrigin).
+    cell_y may be negative (y-down)."""
+    for i in range(int(cols)):
+        for j in range(int(rows)):
+            yield (origin_x + (i + 0.5) * cell_x, origin_y + (j + 0.5) * cell_y)
+
+
+def interpolate_z(triangles, x, y):
+    """Barycentric Z at (x,y) within the TIN. None if outside all triangles."""
+    p = np.array([x, y])
+    for t in triangles:
+        a, b, c = t[0, :2], t[1, :2], t[2, :2]
+        d = _orient2d(a, b, c)
+        if d == 0.0:
+            continue
+        l1 = _orient2d(p, b, c) / d
+        l2 = _orient2d(a, p, c) / d
+        l3 = 1.0 - l1 - l2
+        if l1 >= -1e-12 and l2 >= -1e-12 and l3 >= -1e-12:
+            z = l1 * t[0, 2] + l2 * t[1, 2] + l3 * t[2, 2]
+            return None if np.isnan(z) else float(z)
+    return None
+
+
 def _zsnap(triangles, breaklines, tol):
     """Overwrite vertex Z by linear interpolation along any constraint line
     within tol (mirrors heavy LengthIndexedLine post-process)."""
