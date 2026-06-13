@@ -17,10 +17,11 @@ Run in geobrix-dev Docker:
 import logging
 from pathlib import Path
 
-import mapbox_vector_tile as mvt
 import pytest
-from shapely import to_wkb
-from shapely.geometry import Point, Polygon
+
+mvt = pytest.importorskip("mapbox_vector_tile", reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)")
+from shapely import to_wkb  # noqa: E402
+from shapely.geometry import Point, Polygon  # noqa: E402
 
 pytestmark = pytest.mark.integration
 

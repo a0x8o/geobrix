@@ -1,6 +1,8 @@
-import mapbox_vector_tile as mvt
-from shapely.geometry import Point
-from shapely import to_wkb
+import pytest
+
+mvt = pytest.importorskip("mapbox_vector_tile", reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)")
+from shapely.geometry import Point  # noqa: E402
+from shapely import to_wkb  # noqa: E402
 
 from databricks.labs.gbx.pyvx import _mvt
 

@@ -46,6 +46,9 @@ test = [
     "shapely>=2.0.0",
     "rasterio>=1.3.0",
     "numpy>=1.24.0",
+    # pyvx (light VectorX / MVT) tests use mapbox-vector-tile as the
+    # decode oracle.  Pure-Python, no native deps.
+    "mapbox-vector-tile>=2.0,<3",
 ]
 # Runtime deps for the lightweight pure-Python/PySpark APIs (no JAR) — the umbrella
 # extra covering all light tiers (raster today; vector/grid as they land). Install
