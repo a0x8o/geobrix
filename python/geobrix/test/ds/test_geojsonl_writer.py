@@ -35,14 +35,16 @@ def _shards(out):
 def test_multi_file_one_shard_per_partition(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "shards")
-    _wkb_df(spark, 6).repartition(3).write.format("geojsonl_gbx").mode(
-        "overwrite"
-    ).save(out)
+    df = _wkb_df(spark, 6).repartition(3)
+    nparts = df.rdd.getNumPartitions()
+    df.write.format("geojsonl_gbx").mode("overwrite").save(out)
 
-    # Output is a DIRECTORY of multiple .geojsonl shards (one per non-empty partition).
+    # Output is a DIRECTORY with EXACTLY one .geojsonl shard per (non-empty) partition.
     assert os.path.isdir(out)
     shards = _shards(out)
-    assert len(shards) > 1, f"expected multiple shards, got {shards}"
+    assert (
+        len(shards) == nparts
+    ), f"expected exactly {nparts} shards (one per partition), got {len(shards)}: {shards}"
 
     back = spark.read.format("geojson_gbx").option("multi", "true").load(out)
     assert back.count() == 6
