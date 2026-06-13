@@ -451,11 +451,11 @@ scale (a single 1M archive is shown).
 
 ## Results — vector writers
 
-Vector writers are **lightweight-only** — the heavyweight tier has no vector writer (GDAL/OGR
-can write these formats, but those paths aren't implemented in the JVM tier). Each writes a
-**14,000,000-feature** Delta table to a **single file** (the two-phase writer merges the
-partition fragments on the driver). Run with `gbx:bench:cluster --vector-only --vector-scale
---vector-legs writer --writer-rows 14000000`.
+The **single-file** vector writers are **lightweight-only** — their OGR write paths aren't
+implemented in the heavyweight tier. The **sharded GeoJSONL** writer is available in **both**
+tiers (as the table shows). Each writes a **14,000,000-feature** Delta table to a **single
+file** (the two-phase writer merges the partition fragments on the driver). Run with
+`gbx:bench:cluster --vector-only --vector-scale --vector-legs writer --writer-rows 14000000`.
 
 | Format | rows | light (`*_gbx`) | throughput |
 |---|---|---|---|

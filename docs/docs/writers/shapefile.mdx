@@ -13,10 +13,11 @@ driver preset to `ESRI Shapefile`. It round-trips with the matching `shapefile_g
 reader; the schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared
 across all lightweight vector readers and writers.
 
-:::note No heavyweight equivalent
-The heavyweight tier has no vector writer. GDAL/OGR can write Shapefiles but
-those write paths are not implemented in the heavyweight tier. This writer is
-lightweight-only.
+:::note Single-file write is lightweight-only
+This format's single-file writer is **lightweight-only** — its GDAL/OGR write path
+isn't implemented in the heavyweight tier. For large/any-scale output, the sharded
+[**GeoJSONL** writer](./geojsonl) (`geojsonl_gbx` lightweight / `geojsonl` heavyweight)
+is available in **both** tiers.
 :::
 
 :::note Register first
