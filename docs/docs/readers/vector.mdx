@@ -1,0 +1,197 @@
+---
+sidebar_position: 3
+sidebar_label: Vector
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import ogrExamples from '!!raw-loader!../../tests/python/readers/ogr_examples.py';
+import ogrScala from '!!raw-loader!../../tests/scala/readers/OGRExamples.scala';
+import ogrDBR from '!!raw-loader!../../tests-dbr/python/readers/ogr/examples.py';
+import ogrGbx from '!!raw-loader!../../tests/python/readers/vector_gbx_examples.py';
+
+# Vector Reader
+
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, but your
+**compute usually decides the tier**: the lightweight tier needs **no JAR or init script**
+and is the **only** option on Serverless, standard (shared), and ARM clusters. The
+heavyweight tier requires a **classic x86 cluster** (JAR + GDAL init script); where it is
+available it uses native GDAL on the JVM and tends to pull ahead on large workloads. See
+the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
+## Available Formats
+
+Both tiers read any [OGR/GDAL vector driver](https://gdal.org/drivers/vector/index.html), including:
+
+- **ESRI Shapefile** (.shp), **GeoJSON** (.geojson, .json), **GeoPackage** (.gpkg), **File Geodatabase** (.gdb)
+- **KML** (.kml), **GML** (.gml), **CSV** with geometry (.csv), **PostgreSQL/PostGIS**, and 80+ more.
+
+:::note Format availability
+Driver coverage varies by environment — some formats need extra GDAL drivers/packages installed.
+:::
+
+## Options
+
+Both tiers (lightweight `vector_gbx`, heavyweight `ogr`) take the same options; the named format readers preset `driverName`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driverName` | required on `vector_gbx`; auto-detected from the extension on `ogr`; preset on named readers | OGR driver name (e.g. `GPKG`, `ESRI Shapefile`, `GeoJSON`) — forces a specific driver regardless of the file extension. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Records per read batch (in-memory batching on the single per-file read — not partition splitting). |
+| `layerName` | `""` | Layer name for multi-layer formats (overrides the layer index). |
+| `layerNumber` / `layerN` | `"0"` | Layer index for multi-layer formats (0-based) — `layerNumber` (lightweight) / `layerN` (heavyweight). |
+
+Example — forcing the driver explicitly:
+
+<CodeFromTest
+  code={ogrExamples}
+  language="python"
+  functionName="READ_WITH_DRIVER"
+  source="docs/tests/python/readers/ogr_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_examples.py"
+  outputConstant="READ_WITH_DRIVER_output"
+/>
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · vector_gbx">
+
+`vector_gbx` is the lightweight catch-all vector reader (pyogrio-backed, no JAR). It reads any OGR-supported format and emits the same schema as the heavyweight `ogr` reader.
+
+<CodeFromTest code={ogrGbx} language="python" functionName="READ_VECTOR_GBX"
+  source="docs/tests/python/readers/vector_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_vector_gbx_examples.py" />
+
+It is the lightweight counterpart of the heavyweight `ogr` reader, supporting Python and SQL bindings (not Scala).
+
+### Typical pipeline: ingest into a table
+
+The common pattern is to land vector files in a table for downstream analytics — on Databricks a managed table is **Delta**:
+
+```python
+df = (spark.read.format("vector_gbx")
+      .option("driverName", "GeoJSON")           # pass any OGR driver name
+      .load("/Volumes/main/geo/raw/"))            # a folder of files
+df.write.mode("overwrite").saveAsTable("main.geo.features")  # Delta table on Databricks
+```
+
+Reading a folder fans the files across the cluster (one partition per file), so ingest scales with the data — unlike a single-node `pyogrio.read_*` that parses one file on one machine. See [Benchmarking](../api/benchmarking) for light-vs-heavy ingest figures.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · ogr">
+
+The OGR reader provides generic support for reading vector data formats through the OGR library. This is the base reader that powers all vector format readers in GeoBrix.
+
+## Format Name
+
+`ogr`
+
+## Overview
+
+The OGR reader is a generic vector data reader that can handle any format supported by OGR/GDAL. While GeoBrix provides named readers for common formats (Shapefile, GeoJSON, GeoPackage, etc.), you can use the OGR reader directly for any available format.
+
+## Basic Usage
+
+### Python
+
+<CodeFromTest
+  code={ogrExamples}
+  language="python"
+  functionName="READ_OGR"
+  source="docs/tests/python/readers/ogr_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_examples.py"
+  outputConstant="READ_OGR_output"
+/>
+
+### Scala
+
+<CodeFromTest
+  code={ogrScala}
+  language="scala"
+  functionName="READ_OGR"
+  source="docs/tests/scala/readers/OGRExamples.scala"
+  testFile="docs/tests/scala/readers/ReadersDocTest.scala"
+  outputConstant="READ_OGR_output"
+/>
+
+### SQL
+
+<CodeFromTest
+  code={ogrExamples}
+  language="sql"
+  functionName="SQL_OGR"
+  source="docs/tests/python/readers/ogr_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_examples.py"
+  outputConstant="SQL_OGR_output"
+/>
+
+## Output Schema
+
+```
+root
+ |-- geom_0: binary (geometry in WKB format)
+ |-- geom_0_srid: integer (spatial reference ID)
+ |-- geom_0_srid_proj: string (projection definition)
+ |-- <attribute_1>: <type> (feature attributes...)
+ |-- <attribute_2>: <type>
+ |-- ...
+```
+
+## Databricks Integration
+
+OGR (and named vector readers) output geometry in WKB format. To use with Databricks spatial functions, convert to GEOMETRY type. Example uses the Shapefile reader and sample-data Volumes path; the same pattern applies to any OGR-based reader.
+
+:::tip Requires Databricks Runtime
+These examples use `st_geomfromwkb` to convert GeoBrix WKB to Databricks GEOMETRY type.
+:::
+
+### Convert to GEOMETRY
+
+<CodeFromTest
+  code={ogrDBR}
+  language="python"
+  functionName="CONVERT_TO_GEOMETRY"
+  source="docs/tests-dbr/python/readers/ogr/examples.py"
+  testFile="docs/tests-dbr/python/readers/ogr/test_examples.py"
+/>
+
+### SQL Example
+
+<CodeFromTest
+  code={ogrDBR}
+  language="sql"
+  functionName="SQL_READ_SHAPEFILE"
+  source="docs/tests-dbr/python/readers/ogr/examples.py"
+  testFile="docs/tests-dbr/python/readers/ogr/test_examples.py"
+/>
+
+## Named Readers vs OGR
+
+For common formats, GeoBrix provides named readers for convenience (sample-data Volumes path):
+
+<CodeFromTest
+  code={ogrExamples}
+  language="python"
+  functionName="NAMED_VS_OGR"
+  source="docs/tests/python/readers/ogr_examples.py"
+  testFile="docs/tests/python/readers/test_ogr_examples.py"
+/>
+
+**When to use each**:
+- **Named readers** (shapefile, geojson, ogr_gpkg, file_gdb): Better for common formats, cleaner syntax
+- **OGR**: Useful for less common formats or when you need OGR-specific options
+
+</TabItem>
+</Tabs>
+
+## Next Steps
+
+- [Shapefile Reader](./shapefile)
+- [GeoJSON Reader](./geojson)
+- [GeoPackage Reader](./geopackage)
+- [File GeoDatabase Reader](./filegdb)

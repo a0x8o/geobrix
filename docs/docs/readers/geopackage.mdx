@@ -1,12 +1,76 @@
 ---
 sidebar_position: 6
+sidebar_label: GeoPackage
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import geopackageExamples from '!!raw-loader!../../tests/python/readers/geopackage_examples.py';
 import geopackageScala from '!!raw-loader!../../tests/scala/readers/GeoPackageExamples.scala';
+import geopackageGbx from '!!raw-loader!../../tests/python/readers/geopackage_gbx_examples.py';
 
 # GeoPackage Reader
+
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, but your
+**compute usually decides the tier**: the lightweight tier needs **no JAR or init script**
+and is the **only** option on Serverless, standard (shared), and ARM clusters. The
+heavyweight tier requires a **classic x86 cluster** (JAR + GDAL init script); where it is
+available it uses native GDAL on the JVM and tends to pull ahead on large workloads. See
+the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
+## Options
+
+GeoPackage files can contain multiple layers; both tiers (lightweight `gpkg_gbx`, heavyweight `gpkg_ogr`) preset the GPKG driver and expose a layer selector. They take the same options.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `chunkSize` | `"10000"` | Records per read batch — Arrow in-memory batching on the single per-file read, not partition splitting. |
+| `layerNumber` / `layerN` | `"0"` | Layer index to read (0-based) — `layerNumber` (lightweight) / `layerN` (heavyweight). |
+| `layerName` | `""` | Layer name to read; takes precedence over the layer index when set. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — selecting a specific layer in a multi-layer GeoPackage:
+
+<CodeFromTest
+  code={geopackageExamples}
+  language="python"
+  functionName="READ_SPECIFIC_LAYER"
+  source="docs/tests/python/readers/geopackage_examples.py"
+  testFile="docs/tests/python/readers/test_geopackage_examples.py"
+  outputConstant="READ_SPECIFIC_LAYER_output"
+/>
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · gpkg_gbx">
+
+`gpkg_gbx` is the lightweight GeoPackage reader (pyogrio-backed, no JAR). It reads OGC GeoPackage files and emits the same schema as the heavyweight `gpkg_ogr` reader.
+
+<CodeFromTest code={geopackageGbx} language="python" functionName="READ_GPKG_GBX"
+  source="docs/tests/python/readers/geopackage_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_geopackage_gbx_examples.py" />
+
+It is the lightweight counterpart of the heavyweight `gpkg_ogr` reader, supporting Python and SQL bindings (not Scala).
+
+### Typical pipeline: ingest into a table
+
+The common pattern is to land GeoPackage files in a table for downstream analytics — on Databricks a managed table is **Delta**:
+
+```python
+df = spark.read.format("gpkg_gbx").load("/Volumes/main/geo/raw/")  # a folder of .gpkg files
+df.write.mode("overwrite").saveAsTable("main.geo.districts")        # Delta table on Databricks
+```
+
+Reading a folder fans the files across the cluster (one partition per file), so ingest scales with the data — unlike a single-node `pyogrio.read_*` that parses one file on one machine. See [Benchmarking](../api/benchmarking) for light-vs-heavy ingest figures.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · gpkg_ogr">
 
 The GeoPackage reader provides support for reading OGC GeoPackage format, a modern SQLite-based geospatial format.
 
@@ -73,29 +137,8 @@ root
  |-- <attribute_columns>: various types
 ```
 
-## Options
-
-### Multi-Layer Support
-
-GeoPackage files can contain multiple layers. Use the `layerName` option to specify which layer to read:
-
-<CodeFromTest
-  code={geopackageExamples}
-  language="python"
-  functionName="READ_SPECIFIC_LAYER"
-  source="docs/tests/python/readers/geopackage_examples.py"
-  testFile="docs/tests/python/readers/test_geopackage_examples.py"
-  outputConstant="READ_SPECIFIC_LAYER_output"
-/>
-
-### Other Options
-
-All [OGR reader options](./ogr#options) are available, e.g.:
-
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")
-- `layerName` - Specific layer to read
-- `layerN` - Layer index to read (0-based)
+</TabItem>
+</Tabs>
 
 ## Next Steps
 

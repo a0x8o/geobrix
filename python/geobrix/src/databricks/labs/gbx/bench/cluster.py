@@ -170,6 +170,32 @@ LIGHTWEIGHT, HEAVYWEIGHT = {lightweight!r}, {heavyweight!r}
 # they can be harvested after the run. Diagnostic only -- no rows are produced.
 EXPLAIN_ONLY = {explain_only!r}
 EXPLAIN_DIR = OUT + "/explain"
+# --benchmark-readers: also run the reader benchmark (raster_gbx vs gdal) on the cluster.
+# --readers-only: ONLY run the reader benchmark, skip all fn benchmarks.
+BENCHMARK_READERS = {benchmark_readers!r}
+READERS_ONLY = {readers_only!r}
+# --benchmark-pmtiles: also run the pmtiles writer benchmark (pmtiles_gbx vs pmtiles).
+# --pmtiles-only: ONLY run the pmtiles benchmark, skip all fn benchmarks.
+BENCHMARK_PMTILES = {benchmark_pmtiles!r}
+PMTILES_ONLY = {pmtiles_only!r}
+# --benchmark-vector: also run the vector reader benchmark (light *_gbx vs heavy *_ogr).
+# --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
+BENCHMARK_VECTOR = {benchmark_vector!r}
+VECTOR_ONLY = {vector_only!r}
+# --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead of the
+# tiny 4-file corpus. Requires the scaled corpus to have been generated first via
+# gbx:bench:generate-vector-corpus and staged at {{CORPUS}}/vector-scale/<fmt>/.
+VECTOR_SCALE = {vector_scale!r}
+WRITER_ROWS = {writer_rows}
+# --vector-legs reader|writer|both : run only the reader-ingest legs, only the writer-export
+# leg, or both. Lets each reader/writer be benchmarked as its own isolated cluster job (a
+# struggling reader can't block the writers, and the 14M writer-source table is only
+# materialized for writer runs). Default both.
+VECTOR_LEGS = {vector_legs!r}
+# --vector-formats csv : restrict the scaled vector run to these light formats (e.g.
+# "geojson_gbx"). Empty = all four. Combined with --vector-legs and --lightweight-only/
+# --heavyweight-only, this runs ONE (format x tier x leg) per job for true cold isolation.
+VECTOR_FORMATS = {vector_formats!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -549,6 +575,296 @@ _CELL_HEAVY_SPARK = """# (d) Heavyweight spark-path
 show_section("heavyweight", "spark-path", run_heavy("spark-path"))
 """
 
+_CELL_READERS = """# Reader benchmark: light raster_gbx vs heavy gdal (both on-cluster)
+from databricks.labs.gbx.bench import readers as _rd
+_rows_dir = f"{CORPUS}/rows"
+_reader_rows = []
+if LIGHTWEIGHT:
+    _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="lightweight", fmt="raster_gbx",
+                             options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_r]); lw.append(_r); _reader_rows.append(_r)
+if HEAVYWEIGHT:
+    _r = _rd.run_format_read(spark, _rows_dir, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="heavyweight", fmt="gdal", where="cluster")
+    _sink([_r]); hw.append(_r); _reader_rows.append(_r)
+# Writer benchmark: light gtiff_gbx vs heavy gtiff_gdal (same raster_gbx-read input)
+import shutil as _sh
+_wsrc = f"{CORPUS}/rows"
+if LIGHTWEIGHT:
+    _wl = "/local_disk0/bench_writer_light"
+    _sh.rmtree(_wl, ignore_errors=True)
+    _wr = _rd.run_format_write(spark, _wsrc, _wl, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               write_api="lightweight", read_fmt="raster_gbx", write_fmt="gtiff_gbx",
+                               options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_wr]); lw.append(_wr); _reader_rows.append(_wr)
+if HEAVYWEIGHT:
+    _wh = "/local_disk0/bench_writer_heavy"
+    _sh.rmtree(_wh, ignore_errors=True)
+    _wr = _rd.run_format_write(spark, _wsrc, _wh, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               write_api="heavyweight", read_fmt="raster_gbx", write_fmt="gtiff_gdal",
+                               mode="append",  # heavy gdal writer is append-only (overwrite -> truncate error)
+                               options={"filterRegex": r".*\\.tif$"}, where="cluster")
+    _sink([_wr]); hw.append(_wr); _reader_rows.append(_wr)
+if _reader_rows:
+    _df = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category IN ('reader', 'writer')"
+    )
+    try:
+        display(_df)
+    except Exception:
+        _df.show(100, truncate=False)
+    _md = results.summarize(_reader_rows)
+    _show_md(f"reader benchmark -- {RUN_ID}", _md)
+"""
+
+_CELL_PMTILES = """# PMTiles benchmark: light pmtiles_gbx vs heavy pmtiles (both on-cluster) + parity check
+from databricks.labs.gbx.bench import readers as _rd
+from pmtiles.reader import MemorySource, Reader as _PMReader
+import pmtiles.reader as _pmr
+import glob as _glob
+import gzip as _gz
+import os as _os
+import shutil as _sh
+# Both pmtiles writers are two-phase (executor-write -> driver-merge), so their
+# intermediates MUST be on a filesystem shared across driver+executors. Node-local
+# /local_disk0 fails the driver merge on a multi-node cluster. Use DBFS: light
+# (pure-Python) via the /dbfs FUSE mount (its single-archive finalize is now
+# rename-free, so sequential FUSE writes are safe); heavy (JVM) via the dbfs:
+# scheme (it cannot use UC /Volumes by direct API). Parity decodes both via FUSE.
+_DBFS_FUSE = "/dbfs/tmp/gbx_bench"
+_os.makedirs(_DBFS_FUSE, exist_ok=True)
+_pmtiles_rows = []
+_pl = _ph = None
+if LIGHTWEIGHT:
+    _pl = _DBFS_FUSE + "/pmtiles_light.pmtiles"
+    if _os.path.isdir(_pl):
+        _sh.rmtree(_pl, ignore_errors=True)
+    elif _os.path.exists(_pl):
+        _os.remove(_pl)
+    _r = _rd.run_pmtiles_write(spark, _pl, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               n_tiles=1000, shard_zoom=0, write_fmt="pmtiles_gbx",
+                               where="cluster")
+    _sink([_r]); lw.append(_r); _pmtiles_rows.append(_r)
+if HEAVYWEIGHT:
+    _ph = _DBFS_FUSE + "/pmtiles_heavy"            # FUSE path (for parity decode)
+    _sh.rmtree(_ph, ignore_errors=True)
+    _ph_save = "dbfs:/tmp/gbx_bench/pmtiles_heavy"  # dbfs: scheme (for the JVM writer)
+    _r = _rd.run_pmtiles_write(spark, _ph_save, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                               n_tiles=1000, shard_zoom=0, write_fmt="pmtiles",
+                               where="cluster")
+    _sink([_r]); hw.append(_r); _pmtiles_rows.append(_r)
+# Parity check: decode all tiles from both archives and compare (z,x,y) keys+bytes.
+if LIGHTWEIGHT and HEAVYWEIGHT and _pl and _ph:
+    # The Python pmtiles Reader gzip-decompresses directories unconditionally, but
+    # PMTiles directories may be uncompressed (the heavy Scala writer uses
+    # internal_compression=NONE). Patch deserialize_directory to fall back to the
+    # raw bytes (re-gzip so the lib's own parser still runs) -> reads both tiers.
+    _orig_dd = _pmr.deserialize_directory
+    def _dd_compat(_buf):
+        try:
+            return _orig_dd(_buf)
+        except Exception:
+            return _orig_dd(_gz.compress(bytes(_buf)))
+    _pmr.deserialize_directory = _dd_compat
+
+    def _decode_any(path):
+        # Return {(z,x,y): bytes} for every tile in path (file or dir of *.pmtiles).
+        # Read the whole archive into memory (sequential) and use MemorySource:
+        # the DBFS/Volumes paths are cloud object storage and do not support the
+        # mmap/seek that MmapSource needs.
+        import os as _os2
+        if _os2.path.isfile(path):
+            files = [path]
+        else:
+            files = sorted(_glob.glob(_os2.path.join(path, "**", "*.pmtiles"), recursive=True))
+        tiles = {}
+        for _pf in files:
+            with open(_pf, "rb") as _fh:
+                _data = _fh.read()
+            _rdr = _PMReader(MemorySource(_data))
+            # min/max zoom live in the PMTiles header (not metadata); the Reader
+            # tile accessor is .get(z, x, y) (returns None when absent).
+            _hdr = _rdr.header()
+            _zmin = int(_hdr["min_zoom"])
+            _zmax = int(_hdr["max_zoom"])
+            for _z in range(_zmin, _zmax + 1):
+                _side = 2 ** _z
+                for _x in range(_side):
+                    for _y in range(_side):
+                        _b = _rdr.get(_z, _x, _y)
+                        if _b is not None:
+                            tiles[(_z, _x, _y)] = bytes(_b)
+        return tiles
+    _verdict_path = "/dbfs/tmp/gbx_bench/parity_verdict.txt"
+    try:
+        _lt = _decode_any(_pl)
+        _ht = _decode_any(_ph)
+        _lk = set(_lt.keys())
+        _hk = set(_ht.keys())
+        if _lk == _hk and all(_lt[_k] == _ht[_k] for _k in _lk):
+            _verdict = f"PMTILES PARITY: PASS ({len(_lk)} tiles, keys+bytes equal)"
+        elif _lk == _hk:
+            _bad = [_k for _k in _lk if _lt[_k] != _ht[_k]]
+            _verdict = (f"PMTILES PARITY: FAIL bytes differ on {len(_bad)} tile(s) "
+                        f"e.g. {sorted(_bad)[:5]} ({len(_lk)} tiles)")
+        else:
+            _verdict = (f"PMTILES PARITY: FAIL keyset differs -- light-only "
+                        f"{sorted(_lk - _hk)[:5]}, heavy-only {sorted(_hk - _lk)[:5]} "
+                        f"(light={len(_lk)}, heavy={len(_hk)})")
+    except Exception as _pe:
+        _verdict = f"PMTILES PARITY: ERROR -- {type(_pe).__name__}: {_pe}"
+    print(_verdict)
+    try:
+        with open(_verdict_path, "w") as _vf:
+            _vf.write(_verdict)
+    except Exception as _we:
+        print(f"(could not write verdict file: {_we})")
+    # Hard gate: a parity mismatch or decode error fails the bench run.
+    assert _verdict.startswith("PMTILES PARITY: PASS"), _verdict
+if _pmtiles_rows:
+    _df = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'writer' "
+        f"AND fn IN ('pmtiles_gbx', 'pmtiles')"
+    )
+    try:
+        display(_df)
+    except Exception:
+        _df.show(100, truncate=False)
+    _md = results.summarize(_pmtiles_rows)
+    _show_md(f"pmtiles benchmark -- {RUN_ID}", _md)
+"""
+
+_CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
+# Two-leg pipeline (scaled branch):
+#   Leg 1 (reader): spark.read.format(fmt).load(copies/) -> Delta ingest table (forces
+#     materialization of the full multi-file corpus into one queryable table per format).
+#   Leg 2 (writer): read from the shared ~WRITER_ROWS Delta table -> single-file export
+#     via write.format(fmt) (no coalesce; the two-phase writer merges fragments on commit).
+from databricks.labs.gbx.bench import readers as _rd
+if VECTOR_SCALE:
+    # Scaled corpus: 1M-row seed per format.  The READ path is the copies/ directory so
+    # BOTH tiers enumerate N copies and read them in parallel -- a fair all-format
+    # light-vs-heavy comparison.  Shapefile and FileGDB copies are self-contained zips
+    # (.shp.zip / .gdb.zip) so the heavy OGR dir-read sees each copy as one file.
+    # Writer source is the shared pre-materialized Delta table (WRITER_ROWS polygons).
+    _vscale_base = f"{CORPUS}/vector-scale"
+    # Fresh Delta state each run: drop the writer-source + per-format ingest tables so each
+    # timed ingest is a clean CREATE (not an overwrite of a prior version) and nothing lingers
+    # in the catalog between repeat benchmarks. Dropped again at the end (cleanup).
+    _bench_tbls = ["geospatial_docs.geobrix.bench_vec_wsrc"] + [
+        f"geospatial_docs.geobrix.bench_vec_ingest_{_f}"
+        for _f in (
+            "geojson_gbx", "geojson_ogr", "shapefile_gbx", "shapefile_ogr",
+            "gpkg_gbx", "gpkg_ogr", "file_gdb_gbx", "file_gdb_ogr",
+        )
+    ]
+    for _t in _bench_tbls:
+        spark.sql(f"DROP TABLE IF EXISTS {_t}")
+    _vcases = [
+        # (light_fmt, heavy_fmt, read_path, heavy_options)
+        ("geojson_gbx",  "geojson_ogr",  _vscale_base + "/geojson_gbx/copies",   {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vscale_base + "/shapefile_gbx/copies", {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vscale_base + "/gpkg_gbx/copies",      {}),
+        # FileGDB reads the single seed.gdb.zip for BOTH tiers: the heavy OGR reader opens
+        # one FileGDB datasource, not a directory of them. (light *_gbx CAN dir-read a folder
+        # of .gdb.zip -- a light-only capability noted in the docs.) Single-archive keeps the
+        # light-vs-heavy comparison fair and avoids the heavy dir-read error.
+        ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/seed.gdb.zip",  {}),
+    ]
+    if VECTOR_FORMATS:
+        _sel = set(f.strip() for f in VECTOR_FORMATS.split(",") if f.strip())
+        _vcases = [c for c in _vcases if c[0] in _sel]
+    _do_read = VECTOR_LEGS in ("both", "reader")
+    _do_write = VECTOR_LEGS in ("both", "writer")
+    _wsrc_tbl = "geospatial_docs.geobrix.bench_vec_wsrc"
+    # Materialize the writer-source Delta table once (untimed) so all writer legs share it.
+    # Only for writer runs -- reader-only jobs skip the 14M materialization.
+    if LIGHTWEIGHT and _do_write:
+        from databricks.labs.gbx.bench.corpus_vector import generate_polygon_seed
+        generate_polygon_seed(spark, WRITER_ROWS).write.format("delta").mode("overwrite").saveAsTable(_wsrc_tbl)
+    _vrows = []
+    for _lfmt, _hfmt, _vp, _hopts in _vcases:
+        if LIGHTWEIGHT and _do_read:
+            _it = f"geospatial_docs.geobrix.bench_vec_ingest_{_lfmt}"
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="lightweight", fmt=_lfmt, ingest_table=_it,
+                                     where="cluster")
+            _sink([_r]); lw.append(_r); _vrows.append(_r)
+        # The heavy OGR FileGDB reader reads native Esri .gdb/.gdb.zip but not the GeoBrix-
+        # generated .gdb.zip archive -- skip its heavy leg (FileGDB heavy-read is reported as
+        # native-archive-only; light reads the generated corpus, incl. a directory of them).
+        _heavy_ok = _hfmt != "file_gdb_ogr"
+        if HEAVYWEIGHT and _heavy_ok and _do_read:
+            _it = f"geospatial_docs.geobrix.bench_vec_ingest_{_hfmt}"
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="heavyweight", fmt=_hfmt, options=(_hopts or None),
+                                     ingest_table=_it, where="cluster")
+            _sink([_r]); hw.append(_r); _vrows.append(_r)
+        if LIGHTWEIGHT and HEAVYWEIGHT and _heavy_ok and _do_read:
+            # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
+            # vector bench -- record it and continue so the other formats + the writer leg run.
+            try:
+                _lc = spark.read.format(_lfmt).load(_vp).count()
+                _hr = spark.read.format(_hfmt)
+                for _k, _v in (_hopts or {}).items():
+                    _hr = _hr.option(_k, _v)
+                _hc = _hr.load(_vp).count()
+                print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
+            except Exception as _e:  # noqa: BLE001
+                print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
+        if LIGHTWEIGHT and _do_write:
+            _w = _rd.run_vector_write(spark, _wsrc_tbl, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+                                      SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt,
+                                      src_is_table=True, where="cluster")
+            _sink([_w]); lw.append(_w); _vrows.append(_w)
+    # Cleanup: drop the bench Delta tables so nothing lingers in the catalog between runs.
+    for _t in _bench_tbls:
+        spark.sql(f"DROP TABLE IF EXISTS {_t}")
+else:
+    _vbase = f"{CORPUS}/vector"
+    # (light_fmt, heavy_fmt, read_path, seed_path, heavy_options).
+    # The heavy geojson_ogr reader defaults to the GeoJSONSeq driver, so force multi=false
+    # to read the standard FeatureCollection corpus file (matching the light geojson_gbx
+    # GeoJSON-driver reader) for a fair comparison.
+    _vcases = [
+        ("geojson_gbx",  "geojson_ogr",  _vbase + "/nyc_boroughs.geojson", _vbase + "/nyc_boroughs.geojson", {"multi": "false"}),
+        ("shapefile_gbx", "shapefile_ogr", _vbase + "/nyc_subway.shp.zip",  _vbase + "/nyc_subway.shp.zip",   {}),
+        ("gpkg_gbx",     "gpkg_ogr",     _vbase + "/nyc_complete.gpkg",    _vbase + "/nyc_complete.gpkg",    {}),
+        ("file_gdb_gbx", "file_gdb_ogr", _vbase + "/NYC_Sample.gdb.zip",   _vbase + "/NYC_Sample.gdb.zip",   {}),
+    ]
+    _vrows = []
+    for _lfmt, _hfmt, _vp, _vseed, _hopts in _vcases:
+        if LIGHTWEIGHT:
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="lightweight", fmt=_lfmt, where="cluster")
+            _sink([_r]); lw.append(_r); _vrows.append(_r)
+        if HEAVYWEIGHT:
+            _r = _rd.run_format_read(spark, _vp, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                     api="heavyweight", fmt=_hfmt, options=(_hopts or None),
+                                     where="cluster")
+            _sink([_r]); hw.append(_r); _vrows.append(_r)
+        if LIGHTWEIGHT and HEAVYWEIGHT:
+            # Non-fatal parity: a single format's mismatch/failure must NOT abort the whole
+            # vector bench -- record it and continue so the other formats + the writer leg run.
+            try:
+                _lc = spark.read.format(_lfmt).load(_vp).count()
+                _hr = spark.read.format(_hfmt)
+                for _k, _v in (_hopts or {}).items():
+                    _hr = _hr.option(_k, _v)
+                _hc = _hr.load(_vp).count()
+                print(f"VECTOR PARITY {_lfmt}: light={_lc} heavy={_hc} {'PASS' if _lc==_hc else 'FAIL'}")
+            except Exception as _e:  # noqa: BLE001
+                print(f"VECTOR PARITY {_lfmt}: ERROR {type(_e).__name__}: {str(_e)[:120]}")
+        if LIGHTWEIGHT:
+            _w = _rd.run_vector_write(spark, _vseed, f"{OUT}/vecwrite/{_lfmt}", RUN_ID,
+                                      SPARK_WARMUP, SPARK_MEASURED, fmt=_lfmt, where="cluster")
+            _sink([_w]); lw.append(_w); _vrows.append(_w)
+if _vrows:
+    _md = results.summarize(_vrows)
+    _show_md(f"vector reader+writer benchmark -- {RUN_ID}", _md)
+"""
+
 _EPILOGUE = """# Wrap-up: durable jsonl shards + per-tier summaries + heavy-vs-light comparison.
 all_rows = lw + hw
 if lw:
@@ -637,6 +953,16 @@ def build_bench_notebook(cfg: dict) -> dict:
         lightweight=bool(cfg.get("lightweight")),
         heavyweight=bool(cfg.get("heavyweight")),
         explain_only=bool(cfg.get("explain_only")),
+        benchmark_readers=bool(cfg.get("benchmark_readers")),
+        readers_only=bool(cfg.get("readers_only")),
+        benchmark_pmtiles=bool(cfg.get("benchmark_pmtiles")),
+        pmtiles_only=bool(cfg.get("pmtiles_only")),
+        benchmark_vector=bool(cfg.get("benchmark_vector")),
+        vector_only=bool(cfg.get("vector_only")),
+        vector_scale=bool(cfg.get("vector_scale")),
+        writer_rows=int(cfg.get("writer_rows", 14000000)),
+        vector_legs=str(cfg.get("vector_legs", "both")),
+        vector_formats=str(cfg.get("vector_formats", "") or ""),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -651,25 +977,51 @@ def build_bench_notebook(cfg: dict) -> dict:
     if heavy:
         setup += _HEAVY_HELPERS  # run_heavy (references HeavyBenchMain)
 
+    benchmark_readers = bool(cfg.get("benchmark_readers"))
+    readers_only = bool(cfg.get("readers_only"))
+    benchmark_pmtiles = bool(cfg.get("benchmark_pmtiles"))
+    pmtiles_only = bool(cfg.get("pmtiles_only"))
+    benchmark_vector = bool(cfg.get("benchmark_vector"))
+    vector_only = bool(cfg.get("vector_only"))
+
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
     # (light, heavy) then spark-path (light, heavy).
     cells = [
-        # `markdown` powers the inline displayHTML rendering of the summaries (_show_md).
-        _cell(f"%pip install --quiet '{cfg['wheel']}[pyrx]' markdown"),
+        # Ensure BOTH fresh geobrix code AND the full [light] dep set every run. The wheel
+        # version is a fixed 0.4.0 string, so on a WARM cluster that already has geobrix
+        # installed, a bare `pip install '<wheel>[light]'` no-ops: pip sees geobrix==0.4.0
+        # satisfied and skips the install ENTIRELY -- including resolving the [light] extra
+        # deps. So the cluster can end up running STALE code (e.g. a freshly added DataSource
+        # -> DATA_SOURCE_NOT_FOUND) OR missing a [light] dep (e.g. shapely -> ModuleNotFound
+        # at `import bench.spec`). The old fix (`--force-reinstall --no-deps`) swapped the
+        # code but, by skipping deps, LEFT geobrix present without its extras -> the next
+        # warm run's [light] install then no-ops on those deps. Uninstalling first forces the
+        # install to actually run: fresh code from the wheel FILE + resolved [light] extras
+        # (shapely/rasterio/pyogrio/...). Deps come from pip's cache (fast); only the small
+        # geobrix wheel is re-read. `markdown` powers the displayHTML summaries (_show_md).
+        _cell("%pip uninstall -y geobrix"),
+        _cell(f"%pip install --quiet '{cfg['wheel']}[light]' markdown"),
         _cell("dbutils.library.restartPython()"),
         # Cmd 3 -- the big setup cell (preamble + sink + helpers). Collapsed by default so the
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if light and do_pure:
-        cells.append(_cell(_CELL_LIGHT_PURE))
-    if heavy and do_pure:
-        cells.append(_cell(_CELL_HEAVY_PURE))
-    if light and do_spark:
-        cells.append(_cell(_CELL_LIGHT_SPARK))
-    if heavy and do_spark:
-        cells.append(_cell(_CELL_HEAVY_SPARK))
+    if not readers_only and not pmtiles_only and not vector_only:
+        if light and do_pure:
+            cells.append(_cell(_CELL_LIGHT_PURE))
+        if heavy and do_pure:
+            cells.append(_cell(_CELL_HEAVY_PURE))
+        if light and do_spark:
+            cells.append(_cell(_CELL_LIGHT_SPARK))
+        if heavy and do_spark:
+            cells.append(_cell(_CELL_HEAVY_SPARK))
+    if benchmark_readers or readers_only:
+        cells.append(_cell(_CELL_READERS))
+    if benchmark_pmtiles or pmtiles_only:
+        cells.append(_cell(_CELL_PMTILES))
+    if benchmark_vector or vector_only:
+        cells.append(_cell(_CELL_VECTOR))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)

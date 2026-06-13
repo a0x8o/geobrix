@@ -10,16 +10,75 @@ import TabItem from '@theme/TabItem';
 GeoBrix provides Spark writers for geospatial file formats.
 
 <Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+The lightweight tier ships native Python DataSource V2 writers — no JAR, no init script.
+
+:::tip Why this scales beyond a single node
+These are Spark DataSource V2 writers, not single-node `pyogrio`/`rasterio` wrappers. **Each
+partition is written concurrently** by its executor, then the driver merges the parts into
+the final output (a two-phase write). The PMTiles writer goes further with **distributed
+spatial sharding** — partitioning tiles into bounded per-shard archives written in parallel
+and then cataloging them — which scales horizontally instead of building one memory-bound
+archive on a single node. Merges are sequential and rename-free, so they are safe on
+FUSE-mounted Unity Catalog Volumes / DBFS.
+:::
+
+:::note Register first
+Unlike the heavyweight writers (auto-discovered from the JAR), the lightweight Python
+DataSources are **not** auto-registered — call `register(spark)` once per session before
+using any `*_gbx` format:
+
+```python
+from databricks.labs.gbx.ds.register import register
+register(spark)
+```
+:::
+
+### Available Writers
+
+| Writer | Format Name | Description |
+|--------|-------------|-------------|
+| [Raster Writer](./raster) | `raster_gbx` | Pure-Python catch-all raster writer (no JAR; DataSource V2) |
+| [GeoTIFF Writer](./geotiff) | `gtiff_gbx` | Pure-Python GeoTIFF writer (driver forced to GTiff) |
+| [PMTiles Writer](./pmtiles) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
+| [Vector Writer](./vector) | `vector_gbx` | Pure-Python generic vector writer (pyogrio); any OGR-supported driver. |
+| [Shapefile Writer](./shapefile) | `shapefile_gbx` | Pure-Python Shapefile writer (OGR driver: `ESRI Shapefile`). |
+| [GeoJSON Writer](./geojson) | `geojson_gbx` | Pure-Python GeoJSON writer (OGR driver: `GeoJSON`) — single merged file. |
+| [GeoJSONL Writer](./geojsonl) | `geojsonl_gbx` / `geojsonl` | Multi-file newline-delimited GeoJSONL — one shard per partition, no driver merge. Available in **both** tiers. |
+| [GeoPackage Writer](./geopackage) | `gpkg_gbx` | Pure-Python GeoPackage writer (OGR driver: `GPKG`). |
+| [GeoDatabase Writer](./filegdb) | `file_gdb_gbx` | Pure-Python File Geodatabase writer (OGR driver: `OpenFileGDB`). |
+
+See the [Raster Writer](./raster) page for full usage, options, and the `nameCol` / `ext` controls.
+
+## Benchmarks
+
+Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
+median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
+1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+
+| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
+|--------|------|-------------------------------|-------|
+| `pmtiles_gbx` | Lightweight | 18.4 s | — |
+| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
+
+Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
+tile data. For the full methodology and raster-function results, see the
+[Benchmarking](../api/benchmarking) page.
+
+</TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
 
-Heavyweight writers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and a native Scala PMTiles encoder. They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed. Vector output flows through Spark's built-in writers or the product's native geospatial writers.
+Heavyweight writers are implemented as Spark DataSource V2 connectors backed by GDAL (raster) and a native Scala PMTiles encoder. They are registered automatically when the GeoBrix JAR is on the classpath — no additional configuration needed. For vector output, the heavyweight tier provides the sharded `geojsonl` writer; other vector output flows through the lightweight writers, Spark's built-in writers, or the product's native geospatial writers.
 
 ## Available Writers
 
 | Writer | Format Name | Description |
 |--------|-------------|-------------|
-| [GDAL Writer](./gdal) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+| [Raster Writer](./raster) | `gdal` | Emits each row's tile using the GDAL driver recorded in the tile's metadata. |
+| [GeoTIFF Writer](./geotiff) | `gtiff_gdal` | Named writer for GeoTIFF files (preset `driver="GTiff"`). |
 | [PMTiles Writer](./pmtiles) | `pmtiles` | Streams a `(z, x, y, bytes)` tile set into a single PMTiles v3 archive file. |
+| [GeoJSONL Writer](./geojsonl) | `geojsonl` | Multi-file newline-delimited GeoJSONL — one shard per partition. The heavyweight tier's first vector writer; the lightweight peer is `geojsonl_gbx`. |
 
 ## At a Glance
 
@@ -34,35 +93,37 @@ Heavyweight writers are implemented as Spark DataSource V2 connectors backed by 
 - **Mode:** `.mode("overwrite")` is required; default `ErrorIfExists` is rejected upstream by Spark.
 - **Output path:** the final `.pmtiles` file, not a directory. Read support is not implemented in 0.4.0.
 
+:::note Heavyweight vector writing
+The heavyweight tier writes raster (GDAL), PMTiles, and — its first vector writer — the
+sharded [**GeoJSONL** writer](./geojsonl) (`geojsonl`). The single-file vector formats
+(GeoJSON, Shapefile, GeoPackage, File Geodatabase) are **lightweight-only** to write —
+those OGR write paths aren't implemented in the heavyweight tier. For single-file vector
+output, use the lightweight vector writers: [Vector](./vector) (`vector_gbx`),
+[Shapefile](./shapefile) (`shapefile_gbx`), [GeoJSON](./geojson) (`geojson_gbx`),
+[GeoPackage](./geopackage) (`gpkg_gbx`), or [GeoDatabase](./filegdb) (`file_gdb_gbx`).
+:::
+
+## Benchmarks
+
+Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
+median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
+1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+
+| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
+|--------|------|-------------------------------|-------|
+| `pmtiles_gbx` | Lightweight | 18.4 s | — |
+| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
+
+Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
+tile data. For the full methodology and raster-function results, see the
+[Benchmarking](../api/benchmarking) page.
+
 ## Next Steps
 
-- [GDAL Writer](./gdal) — full details, options, and examples for raster output.
+- [Raster Writer](./raster) — full details, options, and examples for raster output.
+- [GeoTIFF Writer](./geotiff) — full details, options, and examples for GeoTIFF output.
 - [PMTiles Writer](./pmtiles) — full details, options, and examples for tile-pyramid output.
 - [Readers Overview](../readers/overview) — the corresponding read paths.
-
-</TabItem>
-<TabItem value="lightweight" label="Lightweight (pyrx)">
-
-The lightweight tier does not yet ship dedicated `*_pyrx` writers. Today, lightweight raster write workflows use standard `rasterio` round-trips: read tiles from a DataFrame, write each tile's bytes to a file using `rasterio`, and optionally copy the result to a Unity Catalog Volume path.
-
-```python
-import rasterio
-import io
-from pathlib import Path
-
-# Example: write tile bytes back to GeoTIFF via rasterio
-for row in df.toLocalIterator():
-    tile_bytes = row.tile.raster
-    with rasterio.open(io.BytesIO(tile_bytes)) as src:
-        profile = src.profile
-        data = src.read()
-
-    out_path = Path("/Volumes/catalog/schema/volume/output.tif")
-    with rasterio.open(out_path, "w", **profile) as dst:
-        dst.write(data)
-```
-
-Dedicated `*_pyrx` writers — e.g. `spark.write.format("gtiff_pyrx")` — built on the [PySpark Python Data Source API](https://spark.apache.org/docs/latest/api/python/tutorial/sql/python_data_source.html) (no JAR, no init script) are planned for a future release.
 
 </TabItem>
 </Tabs>

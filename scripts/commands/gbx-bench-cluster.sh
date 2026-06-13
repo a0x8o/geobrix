@@ -25,12 +25,18 @@ Options:
   --measured <n>        Measured iters (default 5)
   --heavyweight-only    Skip the lightweight leg
   --lightweight-only    Skip the heavyweight leg (use on ARM clusters)
+  --benchmark-readers   Also run reader benchmarks (raster_gbx vs gdal)
+  --readers-only        Run ONLY the reader benchmark (no fn benchmarks)
+  --benchmark-pmtiles   Also run PMTiles writer benchmark (pmtiles_gbx vs pmtiles)
+  --pmtiles-only        Run ONLY the PMTiles benchmark (no fn benchmarks)
+  --benchmark-vector    Also run vector reader benchmark (light *_gbx vs heavy *_ogr)
+  --vector-only         Run ONLY the vector reader benchmark (no fn benchmarks)
   --no-wait             Submit without blocking on completion
   --help, -h            Show help
 
 NOTE: this submits a job to a real cluster and consumes compute. The operator
 must have provisioned the cluster (init script + bundle + wheel for heavyweight,
-or just the [pyrx] wheel for lightweight/ARM) and filled databricks_cluster_config.env.
+or just the [light] wheel for lightweight/ARM) and filled databricks_cluster_config.env.
 EOF
 }
 
@@ -50,5 +56,12 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 echo "Submitting benchmark job (this runs on a real cluster and costs compute)..."
-python notebooks/tests/push_and_run_bench_on_cluster.py "${PASS_ARGS[@]}"
+# The launcher imports the bench package (-> pyrx -> rasterio) and the
+# databricks SDK, so it must run in the project's .venv-pyrx (which has both),
+# not the ambient python. Fall back to system python only if the venv is absent.
+PYBIN="python"
+if [[ -x "$PROJECT_ROOT/.venv-pyrx/bin/python" ]]; then
+    PYBIN="$PROJECT_ROOT/.venv-pyrx/bin/python"
+fi
+"$PYBIN" notebooks/tests/push_and_run_bench_on_cluster.py "${PASS_ARGS[@]}"
 exit $?

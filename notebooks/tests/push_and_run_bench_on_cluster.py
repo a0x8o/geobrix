@@ -12,7 +12,7 @@ The cluster + artifacts must be provisioned by the operator (see the installatio
 - heavyweight: x86 DBR 17.3 LTS with the init script + bundle + geobrix wheel + the bench
   geobrix-*-tests.jar staged on a Volume (the tests.jar is attached here as a job library;
   the production fat JAR is installed by the heavyweight init script, NOT attached here).
-- lightweight (incl. ARM): just the [pyrx] wheel (installed by the notebook's %pip cell).
+- lightweight (incl. ARM): just the [light] wheel (installed by the notebook's %pip cell).
   On ARM clusters use --lightweight-only (heavyweight is x86-only by design).
 
 Requires: databricks-sdk, and env config (see databricks_cluster_config.example.env).
@@ -28,6 +28,7 @@ Usage:
               --truncate-results (clear only this run_id + this invocation's tier(s)),
               --truncate-all (empty the whole table -> only the current run remains)
 """
+
 from __future__ import annotations
 
 import json
@@ -163,13 +164,39 @@ def _expected_rows(
     row_counts: str,
     lightweight: bool,
     heavyweight: bool,
+    benchmark_readers: bool = False,
+    readers_only: bool = False,
+    benchmark_pmtiles: bool = False,
+    pmtiles_only: bool = False,
+    benchmark_vector: bool = False,
+    vector_only: bool = False,
 ) -> int:
     """Best-effort total rows this run will stream, for an 'N of EXPECTED' progress
     display. Only reliable for a LIGHTWEIGHT-ONLY run: the lightweight fn set + corpus
     are known host-side. The heavyweight fn count is decided in Scala (BenchDispatch),
     not visible here, so any run that includes heavy returns None (count shown without a
     denominator) rather than a misleading number."""
+    # Reader + writer rows: 2 per tier that is active (1 read + 1 write; light + heavy = up to 4).
+    reader_rows = 2 * ((1 if lightweight else 0) + (1 if heavyweight else 0))
+    # PMTiles rows: 1 per active tier (1 write per tier).
+    pmtiles_rows = (1 if lightweight else 0) + (1 if heavyweight else 0)
+    # Vector rows: 4 formats × up to 2 tiers (1 read per format per tier).
+    _n_vformats = 4
+    vector_rows = _n_vformats * ((1 if lightweight else 0) + (1 if heavyweight else 0))
+
+    if readers_only:
+        return reader_rows or None
+
+    if pmtiles_only:
+        return pmtiles_rows or None
+
+    if vector_only:
+        return vector_rows or None
+
     if not lightweight or heavyweight:
+        # heavyweight included -> fn count unknown -> return None, but add reader rows if requested
+        if benchmark_readers and reader_rows:
+            return None  # still unknown due to heavyweight fn count
         return None
     try:
         sys.path.insert(0, "python/geobrix/src")
@@ -189,6 +216,12 @@ def _expected_rows(
         if n_size is None:
             return None  # can't be exact -> don't show a misleading denominator
         total += sum(1 for f in fns if "pure-core" in f.modes) * n_size
+    if benchmark_readers:
+        total += reader_rows
+    if benchmark_pmtiles:
+        total += pmtiles_rows
+    if benchmark_vector:
+        total += vector_rows
     return total or None
 
 
@@ -212,6 +245,30 @@ def main() -> int:
     if explain_only:
         heavyweight = False
         lightweight = True
+    # --benchmark-readers: also run the reader benchmark (raster_gbx vs gdal) on-cluster.
+    # --readers-only: ONLY run the reader benchmark, skip all fn benchmarks.
+    benchmark_readers = "--benchmark-readers" in sys.argv
+    readers_only = "--readers-only" in sys.argv
+    # --benchmark-pmtiles: also run the pmtiles writer benchmark on-cluster.
+    # --pmtiles-only: ONLY run the pmtiles benchmark, skip all fn benchmarks.
+    benchmark_pmtiles = "--benchmark-pmtiles" in sys.argv
+    pmtiles_only = "--pmtiles-only" in sys.argv
+    # --benchmark-vector: also run the vector reader benchmark on-cluster.
+    # --vector-only: ONLY run the vector reader benchmark, skip all fn benchmarks.
+    # --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead
+    #   of the tiny 4-file corpus. Requires the scaled corpus staged at
+    #   {CORPUS}/vector-scale/<fmt>/. Only meaningful when benchmark_vector or vector_only.
+    benchmark_vector = "--benchmark-vector" in sys.argv
+    vector_only = "--vector-only" in sys.argv
+    vector_scale = "--vector-scale" in sys.argv
+    writer_rows = int(_arg("--writer-rows", "14000000"))
+    # --vector-legs reader|writer|both: run the scaled vector reader-ingest legs, the
+    # writer-export leg, or both (default). Lets each be a separate isolated cluster job.
+    vector_legs = _arg("--vector-legs", "both")
+    # --vector-formats csv: restrict the scaled vector run to these light formats (e.g.
+    # geojson_gbx). Empty = all. With --vector-legs + --lightweight-only/--heavyweight-only,
+    # runs ONE (format x tier x leg) per job for cold isolation.
+    vector_formats = _arg("--vector-formats", "")
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -238,6 +295,18 @@ def main() -> int:
     fix_errors = "--no-fix-errors" not in sys.argv
 
     run_id = _arg("--run-id", "cluster")
+    # Keep reader/writer benchmarks SEPARABLE from the function benchmarks: an *-only run
+    # gets its own run_id suffix (unless --run-id was given explicitly) so its rows land in
+    # a distinct partition of the results table instead of commingling with the function
+    # rows under 'cluster'. This also makes the live "N of EXPECTED" count accurate (it
+    # polls by run_id) rather than counting leftover function rows from a prior run.
+    if "--run-id" not in sys.argv:
+        if readers_only:
+            run_id = f"{run_id}-readers"
+        elif pmtiles_only:
+            run_id = f"{run_id}-pmtiles"
+        elif vector_only:
+            run_id = f"{run_id}-vector"
     functions = _arg("--functions", "")
     sel = _arg("--set", "core")
 
@@ -356,9 +425,35 @@ def main() -> int:
         redo_functions=redo_functions,
         #  --explain-only: print/persist spark-path physical plans, no timing/no rows.
         explain_only=explain_only,
+        #  --benchmark-readers: also run reader benchmark (raster_gbx vs gdal).
+        benchmark_readers=benchmark_readers,
+        #  --readers-only: ONLY run the reader benchmark, skip fn benchmarks.
+        readers_only=readers_only,
+        #  --benchmark-pmtiles: also run pmtiles writer benchmark.
+        benchmark_pmtiles=benchmark_pmtiles,
+        #  --pmtiles-only: ONLY run the pmtiles benchmark, skip fn benchmarks.
+        pmtiles_only=pmtiles_only,
+        #  --benchmark-vector: also run vector reader benchmark (light *_gbx vs heavy *_ogr).
+        benchmark_vector=benchmark_vector,
+        #  --vector-only: ONLY run the vector reader benchmark, skip fn benchmarks.
+        vector_only=vector_only,
+        #  --vector-scale: use the scaled 1M-seed corpus instead of the tiny 4-file corpus.
+        vector_scale=vector_scale,
+        #  --writer-rows N: row count for the shared writer-source Delta table (default 14M).
+        writer_rows=writer_rows,
+        #  --vector-legs reader|writer|both: which scaled vector legs to run (default both).
+        vector_legs=vector_legs,
+        #  --vector-formats csv: restrict scaled vector run to these light formats (default all).
+        vector_formats=vector_formats,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
+        cfg["modes"] = "spark-path"
+    if pmtiles_only:
+        # PMTiles writer is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if vector_only:
+        # Vector reader benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -419,12 +514,28 @@ def main() -> int:
     # spark-path draws max(--row-counts) DISTINCT tiles from the pool; a smaller pool would
     # silently UNDER-FILL (report rows=max while processing fewer tiles -> misleading numbers).
     # Require pool >= the largest requested row count. (Skipped for --explain-only, which
-    # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool.)
-    if cfg["modes"] in ("spark-path", "both") and not cfg.get("explain_only"):
-        _max_rc = max((int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0)
+    # builds plans and draws no tiles; pure-core uses the size-sweep, not the row pool. Also
+    # skipped for the *-only reader/writer/pmtiles/vector benchmarks: those read the WHOLE pool
+    # (or their own vector corpus), not the --row-counts function ladder, so the ladder max is
+    # irrelevant to them -- gating on it would falsely refuse a valid 1000-tile reader run.)
+    _only_run = (
+        cfg.get("readers_only")
+        or cfg.get("pmtiles_only")
+        or cfg.get("vector_only")
+    )
+    if (
+        cfg["modes"] in ("spark-path", "both")
+        and not cfg.get("explain_only")
+        and not _only_run
+    ):
+        _max_rc = max(
+            (int(x) for x in str(cfg["row_counts"]).split(",") if x), default=0
+        )
         try:
             _cj = json.loads(
-                w.files.download(f"{corpus}/corpus.json").contents.read().decode("utf-8")
+                w.files.download(f"{corpus}/corpus.json")
+                .contents.read()
+                .decode("utf-8")
             )
             _pool = len(_cj.get("row_pool", {}).get("tiles", []))
         except Exception as _e:
@@ -538,7 +649,18 @@ def main() -> int:
         if on
     ]
     expected = _expected_rows(
-        functions, sel, modes, row_counts, lightweight, heavyweight
+        functions,
+        sel,
+        modes,
+        row_counts,
+        lightweight,
+        heavyweight,
+        benchmark_readers=benchmark_readers,
+        readers_only=readers_only,
+        benchmark_pmtiles=benchmark_pmtiles,
+        pmtiles_only=pmtiles_only,
+        benchmark_vector=benchmark_vector,
+        vector_only=vector_only,
     )
     # "27 (of 83)" when we know the total this run will stream, else just "27".
     of = f" (of {expected})" if expected else ""

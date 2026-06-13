@@ -36,6 +36,13 @@ class OGR_Batch(schema: StructType, options: Map[String, String]) extends Scan w
 
         val filesDf = files.toDF("path")
 
+        // Drivers with no random feature access: OGR's GeoJSON driver re-parses the entire
+        // FeatureCollection into memory on every open, so splitting one file into offset
+        // chunks means each chunk re-opens + re-parses the whole file (~O(features * chunks)).
+        // For these, plan ONE partition per file (parse once, read whole); parallelism comes
+        // from reading many files concurrently. Seekable formats (Shapefile/.shx, GPKG, FileGDB)
+        // keep chunking -- their opens are cheap and they seek to the chunk start.
+        val nonSeekable = Set("GeoJSON", "GeoJSONSeq")
         val offsetsUDF = udf { (path: String) =>
             try {
                 // sidecar files will be ignored here
@@ -46,7 +53,11 @@ class OGR_Batch(schema: StructType, options: Map[String, String]) extends Scan w
                 layer.ResetReading()
                 val nRecords = layer.GetFeatureCount().toInt
                 NodeFileManager.releaseRemote(path)
-                (0 to nRecords by chunkSize).map(s => (path, s, Math.min(s + chunkSize, nRecords))).toArray
+                if (nonSeekable.contains(driverName)) {
+                    Array((path, 0, nRecords)) // one partition: chunking would re-parse the file per chunk
+                } else {
+                    (0 to nRecords by chunkSize).map(s => (path, s, Math.min(s + chunkSize, nRecords))).toArray
+                }
             } catch {
                 case e: Exception => Array.empty[(String, Int, Int)]
             }

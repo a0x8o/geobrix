@@ -1,8 +1,152 @@
 ---
 sidebar_position: 3
+sidebar_label: PMTiles
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import pmtilesEx from '!!raw-loader!../../tests/python/writers/pmtiles_gbx_examples.py';
+
 # PMTiles Writer
+
+Package a tile pyramid (`(z, x, y, bytes)`) into [PMTiles](https://docs.protomaps.com/pmtiles/)
+archives. The **lightweight** `pmtiles_gbx` writer (pure-Python, Serverless-safe,
+distributed spatial sharding) and the **heavyweight** `pmtiles` writer take the
+same input and produce decoded-tile-identical archives (verified in the
+[benchmark](../api/benchmarking#tiled-output-pmtiles-writer)).
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) writers need **no JAR or init script** and are the **only** option
+on Serverless, standard (shared), and ARM clusters. The heavyweight raster/PMTiles writers
+require a **classic x86 cluster** (JAR + GDAL init script); where available they use native
+GDAL on the JVM. So your compute usually decides the tier — then data scale. See the
+[Benchmarking](../api/benchmarking) page for timings and methodology.
+At 1,000 tiles the lightweight `pmtiles_gbx` writer runs comparably to the heavyweight encoder (~18.4 s vs ~20.7 s).
+:::
+
+## Schema
+
+**Input schema — exactly `(z, x, y, bytes)`:**
+
+```
+root
+ |-- z: int
+ |-- x: int
+ |-- y: int
+ |-- bytes: binary
+```
+
+A tile pyramid: one row per tile, `bytes` being the already-encoded tile payload (PNG/JPEG/WebP/MVT/…). The writer requires **exactly these four columns, in this order** — extra, missing, or mis-ordered columns raise an error.
+
+What each column means:
+
+- **`z`** — zoom level. `0` is the whole world in one tile; each level up subdivides every tile into four.
+- **`x`, `y`** — the tile's **column and row in the XYZ ("slippy-map") grid**, addressed from the **upper-left (north-west) origin**: `x` increases eastward, `y` increases southward. Put differently, `(x, y)` identifies the tile by its upper-left corner. This is the Web-Mercator/XYZ convention PMTiles uses — the opposite of the TMS scheme, where `y` increases northward. So `(z, x, y) = (0, 0, 0)` is the single top-level tile, and at zoom 1 `(1, 0, 0)` is the north-west quadrant.
+- **`bytes`** — the already-encoded tile payload; its type (PNG/JPEG/WebP/MVT) is auto-detected from the leading magic bytes.
+
+If your tiles already live in a DataFrame under different names, project them to the exact shape and order:
+
+```python
+tiles.select(
+    tiles["zoom"].alias("z"),
+    tiles["tile_x"].alias("x"),      # column index from the NW origin (east is +)
+    tiles["tile_y"].alias("y"),      # row index from the NW origin (south is +)
+    tiles["payload"].alias("bytes"),
+).write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+Or generate the pyramid straight from rasters with GeoBrix RasterX. [`gbx_rst_xyzpyramid`](../api/raster-functions#rst_xyzpyramid) explodes a raster into one row per intersecting XYZ tile (rendering each as PNG/JPEG/WebP) and already emits a `tile: STRUCT<z, x, y, bytes>` — exactly the PMTiles schema, no manual aliasing of the tile coordinates needed:
+
+```python
+from pyspark.sql import functions as F
+from databricks.labs.gbx.rasterx.functions import rst_xyzpyramid
+
+# One row per (z, x, y) tile across zooms 0..5, as 256px PNG bytes. rst_xyzpyramid
+# emits XYZ tiles addressed from the NW origin -- the convention described above.
+tiles = (
+    rasters
+    .select(F.explode(rst_xyzpyramid("tile", F.lit(0), F.lit(5))).alias("t"))
+    .selectExpr(
+        "t.tile.z AS z",
+        "t.tile.x AS x",
+        "t.tile.y AS y",
+        "t.tile.bytes AS bytes",
+    )
+)
+tiles.write.format("pmtiles_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+**Output:** by default, spatially-sharded `.pmtiles` archives plus a catalog under the target directory; with `shardZoom=0`, a single `.pmtiles` archive file.
+
+## Options
+
+Both tiers are write-only and require `.mode("overwrite")` — a finalized archive cannot be appended to.
+
+### Lightweight (`pmtiles_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `shardZoom` | `"6"` | Grid zoom that partitions the world into one bounded `.pmtiles` per parent tile. `0` = a single merged archive. |
+| `targetTilesPerShard` | _unset_ | Optional cap on tiles per shard; when set, used to size shards instead of a fixed `shardZoom`. |
+| `catalog` | `"stac"` | Catalog written over the shards: `stac`, `tilejson`, or `none`. |
+| `tileType` | _auto-detect_ | Override the PMTile `tile_type`: `png`, `jpeg`/`jpg`, `webp`, `avif`, or `mvt`. |
+| `tileCompression` | `"none"` | PMTile `tile_compression` advertised in the header: `none`, `gzip`, `brotli`, or `zstd`. Tile bytes pass through unchanged. |
+| `metadata` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="OPTIONS_NOTE"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+### Heavyweight (`pmtiles`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `metadataJson` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
+| `tileType` | _auto-detect_ | Override the auto-detected PMTile `tile_type` byte: `1` = MVT, `2` = PNG, `3` = JPEG, `4` = WebP. Useful when emitting via a custom encoder that doesn't carry the standard magic bytes. |
+| `tileCompression` | `1` (none) | PMTile `tile_compression` byte advertised in the header: `1` = none, `2` = gzip, `3` = brotli, `4` = zstd. GeoBrix passes tile bytes through unchanged; set this only if you have pre-compressed your tiles upstream. |
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · pmtiles_gbx">
+
+Pure-Python, JAR-free, Serverless-safe writer that packages a tile pyramid
+(`(z, x, y, bytes)`) into [PMTiles](https://docs.protomaps.com/pmtiles/) archives
+using distributed **spatial sharding**: each populated parent tile becomes one
+bounded, non-overlapping `.pmtiles` shard, plus a global `overview.pmtiles` and a
+catalog over the shards.
+
+## Sharded output (default)
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="WRITE_PMTILES_SHARDED"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+Output layout:
+
+```
+OUT_DIR/tileset/{z}/{x}/{y}.pmtiles   # one per populated parent (Z >= shardZoom)
+OUT_DIR/tileset/overview.pmtiles      # Z < shardZoom global overview
+OUT_DIR/tileset/catalog.json          # STAC/GeoJSON manifest
+```
+
+## Single archive
+
+<CodeFromTest code={pmtilesEx} language="python" functionName="WRITE_PMTILES_SINGLE"
+  source="docs/tests/python/writers/pmtiles_gbx_examples.py"
+  testFile="docs/tests/python/writers/test_pmtiles_gbx_examples.py" />
+
+## Spatial sharding
+
+The writer treats tiled output as immutable, spatially-indexed shards: partition
+the world by a grid, emit one bounded `.pmtiles` per parent tile, and deliver a
+catalog over the shards rather than one merged file. This keeps shards
+independently regenerable and lets a browser fetch only the shard for the area in
+view. Set `shardZoom=0` for a single merged archive.
+
+It is the lightweight counterpart of the heavyweight `pmtiles` writer, supporting Python and SQL bindings (not Scala).
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · pmtiles">
 
 The PMTiles writer streams a per-tile `(z, x, y, bytes)` row set into a single [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) archive file. It is the write-only counterpart of the [`gbx_pmtiles_agg` UDAF](../api/pmtiles-functions#pmtiles_agg) — both share the same native-Scala encoder, but the DataSource avoids the Spark cell-size ceiling by performing a partitioned streaming commit with no in-memory consolidation.
 
@@ -79,14 +223,6 @@ tilesDf.write
     .save("/Volumes/main/default/tiles/out.pmtiles")
 ```
 
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `metadataJson` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
-| `tileType` | _auto-detect_ | Override the auto-detected PMTile `tile_type` byte: `1` = MVT, `2` = PNG, `3` = JPEG, `4` = WebP. Useful when emitting via a custom encoder that doesn't carry the standard magic bytes. |
-| `tileCompression` | `1` (none) | PMTile `tile_compression` byte advertised in the header: `1` = none, `2` = gzip, `3` = brotli, `4` = zstd. GeoBrix passes tile bytes through unchanged; set this only if you have pre-compressed your tiles upstream. |
-
 ## Tile-Type Detection
 
 The encoder reads the first 12 bytes of the first non-empty tile payload and sets the PMTile header's `tile_type` byte:
@@ -120,6 +256,9 @@ PMTiles is designed to be served as a single static file with HTTP `Range` reque
 
 - **No leaf directories.** If the global root directory would exceed 16,257 bytes (PMTiles spec § 4), the encoder errors out and asks you to split your input. In practice this only happens with very large pyramids (tens of millions of tiles); the limit will be relaxed in a future release.
 - **No cross-task dedup.** Identical tiles across partitions are stored multiple times in the final file. The [`gbx_pmtiles_agg`](../api/pmtiles-functions#pmtiles_agg) UDAF does per-blob SHA-256 dedup, so for known-redundant pyramids prefer the UDAF when your data fits a single Spark cell.
+
+</TabItem>
+</Tabs>
 
 ## Next Steps
 

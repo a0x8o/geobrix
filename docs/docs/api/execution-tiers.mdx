@@ -32,7 +32,7 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 | Driver coverage | Full custom GDAL build | rasterio's bundled build (narrower) |
 | SQL default arguments | Supported | Pass all arguments explicitly |
 | Function coverage | Full raster set | Full raster set — every `rst_*` function |
-| Readers / Writers | `gtiff_gdal`, `gdal`, OGR readers | `binaryFile` + `rst_fromcontent` today; native Python Data Source readers planned |
+| Readers / Writers | `gtiff_gdal`, `gdal`, OGR readers | `raster_gbx` / `gtiff_gbx` native Python DataSource V2 reader + writer (no JAR); vector OGR readers still heavy-only |
 
 ## How to choose
 
@@ -41,10 +41,10 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 Choose **Heavyweight (rasterx)** in three cases:
 
 1. **Your environment is already JVM/GDAL-based** — you have the init script and JAR in place, or you specifically want JVM-native execution on a dedicated cluster.
-2. **You need the GDAL/OGR readers** — `gtiff_gdal`, `gdal`, and the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …). The lightweight tier reads via `binaryFile` + `rst_fromcontent` today; native lightweight Python Data Source readers are not yet available.
+2. **You need vector OGR readers or format-specific GDAL options** — the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …) and the generic `gdal` reader with exotic driver options are heavy-only. For raster I/O, the lightweight tier ships native `raster_gbx` / `gtiff_gbx` readers and a writer (no JAR; see [Lightweight Raster Readers](../readers/raster)).
 3. **You need GridX or VectorX** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`) or the vector-tile / TIN / legacy-geometry APIs (`gbx_st_*`). Those packages have a heavyweight tier only.
 
-The reader and grid/vector surfaces (cases 2 and 3) are actively being ported to the lightweight tier, so heavyweight's unique surface is expected to keep narrowing.
+The vector OGR readers and grid/vector surfaces (case 3) are the remaining heavyweight-only surfaces. Raster I/O is now available in both tiers; heavyweight's unique surface is expected to keep narrowing.
 
 ## Performance
 

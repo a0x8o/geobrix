@@ -1,12 +1,84 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
+sidebar_label: GeoTIFF
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import rasterGbxExamples from '!!raw-loader!../../tests/python/readers/raster_gbx_read_examples.py';
 import gtiffExamples from '!!raw-loader!../../tests/python/readers/gtiff_examples.py';
 import gtiffScala from '!!raw-loader!../../tests/scala/readers/GTiffExamples.scala';
 
 # GeoTIFF Reader
+
+Read GeoTIFFs into the shared `(source, tile)` schema. The **lightweight**
+`gtiff_gbx` reader (the `raster_gbx` catch-all with the GeoTIFF driver preset,
+`rasterio`-backed, JAR-free) and the **heavyweight** `gtiff_gdal` reader are
+interchangeable — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, but your
+**compute usually decides the tier**: the lightweight tier needs **no JAR or init script**
+and is the **only** option on Serverless, standard (shared), and ARM clusters. The
+heavyweight tier requires a **classic x86 cluster** (JAR + GDAL init script); where it is
+available it uses native GDAL on the JVM and tends to pull ahead on large workloads. See
+the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
+## Options
+
+Both named readers preset the GeoTIFF driver and inherit their respective generic raster reader's options.
+
+### Lightweight (`gtiff_gbx`)
+
+Inherits the [lightweight `raster_gbx` options](./raster#options):
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+### Heavyweight (`gtiff_gdal`)
+
+Inherits all [heavyweight `gdal` reader options](./raster#options). Common options include:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `readSubdatasets` | `"false"` | Read subdatasets if present |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
+| `retile` | `"false"` | Retile rasters for optimal processing |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling) |
+
+Example — reading with options set:
+
+<CodeFromTest
+  code={gtiffExamples}
+  language="python"
+  functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/gtiff_examples.py"
+  testFile="docs/tests/python/readers/test_gtiff_examples.py"
+  outputConstant="READ_WITH_OPTIONS_output"
+/>
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · gtiff_gbx">
+
+`gtiff_gbx` is the [`raster_gbx`](./raster) catch-all reader with the GeoTIFF
+driver preset — use it to make GeoTIFF reads explicit. It is pure-Python (no JAR)
+and emits the same `(source, tile)` schema as the other readers.
+
+Register the lightweight DataSources first (see
+[Lightweight Raster Readers → Register](./raster#register)).
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_GTIFF_GBX"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py"
+  testFile="docs/tests/python/readers/test_raster_gbx_read_examples.py" />
+
+It is the lightweight counterpart of the heavyweight `gtiff_gdal` reader, supporting Python and SQL bindings (not Scala).
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · gtiff_gdal">
 
 Read GeoTIFF raster files (.tif, .tiff) - the most common geospatial raster format.
 
@@ -58,28 +130,6 @@ This is a named GDAL Reader that presets the `driver` option to "GTiff". GeoTIFF
   source="docs/tests/python/readers/gtiff_examples.py"
   testFile="docs/tests/python/readers/test_gtiff_examples.py"
   outputConstant="SQL_GTIFF_output"
-/>
-
-## Options
-
-The GeoTIFF reader inherits all [GDAL reader options](./gdal#options). Common options include:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `readSubdatasets` | `"false"` | Read subdatasets if present |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
-| `retile` | `"false"` | Retile rasters for optimal processing |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling) |
-
-### Example with Options
-
-<CodeFromTest
-  code={gtiffExamples}
-  language="python"
-  functionName="READ_WITH_OPTIONS"
-  source="docs/tests/python/readers/gtiff_examples.py"
-  testFile="docs/tests/python/readers/test_gtiff_examples.py"
-  outputConstant="READ_WITH_OPTIONS_output"
 />
 
 ## Output Schema
@@ -171,8 +221,11 @@ GeoTIFF supports various compression options:
 GeoBrix reads compressed GeoTIFFs transparently. The compression format is automatically detected and handled by GDAL.
 :::
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
-- [GDAL Reader](./gdal) - Generic raster reader for all GDAL formats
+- [GDAL Reader](./raster) - Generic raster reader for all GDAL formats
 - [Raster Functions](../api/raster-functions) - Raster processing operations
 - [Quick Start](../quick-start) - Get started with GeoBrix

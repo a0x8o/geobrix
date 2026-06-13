@@ -100,7 +100,7 @@ def test_build_bench_notebook_cells():
     )
     nb = cl.build_bench_notebook(cfg)
     src = "\n".join("".join(c.get("source", [])) for c in nb["cells"])
-    assert "geobrix-0.4.0-py3-none-any.whl[pyrx]" in src
+    assert "geobrix-0.4.0-py3-none-any.whl[light]" in src
     assert "restartPython" in src
     assert "HeavyBenchMain" in src and "_jvm" in src
     assert "run_spark_path" in src or "run_pure_core" in src
@@ -195,8 +195,9 @@ def test_build_bench_notebook_one_cell_per_section_in_order():
     assert (
         'show_section("heavyweight", "spark-path", run_heavy("spark-path"))' in secs[3]
     )
-    # 2 install cells + setup + 4 sections + epilogue
-    assert len(nb["cells"]) == 8
+    # 2 install cells + setup + 4 sections + epilogue + exit (exit is its own cell
+    # so the compare summary render isn't truncated -- see build_bench_notebook)
+    assert len(nb["cells"]) == 9
     src = "\n".join("".join(c["source"]) for c in nb["cells"])
     assert "def show_section(" in src
     assert "dbutils.notebook.exit" in src

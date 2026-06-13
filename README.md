@@ -7,269 +7,89 @@
 [![python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE)
 
-GeoBrix is a high-performance spatial processing library. Its raster functions come in two execution tiers: a lightweight pure-Python tier (pyrx) that additionally runs on serverless, shared, and ARM compute, and a heavyweight Scala/GDAL tier (rasterx) for distributed processing on classic clusters (natives for x86 arch only). See [Choosing an Execution Tier](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers). The heavyweight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run on the Databricks Runtime (DBR), see [docs](https://databrickslabs.github.io/geobrix/) for more.
+**GeoBrix** is a high-performance spatial library for Databricks that delivers the next generation of *product-augmenting* capabilities — raster, discrete global grids, and vector format I/O — and is built to drive you *deeper* into Databricks-native [`GEOMETRY`/`GEOGRAPHY` and ST/H3 functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial), not replace them. It is the modern successor to [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (now in maintenance).
 
-## Background
+> **Full docs:** **https://databrickslabs.github.io/geobrix/** — this README is the 2-minute tour.
 
-Now that product built-in [Spatial SQL Functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions) have reached public preview as of DBR17.1, we are seeking to deliver the next generation of product-augmenting capabilities to help our customers. GeoBrix project is a streamlined iteration to the existing, and quite popular, [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/index.html) project. Beyond just porting existing Mosaic code, GeoBrix is modernized with expressions designed to work with our [Data Intelligence Platform](https://www.databricks.com/product/data-intelligence-platform). GeoBrix will be a combination of heavy-weight (e.g. JAR) as well as lightweight (e.g Python, SQL) code artifacts. It also will focus on techniques to use the Databricks platform more widely.
+<img src="resources/images/geobrix_vision.png" width="70%" />
 
-With Databricks first having acquired [MosaicML](https://www.databricks.com/company/newsroom/press-releases/databricks-completes-acquisition-mosaicml) and now having made a product line, [Mosaic AI](https://www.databricks.com/product/artificial-intelligence), it has become clear that the DBLabs Mosaic project, sharing the name, needs to be revamped in name as well as any existing Mosaic capabilities that compete with product investments. If this were not the case, we would have simply iterated on DBLabs Mosaic “in-place” keeping the same name for what is now called GeoBrix. DBLabs Mosaic is in maintenance mode. The latest/last version of Mosaic targets DBR 13.3 LTS since product introduced ST functions starting with DBR 14. As such, Mosaic does not have any awareness of advancements in recent runtimes, including product support for spatial sql and types, and will be retired with [DBR 13.3 EoS](https://docs.databricks.com/aws/en/release-notes/runtime/#supported-databricks-runtime-lts-releases) in AUG 2026.
+## Tiers
 
-<img src="resources/images/geobrix_vision.png" width="75%" />
+- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
+- **Heavyweight tier** — Scala (Python and SQL bindings) + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
 
 ## Packages
 
-GeoBrix offers heavy-weight packages for Raster, Grid, and Vector that are intended to augment and compliment ongoing Databricks product initiatives. 
+<img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
 
-### RasterX
+- **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster).
+- **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex).
+- **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST.
 
-<img src="resources/images/RasterX.png" width="25%" />
+All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names. See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings. 
 
-Refactor and improvement of Mosaic raster functions. Product does not (yet) support anything built-in specifically for raster, so this is a “fully” gap-filling capability.
+## Quick start (lightweight)
 
-### GridX
+Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install the `[light]` extra:
 
-<img src="resources/images/GridX.png" width="25%" />
-
-Refactor of Mosaic discrete global grid indexing functions. Covers British National Grid (BNG) for Great Britain customers, CARTO **quadbin** (a web-mercator-aligned global grid), and user-defined **custom grids** — with cell math, tessellation, k-ring / polyfill, and grid-aware aggregation across all three grid systems.
-
-### VectorX
-
-<img src="resources/images/VectorX.png" width="25%" />
-
-Refactor of select DBLabs Mosaic vector functions that augment the product's built-in ST Geospatial Functions. As of v0.4.0, VectorX spans three areas: **vector-tile encoding** — `st_asmvt` (aggregator) and `st_asmvt_pyramid` (generator) for publishing Mapbox Vector Tile (MVT) layers; **TIN surface modeling** — `st_triangulate` plus `st_interpolateelevationbbox` / `st_interpolateelevationgeom` for constrained-Delaunay triangulation and grid elevation interpolation from Z-valued points; and **legacy-Mosaic migration** — `st_legacyaswkb`, which updates existing Mosaic geometry data to product-supported types so users don't need to install (older) Mosaic to get to the latest spatial features. OGR-based vector readers (Shapefile, GeoJSON, GeoPackage, FileGDB) round out the package.
-
-## Readers
-
-The following spark readers are automatically registered with the JAR on the classpath.
-
-### Raster [“gdal”]
-
-#### Options
-
-* “sizeInMB”    → defaults to “16” - split the file if over the threshold
-* “filterRegex”  → defaults to “.*” - filter loaded files from the provided directory
-
-We are really only focused on [GeoTiffs](https://gdal.org/en/stable/drivers/raster/gtiff.html) right now, but you are free to try to load any available driver with something like:
-
-```
-(
-  spark
-    .read.format(“gdal”)
-    .option("driverName", "<driver>") # if not provided, extension is used to detect
-    .load("<path>")
-)
+```python
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[light]'
 ```
 
-<img src="resources/images/readers/gdal_reader.png" width="50%" />
+```python
+from databricks.labs.gbx.ds.register import register   # *_gbx readers/writers
+from databricks.labs.gbx.pyrx import functions as rx    # gbx_rst_* functions
 
-### Named Readers
+register(spark)
+rx.register(spark)   # optional — only to call the gbx_rst_* SQL functions
 
-The following are available and call the “gdal” reader with some options explicitly set.
+# Read a GeoTIFF and compute with RasterX
+rasters = spark.read.format("gtiff_gbx").load("/Volumes/<catalog>/<schema>/<volume>/*.tif")
+rasters.select(rx.rst_width("tile"), rx.rst_srid("tile")).show()
 
-#### GeoTiff ["gtiff_gdal"]
-
-Read GeoTIFF raster files - the most common geospatial raster format. This is a named GDAL Reader, sets “driverName” → "[GTiff](https://gdal.org/en/stable/drivers/raster/gtiff.html)":
-
-* GDAL auto-associates GeoTiff and BigTiff extensions to this driver, e.g. __.tif__ files
-* With the named reader, the driver is specified to be used regardless of extension
-* Can use the other available "gdal" reader options
-
-```commandline
-(
-  spark
-    .read.format(“gtiff_gdal”)
-    .load("<path_to_supported_files>")
-)
+# Vector read -> write (round-trips with the matching reader)
+boroughs = spark.read.format("geojson_gbx").load("/Volumes/.../boroughs.geojson")
+boroughs.write.format("geojson_gbx").mode("overwrite").save("/Volumes/.../out.geojson")
 ```
 
-The output will look something like the following, with `tile` column now ready to use with other RasterX APIs.
+**Heavyweight** is the same code with `from databricks.labs.gbx.rasterx import functions as rx`, plus the JAR and a GDAL init script — see [Installing & Choosing a Tier](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers).
 
-<img src="resources/images/readers/gtiff_reader.png" width="50%" />
+## Readers & writers
 
-### Vector [“ogr”]
+Lightweight formats use the `*_gbx` suffix; heavyweight use `*_ogr` (vector) / `gdal` (raster). Light and heavy emit the **same schema**, so they are drop-in swaps. Full options and examples: [Readers](https://databrickslabs.github.io/geobrix/docs/readers/overview) · [Writers](https://databrickslabs.github.io/geobrix/docs/writers/overview).
 
-#### Options
+**Raster & tiles**
 
-* “driverName” → if not provided, GDAL uses best guess based on file extension
-* “chunkSize”   → default "10000" - number of records for multi-threading per file reading
-* “layerN”         → default “0” - for file formats that use layers
-* “layerName”  → default “” - for file formats that use layers
-* “asWKB”       → default “true” - whether to return WKB or WKT geometry results
+| Format | Read (light / heavy) | Write (light / heavy) |
+|---|---|---|
+| Raster (any GDAL driver) | `raster_gbx` / `gdal` | `raster_gbx` / `gdal` |
+| GeoTIFF | `gtiff_gbx` / `gtiff_gdal` | `gtiff_gbx` / `gtiff_gdal` |
+| PMTiles | — | `pmtiles_gbx` / `pmtiles` |
 
-Note: For the Beta, results are not converted to Databricks new native spatial types for [GEOMETRY](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type#gsc.tab=0) / [GEOGRAPHY](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geography-type), so this would be an additional step once the data has been read.
+**Vector** — single-file vector writes are lightweight-only; the **sharded GeoJSONL** writer (multi-file, one shard per partition, no driver merge — the recommended writer at any scale) is available in **both** tiers.
 
-### Named Readers
+| Format | Read (light / heavy) | Write |
+|---|---|---|
+| Vector (any OGR driver) | `vector_gbx` / `ogr` | `vector_gbx` (light) |
+| Shapefile | `shapefile_gbx` / `shapefile_ogr` | `shapefile_gbx` (light) |
+| GeoJSON | `geojson_gbx` / `geojson_ogr` | `geojson_gbx` (light) |
+| GeoPackage | `gpkg_gbx` / `gpkg_ogr` | `gpkg_gbx` (light) |
+| File Geodatabase | `file_gdb_gbx` / `file_gdb_ogr` | `file_gdb_gbx` (light) ¹ |
+| GeoJSONL — *sharded, multi-file* | read via `geojson_gbx` (`multi=true`) | `geojsonl_gbx` / `geojsonl` (light **and** heavy) |
 
-The following are available and call the “ogr” reader with some options explicitly set.
+¹ `file_gdb_gbx` write is a **hybrid**: it encodes the `.gdb` via the native GDAL (`osgeo`) from the heavyweight GDAL init script, because pyogrio's bundled GDAL ships a read-only OpenFileGDB driver. On compute with those natives it writes natively; otherwise it raises a clear error (use `gpkg_gbx` / `geojson_gbx`). FileGDB *reading* is lightweight-only.
 
-#### Shapefile [“shapefile_ogr”]
+Light vector readers/writers exchange geometry as **WKB/WKT** with companion `*_srid` columns — convert to/from Databricks `GEOMETRY` with `st_geomfromwkb` / `st_aswkb` (see [Databricks Spatial](https://databrickslabs.github.io/geobrix/docs/databricks-spatial)).
 
-This is a named OGR Reader, sets “driverName” → "[ESRI Shapefile](https://gdal.org/en/stable/drivers/vector/shapefile.html)":
+## Known limitations
 
-* GDAL auto-associates the following extensions to this driver: __.shz__ files (ZIP files containing the .shp, .shx, .dbf and other side-car files of a single layer) and __.shp.zip__ files (ZIP files containing one or several layers)
-* With the named reader, GDAL can additionally handle __.zip__ files (ZIP files containing one or several layers)
+- Native Databricks `GEOMETRY`/`GEOGRAPHY` are not produced directly yet — geometries are exchanged as **WKB/WKT** (+ `*_srid`); convert with the native ST functions ([Databricks Spatial](https://databrickslabs.github.io/geobrix/docs/databricks-spatial)).
+- Spatial KNN is not yet ported; nor is H3 for geometry-based k-ring / k-loop.
 
-```
-(
-  spark
-    .read.format(“shapefile_ogr”)
-    .load("<path_to_supported_files>")
-)
-```
+## Building, deploying, releasing
 
-The output will look something like the following, maintaining attribute columns and having 3 columns for geometry: ‘geom_0’, ‘geom_0_srid’, and ‘geom_0_srid_proj’.
-
-<img src="resources/images/readers/shapefile_reader.png" width="50%" />
-
-### GeoJSON [“geojson_ogr”]
-
-This is a named OGR Reader.
-
-#### Options
-
-* “multi” → default “true”
-  * when “true” set “driverName” → "[GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html)"
-  * otherwise | “[GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html)”
-
-```
-(
-  spark
-    .read.format(“geojson_ogr”)
-    .option("multi", "false") # if not provided, "true" assumed
-    .load("<path_to_supported_files>")
-)
-```
-
-The output will look something like the following, maintaining attribute columns and having 3 columns for geometry: ‘geom_0’, ‘geom_0_srid’, and ‘geom_0_srid_proj’.
-
-<img src="resources/images/readers/geojson_reader.png" width="50%" />
-
-### GeoPackage [“gpkg_ogr”]
-
-This is a named OGR Reader, sets “driverName” → "[GPKG](https://gdal.org/en/stable/drivers/vector/gpkg.html)".
-
-```
-(
-  spark
-    .read.format(“gpkg_ogr”)
-    .load("<path_to_supported_files>")
-)
-```
-
-The output will look something like the following, maintaining attribute columns and having 3 columns for geometry: ‘shape’, ‘shape_srid’, and ‘shape_srid_proj’.
-
-<img src="resources/images/readers/gpkg_reader.png" width="50%" />
-
-### File GeoDatabase [“file_gdb_ogr”]
-
-This is a named OGR Reader, sets “driverName” → "[OpenFileGDB](https://gdal.org/en/stable/drivers/vector/openfilegdb.html)". You also may want to specify options “layerN” or “layerName” to read the desired layer.
-
-```
-(
-  spark
-    .read.format(“file_gdb_ogr”)
-    .load("<path_to_supported_files>")
-)
-```
-
-The output will look something like the following, maintaining attribute columns and having 3 columns for geometry: ‘SHAPE’, ‘SHAPE_srid’, and ‘SHAPE_srid_proj’. Note: column names are case insensitive.
-
-<img src="resources/images/readers/filegdb_reader.png" width="50%" />
+See the [`scripts`](./scripts) folder and the [docs](https://databrickslabs.github.io/geobrix/).
 
 ## Support
-Please note that all projects in the /databrickslabs github account are provided for your exploration only, and are not formally supported by Databricks with Service Level Agreements (SLAs). They are provided AS-IS and we do not make any guarantees of any kind. Please do not submit a support ticket relating to any issues arising from the use of these projects.
 
-Any issues discovered through the use of this project should be filed as GitHub Issues on the Repo. They will be reviewed as time permits, but there are no formal SLAs for support.
-
-## Installing & Using GeoBrix
-
-GeoBrix raster functions come in two execution tiers: a **lightweight** pure-Python tier (`pyrx`) and a **heavyweight** Scala/Spark tier (`rasterx`, with PySpark and SQL bindings). GridX, VectorX, and the GDAL/OGR readers/writers are heavyweight. See [docs](https://databrickslabs.github.io/geobrix/) for full installation and usage.
-
-### Quick Start
-
-GeoBrix raster functions share the **same names** across both execution tiers, so switching tiers is a one-line import change (both alias `rx`). Pick the tier that matches your compute — see [Choosing an Execution Tier](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers) for the full comparison.
-
-#### Lightweight (pyrx)
-
-Pure Python on [rasterio](https://rasterio.readthedocs.io/) — **no JAR, no init script, no native GDAL bundle**. Runs on serverless, standard (shared) clusters, Lakeflow declarative pipelines, and ARM. Stage the GeoBrix wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install it with the `pyrx` extra — `%pip` (cluster-wide) or as a cluster-scoped library:
-
-```python
-%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[pyrx]'
-```
-
-```python
-from databricks.labs.gbx.pyrx import functions as rx
-rx.register(spark)  # optional — only needed to call the gbx_rst_* SQL functions
-
-tiles = (
-    spark.read.format("binaryFile").load("/Volumes/<catalog>/<schema>/<volume>/*.tif")
-    .select(rx.rst_fromcontent("content", "GTiff").alias("tile"))
-)
-tiles.select(rx.rst_width("tile"), rx.rst_srid("tile")).show()
-```
-
-#### Heavyweight (rasterx)
-
-Scala + native GDAL for distributed processing on classic (x86) clusters. Requires the JAR plus a cluster init script that installs GDAL natives:
-
-1. Add the GeoBrix JAR and Shared Object (`*.so`) to a Volume — delivered via [Releases](https://github.com/databrickslabs/geobrix/releases) artifacts.
-2. Add [geobrix-gdal-init.sh](./scripts/geobrix-gdal-init.sh) to a Databricks Volume (modify `VOL_DIR` to the artifacts' location) and attach it as the cluster init script.
-3. Add the WHL as a cluster library.
-
-```python
-from databricks.labs.gbx.rasterx import functions as rx
-rx.register(spark)  # registers the gbx_rst_* SQL functions
-
-rasters = spark.read.format("gdal").load("/Volumes/<catalog>/<schema>/<volume>/*.tif")
-rasters.select(rx.rst_width("tile"), rx.rst_srid("tile")).show()
-```
-
-#### Inspect the registered SQL functions (either tier, after `register`)
-
-```sql
--- hint: you can sort the return column
-show functions like 'gbx_rst_*'
-```
-
-<img src="resources/images/quickstart/show_funcs.png" width="25%" />
-
-```sql
-describe function extended gbx_rst_boundingbox
-```
-
-<img src="resources/images/quickstart/func_descrip.png" width="50%" />
-
-### Scala Bindings
-The heavy-weight API is written in Scala with various spark optimizations implemented with best practices, including using Spark Connect to invoke the columnar expressions. The pattern for registering functions is `com.databricks.labs.gbx.<category>.functions` where ‘gbx’ is the convention for GeoBrix in classpaths:
-
-* __VectorX__ - sample function `vx.st_legacyaswkb`.
-  * `import com.databricks.labs.gbx.vectorx.{functions => vx}`
-  * `vx.register(spark)`
-  * `vx.<function>`
-* __GridX__ (showing BNG) `import com.databricks.labs.gbx.gridx.bng.{functions => bx}` (same registrations and execution pattern as VectorX) - sample function `bx.bng_cellarea`.
-* __RasterX__ `import com.databricks.labs.gbx.rasterx.{functions => rx}` (same registrations and execution pattern as VectorX) - sample functions `rx.rst_clip`.
-
-### Python Bindings
-The python bindings are a lightweight wrapper to the underlying Scala columnar expressions via Spark Connect. Functions are registered in a similar manner as with scala:
-
-* __VectorX__
-  * `from databricks.labs.gbx.vectorx import functions as vx`
-  * `vx.register(spark)`
-  * `vx.<function>`
-* __GridX__ (showing BNG) `from databricks.labs.gbx.gridx.bng import functions as bx` (same registrations and execution pattern as VectorX)
-* __RasterX__ `from databricks.labs.gbx.rasterx import functions as rx` (same registrations and execution pattern as VectorX)
-
-### SQL
-All GeoBrix SQL functions will be registered with gbx_ prefix. This reflects a lesson learned from previous experiences, where functions registered without a prefix is unattributable to any particular provider on classic compute, e.g. cannot tell whether st_<function> invoked within classic compute is from product or Sedona, etc., but usage will be easily attributable to GeoBrix when gbx_st_<function> is invoked:
-
-* Sample vector expression: `gbx_st_legacyaswkb`
-* Sample grid expression: `gbx_bng_cellarea`
-* Sample raster expression: `gbx_rst_clip`
-
-## Building | Deploying | Releasing the Project
-See the [scripts](./scripts) folder for more information.
-
-## Known Limitations
-* The Beta does not yet support Databricks Spatial Types directly but is standardized to [E]WKB or [E]WKT where geometries are involved. More under [Databricks Spatial Types and Functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial) for converting to our built-in [GEOMETRY](https://docs.databricks.com/aws/en/sql/language-manual/data-types/geometry-type#gsc.tab=0) type and using our built-in ST Geospatial Functions.
-* Spatial KNN is not yet ported; neither is H3 support for Geometry-based K-Ring and K-Loop.
+Databricks Labs projects are provided **AS-IS**, for exploration only, and are **not** covered by Databricks SLAs. Please file issues as [GitHub Issues](https://github.com/databrickslabs/geobrix/issues); they are reviewed as time permits. Do not file Databricks support tickets for these projects.

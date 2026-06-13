@@ -46,19 +46,15 @@ const sidebars = {
       label: 'Readers & Writers',
       collapsed: false,
       items: [
+        'readers/overview',
+        'writers/overview',
         {
           type: 'category',
           label: 'Readers',
           collapsed: false,
           items: [
-            'readers/overview',
-            'readers/gdal',
-            'readers/gtiff',
-            'readers/ogr',
-            'readers/shapefile',
-            'readers/geojson',
-            'readers/geopackage',
-            'readers/filegdb',
+            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/vector'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
           ],
         },
         {
@@ -66,9 +62,8 @@ const sidebars = {
           label: 'Writers',
           collapsed: false,
           items: [
-            'writers/overview',
-            'writers/gdal',
-            'writers/pmtiles',
+            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster', 'writers/vector'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
           ],
         },
       ],

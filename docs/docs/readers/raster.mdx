@@ -1,12 +1,115 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
+sidebar_label: Raster
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import rasterGbxExamples from '!!raw-loader!../../tests/python/readers/raster_gbx_read_examples.py';
 import gdalExamples from '!!raw-loader!../../tests/python/readers/gdal_examples.py';
 import gdalScala from '!!raw-loader!../../tests/scala/readers/GDALExamples.scala';
 
-# GDAL Reader
+# Raster Reader
+
+Read rasters into the shared `(source, tile)` schema. GeoBrix offers two
+interchangeable tiers: a **lightweight** pure-Python/PySpark reader (`raster_gbx`,
+`rasterio`-backed, JAR-free, Serverless-safe) and a **heavyweight** GDAL-backed
+reader (`gdal`). They emit the same schema, so swapping is a one-line
+`format(...)` change — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+> The heavyweight `gdal` reader supports the full set of GDAL drivers (NetCDF,
+> HDF5, COG, …); the lightweight reader covers the common raster path. The pairing
+> is a corresponding *general raster reader* per tier, not a feature-identical one.
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, but your
+**compute usually decides the tier**: the lightweight tier needs **no JAR or init script**
+and is the **only** option on Serverless, standard (shared), and ARM clusters. The
+heavyweight tier requires a **classic x86 cluster** (JAR + GDAL init script); where it is
+available it uses native GDAL on the JVM and tends to pull ahead on large workloads. See
+the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
+## Options
+
+### Lightweight (`raster_gbx`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset.
+
+### Heavyweight (`gdal`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driver` | auto-detected from extension | Explicitly specify the GDAL driver to use (regardless of extension). |
+| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing). |
+| `filterRegex` | `".*"` | Filter files by regex when reading from a directory. |
+| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g. HDF, NetCDF). |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles. |
+| `retile` | `"false"` | Retile rasters for optimal processing. |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled). |
+
+Example — forcing the GDAL driver explicitly:
+
+<CodeFromTest
+  code={gdalExamples}
+  language="python"
+  functionName="READ_WITH_DRIVER"
+  source="docs/tests/python/readers/gdal_examples.py"
+  testFile="docs/tests/python/readers/test_gdal_examples.py"
+  outputConstant="READ_WITH_DRIVER_output"
+/>
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · raster_gbx">
+
+## Register
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="REGISTER"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py" />
+
+:::note Lightweight readers and writers are not auto-registered
+
+This is a key difference from the heavyweight tier. The heavyweight readers/writers
+(`gdal`, `gtiff_gdal`, …) are **auto-discovered from the JAR** on the classpath via
+Spark's JVM `DataSourceRegister` service loader, so `spark.read.format("gdal")`
+works with no setup call. The lightweight readers/writers are **Python** Data
+Source V2 sources, and Python has no classpath auto-discovery equivalent — so you
+must register them explicitly with `register(spark)` (above) before using
+`format("raster_gbx")` / `format("gtiff_gbx")` for reads **or** writes.
+
+Importing `databricks.labs.gbx.ds` will opportunistically register them if a
+Spark session is already active, but the explicit `register(spark)` call is the
+reliable path, in case your session is created after imports. (This mirrors
+the heavyweight `gbx_rst_*` SQL functions, which also require an explicit
+`register(spark)`.)
+
+:::
+
+## Read (catch-all)
+
+<CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_RASTER_GBX"
+  source="docs/tests/python/readers/raster_gbx_read_examples.py"
+  testFile="docs/tests/python/readers/test_raster_gbx_read_examples.py"
+  outputConstant="READ_RASTER_GBX_output" />
+
+`gtiff_gbx` is `raster_gbx` with the GeoTIFF driver preset. See the [Lightweight GeoTIFF Reader](./geotiff) for the named-reader page. See the page-level [Options](#options) section below for the available reader options.
+
+See [Choosing an Execution Tier](../api/execution-tiers) for the full tradeoff and the
+[Benchmarking](../api/benchmarking) page for light-vs-heavy timings.
+
+It is the lightweight counterpart of the heavyweight `gdal` reader, supporting Python and SQL bindings (not Scala).
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · gdal">
 
 The GDAL reader provides generic support for reading raster data formats through the GDAL library. This is the base reader that powers all raster format readers in GeoBrix.
 
@@ -84,34 +187,6 @@ Experience varies across GDAL formats. Not all formats are available by default�
   outputConstant="SQL_GDAL_output"
 />
 
-## Options
-
-### `driver`
-
-**Default:** Auto-detected from file extension if not specified
-
-Explicitly specify the GDAL driver to use (regardless of extension).
-
-<CodeFromTest
-  code={gdalExamples}
-  language="python"
-  functionName="READ_WITH_DRIVER"
-  source="docs/tests/python/readers/gdal_examples.py"
-  testFile="docs/tests/python/readers/test_gdal_examples.py"
-  outputConstant="READ_WITH_DRIVER_output"
-/>
-
-### Other Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing) |
-| `filterRegex` | `".*"` | Filter files by regex when reading from directory |
-| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g., HDF, NetCDF) |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
-| `retile` | `"false"` | Retile rasters for optimal processing |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled) |
-
 ## Output Schema
 
 ```
@@ -139,6 +214,9 @@ df = spark.read.format("gdal").option("driver", "GTiff").load("/path/to/file.tif
 **When to use each**:
 - **Named readers** (gtiff_gdal): Better for common formats, cleaner syntax
 - **GDAL**: Useful for less common formats or when you need driver-specific options
+
+</TabItem>
+</Tabs>
 
 ## Common Raster Formats Explained
 
@@ -223,6 +301,6 @@ The `hrrr-weather` dataset is included in the **complete** sample-data bundle, n
 
 ## Next Steps
 
-- [GeoTIFF Reader](./gtiff) - Named reader for GeoTIFF format
+- [GeoTIFF Reader](./geotiff) - Named reader for GeoTIFF format
 - [Raster Functions](../api/raster-functions) - Raster processing operations
 - [Quick Start](../quick-start) - Get started with GeoBrix
