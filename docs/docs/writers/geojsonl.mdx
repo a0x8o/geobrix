@@ -1,0 +1,136 @@
+---
+sidebar_position: 7
+sidebar_label: GeoJSONL (multi-file)
+---
+
+# GeoJSONL Writer (multi-file)
+
+`geojsonl_gbx` — a pure-Python, Serverless-safe DataSource V2 writer that emits a
+**directory of newline-delimited GeoJSONL shards** (OGR driver `GeoJSONSeq`,
+one `Feature` per line). Unlike the single-file `geojson_gbx` writer — which merges
+every partition into one `FeatureCollection` file on the driver — `geojsonl_gbx`
+writes **one shard per partition with no driver merge**, the natural shape for a
+splittable, appendable format. Write throughput scales with partitions.
+
+:::note No heavyweight equivalent
+The heavyweight tier has no vector writer. This writer is lightweight-only.
+:::
+
+:::note Register first
+Call `register(spark)` once before using any `*_gbx` format (see the
+[Writers Overview](./overview)).
+:::
+
+:::note Input geometry format
+The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
+the same encodings the `*_gbx` readers emit. The SRID/CRS is taken from the companion
+`*_srid` / `*_srid_proj` columns, so plain WKB or WKT is all that is needed. Extended forms
+(**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not** accepted as writer input.
+
+Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column? Convert it to a supported
+interchange format first with an
+[ST export function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#export):
+use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT.
+:::
+
+## Options
+
+| Option | Default | Behavior |
+|---|---|---|
+| `maxRecordsPerFile` | unset (one shard per partition) | If set, split each partition into multiple shards of at most this many features. |
+| `mode` | `overwrite` | `overwrite` only; `append` is rejected. The target directory is cleared once before the shards land. |
+| `geometryType` | inferred from the data | Override the OGR geometry type. |
+| `layerName` | driver default | Output layer name where supported. |
+
+## Schema
+
+**Input schema — a geometry column plus its SRID companion:**
+
+```
+root
+ |-- <geom>: binary (WKB)  or  string (WKT)   # the geometry
+ |-- <geom>_srid: string        # REQUIRED — CRS authority code, e.g. "4326" ("0" if unknown)
+ |-- <geom>_srid_proj: string   # optional — PROJ4 string, used as a CRS fallback when srid is "0"
+ |-- ...any other columns       # written as feature attributes
+```
+
+The writer locates the geometry as the column `X` that has a companion `X_srid` column
+(`geom_0` by convention — what the `*_gbx` readers emit). The `_srid` / `_srid_proj` columns
+are consumed for the CRS and are **not** written as fields. **Every other column is written
+as a feature attribute.**
+
+Coerce your DataFrame/table to this shape before writing:
+
+```python
+from pyspark.sql import functions as F
+
+df.select(
+    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
+    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
+    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
+    "name", "population",                      # -> written as feature attributes
+).write.format("geojsonl_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+**Output:** a **directory** (`out/`) containing one `part-<uuid>.geojsonl` shard per
+non-empty partition (plus an advisory `_SUCCESS` marker). Each shard is a sequence of
+newline-delimited GeoJSON `Feature` objects; attributes are written as feature `properties`.
+
+**Read it back** with the GeoJSON reader's directory mode — `multi=true` enumerates the
+`.geojsonl` shards and parses each as a `GeoJSONSeq` sequence:
+
+```python
+back = spark.read.format("geojson_gbx").option("multi", "true").load("/Volumes/cat/sch/vol/out")
+```
+
+## How it scales
+
+`geojson_gbx` writes **one merged file**: each partition writes a fragment, then the driver
+concatenates all fragments into a single `FeatureCollection`. That driver-side merge is
+sequential — fine for "one file for the table", but a single-node bottleneck at scale.
+
+`geojsonl_gbx` writes **one shard per partition with no driver merge**. Each executor encodes
+its partition to a worker-local GeoJSONL shard and sequentially copies it into the output
+directory (rename-free, so safe on FUSE-mounted Unity Catalog Volumes / DBFS). Because GeoJSONL
+is splittable and concatenable, the directory of shards *is* the dataset — there is nothing to
+assemble on the driver, so **write throughput scales with the number of partitions**. Use
+`df.repartition(n)` to set shard granularity, or `maxRecordsPerFile` to cap features per shard
+(splitting a large partition into several shards).
+
+Choose `geojson_gbx` when you want a single file; choose `geojsonl_gbx` for large, streaming,
+or highly parallel writes.
+
+## Typical pipeline: export a table to a sharded directory
+
+Export a table of vector data to a directory of GeoJSONL shards — repartition to control
+write parallelism (one shard per partition):
+
+| Step | Code |
+|---|---|
+| 1. Load a table | `df = spark.table("main.geo.parcels")` |
+| 2. Set parallelism | `df = df.repartition(64)` |
+| 3. Write sharded | `df.write.format("geojsonl_gbx").mode("overwrite").save("/Volumes/main/geo/exports/parcels")` |
+| 4. Read back | `spark.read.format("geojson_gbx").option("multi","true").load("/Volumes/main/geo/exports/parcels")` |
+
+```python
+df = spark.table("main.geo.parcels")          # vector data in a (Delta) table
+df.repartition(64).write.format("geojsonl_gbx").mode("overwrite").save(
+    "/Volumes/main/geo/exports/parcels"
+)
+# -> a directory of 64 part-<uuid>.geojsonl shards, written in parallel, no driver merge
+```
+
+To cap features per shard regardless of partition size:
+
+```python
+df.write.format("geojsonl_gbx").mode("overwrite").option(
+    "maxRecordsPerFile", "50000"
+).save("/Volumes/main/geo/exports/parcels")
+```
+
+## Next Steps
+
+- [GeoJSON Writer](./geojson) — the single-file (`FeatureCollection`) writer.
+- [Vector Writer](./vector) — the generic OGR writer (any driver).
+- [Writers Overview](./overview) — all writers, register-first, and benchmarks.
+- [Readers Overview](../readers/overview) — the corresponding read paths.

@@ -205,6 +205,12 @@ class VectorGbxReader(DataSourceReader):
         if not self.path:
             raise ValueError("vector_gbx requires a 'path' (e.g. .load(path)).")
         self.driver = options.get("driverName", "") or self._DRIVER
+        # `multi=true` reads a DIRECTORY of newline-delimited GeoJSONL shards (the
+        # output of geojsonl_gbx): switch a GeoJSON reader to the GeoJSONSeq driver so
+        # _members() enumerates .geojsonl/.geojsons and each shard is parsed as a
+        # one-Feature-per-line sequence rather than a FeatureCollection.
+        if options.get("multi", "false").lower() == "true" and self.driver == "GeoJSON":
+            self.driver = "GeoJSONSeq"
         self.as_wkb = options.get("asWKB", "true").lower() != "false"
         self.chunk_size = max(1, int(options.get("chunkSize", "10000")))
         self.layer_number = int(options.get("layerNumber", "0"))
@@ -225,14 +231,17 @@ class VectorGbxReader(DataSourceReader):
         """Member paths to read. For a plain directory, enumerate matching vector
         files (by driver extension). A .gdb directory is a single FileGDB dataset
         and is returned as-is. A regular file path returns [self.path]."""
-        if not os.path.isdir(self.path) or self.path.lower().rstrip("/").endswith(".gdb"):
+        if not os.path.isdir(self.path) or self.path.lower().rstrip("/").endswith(
+            ".gdb"
+        ):
             return [self.path]
         exts: Tuple[str, ...] = self._EXT_FOR_DRIVER.get(self.driver) or ()
         names = sorted(os.listdir(self.path))
         members = [
             os.path.join(self.path, n)
             for n in names
-            if (exts and n.lower().endswith(exts)) or n.lower().rstrip("/").endswith(".gdb")
+            if (exts and n.lower().endswith(exts))
+            or n.lower().rstrip("/").endswith(".gdb")
         ]
         return members or [self.path]
 
@@ -248,7 +257,8 @@ class VectorGbxReader(DataSourceReader):
         """Yield a locally-readable path. For random-access drivers, copy the source
         (a file, or a `.gdb` directory) to worker-local temp with a sequential copy
         (FUSE-safe), so GDAL does its seeked I/O on local disk, then clean up -- all
-        transparent to the caller. Sequential drivers (GeoJSON/Shapefile) read in place."""
+        transparent to the caller. Sequential drivers (GeoJSON/Shapefile) read in place.
+        """
         if not self._needs_stage():
             yield path
             return
@@ -258,7 +268,9 @@ class VectorGbxReader(DataSourceReader):
             if os.path.isdir(path):
                 shutil.copytree(path, local)
             else:
-                shutil.copy(path, local)  # sequential read of object storage -> FUSE-safe
+                shutil.copy(
+                    path, local
+                )  # sequential read of object storage -> FUSE-safe
             yield local
         finally:
             shutil.rmtree(tmpd, ignore_errors=True)
@@ -364,7 +376,11 @@ class VectorGbxReader(DataSourceReader):
         proj_out = pa.array([proj4] * n, type=pa.string())
 
         out_cols = [tbl.column(c) for c in attr_cols] + [geom_out, srid_out, proj_out]
-        out_names = attr_cols + [out_gname, out_gname + "_srid", out_gname + "_srid_proj"]
+        out_names = attr_cols + [
+            out_gname,
+            out_gname + "_srid",
+            out_gname + "_srid_proj",
+        ]
         out_table = pa.Table.from_arrays(
             [
                 c.combine_chunks() if isinstance(c, pa.ChunkedArray) else c
@@ -483,7 +499,9 @@ class VectorGbxWriter(DataSourceWriter):
         parent = os.path.dirname(self.path) or "."
         self.scratch_dir = os.path.join(parent, "_vec_scratch")
         if not self.overwrite and self._target_exists():
-            raise ValueError("vector_gbx does not support append; use .mode('overwrite').")
+            raise ValueError(
+                "vector_gbx does not support append; use .mode('overwrite')."
+            )
 
     def _target_exists(self) -> bool:
         return os.path.exists(self.path) and (
@@ -629,8 +647,10 @@ class VectorGbxWriter(DataSourceWriter):
                 "needs GDAL >= 3.6 with OpenFileGDB write (the heavyweight GDAL natives)."
             )
         _WKB = {
-            "Point": ogr.wkbPoint, "LineString": ogr.wkbLineString,
-            "Polygon": ogr.wkbPolygon, "MultiPoint": ogr.wkbMultiPoint,
+            "Point": ogr.wkbPoint,
+            "LineString": ogr.wkbLineString,
+            "Polygon": ogr.wkbPolygon,
+            "MultiPoint": ogr.wkbMultiPoint,
             "MultiLineString": ogr.wkbMultiLineString,
             "MultiPolygon": ogr.wkbMultiPolygon,
             "GeometryCollection": ogr.wkbGeometryCollection,
@@ -756,3 +776,188 @@ class VectorGbxWriter(DataSourceWriter):
             os.remove(self.path)
         elif os.path.isdir(self.path):
             shutil.rmtree(self.path, ignore_errors=True)
+
+
+@dataclass
+class _GeoJSONLCommitMessage(WriterCommitMessage):
+    shard_paths: Tuple[str, ...]
+
+
+class GeoJSONLGbxWriter(DataSourceWriter):
+    """Multi-file GeoJSONL writer: each partition writes one (or, with
+    maxRecordsPerFile, several) newline-delimited GeoJSONL shard(s) directly into
+    the output DIRECTORY -- NO driver merge. The natural shape for JSONL: shards
+    are splittable + concatenable, so write throughput scales with partitions
+    instead of bottlenecking on a single-node assembly. Contrast geojson_gbx,
+    which merges all partitions into one FeatureCollection file on the driver.
+
+    Each shard is encoded to worker-local temp via pyogrio (driver GeoJSONSeq),
+    then sequentially copied to OUTDIR/part-<uuid>.geojsonl (FUSE-safe on Volumes).
+    overwrite clears the target directory once before the executors write; append
+    is rejected (matching the other vector writers for v0.4.0)."""
+
+    _DRIVER = "GeoJSONSeq"
+    _EXT = ".geojsonl"
+
+    def __init__(self, path, schema, options, overwrite):
+        opts = {k.lower(): v for k, v in options.items()}
+        self.path = path
+        self.overwrite = overwrite
+        self.geometry_type_override = opts.get("geometrytype")
+        self.layer_name = opts.get("layername")
+        mrpf = opts.get("maxrecordsperfile")
+        self.max_records_per_file = int(mrpf) if mrpf else 0
+        if self.max_records_per_file < 0:
+            raise ValueError("maxRecordsPerFile must be a non-negative integer.")
+        self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
+            schema
+        )
+        self._col_order = [f.name for f in schema.fields]
+        self._geom_is_wkb = any(
+            f.name == self.geom_col and isinstance(f.dataType, BinaryType)
+            for f in schema.fields
+        )
+        if not self.overwrite and self._target_exists():
+            raise ValueError(
+                "geojsonl_gbx does not support append; use .mode('overwrite')."
+            )
+        # Clear the target directory ONCE, on the driver, before executors write
+        # (the writer is constructed once on the driver). Sequential rmtree -- no
+        # rename -- so it is FUSE-safe on DBFS/Volumes.
+        if os.path.isfile(self.path):
+            os.remove(self.path)
+        elif os.path.isdir(self.path):
+            shutil.rmtree(self.path, ignore_errors=True)
+        os.makedirs(self.path, exist_ok=True)
+
+    def _target_exists(self) -> bool:
+        return os.path.exists(self.path) and (
+            os.path.isfile(self.path) or bool(os.listdir(self.path))
+        )
+
+    def _drop_meta_cols(self, tbl):
+        return tbl.drop_columns(
+            [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
+        )
+
+    def _infer_geom_crs(self, tbl) -> Tuple[str, Optional[str]]:
+        geom_type, crs = self.geometry_type_override, None
+        g = tbl.column(self.geom_col).to_pylist()
+        s = (
+            tbl.column(self.srid_col).to_pylist()
+            if self.srid_col in tbl.column_names
+            else []
+        )
+        p = (
+            tbl.column(self.proj_col).to_pylist()
+            if self.proj_col in tbl.column_names
+            else []
+        )
+        for i, gv in enumerate(g):
+            if gv is None:
+                continue
+            if geom_type is None:
+                geom_type = _geometry_type_of(gv)
+            if crs is None:
+                crs = _srid_to_crs(
+                    s[i] if i < len(s) else "", p[i] if i < len(p) else ""
+                )
+            break
+        return geom_type or "Unknown", crs
+
+    # ---- executor: partition rows -> one or more GeoJSONL shards in OUTDIR ----
+    def write(self, iterator: Iterator) -> WriterCommitMessage:
+        import pyarrow as pa
+        import pyogrio
+        from shapely import from_wkt, to_wkb
+
+        idx = {n: i for i, n in enumerate(self._col_order)}
+        cols: Dict[str, list] = {n: [] for n in self._col_order}
+        for row in iterator:
+            for n in self._col_order:
+                v = row[idx[n]]
+                if n == self.geom_col and v is not None and not self._geom_is_wkb:
+                    v = to_wkb(from_wkt(v))  # WKT input -> WKB
+                elif n == self.geom_col and v is not None:
+                    v = bytes(v)
+                cols[n].append(v)
+        nrows = len(cols[self.geom_col])
+        if nrows == 0:
+            return _GeoJSONLCommitMessage(shard_paths=())  # empty partition -> nothing
+
+        tbl = pa.table({n: cols[n] for n in self._col_order})
+        geom_type, crs = self._infer_geom_crs(tbl)
+        chunk = self.max_records_per_file or nrows  # split into N-row shards if set
+        bounds = list(range(0, nrows, chunk))
+
+        os.makedirs(self.path, exist_ok=True)
+        local_dir = tempfile.mkdtemp(prefix="gbx_geojsonl_")
+        written: List[str] = []
+        try:
+            for start in bounds:
+                slice_tbl = self._drop_meta_cols(tbl.slice(start, chunk))
+                # Per-shard uuid -> unique across tasks AND across chunks of one task.
+                name = f"part-{uuid.uuid4().hex}{self._EXT}"
+                local_path = os.path.join(local_dir, name)
+                kw = dict(
+                    driver=self._DRIVER,
+                    geometry_name=self.geom_col,
+                    geometry_type=geom_type,
+                    crs=crs,
+                )
+                if self.layer_name:
+                    kw["layer"] = self.layer_name
+                pyogrio.write_arrow(slice_tbl, local_path, **kw)
+                dst = os.path.join(self.path, name)
+                shutil.copy(local_path, dst)  # sequential -> FUSE-safe
+                written.append(dst)
+        finally:
+            shutil.rmtree(local_dir, ignore_errors=True)
+        return _GeoJSONLCommitMessage(shard_paths=tuple(written))
+
+    # ---- driver: NO merge; just finalize (optional _SUCCESS marker) ----
+    def commit(self, messages: List[Optional[WriterCommitMessage]]) -> None:
+        os.makedirs(self.path, exist_ok=True)
+        try:
+            with open(os.path.join(self.path, "_SUCCESS"), "w") as fh:
+                fh.write("")
+        except OSError:
+            pass  # marker is advisory; never fail the commit on it
+
+    def abort(self, messages: List[Optional[WriterCommitMessage]]) -> None:
+        # Best-effort cleanup of any shards that did land.
+        for m in messages:
+            if isinstance(m, _GeoJSONLCommitMessage):
+                for shard in m.shard_paths:
+                    with contextlib.suppress(OSError):
+                        if os.path.isfile(shard):
+                            os.remove(shard)
+
+
+class GeoJSONLGbxDataSource(DataSource):
+    """`geojsonl_gbx` -- multi-file GeoJSONL writer (directory of shards). It also
+    reads back via the geojson_gbx reader with option('multi','true')."""
+
+    @classmethod
+    def name(cls) -> str:
+        return "geojsonl_gbx"
+
+    def schema(self) -> StructType:
+        # Reading is done via geojson_gbx(multi=true); expose the GeoJSONSeq reader
+        # for symmetry so .load() on a shard directory works through this name too.
+        opts = dict(self.options)
+        opts["driverName"] = opts.get("driverName", "") or "GeoJSONSeq"
+        return VectorGbxReader(opts).schema()
+
+    def reader(self, schema: StructType) -> DataSourceReader:
+        opts = dict(self.options)
+        opts["driverName"] = opts.get("driverName", "") or "GeoJSONSeq"
+        return VectorGbxReader(opts)
+
+    def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
+        path = self.options.get("path")
+        if not path:
+            raise ValueError(
+                "geojsonl_gbx writer requires an output path (.save(path))."
+            )
+        return GeoJSONLGbxWriter(path, schema, dict(self.options), overwrite)

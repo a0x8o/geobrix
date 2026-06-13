@@ -44,7 +44,8 @@ register(spark)
 | [PMTiles Writer](./pmtiles) | `pmtiles_gbx` | Package a tile pyramid into spatially-sharded PMTiles archives + a catalog. |
 | [Vector Writer](./vector) | `vector_gbx` | Pure-Python generic vector writer (pyogrio); any OGR-supported driver. |
 | [Shapefile Writer](./shapefile) | `shapefile_gbx` | Pure-Python Shapefile writer (OGR driver: `ESRI Shapefile`). |
-| [GeoJSON Writer](./geojson) | `geojson_gbx` | Pure-Python GeoJSON writer (OGR driver: `GeoJSON`). |
+| [GeoJSON Writer](./geojson) | `geojson_gbx` | Pure-Python GeoJSON writer (OGR driver: `GeoJSON`) — single merged file. |
+| [GeoJSONL Writer](./geojsonl) | `geojsonl_gbx` | Multi-file newline-delimited GeoJSONL — one shard per partition, no driver merge. |
 | [GeoPackage Writer](./geopackage) | `gpkg_gbx` | Pure-Python GeoPackage writer (OGR driver: `GPKG`). |
 | [GeoDatabase Writer](./filegdb) | `file_gdb_gbx` | Pure-Python File Geodatabase writer (OGR driver: `OpenFileGDB`). |
 

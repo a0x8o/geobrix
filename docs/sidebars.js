@@ -63,7 +63,7 @@ const sidebars = {
           collapsed: false,
           items: [
             { type: 'category', label: 'General', collapsed: false, items: ['writers/raster', 'writers/vector'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geopackage', 'writers/filegdb'] },
+            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
           ],
         },
       ],
