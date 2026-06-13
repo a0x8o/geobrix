@@ -283,35 +283,17 @@ class VectorGbxReader(DataSourceReader):
         return _vector_schema(self._info_for(first), self.as_wkb)
 
     def partitions(self) -> Sequence[InputPartition]:
-        parts: List[_ChunkPartition] = []
-        for member in self._members():
-            if self._needs_stage():
-                # Random-access formats are staged to local temp and read whole, so the
-                # per-member file is copied exactly once: one partition per member,
-                # count=0 meaning "read all features".
-                parts.append(
-                    _ChunkPartition(
-                        member, self.driver, self._layer(), self.as_wkb, 0, 0
-                    )
-                )
-                continue
-            n = int(self._info_for(member).get("features", 0) or 0)
-            skip = 0
-            while skip < n or (n == 0 and skip == 0):
-                parts.append(
-                    _ChunkPartition(
-                        member,
-                        self.driver,
-                        self._layer(),
-                        self.as_wkb,
-                        skip,
-                        self.chunk_size,
-                    )
-                )
-                skip += self.chunk_size
-                if n == 0:
-                    break
-        return parts
+        # ONE partition per member file, read whole (count=0 = all features). Splitting a
+        # single file into feature-offset chunks is counterproductive for these formats:
+        # OGR's GeoJSON driver re-parses the ENTIRE FeatureCollection into memory on every
+        # open, so N chunks = N full parses (~O(features * chunks) -- this was the dominant
+        # cost). Parallelism comes from reading many files concurrently (one task per file);
+        # within a single read, chunk_size only bounds the Arrow batch size on the yield, not
+        # the parse. Random-access formats (GPKG/FileGDB) are staged to local temp + read whole.
+        return [
+            _ChunkPartition(member, self.driver, self._layer(), self.as_wkb, 0, 0)
+            for member in self._members()
+        ]
 
     def read(self, partition: "_ChunkPartition"):
         """Arrow-native read: transform the pyogrio Arrow table in Arrow (rename the
@@ -333,8 +315,9 @@ class VectorGbxReader(DataSourceReader):
             "read_geometry": True,
             "datetime_as_string": False,
         }
-        # count==0 means "read all" (staged random-access members are read whole);
-        # otherwise it is the chunk size for sequential formats.
+        # One partition per file reads the whole member (count==0); max_features is left
+        # unset so OGR parses the file once. (A non-zero count would cap features, but the
+        # planner no longer splits a file into offset chunks -- see partitions().)
         if partition.count:
             kw["max_features"] = partition.count
         if partition.driver:
@@ -391,7 +374,9 @@ class VectorGbxReader(DataSourceReader):
         )
         # Cast to the declared schema's Arrow types for guaranteed PySpark alignment.
         out = out_table.cast(target, safe=False)
-        for batch in out.to_batches():
+        # Yield in chunk_size-bounded batches: the file is parsed once (above); chunk_size
+        # only bounds the per-batch row count handed to Spark (memory), not the parse.
+        for batch in out.to_batches(max_chunksize=self.chunk_size):
             yield batch
 
 

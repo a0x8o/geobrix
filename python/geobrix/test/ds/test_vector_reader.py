@@ -54,8 +54,11 @@ def test_vector_gbx_chunksize_reads_all(spark, tmp_path):
     register(spark)
     p = _gj_path(str(tmp_path))
     df = spark.read.format("vector_gbx").option("chunkSize", "1").load(p)
-    # chunkSize=1 over 2 features -> multiple partitions; union still 2 rows
-    assert df.rdd.getNumPartitions() >= 2
+    # One partition per FILE now (not per offset-chunk): splitting a single GeoJSON by
+    # feature offset would re-parse the whole file on every chunk. chunkSize only bounds the
+    # Arrow batch size within the single read, so a one-file source = 1 partition and still
+    # returns all features.
+    assert df.rdd.getNumPartitions() == 1
     assert df.count() == 2
 
 
