@@ -51,3 +51,15 @@ def test_pyramid_rejects_too_many_tiles():
     with pytest.raises(ValueError):
         from shapely.geometry import box
         list(_mvt.pyramid_tiles(to_wkb(box(-179, -85, 179, 85)), {}, 0, 20, "layer", 4096))
+
+
+def test_pyramid_rejects_negative_min_z():
+    # Mirrors the heavy require(minZ >= 0); negative zoom must raise, not emit garbage.
+    with pytest.raises(ValueError, match="min_z must be >= 0"):
+        list(_mvt.pyramid_tiles(to_wkb(Point(0.0, 0.0)), {"id": 1}, -1, 2, "layer", 4096))
+
+
+def test_pyramid_rejects_inverted_range():
+    # Mirrors the heavy require(maxZ >= minZ); inverted range must raise, not yield zero rows.
+    with pytest.raises(ValueError, match="max_z .* must be >= min_z"):
+        list(_mvt.pyramid_tiles(to_wkb(Point(0.0, 0.0)), {"id": 1}, 3, 1, "layer", 4096))

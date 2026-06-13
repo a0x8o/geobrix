@@ -104,6 +104,10 @@ def pyramid_tiles(
         layer_name: MVT layer name written into each tile blob.
         extent: Tile coordinate extent (default 4096).
     """
+    if min_z < 0:
+        raise ValueError(f"min_z must be >= 0; got {min_z}")
+    if max_z < min_z:
+        raise ValueError(f"max_z ({max_z}) must be >= min_z ({min_z})")
     if max_z > MAX_ZOOM:
         raise ValueError(f"max_z {max_z} exceeds MAX_ZOOM {MAX_ZOOM}")
     if isinstance(geom_wkb, (bytes, bytearray)):
