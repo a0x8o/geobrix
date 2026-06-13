@@ -3,17 +3,31 @@ sidebar_position: 7
 sidebar_label: GeoJSONL (multi-file)
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # GeoJSONL Writer (multi-file)
 
-`geojsonl_gbx` — a pure-Python, Serverless-safe DataSource V2 writer that emits a
-**directory of newline-delimited GeoJSONL shards** (OGR driver `GeoJSONSeq`,
-one `Feature` per line). Unlike the single-file `geojson_gbx` writer — which merges
-every partition into one `FeatureCollection` file on the driver — `geojsonl_gbx`
-writes **one shard per partition with no driver merge**, the natural shape for a
-splittable, appendable format. Write throughput scales with partitions.
+Emit a **directory of newline-delimited GeoJSONL shards** (OGR driver `GeoJSONSeq`, one
+`Feature` per line) — **one shard per partition, no driver merge**. Unlike the single-file
+GeoJSON writer — which merges every partition into one `FeatureCollection` file on the driver —
+the GeoJSONL writer's shards *are* the dataset, so write throughput scales with partitions. An
+optional `maxRecordsPerFile` splits a partition into several shards.
 
-:::note No heavyweight equivalent
-The heavyweight tier has no vector writer. This writer is lightweight-only.
+Both tiers take the same input shape and produce a directory of `part-<uuid>.geojsonl` shards
+that round-trips with the GeoJSON reader's directory mode:
+
+- **Lightweight** `geojsonl_gbx` — pure-Python, Serverless-safe (pyogrio); read back via
+  `geojson_gbx` with `option("multi","true")`.
+- **Heavyweight** `geojsonl` — DataSource V2 writer on native GDAL/OGR (JVM); read back via
+  `geojson_ogr` with `option("multi","true")`.
+
+:::tip Which tier?
+The lightweight (`*_gbx`) writer needs **no JAR or init script** and is the **only** option on
+Serverless, standard (shared), and ARM clusters. The heavyweight `geojsonl` writer requires a
+**classic x86 cluster** with the GeoBrix JAR + GDAL init script; where available it encodes each
+shard with native GDAL/OGR on the JVM. Your compute usually decides the tier. See the
+[Writers Overview](./overview).
 :::
 
 :::note Register first
@@ -23,7 +37,7 @@ Call `register(spark)` once before using any `*_gbx` format (see the
 
 :::note Input geometry format
 The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
-the same encodings the `*_gbx` readers emit. The SRID/CRS is taken from the companion
+the same encodings the readers emit. The SRID/CRS is taken from the companion
 `*_srid` / `*_srid_proj` columns, so plain WKB or WKT is all that is needed. Extended forms
 (**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not** accepted as writer input.
 
@@ -55,11 +69,20 @@ root
 ```
 
 The writer locates the geometry as the column `X` that has a companion `X_srid` column
-(`geom_0` by convention — what the `*_gbx` readers emit). The `_srid` / `_srid_proj` columns
+(`geom_0` by convention — what the readers emit). The `_srid` / `_srid_proj` columns
 are consumed for the CRS and are **not** written as fields. **Every other column is written
 as a feature attribute.**
 
-Coerce your DataFrame/table to this shape before writing:
+**Output:** a **directory** (`out/`) containing one `part-<uuid>.geojsonl` shard per
+non-empty partition (plus an advisory `_SUCCESS` marker). Each shard is a sequence of
+newline-delimited GeoJSON `Feature` objects; attributes are written as feature `properties`.
+
+## Write it
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · geojsonl_gbx">
+
+Coerce your DataFrame/table to the writer shape, then write:
 
 ```python
 from pyspark.sql import functions as F
@@ -72,10 +95,6 @@ df.select(
 ).write.format("geojsonl_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
 ```
 
-**Output:** a **directory** (`out/`) containing one `part-<uuid>.geojsonl` shard per
-non-empty partition (plus an advisory `_SUCCESS` marker). Each shard is a sequence of
-newline-delimited GeoJSON `Feature` objects; attributes are written as feature `properties`.
-
 **Read it back** with the GeoJSON reader's directory mode — `multi=true` enumerates the
 `.geojsonl` shards and parses each as a `GeoJSONSeq` sequence:
 
@@ -83,21 +102,54 @@ newline-delimited GeoJSON `Feature` objects; attributes are written as feature `
 back = spark.read.format("geojson_gbx").option("multi", "true").load("/Volumes/cat/sch/vol/out")
 ```
 
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · geojsonl">
+
+Same input shape and output layout; the format name is `geojsonl` and reads back through the
+heavyweight GeoJSON reader (`geojson_ogr`). Requires a classic x86 cluster with the GeoBrix JAR
+and GDAL init script.
+
+```python
+from pyspark.sql import functions as F
+
+df.select(
+    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
+    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
+    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
+    "name", "population",                      # -> written as feature attributes
+).write.format("geojsonl").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+```
+
+**Read it back** with the heavyweight GeoJSON reader's directory mode:
+
+```python
+back = spark.read.format("geojson_ogr").option("multi", "true").load("/Volumes/cat/sch/vol/out")
+```
+
+Each shard is encoded with native GDAL/OGR (`GeoJSONSeq` driver) to worker-local temp, then
+sequentially copied into the output directory (rename-free, so safe on FUSE-mounted Unity
+Catalog Volumes / DBFS).
+
+</TabItem>
+</Tabs>
+
 ## How it scales
 
-`geojson_gbx` writes **one merged file**: each partition writes a fragment, then the driver
-concatenates all fragments into a single `FeatureCollection`. That driver-side merge is
+The single-file GeoJSON writer writes **one merged file**: each partition writes a fragment, then
+the driver concatenates all fragments into a single `FeatureCollection`. That driver-side merge is
 sequential — fine for "one file for the table", but a single-node bottleneck at scale.
 
-`geojsonl_gbx` writes **one shard per partition with no driver merge**. Each executor encodes
+The GeoJSONL writer writes **one shard per partition with no driver merge**. Each executor encodes
 its partition to a worker-local GeoJSONL shard and sequentially copies it into the output
 directory (rename-free, so safe on FUSE-mounted Unity Catalog Volumes / DBFS). Because GeoJSONL
 is splittable and concatenable, the directory of shards *is* the dataset — there is nothing to
 assemble on the driver, so **write throughput scales with the number of partitions**. Use
 `df.repartition(n)` to set shard granularity, or `maxRecordsPerFile` to cap features per shard
-(splitting a large partition into several shards).
+(splitting a large partition into several shards). This holds for both tiers — the lightweight
+writer parallelizes per partition with pyogrio, the heavyweight writer with native GDAL/OGR on the
+JVM.
 
-Choose `geojson_gbx` when you want a single file; choose `geojsonl_gbx` for large, streaming,
+Choose the single-file GeoJSON writer when you want one file; choose GeoJSONL for large, streaming,
 or highly parallel writes.
 
 ## Typical pipeline: export a table to a sharded directory
@@ -105,7 +157,7 @@ or highly parallel writes.
 Export a table of vector data to a directory of GeoJSONL shards — repartition to control
 write parallelism (one shard per partition):
 
-| Step | Code |
+| Step | Code (lightweight) |
 |---|---|
 | 1. Load a table | `df = spark.table("main.geo.parcels")` |
 | 2. Set parallelism | `df = df.repartition(64)` |
@@ -119,6 +171,9 @@ df.repartition(64).write.format("geojsonl_gbx").mode("overwrite").save(
 )
 # -> a directory of 64 part-<uuid>.geojsonl shards, written in parallel, no driver merge
 ```
+
+On a classic x86 cluster, swap the format names for the heavyweight tier
+(`geojsonl` to write, `geojson_ogr` with `multi=true` to read back).
 
 To cap features per shard regardless of partition size:
 
