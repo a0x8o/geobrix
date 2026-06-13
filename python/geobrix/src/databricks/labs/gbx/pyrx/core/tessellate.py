@@ -12,7 +12,6 @@ from collections import defaultdict
 import h3
 import numpy as np
 import shapely.wkb
-from rasterio.features import geometry_mask
 from rasterio.io import MemoryFile
 from rasterio.warp import transform_bounds, transform_geom
 from shapely.geometry import Polygon, mapping, shape
@@ -149,16 +148,16 @@ def iter_tessellate_h3(ds, resolution: int, mode: str = "covering"):
         yield from _centroid_chips(ds, resolution)
         return
 
-    # Raster bbox in WGS84 lon/lat, enumerate covering H3 cells.
+    # Raster bbox in WGS84 lon/lat.
     west, south, east, north = transform_bounds(ds.crs, _WGS84, *ds.bounds)
+    # True overlapping cell set via h3-py 4.4.2 native primitive — no ring
+    # expansion or post-hoc prune needed (polygon_to_cells_experimental with
+    # contain="overlap" returns exactly the cells whose hexagon intersects the
+    # bbox polygon).
     bbox_poly = h3.LatLngPoly(
         [(south, west), (north, west), (north, east), (south, east)]
     )
-    cells = h3.h3shape_to_cells(bbox_poly, resolution)
-    # Buffer by one ring so edge cells overlapping the raster are included.
-    covered = set(cells)
-    for c in cells:
-        covered.update(h3.grid_disk(c, 1))
+    covered = h3.polygon_to_cells_experimental(bbox_poly, resolution, contain="overlap")
 
     dst_epsg = ds.crs.to_epsg() if ds.crs else None
     reproject = dst_epsg != 4326
@@ -168,32 +167,14 @@ def iter_tessellate_h3(ds, resolution: int, mode: str = "covering"):
         if reproject:
             geom = transform_geom(_WGS84, ds.crs, mapping(cell_poly))
             cell_poly = shape(geom)
-        # Emptiness guard (parity with heavy RasterTessellate.getTile, which
-        # drops a cell when ClipToGeom + RasterAccessors.isEmpty find no valid
-        # pixels): the one-ring expansion adds fringe candidates whose bounding
-        # box clips the raster edge but whose hexagon covers ZERO pixel cells.
-        # gdalwarp -crop_to_cutline yields an all-nodata tile for those, which
-        # heavy's isEmpty rejects; without this guard the lightweight side keeps
-        # the degenerate zero-coverage cell and diverges (6 vs heavy's 5).
-        cover = geometry_mask(
-            [cell_poly],
-            out_shape=(ds.height, ds.width),
-            transform=ds.transform,
-            invert=True,
-            all_touched=True,
-        )
-        if not cover.any():
-            continue
         try:
-            clipped = edit.clip_to_geom(ds, shapely.wkb.dumps(cell_poly))
+            # all_touched=True: boundary pixels touched by the hexagon edge are
+            # included in the chip, consistent with the covering selection intent.
+            clipped = edit.clip_to_geom(ds, shapely.wkb.dumps(cell_poly), all_touched=True)
         except ValueError:
             # rasterio.mask raises ValueError when the shape does not overlap.
             continue
-        cellid = h3.str_to_int(cell)
-        # h3 ids fit in unsigned 64-bit; map to signed int64 for the tile struct.
-        if cellid >= 2**63:
-            cellid -= 2**64
-        yield (cellid, clipped)
+        yield (_h3_str_to_signed_int64(cell), clipped)
 
 
 def tessellate_h3(ds, resolution: int) -> list:

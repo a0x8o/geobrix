@@ -63,3 +63,20 @@ def test_covering_mode_unchanged():
         with mf.open() as ds:
             cells = list(T.iter_tessellate_h3(ds, resolution=9, mode="covering"))
     assert len(cells) > 0, "covering mode must yield at least one cell"
+
+
+def test_covering_mode_is_overlap_set():
+    """covering mode cell ids must exactly match h3.polygon_to_cells_experimental overlap set."""
+    import h3
+    from shapely.geometry import box
+
+    tile = _tile_4326()
+    with _serde.open_tile(tile) as ds:
+        cells = {cellid for cellid, _ in T.iter_tessellate_h3(ds, resolution=9, mode="covering")}
+
+    # tile extent: from_origin(-0.1, 51.5, 0.01, 0.01) → west=-0.1, north=51.5, 64px at 0.01deg
+    minx, maxx = -0.1, -0.1 + 64 * 0.01
+    miny, maxy = 51.5 - 64 * 0.01, 51.5
+    shp = h3.geo_to_h3shape(box(minx, miny, maxx, maxy).__geo_interface__)
+    oracle = {T._h3_str_to_signed_int64(c) for c in h3.polygon_to_cells_experimental(shp, 9, contain="overlap")}
+    assert cells == oracle
