@@ -1265,13 +1265,18 @@ def _fanout_spec(fn: str, scale: float):
         span = 0.5 * (s**0.5)
         bounds = (-span, 51.5 - span, span, 51.5 + span)
         tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        # Pass explicit mode='covering' (the default) so the bench leg is
+        # unambiguous and a future 'centroid' variant can be added by changing
+        # this one argument. Heavy uses LATERAL VIEW (CollectionGenerator, flat
+        # rows, no explode) -- same pattern as rst_xyzpyramid.
+        mode = "covering"
         light = (
             "SELECT t.* FROM _fanout_bench_ras, "
-            f"LATERAL gbx_rst_h3_tessellate(tile, {res}) t"
+            f"LATERAL gbx_rst_h3_tessellate(tile, {res}, '{mode}') t"
         )
         heavy = (
             "SELECT t.* FROM _fanout_bench_ras "
-            f"LATERAL VIEW gbx_rst_h3_tessellate(tile, {res}) t AS tile"
+            f"LATERAL VIEW gbx_rst_h3_tessellate(tile, {res}, '{mode}') t AS tile"
         )
         return tile_kwargs, light, heavy
 
