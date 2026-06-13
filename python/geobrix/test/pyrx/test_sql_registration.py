@@ -106,21 +106,21 @@ def test_register_enables_xyzpyramid_sql(spark):
 def test_register_enables_h3_rastertogrid_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=4, height=3, epsg=4326)
-    # nested ARRAY<ARRAY<struct>>: outer size == band count (1).
-    n = spark.sql(
-        "SELECT size(gbx_rst_h3_rastertogridcount(tile, 6)) AS n FROM t"
-    ).first()["n"]
-    assert n == 1
+    # UDTF returns flat (band, cellID, measure) rows; sum of counts == 12 pixels.
+    rows = spark.sql(
+        "SELECT t.band, t.measure FROM t, LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    assert all(r["band"] == 1 for r in rows)
+    assert sum(r["measure"] for r in rows) == 12
 
 
 def test_register_enables_quadbin_rastertogrid_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=4, height=3, epsg=4326)
-    # explode both levels and confirm counts sum to the 12 valid pixels.
+    # UDTF returns flat (band, cellID, measure) rows; sum of counts == 12 pixels.
     total = spark.sql(
-        "SELECT sum(c.measure) AS total FROM t "
-        "LATERAL VIEW explode(gbx_rst_quadbin_rastertogridcount(tile, 10)) AS b "
-        "LATERAL VIEW explode(b) AS c"
+        "SELECT sum(t.measure) AS total FROM t, "
+        "LATERAL gbx_rst_quadbin_rastertogridcount(tile, 10) t"
     ).first()["total"]
     assert total == 12
 

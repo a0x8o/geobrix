@@ -71,6 +71,16 @@ def register(spark: SparkSession = None) -> None:
         spark.udf.register(name, udf_obj)
     # UDTFs must use spark.udtf.register (not spark.udf.register).
     spark.udtf.register("gbx_rst_polygonize", _RstPolygonizeUDTF)
+    spark.udtf.register("gbx_rst_h3_rastertogridavg", _RstH3RasterToGridAvgUDTF)
+    spark.udtf.register("gbx_rst_h3_rastertogridcount", _RstH3RasterToGridCountUDTF)
+    spark.udtf.register("gbx_rst_h3_rastertogridmax", _RstH3RasterToGridMaxUDTF)
+    spark.udtf.register("gbx_rst_h3_rastertogridmin", _RstH3RasterToGridMinUDTF)
+    spark.udtf.register("gbx_rst_h3_rastertogridmedian", _RstH3RasterToGridMedianUDTF)
+    spark.udtf.register("gbx_rst_quadbin_rastertogridavg", _RstQuadbinRasterToGridAvgUDTF)
+    spark.udtf.register("gbx_rst_quadbin_rastertogridcount", _RstQuadbinRasterToGridCountUDTF)
+    spark.udtf.register("gbx_rst_quadbin_rastertogridmax", _RstQuadbinRasterToGridMaxUDTF)
+    spark.udtf.register("gbx_rst_quadbin_rastertogridmin", _RstQuadbinRasterToGridMinUDTF)
+    spark.udtf.register("gbx_rst_quadbin_rastertogridmedian", _RstQuadbinRasterToGridMedianUDTF)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------
@@ -2400,59 +2410,67 @@ def rst_xyzpyramid(
     return _xyzpyramid_udf(_col(tile), _col(min_z), _col(max_z), fmt, sz, resamp)
 
 
-# --- Tier 1i: raster->grid aggregation UDFs (h3 + quadbin) -----------------
-# Output: ARRAY (per band) of ARRAY of struct(cellID LONG, measure <T>).
-# measure is INTEGER for the count variants, DOUBLE for avg/min/max/median.
-def _grid_struct_schema(measure_type):
-    return ArrayType(
-        ArrayType(
-            StructType(
-                [
-                    StructField("cellID", LongType(), True),
-                    StructField("measure", measure_type, True),
-                ]
-            )
-        )
+# --- Tier 1i: raster->grid aggregation UDTFs (h3 + quadbin) -----------------
+# Streaming UDTFs: yield flat (band INT, cellID LONG, measure <T>) rows.
+# band is 1-based (rasterio convention).  measure type matches Scala heavy:
+#   h3 count  -> IntegerType  (INT)
+#   quadbin count -> LongType (LONG)
+#   avg/max/min/median -> DoubleType (DOUBLE)
+
+
+def _grid_flat_schema(measure_type):
+    return StructType(
+        [
+            StructField("band", IntegerType(), False),
+            StructField("cellID", LongType(), True),
+            StructField("measure", measure_type, True),
+        ]
     )
 
 
-_GRID_DOUBLE_SCHEMA = _grid_struct_schema(DoubleType())
-_GRID_INT_SCHEMA = _grid_struct_schema(IntegerType())
+_GRID_FLAT_DOUBLE_SCHEMA = _grid_flat_schema(DoubleType())
+_GRID_FLAT_INT_SCHEMA = _grid_flat_schema(IntegerType())  # h3 count
+_GRID_FLAT_LONG_SCHEMA = _grid_flat_schema(LongType())  # quadbin count
 
 
-def _make_rastertogrid_udf(grid, agg, schema):
-    @f.udf(schema)
-    def _udf(tile, resolution):
-        if tile is None or tile["raster"] is None:
-            return None
-        from databricks.labs.gbx.pyrx import _env
+def _make_rastertogrid_udtf(grid, agg, flat_schema):
+    @udtf(returnType=flat_schema)
+    class _RasterToGridUDTF:
+        def eval(self, tile, resolution):
+            if tile is None or tile["raster"] is None:
+                return
+            from databricks.labs.gbx.pyrx import _env
 
-        _env.configure_gdal_env()
-        with _serde.open_tile(bytes(tile["raster"])) as ds:
-            return gridagg.raster_to_grid(ds, int(resolution), grid, agg)
+            _env.configure_gdal_env()
+            with _serde.open_tile(bytes(tile["raster"])) as ds:
+                bands_data = gridagg.raster_to_grid(ds, int(resolution), grid, agg)
+            # Yield flat rows (band, cellID, measure) — never buffer full nested list.
+            for band_idx, cells in enumerate(bands_data, start=1):
+                for cell in cells:
+                    yield (band_idx, int(cell["cellID"]), cell["measure"])
 
-    return _udf
+    return _RasterToGridUDTF
 
 
-_u_h3_rastertogridavg = _make_rastertogrid_udf("h3", "avg", _GRID_DOUBLE_SCHEMA)
-_u_h3_rastertogridcount = _make_rastertogrid_udf("h3", "count", _GRID_INT_SCHEMA)
-_u_h3_rastertogridmax = _make_rastertogrid_udf("h3", "max", _GRID_DOUBLE_SCHEMA)
-_u_h3_rastertogridmin = _make_rastertogrid_udf("h3", "min", _GRID_DOUBLE_SCHEMA)
-_u_h3_rastertogridmedian = _make_rastertogrid_udf("h3", "median", _GRID_DOUBLE_SCHEMA)
-_u_quadbin_rastertogridavg = _make_rastertogrid_udf(
-    "quadbin", "avg", _GRID_DOUBLE_SCHEMA
+_RstH3RasterToGridAvgUDTF = _make_rastertogrid_udtf("h3", "avg", _GRID_FLAT_DOUBLE_SCHEMA)
+_RstH3RasterToGridCountUDTF = _make_rastertogrid_udtf("h3", "count", _GRID_FLAT_INT_SCHEMA)
+_RstH3RasterToGridMaxUDTF = _make_rastertogrid_udtf("h3", "max", _GRID_FLAT_DOUBLE_SCHEMA)
+_RstH3RasterToGridMinUDTF = _make_rastertogrid_udtf("h3", "min", _GRID_FLAT_DOUBLE_SCHEMA)
+_RstH3RasterToGridMedianUDTF = _make_rastertogrid_udtf("h3", "median", _GRID_FLAT_DOUBLE_SCHEMA)
+_RstQuadbinRasterToGridAvgUDTF = _make_rastertogrid_udtf(
+    "quadbin", "avg", _GRID_FLAT_DOUBLE_SCHEMA
 )
-_u_quadbin_rastertogridcount = _make_rastertogrid_udf(
-    "quadbin", "count", _GRID_INT_SCHEMA
+_RstQuadbinRasterToGridCountUDTF = _make_rastertogrid_udtf(
+    "quadbin", "count", _GRID_FLAT_LONG_SCHEMA
 )
-_u_quadbin_rastertogridmax = _make_rastertogrid_udf(
-    "quadbin", "max", _GRID_DOUBLE_SCHEMA
+_RstQuadbinRasterToGridMaxUDTF = _make_rastertogrid_udtf(
+    "quadbin", "max", _GRID_FLAT_DOUBLE_SCHEMA
 )
-_u_quadbin_rastertogridmin = _make_rastertogrid_udf(
-    "quadbin", "min", _GRID_DOUBLE_SCHEMA
+_RstQuadbinRasterToGridMinUDTF = _make_rastertogrid_udtf(
+    "quadbin", "min", _GRID_FLAT_DOUBLE_SCHEMA
 )
-_u_quadbin_rastertogridmedian = _make_rastertogrid_udf(
-    "quadbin", "median", _GRID_DOUBLE_SCHEMA
+_RstQuadbinRasterToGridMedianUDTF = _make_rastertogrid_udtf(
+    "quadbin", "median", _GRID_FLAT_DOUBLE_SCHEMA
 )
 
 _RASTERTOGRID_DOC = """{summary}
@@ -2463,56 +2481,98 @@ _RASTERTOGRID_DOC = """{summary}
     interpreted as EPSG:4326 lon/lat (no reprojection -- reproject upstream with
     ``rst_transform`` if your source CRS differs).
 
+    Light tier is a Python UDTF -- invoke as a SQL LATERAL table function::
+
+        SELECT t.band, t.cellID, t.measure
+        FROM <df>, LATERAL gbx_rst_{sql_name}(tile, resolution) t
+
+    Each row: band INT (1-based), cellID LONG ({grid} cell id),
+    measure {measure}.
+
     Args:
         tile:       Tile struct column.
         resolution: {grid} resolution ({res_range}).
-
-    Returns:
-        ARRAY (one element per raster band) of ARRAY of
-        ``struct(cellID LONG, measure {measure})``. Explode twice (or index)
-        to consume: ``explode`` the outer array for per-band rows, then
-        ``explode`` the inner array for one row per cell.
     """
 
 
-def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_h3_rastertogridavg(_col(tile), _col(resolution))
+def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into H3 cells by mean, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridavg(tile, resolution) t"
+    )
 
 
-def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_h3_rastertogridcount(_col(tile), _col(resolution))
+def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> None:
+    """Count raster pixels falling in each H3 cell, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridcount(tile, resolution) t"
+    )
 
 
-def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_h3_rastertogridmax(_col(tile), _col(resolution))
+def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into H3 cells by maximum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmax(tile, resolution) t"
+    )
 
 
-def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_h3_rastertogridmin(_col(tile), _col(resolution))
+def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into H3 cells by minimum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmin(tile, resolution) t"
+    )
 
 
-def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_h3_rastertogridmedian(_col(tile), _col(resolution))
+def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into H3 cells by median, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmedian(tile, resolution) t"
+    )
 
 
-def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_quadbin_rastertogridavg(_col(tile), _col(resolution))
+def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into quadbin cells by mean, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridavg(tile, resolution) t"
+    )
 
 
-def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_quadbin_rastertogridcount(_col(tile), _col(resolution))
+def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> None:
+    """Count raster pixels falling in each quadbin cell, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridcount(tile, resolution) t"
+    )
 
 
-def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_quadbin_rastertogridmax(_col(tile), _col(resolution))
+def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into quadbin cells by maximum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmax(tile, resolution) t"
+    )
 
 
-def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_quadbin_rastertogridmin(_col(tile), _col(resolution))
+def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into quadbin cells by minimum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmin(tile, resolution) t"
+    )
 
 
-def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
-    return _u_quadbin_rastertogridmedian(_col(tile), _col(resolution))
+def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> None:
+    """Aggregate raster pixel values into quadbin cells by median, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmedian(tile, resolution) t"
+    )
 
 
 rst_h3_rastertogridavg.__doc__ = _RASTERTOGRID_DOC.format(
@@ -2521,6 +2581,7 @@ rst_h3_rastertogridavg.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their mean (DOUBLE)",
     res_range="0..15",
     measure="DOUBLE",
+    sql_name="h3_rastertogridavg",
 )
 rst_h3_rastertogridcount.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Count raster pixels falling in each H3 cell, per band.",
@@ -2528,6 +2589,7 @@ rst_h3_rastertogridcount.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="a pixel count (INTEGER)",
     res_range="0..15",
     measure="INTEGER",
+    sql_name="h3_rastertogridcount",
 )
 rst_h3_rastertogridmax.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into H3 cells by maximum, per band.",
@@ -2535,6 +2597,7 @@ rst_h3_rastertogridmax.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their maximum (DOUBLE)",
     res_range="0..15",
     measure="DOUBLE",
+    sql_name="h3_rastertogridmax",
 )
 rst_h3_rastertogridmin.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into H3 cells by minimum, per band.",
@@ -2542,6 +2605,7 @@ rst_h3_rastertogridmin.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their minimum (DOUBLE)",
     res_range="0..15",
     measure="DOUBLE",
+    sql_name="h3_rastertogridmin",
 )
 rst_h3_rastertogridmedian.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into H3 cells by median, per band.",
@@ -2549,6 +2613,7 @@ rst_h3_rastertogridmedian.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their median (DOUBLE; even counts average the two middle values)",
     res_range="0..15",
     measure="DOUBLE",
+    sql_name="h3_rastertogridmedian",
 )
 rst_quadbin_rastertogridavg.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into quadbin cells by mean, per band.",
@@ -2556,13 +2621,15 @@ rst_quadbin_rastertogridavg.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their mean (DOUBLE)",
     res_range="0..20",
     measure="DOUBLE",
+    sql_name="quadbin_rastertogridavg",
 )
 rst_quadbin_rastertogridcount.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Count raster pixels falling in each quadbin cell, per band.",
     grid="quadbin",
-    agg_desc="a pixel count (INTEGER)",
+    agg_desc="a pixel count (LONG)",
     res_range="0..20",
-    measure="INTEGER",
+    measure="LONG",
+    sql_name="quadbin_rastertogridcount",
 )
 rst_quadbin_rastertogridmax.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into quadbin cells by maximum, per band.",
@@ -2570,6 +2637,7 @@ rst_quadbin_rastertogridmax.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their maximum (DOUBLE)",
     res_range="0..20",
     measure="DOUBLE",
+    sql_name="quadbin_rastertogridmax",
 )
 rst_quadbin_rastertogridmin.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into quadbin cells by minimum, per band.",
@@ -2577,6 +2645,7 @@ rst_quadbin_rastertogridmin.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their minimum (DOUBLE)",
     res_range="0..20",
     measure="DOUBLE",
+    sql_name="quadbin_rastertogridmin",
 )
 rst_quadbin_rastertogridmedian.__doc__ = _RASTERTOGRID_DOC.format(
     summary="Aggregate raster pixel values into quadbin cells by median, per band.",
@@ -2584,6 +2653,7 @@ rst_quadbin_rastertogridmedian.__doc__ = _RASTERTOGRID_DOC.format(
     agg_desc="their median (DOUBLE; even counts average the two middle values)",
     res_range="0..20",
     measure="DOUBLE",
+    sql_name="quadbin_rastertogridmedian",
 )
 
 
@@ -3138,6 +3208,8 @@ _sql_tile_ops = {
     "gbx_rst_dtmfromgeoms": _dtmfromgeoms_udf,
     # gbx_rst_polygonize is a UDTF registered separately in register() via
     # spark.udtf.register — UDTFs cannot go through spark.udf.register.
+    # gbx_rst_{h3,quadbin}_rastertogrid* are UDTFs registered separately in
+    # register() via spark.udtf.register — UDTFs cannot go through spark.udf.register.
     "gbx_rst_ndvi": _ndvi_udf,
     "gbx_rst_ndwi": _ndwi_udf,
     "gbx_rst_nbr": _nbr_udf,
@@ -3163,16 +3235,6 @@ _sql_tile_ops = {
     "gbx_rst_maketiles": _maketiles_udf,
     "gbx_rst_tilexyz": _tilexyz_udf,
     "gbx_rst_xyzpyramid": _xyzpyramid_udf,
-    "gbx_rst_h3_rastertogridavg": _u_h3_rastertogridavg,
-    "gbx_rst_h3_rastertogridcount": _u_h3_rastertogridcount,
-    "gbx_rst_h3_rastertogridmax": _u_h3_rastertogridmax,
-    "gbx_rst_h3_rastertogridmin": _u_h3_rastertogridmin,
-    "gbx_rst_h3_rastertogridmedian": _u_h3_rastertogridmedian,
-    "gbx_rst_quadbin_rastertogridavg": _u_quadbin_rastertogridavg,
-    "gbx_rst_quadbin_rastertogridcount": _u_quadbin_rastertogridcount,
-    "gbx_rst_quadbin_rastertogridmax": _u_quadbin_rastertogridmax,
-    "gbx_rst_quadbin_rastertogridmin": _u_quadbin_rastertogridmin,
-    "gbx_rst_quadbin_rastertogridmedian": _u_quadbin_rastertogridmedian,
 }
 
 # Grouped aggregators register the BINARY grouped-agg pandas_udf directly; SQL

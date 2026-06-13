@@ -609,44 +609,92 @@ def test_rst_xyzpyramid_array(spark):
 # --- raster->grid aggregation (h3 + quadbin) --------------------------------
 def test_rst_h3_rastertogridcount(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    # outer array (1 band) -> inner array of (cellID, measure); count sums to 12.
-    rows = (
-        df.select(f.explode(prx.rst_h3_rastertogridcount("tile", f.lit(6))).alias("b"))
-        .select(f.explode("b").alias("c"))
-        .select(f.col("c.cellID").alias("cid"), f.col("c.measure").alias("m"))
-        .collect()
-    )
-    assert sum(r["m"] for r in rows) == 12
-    assert all(0 < r["cid"] < 2**63 for r in rows)
+    df.createOrReplaceTempView("_ras_h3_count")
+    prx.register(spark)
+    # UDTF yields flat (band, cellID, measure); count sums to 4x3=12.
+    rows = spark.sql(
+        "SELECT t.band, t.cellID, t.measure FROM _ras_h3_count, "
+        "LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    assert sum(r["measure"] for r in rows) == 12
+    assert all(0 < r["cellID"] < 2**63 for r in rows)
 
 
 def test_rst_quadbin_rastertogridcount(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    rows = (
-        df.select(
-            f.explode(prx.rst_quadbin_rastertogridcount("tile", f.lit(10))).alias("b")
-        )
-        .select(f.explode("b").alias("c"))
-        .select(f.col("c.measure").alias("m"))
-        .collect()
-    )
-    assert sum(r["m"] for r in rows) == 12
+    df.createOrReplaceTempView("_ras_qb_count")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.measure FROM _ras_qb_count, "
+        "LATERAL gbx_rst_quadbin_rastertogridcount(tile, 10) t"
+    ).collect()
+    assert sum(r["measure"] for r in rows) == 12
 
 
 def test_rst_h3_rastertogridavg_multiband_outer_length(spark):
     df = _tile_df(spark, width=4, height=3, count=2)
-    n = df.select(
-        f.size(prx.rst_h3_rastertogridavg("tile", f.lit(5))).alias("n")
-    ).first()["n"]
-    assert n == 2
+    df.createOrReplaceTempView("_ras_h3_avg_mb")
+    prx.register(spark)
+    # 2-band raster: expect 2 distinct band values in the UDTF output.
+    rows = spark.sql(
+        "SELECT DISTINCT t.band FROM _ras_h3_avg_mb, "
+        "LATERAL gbx_rst_h3_rastertogridavg(tile, 5) t"
+    ).collect()
+    assert len(rows) == 2
 
 
 def test_rst_quadbin_rastertogridmedian(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    n = df.select(
-        f.size(prx.rst_quadbin_rastertogridmedian("tile", f.lit(8))).alias("n")
-    ).first()["n"]
-    assert n == 1
+    df.createOrReplaceTempView("_ras_qb_median")
+    prx.register(spark)
+    # 1-band raster: should return rows with band=1.
+    rows = spark.sql(
+        "SELECT DISTINCT t.band FROM _ras_qb_median, "
+        "LATERAL gbx_rst_quadbin_rastertogridmedian(tile, 8) t"
+    ).collect()
+    assert len(rows) == 1
+
+
+# --- rastertogrid UDTF LATERAL tests (new flat schema) ----------------------
+def test_rst_h3_rastertogridcount_udtf_lateral(spark):
+    """UDTF emits flat (band, cellID, measure) rows via LATERAL."""
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_test")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.band, t.cellID, t.measure "
+        "FROM _ras_test, LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    # 1-band raster: all rows have band=1
+    assert all(r["band"] == 1 for r in rows), "all rows should have band=1 for 1-band raster"
+    # sum of cell counts == total pixel count (4x3=12)
+    assert sum(r["measure"] for r in rows) == 12
+    assert all(0 < r["cellID"] < 2**63 for r in rows)
+
+
+def test_rastertogrid_all_10_register_and_return_flat_rows(spark):
+    """Smoke: all 10 UDTFs register and return flat (band, cellID, measure) rows."""
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_smoke")
+    prx.register(spark)
+    for name, res in [
+        ("gbx_rst_h3_rastertogridavg", 6),
+        ("gbx_rst_h3_rastertogridcount", 6),
+        ("gbx_rst_h3_rastertogridmax", 6),
+        ("gbx_rst_h3_rastertogridmin", 6),
+        ("gbx_rst_h3_rastertogridmedian", 6),
+        ("gbx_rst_quadbin_rastertogridavg", 10),
+        ("gbx_rst_quadbin_rastertogridcount", 10),
+        ("gbx_rst_quadbin_rastertogridmax", 10),
+        ("gbx_rst_quadbin_rastertogridmin", 10),
+        ("gbx_rst_quadbin_rastertogridmedian", 10),
+    ]:
+        rows = spark.sql(
+            f"SELECT t.band, t.cellID, t.measure FROM _ras_smoke, LATERAL {name}(tile, {res}) t"
+        ).collect()
+        assert len(rows) > 0, f"{name} returned no rows"
+        assert all(r["band"] == 1 for r in rows), f"{name}: band should be 1 for 1-band raster"
+        assert all(r["cellID"] is not None for r in rows), f"{name}: cellID must not be None"
 
 
 # --- Group 1: per-band statistics & accessors -------------------------------
