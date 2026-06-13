@@ -9,6 +9,7 @@ import vectorxFunctionsExamples from '!!raw-loader!../../tests/python/api/vector
 import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_functions_sql.py';
 import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.py';
 import Tier from '@site/src/components/Tier';
+import { Impl } from '@site/src/components/Tier';
 
 # VectorX Function Reference
 
@@ -96,7 +97,7 @@ This means downstream clients (MapLibre GL JS, Mapbox GL JS, deck.gl) receive nu
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyvx)">
 
-<Tier light/>
+<Tier light/> <Impl groupedAgg/>
 
 Aggregator that encodes a group of features into a single MVT protobuf blob for one
 `(z, x, y)` tile. Each call to `groupBy(z, x, y).agg(vx.st_asmvt(...))` produces the
@@ -198,7 +199,7 @@ df.groupBy("z", "x", "y").agg(
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyvx)">
 
-<Tier light/>
+<Tier light/> <Impl udtf/>
 
 Generator (Python UDTF) that explodes one input feature into one row per intersecting
 `(z, x, y)` tile across a zoom range, with MVT bytes already encoded in each row. The

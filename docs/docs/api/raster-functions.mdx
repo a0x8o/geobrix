@@ -6,6 +6,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import Tier from '@site/src/components/Tier';
+import { Impl } from '@site/src/components/Tier';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
 import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
@@ -545,7 +546,7 @@ Combine or merge rasters in group-by (6 total).
 
 ### rst_combineavg_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_combineavg_agg("tile"))` returns the NoData-aware per-pixel mean as one tile per group; input tiles must share the same grid (shape/extent/CRS). In SQL `gbx_rst_combineavg_agg` returns the raster BINARY (cellid dropped); wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -559,7 +560,7 @@ Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_comb
 
 ### rst_derivedband_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `groupBy(...).agg(rx.rst_derivedband_agg("tile", pyfunc, funcName))` stacks the group's tiles as bands and applies your pixel function, returning one tile per group. In SQL `gbx_rst_derivedband_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -573,7 +574,7 @@ Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `gro
 
 ### rst_dtmfromgeoms_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **SciPy** (`scipy.spatial.Delaunay`). Aggregate — builds one TIN DTM tile per group from the group's Z-valued points via barycentric interpolation over an **unconstrained** Delaunay triangulation; `breaklines`, `merge_tolerance`, and `snap_tolerance` are accepted but not enforced (the heavyweight tier builds a constrained TIN). In SQL `gbx_rst_dtmfromgeoms_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -591,7 +592,7 @@ Streaming aggregator that accepts one Z-valued point WKB per row and produces a 
 
 ### rst_frombands_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio**. Aggregate — `groupBy(...).agg(rx.rst_frombands_agg("tile", "band_index"))` stacks the group's tiles into one multi-band tile ordered by ascending `band_index`. In SQL `gbx_rst_frombands_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -609,7 +610,7 @@ Streaming aggregator that collects ordered per-band tiles (one row per band) int
 
 ### rst_merge_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.rst_merge_agg("tile"))` merges the group's tiles into one mosaic tile (output spans the union extent). In SQL `gbx_rst_merge_agg` returns the merged raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -623,7 +624,7 @@ Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.r
 
 ### rst_rasterize_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.features`). Aggregate — burns the group's `(geom, value)` rows into one tile over the given extent/size/SRID (last-wins on overlap). In SQL `gbx_rst_rasterize_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -641,7 +642,7 @@ Streaming aggregator that burns geometry/value pairs (one row per feature) into 
 
 ### rst_gridfrompoints_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **SciPy** (`cKDTree` IDW). Aggregate — `groupBy(...).agg(rx.rst_gridfrompoints_agg(...))` inverse-distance-interpolates the group's points into one Float64 grid tile (NoData −9999). In SQL `gbx_rst_gridfrompoints_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -847,7 +848,7 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridavg
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -861,7 +862,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridcount
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -875,7 +876,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmax
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -889,7 +890,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmin
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -903,7 +904,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmedian
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -923,7 +924,7 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridavg
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -937,7 +938,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridcount
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -951,7 +952,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmax
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -965,7 +966,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmin
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -979,7 +980,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmedian
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -1385,7 +1386,7 @@ Powered by **rasterio** (`rasterio.features`).
 
 ### rst_polygonize
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.features`). In pyrx, `gbx_rst_polygonize` is a
