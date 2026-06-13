@@ -95,3 +95,53 @@ def test_legacy_parity_polygon_with_hole_and_z(spark_with_jar):
     assert lg.equals(hg)
     assert len(lg.interiors) == 1 and len(hg.interiors) == 1
     assert lg.has_z and hg.has_z
+
+
+def test_legacy_parity_multipolygon_hole_on_second(spark_with_jar):
+    spark = spark_with_jar
+    from shapely import wkb
+    from shapely.geometry import MultiPolygon
+    from databricks.labs.gbx.pyvx import functions as vx
+
+    def sq(o, s):
+        return [[o, o], [o + s, o], [o + s, o + s], [o, o + s], [o, o]]
+
+    poly0 = sq(0.0, 10.0)
+    poly1 = sq(20.0, 10.0)
+    hole1 = sq(22.0, 2.0)  # hole on the SECOND polygon
+    schema = (
+        "g struct<typeId:int,srid:int,"
+        "boundaries:array<array<array<double>>>,"
+        "holes:array<array<array<array<double>>>>>"
+    )
+    df = spark.createDataFrame(
+        [(
+            {
+                "typeId": 6,
+                "srid": 0,
+                "boundaries": [poly0, poly1],
+                "holes": [[], [hole1]],
+            },
+        )],
+        schema,
+    )
+    df.createOrReplaceTempView("legmp")
+
+    # light first
+    vx.register(spark)
+    light = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"])
+
+    # heavy overwrites the same SQL name
+    from databricks.labs.gbx.vectorx.jts.legacy import functions as hx
+
+    hx.register(spark)
+    heavy = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"])
+
+    lg, hg = wkb.loads(light), wkb.loads(heavy)
+    assert isinstance(lg, MultiPolygon) and isinstance(hg, MultiPolygon)
+    assert lg.equals(hg)
+    # the SECOND polygon retains its interior ring in both tiers
+    assert len(lg.geoms[1].interiors) == 1
+    assert len(hg.geoms[1].interiors) == 1
+    assert len(lg.geoms[0].interiors) == 0
+    assert len(hg.geoms[0].interiors) == 0

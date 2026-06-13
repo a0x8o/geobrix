@@ -76,7 +76,7 @@ def register(spark: SparkSession = None) -> None:
         spark = SparkSession.builder.getOrCreate()
     spark.udf.register("gbx_st_asmvt", _asmvt_udf)
     spark.udtf.register("gbx_st_asmvt_pyramid", _AsMvtPyramidUDTF)
-    _env.assert_tin_available()
+    _env.assert_legacy_available()
     spark.udf.register("gbx_st_legacyaswkb", _legacyaswkb_impl, BinaryType())
 
 

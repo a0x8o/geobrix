@@ -148,6 +148,23 @@ class ST_LegacyAsWKBTest extends AnyFunSuite {
         decoded.getCoordinate.getZ shouldBe 30.0
     }
 
+    test("ST_LegacyAsWKB eval should preserve Z for LINESTRING Z") {
+        // LINESTRING Z — each vertex carries z; it must survive WKB encoding (not be dropped to 2D).
+        val c0 = InternalCoord(Seq(0.0, 0.0, 5.0))
+        val c1 = InternalCoord(Seq(1.0, 1.0, 6.0))
+        val row = InternalRow(
+          3, // LINESTRING
+          0,
+          new GenericArrayData(Array(new GenericArrayData(Array(c0.serialize, c1.serialize)))),
+          new GenericArrayData(Array.empty)
+        )
+
+        val wkb = ST_LegacyAsWKB.eval(row)
+        val decoded = new org.locationtech.jts.io.WKBReader().read(wkb)
+        decoded.getCoordinate.getZ should not be Double.NaN
+        decoded.getCoordinate.getZ shouldBe 5.0
+    }
+
     test("ST_LegacyAsWKB eval should round-trip through JTS") {
         // Create a simple point
         val point = gf.createPoint(new Coordinate(5.0, 10.0))

@@ -105,6 +105,16 @@ object JTS {
         gf.createLineString(coordinates)
     }
 
+    /** Builds a LineString from JTS Coordinates (preserves Z); uses per-thread factory.
+      *
+      * Unlike [[lineStringXYs]] (which takes 2D (x, y) pairs), this keeps the full Coordinate,
+      * so a Z value survives the round-trip when the source coordinates carry one. */
+    def lineStringCoords(coords: Seq[Coordinate]): LineString = {
+        val tid = Thread.currentThread().getId
+        val gf = geometryFactories.getOrElseUpdate(tid, new GeometryFactory())
+        gf.createLineString(coords.toArray)
+    }
+
     /** Translates geometry by (xd, yd) via AffineTransformation. */
     def translate(xd: Double, yd: Double, geometry: Geometry): Geometry = {
         val transformation = AffineTransformation.translationInstance(xd, yd)

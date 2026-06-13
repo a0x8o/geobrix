@@ -1,7 +1,7 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")
-from shapely.geometry import Point, LineString, Polygon, MultiPolygon  # noqa: E402
+from shapely.geometry import Point, LineString, MultiPoint, Polygon, MultiPolygon  # noqa: E402
 from shapely import wkb  # noqa: E402
 
 from databricks.labs.gbx.pyvx import _legacy
@@ -19,6 +19,20 @@ def test_point_xy():
 def test_point_xyz_preserves_z():
     g = _legacy.legacy_to_geom(_row(1, [[[30.0, 10.0, 5.0]]]))
     assert g.has_z and abs(g.z - 5.0) < 1e-9
+
+
+def test_multipoint_xy():
+    # boundaries[0] is the single ring holding all point coords.
+    g = _legacy.legacy_to_geom(_row(2, [[[30.0, 10.0], [40.0, 20.0]]]))
+    assert g.equals(MultiPoint([(30.0, 10.0), (40.0, 20.0)]))
+
+
+def test_multipoint_xyz():
+    g = _legacy.legacy_to_geom(_row(2, [[[30.0, 10.0, 5.0], [40.0, 20.0, 6.0]]]))
+    assert isinstance(g, MultiPoint)
+    assert g.has_z
+    zs = sorted(pt.z for pt in g.geoms)
+    assert zs == [5.0, 6.0]
 
 
 def test_linestring():
@@ -52,3 +66,7 @@ def test_geometrycollection_raises():
 def test_aswkb_preserves_z_iso():
     out = _legacy.legacy_to_wkb(_row(1, [[[30.0, 10.0, 5.0]]]))
     assert wkb.loads(out).has_z
+
+
+def test_null_input():
+    assert _legacy.legacy_to_wkb(None) is None

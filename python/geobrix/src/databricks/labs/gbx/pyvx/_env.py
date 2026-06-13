@@ -20,6 +20,26 @@ def assert_mvt_available() -> None:
         )
 
 
+def assert_legacy_available() -> None:
+    """Raise a clear ImportError if the legacy decode light deps are missing.
+
+    Legacy decode (st_legacyaswkb) needs only shapely — not scipy. Keep this
+    separate from assert_tin_available so an MVT/legacy-only user without scipy
+    can still register the legacy UDF.
+    """
+    missing = []
+    try:
+        import shapely  # noqa: F401
+    except Exception:  # noqa: BLE001
+        missing.append("shapely")
+    if missing:
+        raise ImportError(
+            "pyvx legacy requires the [light] extra; missing: "
+            + ", ".join(missing)
+            + ". Install with: pip install 'geobrix[light]'"
+        )
+
+
 def assert_tin_available() -> None:
     """Raise a clear ImportError if the TIN/legacy light deps are missing."""
     missing = []

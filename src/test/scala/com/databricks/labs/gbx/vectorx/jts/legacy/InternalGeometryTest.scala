@@ -82,6 +82,28 @@ class InternalGeometryTest extends AnyFunSuite {
         jts shouldBe a[LineString]
     }
 
+    // ====== toJTS - LINEARRING (typeId 7) ======
+
+    test("toJTS should convert LINEARRING (typeId 7) to a JTS LineString") {
+        val boundaries = Array(Array(
+          InternalCoord(Seq(0.0, 0.0)),
+          InternalCoord(Seq(1.0, 0.0)),
+          InternalCoord(Seq(1.0, 1.0)),
+          InternalCoord(Seq(0.0, 0.0))
+        ))
+        val holes = Array(Array.empty[Array[InternalCoord]])
+        val geom = InternalGeometry(
+          typeId = GeometryTypeEnum.LINEARRING.id,
+          srid = 4326,
+          boundaries = boundaries,
+          holes = holes
+        )
+        val jts = geom.toJTS
+        jts should not be null
+        jts shouldBe a[LineString]
+        jts.getNumPoints shouldBe 4
+    }
+
     // ====== toJTS - MULTILINESTRING ======
 
     test("toJTS should convert MULTILINESTRING to JTS") {

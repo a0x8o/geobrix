@@ -22,9 +22,11 @@ case class InternalGeometry(
         GeometryTypeEnum.fromTypeId(typeId) match {
             case GeometryTypeEnum.POINT              => JTS.point(boundaries.head.head.toCoordinate)
             case GeometryTypeEnum.MULTIPOINT         => JTS.multiPoint(boundaries.head.map(p => JTS.point(p.toCoordinate)))
-            case GeometryTypeEnum.LINESTRING         => JTS.lineStringXYs(boundaries.head.map(c => (c.coords(0), c.coords(1))).toBuffer)
+            case GeometryTypeEnum.LINESTRING         => JTS.lineStringCoords(boundaries.head.map(_.toCoordinate).toSeq)
+            // JTS boundary coercion can surface a LinearRing typeId; decode it as a LineString (Z-aware), matching light.
+            case GeometryTypeEnum.LINEARRING         => JTS.lineStringCoords(boundaries.head.map(_.toCoordinate).toSeq)
             case GeometryTypeEnum.MULTILINESTRING    =>
-                JTS.multiLineString(boundaries.map(ls => JTS.lineStringXYs(ls.map(c => (c.coords(0), c.coords(1))).toBuffer)))
+                JTS.multiLineString(boundaries.map(ls => JTS.lineStringCoords(ls.map(_.toCoordinate).toSeq)))
             case GeometryTypeEnum.POLYGON            =>
                 val shell = boundaries.head.map(_.toCoordinate).toSeq
                 val rings = if (holes.nonEmpty) holes.head.map(_.map(_.toCoordinate).toSeq).toSeq else Seq.empty

@@ -41,7 +41,7 @@ def legacy_to_geom(row: Any):
     if type_id == _POINT:
         return Point(*_ring(boundaries[0])[0])
     if type_id == _MULTIPOINT:
-        return MultiPoint([_ring(p)[0] for p in boundaries[0]])
+        return MultiPoint(_ring(boundaries[0]))
     if type_id in (_LINESTRING, _LINEARRING):
         return LineString(_ring(boundaries[0]))
     if type_id == _MULTILINESTRING:
