@@ -121,9 +121,9 @@ runs:
         # collection fails with ModuleNotFoundError: No module named 'rasterio').
         # pytest-cov is already locked in requirements-ci.txt; no extra install needed.
         if [ "${{ inputs.enable_coverage }}" = "true" ]; then
-          pytest -m "not integration" --ignore=test/pyrx --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
+          pytest -m "not integration" --ignore=test/pyrx --ignore=test/pyvx --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
         else
-          pytest -m "not integration" --ignore=test/pyrx
+          pytest -m "not integration" --ignore=test/pyrx --ignore=test/pyvx
         fi
     - name: Copy python artifacts to GH Actions run
       shell: bash

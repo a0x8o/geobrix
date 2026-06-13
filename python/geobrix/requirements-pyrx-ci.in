@@ -51,6 +51,9 @@ pmtiles==3.7.0
 pyogrio==0.12.1
 pyproj==3.7.2
 
+# --- MVT (light pyvx) decode oracle used in test/pyvx/ ---
+mapbox-vector-tile==2.2.0
+
 # --- discrete global grids: raster->H3/quadbin aggregation ---
 h3==4.4.2
 quadbin==0.2.2
