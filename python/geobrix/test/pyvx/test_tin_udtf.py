@@ -41,3 +41,46 @@ def test_st_triangulate_conforming_raises(spark):
     df.createOrReplaceTempView("v2")
     with pytest.raises(Exception, match="conforming"):
         spark.sql("SELECT t.* FROM v2, LATERAL gbx_st_triangulate(pts, bl, mt, st, spf, 'conforming') t").collect()
+
+
+def test_interpolateelevationbbox_emits_points(spark):
+    vx.register(spark)
+    pts = _pts_wkb([(0, 0, 0), (10, 0, 10), (10, 10, 20), (0, 10, 10)])
+    df = spark.createDataFrame(
+        [(pts, [], 0.0, 0.0, "NONENCROACHING", 0.0, 0.0, 10.0, 10.0, 5, 5, 0)],
+        "pts array<binary>, bl array<binary>, mt double, st double, spf string, "
+        "xmin double, ymin double, xmax double, ymax double, w int, h int, srid int")
+    df.createOrReplaceTempView("vb")
+    rows = spark.sql("SELECT t.elevation_point FROM vb, LATERAL "
+                     "gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, xmin, ymin, xmax, ymax, w, h, srid, 'constrained') t").collect()
+    assert len(rows) == 25
+    from shapely import wkb
+    assert wkb.loads(bytes(rows[0]["elevation_point"])).has_z
+
+
+def test_interpolateelevationgeom_emits_points(spark):
+    vx.register(spark)
+    pts = _pts_wkb([(0, 0, 0), (10, 0, 10), (10, 10, 20), (0, 10, 10)])
+    origin = bytearray(to_wkb(Point(0.0, 10.0)))
+    df = spark.createDataFrame(
+        [(pts, [], 0.0, 0.0, "NONENCROACHING", origin, 5, 5, 2.0, -2.0)],
+        "pts array<binary>, bl array<binary>, mt double, st double, spf string, "
+        "origin binary, cols int, rows int, cx double, cy double")
+    df.createOrReplaceTempView("vg")
+    rows = spark.sql("SELECT t.elevation_point FROM vg, LATERAL "
+                     "gbx_st_interpolateelevationgeom(pts, bl, mt, st, spf, origin, cols, rows, cx, cy, 'constrained') t").collect()
+    assert len(rows) == 25
+
+
+def test_interpolateelevation_default_mode_and_conforming_raises(spark):
+    vx.register(spark)
+    pts = _pts_wkb([(0, 0, 0), (10, 0, 10), (10, 10, 20), (0, 10, 10)])
+    df = spark.createDataFrame(
+        [(pts, [], 0.0, 0.0, "NONENCROACHING", 0.0, 0.0, 10.0, 10.0, 3, 3, 0)],
+        "pts array<binary>, bl array<binary>, mt double, st double, spf string, "
+        "xmin double, ymin double, xmax double, ymax double, w int, h int, srid int")
+    df.createOrReplaceTempView("vc")
+    n = spark.sql("SELECT t.* FROM vc, LATERAL gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, xmin, ymin, xmax, ymax, w, h, srid) t").count()
+    assert n == 9  # 13-arg minus mode -> default constrained, 3x3 grid
+    with pytest.raises(Exception, match="conforming"):
+        spark.sql("SELECT t.* FROM vc, LATERAL gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, xmin, ymin, xmax, ymax, w, h, srid, 'conforming') t").collect()
