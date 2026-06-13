@@ -192,6 +192,10 @@ WRITER_ROWS = {writer_rows}
 # struggling reader can't block the writers, and the 14M writer-source table is only
 # materialized for writer runs). Default both.
 VECTOR_LEGS = {vector_legs!r}
+# --vector-formats csv : restrict the scaled vector run to these light formats (e.g.
+# "geojson_gbx"). Empty = all four. Combined with --vector-legs and --lightweight-only/
+# --heavyweight-only, this runs ONE (format x tier x leg) per job for true cold isolation.
+VECTOR_FORMATS = {vector_formats!r}
 
 os.makedirs(OUT, exist_ok=True)
 # Disable AQE so it can't coalesce the spark-path repartition back toward
@@ -768,6 +772,9 @@ if VECTOR_SCALE:
         # light-vs-heavy comparison fair and avoids the heavy dir-read error.
         ("file_gdb_gbx", "file_gdb_ogr", _vscale_base + "/file_gdb_gbx/seed.gdb.zip",  {}),
     ]
+    if VECTOR_FORMATS:
+        _sel = set(f.strip() for f in VECTOR_FORMATS.split(",") if f.strip())
+        _vcases = [c for c in _vcases if c[0] in _sel]
     _do_read = VECTOR_LEGS in ("both", "reader")
     _do_write = VECTOR_LEGS in ("both", "writer")
     _wsrc_tbl = "geospatial_docs.geobrix.bench_vec_wsrc"
@@ -955,6 +962,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         vector_scale=bool(cfg.get("vector_scale")),
         writer_rows=int(cfg.get("writer_rows", 14000000)),
         vector_legs=str(cfg.get("vector_legs", "both")),
+        vector_formats=str(cfg.get("vector_formats", "") or ""),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
