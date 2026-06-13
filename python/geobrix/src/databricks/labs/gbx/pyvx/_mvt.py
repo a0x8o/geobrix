@@ -22,7 +22,8 @@ def encode_layer(
     """Encode features into one MVT layer blob.
 
     Each feature is ``{'geometry': <WKB bytes or Shapely geom>, 'properties': dict}``.
-    Geometry should be in tile-local pixel coordinates [0, extent].
+    Geometry is passed through as-is; callers are responsible for projecting to
+    tile-local pixel coordinates [0, extent] before calling (e.g. via ``_to_tile_local``).
     Property values keep their native Python type (bool/int/float/str);
     non-native types are str()-ified via ``to_native_props``.
 
@@ -117,10 +118,11 @@ def pyramid_tiles(
     total = 0
     spans: Dict[int, Tuple[range, range]] = {}
     for z in range(min_z, max_z + 1):
-        x0, y1 = _lonlat_to_tile(minx, miny, z)
-        x1, y0 = _lonlat_to_tile(maxx, maxy, z)
-        xr = range(min(x0, x1), max(x0, x1) + 1)
-        yr = range(min(y0, y1), max(y0, y1) + 1)
+        # Tile y increases southward, so SW corner has higher y than NE corner.
+        x_sw, y_sw = _lonlat_to_tile(minx, miny, z)
+        x_ne, y_ne = _lonlat_to_tile(maxx, maxy, z)
+        xr = range(min(x_sw, x_ne), max(x_sw, x_ne) + 1)
+        yr = range(min(y_ne, y_sw), max(y_ne, y_sw) + 1)
         spans[z] = (xr, yr)
         total += len(xr) * len(yr)
         if total > MAX_TILES:

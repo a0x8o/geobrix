@@ -31,7 +31,7 @@ def to_native_props(attrs: Any) -> Dict[str, Any]:
     """
     if attrs is None:
         return {}
-    items = attrs.asDict().items() if hasattr(attrs, "asDict") else dict(attrs).items()
+    items = attrs.asDict().items() if hasattr(attrs, "asDict") else attrs.items()
     out: Dict[str, Any] = {}
     for k, v in items:
         if v is None:
