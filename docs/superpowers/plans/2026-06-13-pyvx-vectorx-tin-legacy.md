@@ -23,12 +23,55 @@
 - Commit messages: subject ≤72 chars + a WHY body for non-trivial commits; trailer exactly `Co-authored-by: Isaac`. Before commit: `chmod -R u+rwX .git/objects`.
 - Serverless-safety: the pyvx package must never reference `_jvm`, `sparkContext`, `.rdd`, or `spark.conf.set`. `test/pyvx/test_serverless_no_spark_config.py` already guards this — keep it green.
 
+## Geometry input contract (cross-cutting — applies to EVERY geom-accepting function)
+
+Every pyvx function that accepts a geometry argument MUST accept the **same set of encodings**, consistent with the heavy ST surface: **WKB, EWKB, WKT, and EWKT** (`SRID=<n>;<wkt>`). This is centralized in one helper so the contract can't drift between functions.
+
+- Create `python/geobrix/src/databricks/labs/gbx/pyvx/_geom.py` with:
+
+```python
+"""Shared geometry-input parsing for the pyvx light tier.
+
+Every geom-accepting pyvx function uses parse_geom so the accepted encodings
+(WKB / EWKB / WKT / EWKT) stay consistent across the ST surface and match the
+heavyweight tier (which accepts BINARY|STRING for geometry inputs).
+"""
+from typing import Any, Optional
+from shapely import from_wkb, from_wkt, set_srid
+from shapely.geometry.base import BaseGeometry
+
+
+def parse_geom(x: Any) -> Optional[BaseGeometry]:
+    """Parse a geometry from WKB/EWKB bytes or WKT/EWKT text. None -> None.
+
+    shapely.from_wkb already reads EWKB (SRID embedded). shapely.from_wkt does
+    NOT understand the EWKT 'SRID=<n>;' prefix, so strip+apply it here.
+    """
+    if x is None:
+        return None
+    if isinstance(x, (bytes, bytearray)):
+        return from_wkb(bytes(x))  # handles WKB and EWKB
+    s = str(x).strip()
+    if s[:5].upper() == "SRID=":
+        srid_part, _, wkt_part = s.partition(";")
+        geom = from_wkt(wkt_part)
+        try:
+            return set_srid(geom, int(srid_part[5:]))
+        except ValueError:
+            return geom
+    return from_wkt(s)
+```
+
+- All geom-accepting functions call `parse_geom` (TIN `points`/`breaklines` via `_geoms_from_array`, the geom-grid `grid_origin`). Where a task below shows inline `from_wkb`/`from_wkt`, replace it with `parse_geom`.
+- **Consistency audit (Task 12):** confirm the existing `st_asmvt` geom input (`_asmvt_udf`) accepts the same set (today it takes WKB bytes only) and align it to `parse_geom` if heavy `gbx_st_asmvt` accepts WKT/EWKT too; verify all `gbx_st_*` geom params share the contract.
+
 ---
 
 ## File Structure
 
 | File | Responsibility |
 |---|---|
+| `python/geobrix/src/databricks/labs/gbx/pyvx/_geom.py` | **new** — shared `parse_geom` (WKB/EWKB/WKT/EWKT) used by every geom-accepting pyvx function |
 | `python/geobrix/src/databricks/labs/gbx/pyvx/_legacy.py` | **new** — decode legacy Mosaic struct → shapely geom (Z + holes preserved) |
 | `python/geobrix/src/databricks/labs/gbx/pyvx/_tin.py` | **new** — scipy Delaunay + Sloan constraint recovery + Z-snap + barycentric interp + grid generators (Spark-free) |
 | `python/geobrix/src/databricks/labs/gbx/pyvx/functions.py` | **modify** — add `st_legacyaswkb` UDF, 3 TIN `@udtf` classes + wrappers, extend `register()` |
@@ -899,15 +942,14 @@ In `functions.py`, add a shared geometry-array decoder and the UDTF:
 
 ```python
 def _geoms_from_array(arr):
-    """Decode an ARRAY<BINARY|STRING> of geometries to numpy XYZ vertex arrays
-    (points) or (N,2|3) polylines (breaklines), via shapely."""
-    from shapely import from_wkb, from_wkt
+    """Decode an ARRAY<BINARY|STRING> of geometries via the shared parse_geom
+    contract (WKB/EWKB/WKT/EWKT)."""
+    from ._geom import parse_geom
     out = []
     for g in arr or []:
-        if g is None:
-            continue
-        geom = from_wkb(bytes(g)) if isinstance(g, (bytes, bytearray)) else from_wkt(str(g))
-        out.append(geom)
+        geom = parse_geom(g)
+        if geom is not None:
+            out.append(geom)
     return out
 
 
@@ -1069,8 +1111,9 @@ class _InterpElevBBoxUDTF:
 class _InterpElevGeomUDTF:
     def eval(self, points, breaklines, merge_tolerance, snap_tolerance, split_point_finder,
              grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y, mode=None):
-        from shapely import from_wkb, get_srid
-        og = from_wkb(bytes(grid_origin)) if isinstance(grid_origin, (bytes, bytearray)) else None
+        from shapely import get_srid
+        from ._geom import parse_geom
+        og = parse_geom(grid_origin)  # WKB/EWKB/WKT/EWKT
         ox, oy = (og.x, og.y) if og is not None else (0.0, 0.0)
         srid = get_srid(og) if og is not None else 0
         yield from _emit_elevation(
@@ -1234,15 +1277,19 @@ is heavy-only."
 
 - [ ] **Step 2: Update `vectorx-functions.mdx`** — add light/heavy tabs for the 4 functions, the `mode` param, and a "constrained vs conforming" + breakline divergence explainer (defensible-divergence framing, like the H3-Java 3.7.0 note). Legacy section: `st_legacyaswkb` preserves Z + holes; SRID applied separately at ingestion; M out of scope. No "wave N" / internal vocabulary.
 
-- [ ] **Step 3: Build docs + checks**
+- [ ] **Step 3: Geometry-input consistency audit**
+
+Verify every `gbx_st_*` geom-accepting function shares the `parse_geom` contract (WKB/EWKB/WKT/EWKT): the TIN `points`/`breaklines`/`grid_origin` (done in T8/T9) and the existing `st_asmvt` geom input. If heavy `gbx_st_asmvt` accepts WKT/EWKT (not just WKB), update `_asmvt_udf` in `functions.py` to route its geom through `_geom.parse_geom` (decode → re-`to_wkb` for mapbox-vector-tile) and add a test that `st_asmvt` accepts a WKT geom. Document the accepted-encodings contract once on the VectorX page.
+
+- [ ] **Step 4: Build docs + checks**
 
 Run: `cd docs && npm run build` → SUCCESS. `grep -rn -iE "wave [0-9]+" docs/docs/` → empty. `bash scripts/commands/gbx-test-bindings.sh --log bindings-tin.log` → PASS.
 
-- [ ] **Step 4: Full Docker verification**
+- [ ] **Step 5: Full Docker verification**
 
 Run the pyvx suite + the TIN/legacy Scala suites in Docker (mirror the MVT verification): light units green, parity green (JAR staged), Scala green.
 
-- [ ] **Step 5: Commit + update the PR checklist**
+- [ ] **Step 6: Commit + update the PR checklist**
 
 ```bash
 chmod -R u+rwX .git/objects
