@@ -10,6 +10,32 @@
 
 ---
 
+## Reframe (2026-06-12): pipeline-shaped bench + format-capacity sizing
+
+After Tasks 1–6 landed, the scenario and sizing were refined (supersedes the relevant parts of Tasks 6–8 below):
+
+**Two-leg pipeline (not a `read.format(x)→write.format(x)` round-trip):**
+- **Reader = ingest.** Read *enough files with enough rows* and **write a Delta table** (the common "load vector data into Delta" pipeline). Timed = the full read→Delta materialization (forces a real read, not a lazy `count()` that games the parser). Light `*_gbx` vs heavy `*_ogr`. Source = a directory of N vector files (the replicated copies; shapefile/FileGDB copies are zipped `.shp.zip`/`.gdb.zip` so both tiers dir-read them).
+- **Writer = export.** Start from a **Delta table** of vector data and **write a single file** in format x. Timed = table→single-file write (the writer's driver-side merge). Light only (heavy has no named-vector writers — documented gap). Multi-file output ("subdivide a table into a handful of files") is the **future API capability**, noted not benchmarked.
+
+**Capacity-driven sizing — push toward each format's ceiling; the limit must read as the *format's*, not GeoBrix's (never let a round number look like our cap):**
+
+| Format | Hard ceiling | Cause | ≈ box-polygon features at ceiling |
+|---|---|---|---|
+| Shapefile | **2 GB** per `.shp` (and per `.dbf`) | 32-bit offsets in 16-bit words (OGR caps 4 GB; 2 GB compat norm) | **~15.8 M** |
+| GeoPackage | **~17.6 TB** (4 KB pages; ~281 TB max) | SQLite `page_size × max_page_count` | billions (no practical cap) |
+| FileGDB | **2.1 B rows** / 1 TB per FC (→256 TB) | OBJECTID = signed int32 | ~2.1 billion |
+| GeoJSON | **none** (RFC 7946) | text; bounded only by disk/parse memory | unbounded |
+
+- **Writer-export (capacity demo):** source = a single ~14 M-polygon Delta table (generated directly via `generate_polygon_seed`, not from the vector corpus) → one file per format. ~14 M ≈ 1.9 GB shapefile — near (safely under) its 2 GB ceiling, **no deliberate break**; the others carry it and are *documented* (cited) to go to billions/TB. Single-file is driver-bound → measure on the small validation; if too heavy (esp. GPKG/FileGDB), cap the writer leg at the largest size that completes cleanly and document the figure there.
+- **Reader-ingest (scale demo):** read a directory of N copies (1 M each) → Delta; N chosen for "enough files with enough rows" (distributed, scales fine). Final N picked from the small-validation throughput (light GPKG read uses the read-only-Volume in-memory fallback and is the slow path — size so it completes).
+
+**Harness shape:** `run_format_read` → read dir + `write.format("delta").saveAsTable` (timed); `run_vector_write` → read a source Delta table + write one file (timed). `_CELL_VECTOR` materializes the ~14 M writer-source table once (untimed), runs the reader leg (copies dir → Delta, both tiers) and the writer leg (source table → single file, light).
+
+**Benchmarking.mdx (Task 8):** fill the two legs' numbers AND state each format's true ceiling (cited) so the capacity story is explicit.
+
+---
+
 ## File structure
 
 - **Create `python/geobrix/src/databricks/labs/gbx/bench/corpus_vector.py`** — the generator: `generate_polygon_seed`, `transcode_vector_seed`, `replicate_vector_seed`, `build_vector_corpus` (orchestrator). Pure functions over a SparkSession; no bench-harness coupling.
