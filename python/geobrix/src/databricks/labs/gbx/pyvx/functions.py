@@ -34,10 +34,13 @@ def _asmvt_udf(geom: pd.Series, attrs: pd.Series, layer: pd.Series) -> bytes:
     layer_name = "layer"
     if layer is not None and len(layer) > 0 and layer.iloc[0] is not None:
         layer_name = str(layer.iloc[0])
+    # Pass each geom (WKB/EWKB bytes or WKT/EWKT str) through untouched; encode_layer
+    # routes it through the shared _geom.parse_geom contract. Empty/None geoms are
+    # dropped there (parse_geom -> None / is_empty), so no per-encoding length check here.
     feats = [
-        {"geometry": bytes(g), "properties": a}
+        {"geometry": g, "properties": a}
         for g, a in zip(geom, attrs)
-        if g is not None and len(bytes(g)) > 0
+        if g is not None
     ]
     return _mvt.encode_layer(feats, layer_name=layer_name)
 

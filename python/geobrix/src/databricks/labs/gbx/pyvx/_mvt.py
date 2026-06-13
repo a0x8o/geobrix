@@ -3,10 +3,11 @@ import math
 from typing import Any, Dict, Iterator, List, Tuple
 
 import mapbox_vector_tile as mvt
-from shapely import from_wkb
 from shapely.geometry import box
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
+from ._geom import parse_geom
 from ._serde import to_native_props
 
 MAX_ZOOM = 20
@@ -21,9 +22,11 @@ def encode_layer(
 ) -> bytes:
     """Encode features into one MVT layer blob.
 
-    Each feature is ``{'geometry': <WKB bytes or Shapely geom>, 'properties': dict}``.
-    Geometry is passed through as-is; callers are responsible for projecting to
-    tile-local pixel coordinates [0, extent] before calling (e.g. via ``_to_tile_local``).
+    Each feature is ``{'geometry': <WKB/EWKB bytes, WKT/EWKT str, or Shapely geom>,
+    'properties': dict}``. Geometry inputs route through the shared ``_geom.parse_geom``
+    contract so every geom-accepting pyvx function accepts the same encodings.
+    Callers are responsible for projecting to tile-local pixel coordinates [0, extent]
+    before calling (e.g. via ``_to_tile_local``).
     Property values keep their native Python type (bool/int/float/str);
     non-native types are str()-ified via ``to_native_props``.
 
@@ -33,10 +36,12 @@ def encode_layer(
     layer_feats = []
     for f in features:
         geom = f["geometry"]
-        if isinstance(geom, (bytes, bytearray)):
-            shp = from_wkb(bytes(geom))
-        else:
+        # Shapely geoms (already-projected tile-local coords) pass through untouched;
+        # raw WKB/EWKB/WKT/EWKT inputs decode via the shared parse_geom contract.
+        if isinstance(geom, BaseGeometry):
             shp = geom
+        else:
+            shp = parse_geom(geom)
         if shp is None or shp.is_empty:
             continue
         layer_feats.append(
@@ -97,7 +102,8 @@ def pyramid_tiles(
     - Total intersecting tiles <= MAX_TILES (1,000,000); raises ValueError if exceeded.
 
     Args:
-        geom_wkb: WKB bytes (or Shapely geometry) in EPSG:4326.
+        geom_wkb: WKB/EWKB bytes, WKT/EWKT str, or Shapely geometry in EPSG:4326
+            (decoded via the shared ``_geom.parse_geom`` contract).
         attrs: Mapping or PySpark Row of feature attributes.
         min_z: Minimum zoom level (inclusive).
         max_z: Maximum zoom level (inclusive).
@@ -110,10 +116,10 @@ def pyramid_tiles(
         raise ValueError(f"max_z ({max_z}) must be >= min_z ({min_z})")
     if max_z > MAX_ZOOM:
         raise ValueError(f"max_z {max_z} exceeds MAX_ZOOM {MAX_ZOOM}")
-    if isinstance(geom_wkb, (bytes, bytearray)):
-        shp = from_wkb(bytes(geom_wkb))
-    else:
+    if isinstance(geom_wkb, BaseGeometry):
         shp = geom_wkb
+    else:
+        shp = parse_geom(geom_wkb)
     if shp is None or shp.is_empty:
         return
     props = to_native_props(attrs)
