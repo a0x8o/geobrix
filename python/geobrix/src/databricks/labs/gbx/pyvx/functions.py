@@ -83,15 +83,19 @@ def st_asmvt_pyramid(
 ):
     """Generator: one (z,x,y,mvt_bytes) row per intersecting tile across [min_z,max_z].
 
-    Light tier is a Python UDTF — invoke as a SQL LATERAL table function:
+    In the light tier the pyramid generator is a Python UDTF and is invoked only via
+    SQL LATERAL — it has no Python DataFrame Column form (unlike the heavy tier, which
+    exposes a Column API for this generator). Calling this wrapper directly raises
+    NotImplementedError; instead register and call it as a SQL LATERAL table function:
 
         SELECT t.* FROM features, LATERAL gbx_st_asmvt_pyramid(geom, attrs, 0, 12, 'layer', 4096) t
 
     The output schema (z,x,y,mvt_bytes) matches the heavyweight generator and feeds
-    gbx_pmtiles_agg downstream.
+    gbx_pmtiles_agg downstream, so the two tiers are interchangeable at the SQL level.
     """
     raise NotImplementedError(
-        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "Light st_asmvt_pyramid has no Python Column form; invoke the registered UDTF as a "
+        "SQL LATERAL table function: "
         "SELECT t.* FROM <df>, LATERAL gbx_st_asmvt_pyramid(geom, attrs, min_z, max_z, layer, extent) t"
     )
 
