@@ -1100,6 +1100,327 @@ def run_mvt_agg(
         )
 
 
+def _make_synthetic_geotiff(n_regions: int = 4, size: int = 64) -> bytes:
+    """Build a minimal in-memory GeoTIFF with ``n_regions`` distinct value patches.
+
+    The tile is ``size x size`` pixels, single-band float32, EPSG:4326-ish.
+    Each of the n_regions regions occupies a quadrant-like block of pixels so
+    rst_polygonize has meaningful connected components to extract, and
+    rst_h3_rastertogridcount has non-trivial cells to count.  Returns raw GTiff
+    bytes suitable for putting in a tile struct.
+    """
+    import io as _io
+    import math
+
+    import numpy as np
+    import rasterio
+    from rasterio.crs import CRS
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_bounds
+
+    data = np.zeros((size, size), dtype=np.float32)
+    # Split the raster into n_regions horizontal bands, each with a distinct value.
+    step = max(1, size // n_regions)
+    for i in range(n_regions):
+        row_start = i * step
+        row_end = (i + 1) * step if i < n_regions - 1 else size
+        data[row_start:row_end, :] = float(i + 1)
+
+    # A small WGS84 extent in London roughly; H3 resolution 7 has ~1.2km cells
+    # which are smaller than this ~50km extent, so the tile produces multiple cells.
+    transform = from_bounds(-0.5, 51.3, 0.5, 51.7, size, size)
+    crs = CRS.from_epsg(4326)
+
+    buf = _io.BytesIO()
+    with MemoryFile() as mf:
+        with mf.open(
+            driver="GTiff",
+            dtype="float32",
+            width=size,
+            height=size,
+            count=1,
+            crs=crs,
+            transform=transform,
+        ) as ds:
+            ds.write(data, 1)
+        buf.write(mf.read())
+    return buf.getvalue()
+
+
+def run_fanout_udtf(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    fn: str,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time a fan-out UDTF (rst_polygonize or rst_h3_rastertogridcount).
+
+    Builds a single synthetic GeoTIFF tile with distinct value regions, wraps
+    it in a one-row DataFrame matching the tile struct schema, then times the
+    LATERAL SQL invocation (light) or explode-Column invocation (heavy) to
+    completion.  Returns a single ResultRow (mode="spark-path", category="fanout").
+
+    ``api`` controls which tier is timed:
+        "lightweight"  → registers pyrx UDTFs; invokes via LATERAL SQL
+        "heavyweight"  → registers rasterx; invokes via F.explode(Column)
+    ``fn`` selects the function:
+        "rst_polygonize"             → band=1, connectedness=4
+        "rst_h3_rastertogridcount"   → resolution=7
+    """
+    env = capture_env(where)
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyrx import functions as prx
+
+            prx.register(spark)
+        else:
+            from databricks.labs.gbx.rasterx import functions as rx
+
+            rx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build a synthetic tile DataFrame (one row).
+    try:
+        from pyspark.sql.types import (
+            BinaryType,
+            LongType,
+            MapType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        tile_bytes = _make_synthetic_geotiff(n_regions=4, size=64)
+        tile_schema = StructType(
+            [
+                StructField("cellid", LongType(), nullable=False),
+                StructField("raster", BinaryType(), nullable=False),
+                StructField(
+                    "metadata",
+                    MapType(StringType(), StringType()),
+                    nullable=True,
+                ),
+            ]
+        )
+        tile_row = (0, bytearray(tile_bytes), {"driver": "GTiff", "width": "64", "height": "64", "count": "1"})
+        df = spark.createDataFrame([tile_row], schema=tile_schema)
+        import pyspark.sql.functions as _F
+
+        # Wrap as a struct column named "tile" matching the gbx_rst_* UDTF expectation.
+        df = df.select(_F.struct("cellid", "raster", "metadata").alias("tile")).cache()
+        df.count()  # materialise
+
+        # Register as a temp view for SQL path.
+        df.createOrReplaceTempView("_fanout_bench_ras")
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build the job closure: light uses LATERAL SQL; heavy uses explode(Column).
+    try:
+        if api == "lightweight":
+            if fn == "rst_polygonize":
+                sql = (
+                    "SELECT t.* "
+                    "FROM _fanout_bench_ras, "
+                    "LATERAL gbx_rst_polygonize(tile, 1, 4) t"
+                )
+            else:  # rst_h3_rastertogridcount
+                sql = (
+                    "SELECT t.* "
+                    "FROM _fanout_bench_ras, "
+                    "LATERAL gbx_rst_h3_rastertogridcount(tile, 7) t"
+                )
+
+            def _job():
+                return spark.sql(sql).count()
+
+        else:  # heavyweight
+            from databricks.labs.gbx.rasterx import functions as rx
+
+            if fn == "rst_polygonize":
+                def _job():
+                    return (
+                        df.select(
+                            _F.explode(rx.rst_polygonize(_F.col("tile"), _F.lit(1), _F.lit(4)))
+                            .alias("poly")
+                        )
+                        .count()
+                    )
+            else:  # rst_h3_rastertogridcount
+                def _job():
+                    return (
+                        df.select(
+                            _F.explode(rx.rst_h3_rastertogridcount(_F.col("tile"), _F.lit(7)))
+                            .alias("cell")
+                        )
+                        .count()
+                    )
+
+        # Validate once (untimed): guard against 0-row output.
+        actual_rows = int(_job())
+        if actual_rows == 0:
+            raise RuntimeError(
+                f"{fn} ({api}) produced 0 output rows -- check tile content or "
+                "registration."
+            )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=f"job build/validate error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=64,
+            bands=1,
+            dtype="float32",
+            srid=4326,
+            rows=actual_rows,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / actual_rows / 1000.0) if (ms and actual_rows) else 0.0,
+            per_tile_avg_ms=(ms / actual_rows) if (ms and actual_rows) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"{fn} {api} -> {actual_rows} output rows",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=64,
+            bands=1,
+            dtype="float32",
+            srid=4326,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _list_tifs(corpus_dir: str) -> List[str]:
     """Return all *.tif / *.tiff paths under corpus_dir."""
     import glob

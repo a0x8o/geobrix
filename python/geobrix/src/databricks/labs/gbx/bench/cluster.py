@@ -186,6 +186,10 @@ VECTOR_ONLY = {vector_only!r}
 # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
 BENCHMARK_MVT = {benchmark_mvt!r}
 MVT_ONLY = {mvt_only!r}
+# --benchmark-fanout: also run the fan-out UDTF benchmark (rst_polygonize + rst_h3_rastertogridcount).
+# --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
+BENCHMARK_FANOUT = {benchmark_fanout!r}
+FANOUT_ONLY = {fanout_only!r}
 # --vector-scale: read the scaled 1M-seed corpus (copies dir + seed file) instead of the
 # tiny 4-file corpus. Requires the scaled corpus to have been generated first via
 # gbx:bench:generate-vector-corpus and staged at {{CORPUS}}/vector-scale/<fmt>/.
@@ -886,6 +890,58 @@ if _mvt_rows:
     _show_md(f"mvt benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_FANOUT = """# Fan-out UDTF benchmark: light pyrx vs heavy rasterx for rst_polygonize + rst_h3_rastertogridcount
+from databricks.labs.gbx.bench import readers as _rd
+_fanout_rows = []
+_fanout_fns = ["rst_polygonize", "rst_h3_rastertogridcount"]
+# For parity: collect (fn, api, output_count) to compare light vs heavy per-fn.
+_fanout_counts = {}  # (fn, api) -> row count
+for _ffn in _fanout_fns:
+    if LIGHTWEIGHT:
+        _r = _rd.run_fanout_udtf(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                  api="lightweight", fn=_ffn, where="cluster")
+        _sink([_r]); lw.append(_r); _fanout_rows.append(_r)
+        _fanout_counts[(_ffn, "lightweight")] = _r.rows
+    if HEAVYWEIGHT:
+        _r = _rd.run_fanout_udtf(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                                  api="heavyweight", fn=_ffn, where="cluster")
+        _sink([_r]); hw.append(_r); _fanout_rows.append(_r)
+        _fanout_counts[(_ffn, "heavyweight")] = _r.rows
+# Parity check: compare light vs heavy output row counts per fn.
+if LIGHTWEIGHT and HEAVYWEIGHT:
+    _parity_ok = True
+    _parity_msgs = []
+    for _ffn in _fanout_fns:
+        _lc = _fanout_counts.get((_ffn, "lightweight"), None)
+        _hc = _fanout_counts.get((_ffn, "heavyweight"), None)
+        if _lc is None or _hc is None:
+            continue
+        if _lc == _hc and _lc > 0:
+            _parity_msgs.append(f"{_ffn}: PASS (light=heavy={_lc} rows)")
+        else:
+            _parity_ok = False
+            _parity_msgs.append(f"{_ffn}: FAIL light={_lc} heavy={_hc}")
+    _verdict = "FANOUT PARITY: " + (
+        "PASS" if _parity_ok else "FAIL"
+    ) + " -- " + "; ".join(_parity_msgs)
+    print(_verdict)
+    assert _verdict.startswith("FANOUT PARITY: PASS"), _verdict
+if _fanout_rows:
+    _df_fanout = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'fanout'"
+    )
+    try:
+        display(_df_fanout)
+    except Exception:
+        _df_fanout.show(100, truncate=False)
+    _md = results.summarize(_fanout_rows)
+    _show_md(f"fanout UDTF benchmark -- {RUN_ID}", _md)
+"""
+
+# Cell-set constants: a "fanout-only" run uses just _CELL_FANOUT.
+FANOUT_ONLY = {"fanout"}
+BENCHMARK_FANOUT = {"fanout"}
+
 _CELL_VECTOR = """# Vector reader + writer benchmark: light *_gbx vs heavy *_ogr (+ row-count parity)
 # Two-leg pipeline (scaled branch):
 #   Leg 1 (reader): spark.read.format(fmt).load(copies/) -> Delta ingest table (forces
@@ -1116,6 +1172,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         vector_formats=str(cfg.get("vector_formats", "") or ""),
         benchmark_mvt=bool(cfg.get("benchmark_mvt")),
         mvt_only=bool(cfg.get("mvt_only")),
+        benchmark_fanout=bool(cfg.get("benchmark_fanout")),
+        fanout_only=bool(cfg.get("fanout_only")),
     )
     setup += (
         _SINK  # truncate up-front + define the incremental Delta sink + show_section
@@ -1138,6 +1196,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     vector_only = bool(cfg.get("vector_only"))
     benchmark_mvt = bool(cfg.get("benchmark_mvt"))
     mvt_only = bool(cfg.get("mvt_only"))
+    benchmark_fanout = bool(cfg.get("benchmark_fanout"))
+    fanout_only = bool(cfg.get("fanout_only"))
 
     # Setup is one cell; then ONE cell per selected (tier x mode) section so each renders
     # its table + summary the moment it finishes; then the wrap-up cell. Order: pure-core
@@ -1162,7 +1222,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if not readers_only and not pmtiles_only and not vector_only and not mvt_only:
+    if not readers_only and not pmtiles_only and not vector_only and not mvt_only and not fanout_only:
         if light and do_pure:
             cells.append(_cell(_CELL_LIGHT_PURE))
         if heavy and do_pure:
@@ -1179,6 +1239,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_VECTOR))
     if benchmark_mvt or mvt_only:
         cells.append(_cell(_CELL_MVT))
+    if benchmark_fanout or fanout_only:
+        cells.append(_cell(_CELL_FANOUT))
     cells.append(_cell(_EPILOGUE))
     cells.append(
         _cell(_EXIT)

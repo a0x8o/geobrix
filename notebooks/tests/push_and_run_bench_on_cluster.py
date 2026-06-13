@@ -265,6 +265,11 @@ def main() -> int:
     # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
     benchmark_mvt = "--benchmark-mvt" in sys.argv
     mvt_only = "--mvt-only" in sys.argv
+    # --benchmark-fanout: also run the fan-out UDTF benchmark (rst_polygonize +
+    #   rst_h3_rastertogridcount), light pyrx LATERAL vs heavy rasterx explode.
+    # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
+    benchmark_fanout = "--benchmark-fanout" in sys.argv
+    fanout_only = "--fanout-only" in sys.argv
     writer_rows = int(_arg("--writer-rows", "14000000"))
     # --vector-legs reader|writer|both: run the scaled vector reader-ingest legs, the
     # writer-export leg, or both (default). Lets each be a separate isolated cluster job.
@@ -313,6 +318,8 @@ def main() -> int:
             run_id = f"{run_id}-vector"
         elif mvt_only:
             run_id = f"{run_id}-mvt"
+        elif fanout_only:
+            run_id = f"{run_id}-fanout"
     functions = _arg("--functions", "")
     sel = _arg("--set", "core")
 
@@ -455,6 +462,10 @@ def main() -> int:
         benchmark_mvt=benchmark_mvt,
         #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
         mvt_only=mvt_only,
+        #  --benchmark-fanout: also run fan-out UDTF benchmark (rst_polygonize + rst_h3_rastertogridcount).
+        benchmark_fanout=benchmark_fanout,
+        #  --fanout-only: ONLY run the fanout benchmark, skip fn benchmarks.
+        fanout_only=fanout_only,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
@@ -467,6 +478,9 @@ def main() -> int:
         cfg["modes"] = "spark-path"
     if mvt_only:
         # MVT agg benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if fanout_only:
+        # Fan-out UDTF benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
 
     # Import the notebook builder from the repo source (this runs on the HOST, not the cluster).
@@ -536,6 +550,7 @@ def main() -> int:
         or cfg.get("pmtiles_only")
         or cfg.get("vector_only")
         or cfg.get("mvt_only")
+        or cfg.get("fanout_only")
     )
     if (
         cfg["modes"] in ("spark-path", "both")
