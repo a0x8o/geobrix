@@ -69,7 +69,8 @@ class ST_InterpolateElevationGeomTest extends AnyFunSuite {
             Literal(10),                                                         // grid_cols  (Int)
             Literal(10),                                                         // grid_rows  (Int)
             Literal(10.0),                                                       // cell_size_x
-            Literal(10.0)                                                        // cell_size_y
+            Literal(10.0),                                                       // cell_size_y
+            Literal("constrained")
         )
 
         val rows = evalGeomExpr(expr)
@@ -102,7 +103,8 @@ class ST_InterpolateElevationGeomTest extends AnyFunSuite {
             Literal(10),
             Literal(10),
             Literal(10.0),
-            Literal(10.0)
+            Literal(10.0),
+            Literal("constrained")
         )
 
         val bboxExpr = ST_InterpolateElevationBBox(
@@ -117,7 +119,8 @@ class ST_InterpolateElevationGeomTest extends AnyFunSuite {
             Literal(100.0), // ymax
             Literal(10),    // width_px
             Literal(10),    // height_px
-            Literal(32633)  // srid
+            Literal(32633), // srid
+            Literal("constrained")
         )
 
         def toTriples(rows: Seq[InternalRow]): Seq[(Double, Double, Double)] =
@@ -147,21 +150,45 @@ class ST_InterpolateElevationGeomTest extends AnyFunSuite {
         }
     }
 
-    test("ST_InterpolateElevationGeom.builder accepts exactly 10 arguments") {
+    test("ST_InterpolateElevationGeom.builder accepts exactly 10 arguments and defaults to constrained") {
         val pts = cornerPoints
-        noException should be thrownBy {
-            ST_InterpolateElevationGeom.builder()(Seq(
-                geomArrayLit(pts: _*),
-                emptyArrayLit,
-                Literal(0.0),
-                Literal(0.01),
-                Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
-                originLit,
-                Literal(10),
-                Literal(10),
-                Literal(10.0),
-                Literal(10.0)
-            ))
+        val built = ST_InterpolateElevationGeom.builder()(Seq(
+            geomArrayLit(pts: _*),
+            emptyArrayLit,
+            Literal(0.0),
+            Literal(0.01),
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
+            originLit,
+            Literal(10),
+            Literal(10),
+            Literal(10.0),
+            Literal(10.0)
+        )).asInstanceOf[ST_InterpolateElevationGeom]
+
+        built.modeExpr shouldBe Literal("constrained")
+        evalGeomExpr(built).length shouldBe 100
+    }
+
+    test("st_interpolateelevationgeom mode=conforming yields the 100-point grid for a tilted plane") {
+        val pts = cornerPoints
+        val expr = ST_InterpolateElevationGeom(
+            geomArrayLit(pts: _*),
+            emptyArrayLit,
+            Literal(0.0),
+            Literal(0.01),
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
+            originLit,
+            Literal(10),
+            Literal(10),
+            Literal(10.0),
+            Literal(10.0),
+            Literal("conforming")
+        )
+        val rows = evalGeomExpr(expr)
+        rows.length shouldBe 100
+        rows.foreach { row =>
+            val pt = JTS.fromWKB(row.getBinary(0)).asInstanceOf[Point]
+            pt.getCoordinate.getZ should be(planeZ(pt.getX, pt.getY) +- 1e-6)
         }
     }
 }

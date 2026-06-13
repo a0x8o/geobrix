@@ -37,7 +37,7 @@ import com.databricks.labs.gbx.vectorx.jts.{InterpolateElevation, JTS, Triangula
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression}
+import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression, Literal}
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -53,7 +53,8 @@ case class ST_InterpolateElevationGeom(
     gridCols: Expression,
     gridRows: Expression,
     cellSizeX: Expression,
-    cellSizeY: Expression
+    cellSizeY: Expression,
+    modeExpr: Expression
 ) extends CollectionGenerator
       with Serializable
       with CodegenFallback {
@@ -65,10 +66,10 @@ case class ST_InterpolateElevationGeom(
 
     override def children: Seq[Expression] =
         Seq(pointsArray, breaklinesArray, mergeTolerance, snapTolerance, splitPointFinder,
-            gridOrigin, gridCols, gridRows, cellSizeX, cellSizeY)
+            gridOrigin, gridCols, gridRows, cellSizeX, cellSizeY, modeExpr)
 
     override def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7), nc(8), nc(9))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7), nc(8), nc(9), nc(10))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] = {
         val pointsVal = pointsArray.eval(input)
@@ -103,6 +104,14 @@ case class ST_InterpolateElevationGeom(
         }
         val finder = TriangulationSplitPointTypeEnum.fromString(finderStr)
 
+        val modeStr = modeExpr.eval(input) match {
+            case s: UTF8String => s.toString
+            case s: String     => s
+            case null          => throw new IllegalArgumentException(
+                "gbx_st_interpolateelevationgeom: mode must not be null")
+            case other         => other.toString
+        }
+
         val originGeom: Geometry = gridOrigin.eval(input) match {
             case b: Array[Byte] => JTS.fromWKB(b)
             case s: UTF8String  => JTS.fromWKT(s.toString)
@@ -126,7 +135,7 @@ case class ST_InterpolateElevationGeom(
         mp.setSRID(originSrid)
         val grid = InterpolateElevation.pointGridOrigin(originX, originY, cols, rows, cSizeX, cSizeY, originSrid)
         val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid,
-                                                            mergeTol, snapTol, Some(finder))
+                                                            mergeTol, snapTol, Some(finder), modeStr)
 
         interpolated.iterator.map { p =>
             InternalRow(JTS.toWKB3(p))
@@ -200,17 +209,20 @@ object ST_InterpolateElevationGeom extends WithExpressionInfo {
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
         case 10 => ST_InterpolateElevationGeom(
             c(0), c(1), c(2), c(3), c(4),
-            c(5), c(6), c(7), c(8), c(9))
+            c(5), c(6), c(7), c(8), c(9), Literal("constrained"))
+        case 11 => ST_InterpolateElevationGeom(
+            c(0), c(1), c(2), c(3), c(4),
+            c(5), c(6), c(7), c(8), c(9), c(10))
         case n => throw new IllegalArgumentException(
-            s"gbx_st_interpolateelevationgeom takes exactly 10 arguments " +
+            s"gbx_st_interpolateelevationgeom takes 10 or 11 arguments " +
             s"(points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, " +
-            s"grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y); got $n"
+            s"grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y, [mode]); got $n"
         )
     }
 
     override def usageArgs: String =
         "points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, " +
-        "grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y"
+        "grid_origin, grid_cols, grid_rows, cell_size_x, cell_size_y, mode"
 
     override def description: String =
         "Generator: emit one row per Z-interpolated grid cell center (WKB BINARY) " +
