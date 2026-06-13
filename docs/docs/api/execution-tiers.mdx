@@ -42,7 +42,7 @@ Choose **Heavyweight (rasterx)** in three cases:
 
 1. **Your environment is already JVM/GDAL-based** — you have the init script and JAR in place, or you specifically want JVM-native execution on a dedicated cluster.
 2. **You need vector OGR readers or format-specific GDAL options** — the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …) and the generic `gdal` reader with exotic driver options are heavy-only. For raster I/O, the lightweight tier ships native `raster_gbx` / `gtiff_gbx` readers and a writer (no JAR; see [Lightweight Raster Readers](../readers/raster)).
-3. **You need GridX, or the VectorX TIN / legacy-geometry functions** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`), TIN surface modeling (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`), and legacy-geometry migration (`gbx_st_legacyaswkb`) are heavyweight-only. **Vector-tile encoding** (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`) is available in the lightweight `pyvx` tier — see [VectorX Functions (Lightweight)](./vectorx-functions-lightweight).
+3. **You need GridX, or the VectorX TIN / legacy-geometry functions** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`), TIN surface modeling (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`), and legacy-geometry migration (`gbx_st_legacyaswkb`) are heavyweight-only. **Vector-tile encoding** (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`) is available in the lightweight `pyvx` tier — see [VectorX Function Reference](./vectorx-functions#vector-tile-output).
 
 The vector OGR readers, GridX, and the TIN/legacy-geometry VectorX functions (case 3) are the remaining heavyweight-only surfaces. Raster I/O and MVT tile encoding are now available in both tiers; heavyweight's unique surface is expected to keep narrowing.
 

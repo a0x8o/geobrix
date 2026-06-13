@@ -58,7 +58,7 @@ def st_asmvt(geom_wkb: ColLike, attrs: ColLike, layer_name: ColLike) -> Column:
 
     Args:
         geom_wkb: Per-row geometry in WKB (BINARY) column, in tile-local coordinates.
-        attrs:    Per-row attribute struct column (all fields stringified in v0.4.0).
+        attrs:    Per-row attribute struct column (encoded with native MVT value types).
         layer_name: Constant MVT layer name. Pass a plain ``str`` for a literal layer
                     name (auto-wrapped with ``f.lit``), or a ``Column`` to reference
                     a column. To reference a column by name, use ``f.col("...")``.
@@ -94,7 +94,7 @@ def st_asmvt_pyramid(
 
     Args:
         geom_wkb:   Per-feature geometry in WKB (BINARY) column.
-        attrs:      Per-feature attribute struct column (all fields stringified in v0.4.0).
+        attrs:      Per-feature attribute struct column (encoded with native MVT value types).
         min_z:      Inclusive minimum zoom level.
         max_z:      Inclusive maximum zoom level (<= 20).
         layer_name: Constant MVT layer name. Pass a plain ``str`` for a literal

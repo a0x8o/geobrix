@@ -123,6 +123,11 @@ const config = {
             position: 'left'
           },
           {
+            to: '/docs/readers/overview',
+            label: 'Readers & Writers',
+            position: 'left'
+          },
+          {
             href: 'https://github.com/databrickslabs/geobrix',
             label: 'GitHub',
             position: 'right',
