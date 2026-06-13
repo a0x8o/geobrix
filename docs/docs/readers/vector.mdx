@@ -194,11 +194,15 @@ For common formats, GeoBrix provides named readers for convenience (sample-data 
 
 ### Heavyweight (`ogr`)
 
-#### `driverName`
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driverName` | auto-detected from extension | Force a specific OGR driver regardless of file extension (e.g. a `.txt` that is really GeoJSON). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `layerN` | `"0"` | Layer index for multi-layer formats (0-based). |
+| `layerName` | `""` | Layer name for multi-layer formats (overrides `layerN`). |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
 
-**Default:** Auto-detected from file extension if not specified
-
-Explicitly specify the OGR driver to use (regardless of extension).
+Example — forcing the driver explicitly:
 
 <CodeFromTest
   code={ogrExamples}
@@ -208,12 +212,3 @@ Explicitly specify the OGR driver to use (regardless of extension).
   testFile="docs/tests/python/readers/test_ogr_examples.py"
   outputConstant="READ_WITH_DRIVER_output"
 />
-
-#### Other Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading |
-| `layerN` | `"0"` | Layer index for multi-layer formats (0-based) |
-| `layerName` | `""` | Layer name for multi-layer formats (overrides `layerN`) |
-| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text) |

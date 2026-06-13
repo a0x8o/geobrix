@@ -158,22 +158,26 @@ root
 
 ### Lightweight (`geojson_gbx`)
 
-- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
-- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
-- `layerNumber` - Layer index to read (default: `"0"`).
-- `layerName` - Layer name to read; takes precedence over `layerNumber` when set.
-
 The driver (`GeoJSON`) is preset; there is no `multi` switch — `geojson_gbx` reads both GeoJSON and GeoJSONSeq files.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index to read (0-based). |
+| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
 
 ### Heavyweight (`geojson_ogr`)
 
-#### `multi`
+| Option | Default | Description |
+|--------|---------|-------------|
+| `multi` | `"true"` | `"true"` uses the [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files); `"false"` uses the [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
 
-**Default:** `"true"`
+All other [OGR reader options](./vector#options) (`driverName`, `layerN`, `layerName`, …) are also available.
 
-Controls which GeoJSON driver to use:
-- `"true"` → Uses [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files)
-- `"false"` → Uses [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection format)
+Example — reading newline-delimited GeoJSONSeq (the `multi` default):
 
 <CodeFromTest
   code={geojsonExamples}
@@ -183,10 +187,3 @@ Controls which GeoJSON driver to use:
   testFile="docs/tests/python/readers/test_geojson_examples.py"
   outputConstant="READ_GEOJSONSEQ_output"
 />
-
-#### Other Options
-
-All [OGR reader options](./vector#options) are available, e.g.:
-
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")

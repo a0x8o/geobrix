@@ -111,18 +111,27 @@ Read ESRI Shapefile format using the `shapefile` reader.
 
 The ESRI Shapefile driver is preset. Available options:
 
-- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
-- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
-- `layerNumber` - Layer index to read (default: `"0"`).
-- `layerName` - Layer name to read; takes precedence over `layerNumber` when set.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index to read (0-based). |
+| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
 
 ### Heavyweight (`shapefile_ogr`)
 
-For the full list of options (chunkSize, driverName, layerN, asWKB, etc.), see [OGR reader options](./vector#options).
+The ESRI Shapefile driver is preset.
 
-#### Chunk Size
+| Option | Default | Description |
+|--------|---------|-------------|
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `layerN` | `"0"` | Layer index for multi-layer formats (0-based). |
+| `layerName` | `""` | Layer name (overrides `layerN`). |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
 
-Adjust records per chunk for performance:
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — tuning the chunk size for performance:
 
 <CodeFromTest
   code={shapefileExamples}

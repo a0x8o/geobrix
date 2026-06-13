@@ -149,18 +149,29 @@ File Geodatabases contain multiple feature classes (layers); both tiers expose a
 
 ### Lightweight (`file_gdb_gbx`)
 
-- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
-- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
-- `layerNumber` - Feature-class index to read (default: `"0"`, first feature class).
-- `layerName` - Feature-class name to read; takes precedence over `layerNumber` when set.
+The OpenFileGDB driver is preset.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Feature-class index to read (0-based, first feature class). |
+| `layerName` | `""` | Feature-class name to read; takes precedence over `layerNumber` when set. |
 
 ### Heavyweight (`file_gdb_ogr`)
 
-#### `layerName`
+The OpenFileGDB driver is preset.
 
-**Default:** `""` (first feature class)
+| Option | Default | Description |
+|--------|---------|-------------|
+| `layerName` | `""` (first feature class) | Feature-class (layer) name to read; takes precedence over `layerN`. |
+| `layerN` | `"0"` | Feature-class index to read (0-based). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
 
-Specify which feature class (layer) to read from the geodatabase:
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — reading a specific feature class by name:
 
 <CodeFromTest
   code={filegdbExamples}
@@ -170,11 +181,3 @@ Specify which feature class (layer) to read from the geodatabase:
   testFile="docs/tests/python/readers/test_filegdb_examples.py"
   outputConstant="READ_WITH_LAYER_output"
 />
-
-#### Other Options
-
-All [OGR reader options](./vector#options) are available, e.g.:
-
-- `layerN` - Layer index to read (0-based)
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")

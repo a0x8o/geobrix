@@ -131,16 +131,27 @@ GeoPackage files can contain multiple layers; both tiers expose a layer selector
 
 The GPKG driver is preset. Available options:
 
-- `asWKB` - Output geometry as WKB vs WKT (default: `"true"`).
-- `chunkSize` - Arrow batch size for the per-file read; controls in-memory batching, not partition splitting (default: `"10000"`).
-- `layerNumber` - Layer index to read (default: `"0"`).
-- `layerName` - Layer name to read; takes precedence over `layerNumber` when set.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index to read (0-based). |
+| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
 
 ### Heavyweight (`gpkg_ogr`)
 
-#### Multi-Layer Support
+The GPKG driver is preset.
 
-Use the `layerName` option to specify which layer to read:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `layerName` | `""` | Layer name to read (overrides `layerN`). |
+| `layerN` | `"0"` | Layer index to read (0-based). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
+
+Example — selecting a specific layer in a multi-layer GeoPackage:
 
 <CodeFromTest
   code={geopackageExamples}
@@ -150,12 +161,3 @@ Use the `layerName` option to specify which layer to read:
   testFile="docs/tests/python/readers/test_geopackage_examples.py"
   outputConstant="READ_SPECIFIC_LAYER_output"
 />
-
-#### Other Options
-
-All [OGR reader options](./vector#options) are available, e.g.:
-
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")
-- `layerName` - Specific layer to read
-- `layerN` - Layer index to read (0-based)

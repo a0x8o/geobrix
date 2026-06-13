@@ -284,11 +284,17 @@ The `hrrr-weather` dataset is included in the **complete** sample-data bundle, n
 
 ### Heavyweight (`gdal`)
 
-#### `driver`
+| Option | Default | Description |
+|--------|---------|-------------|
+| `driver` | auto-detected from extension | Explicitly specify the GDAL driver to use (regardless of extension). |
+| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing). |
+| `filterRegex` | `".*"` | Filter files by regex when reading from a directory. |
+| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g. HDF, NetCDF). |
+| `rasterAsGrid` | `"false"` | Read as grid instead of tiles. |
+| `retile` | `"false"` | Retile rasters for optimal processing. |
+| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled). |
 
-**Default:** Auto-detected from file extension if not specified
-
-Explicitly specify the GDAL driver to use (regardless of extension).
+Example — forcing the GDAL driver explicitly:
 
 <CodeFromTest
   code={gdalExamples}
@@ -298,14 +304,3 @@ Explicitly specify the GDAL driver to use (regardless of extension).
   testFile="docs/tests/python/readers/test_gdal_examples.py"
   outputConstant="READ_WITH_DRIVER_output"
 />
-
-#### Other Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing) |
-| `filterRegex` | `".*"` | Filter files by regex when reading from directory |
-| `readSubdatasets` | `"false"` | Read subdatasets if present (e.g., HDF, NetCDF) |
-| `rasterAsGrid` | `"false"` | Read as grid instead of tiles |
-| `retile` | `"false"` | Retile rasters for optimal processing |
-| `tileSize` | `"256"` | Tile size in pixels (if retiling enabled) |
