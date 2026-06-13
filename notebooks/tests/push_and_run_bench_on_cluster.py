@@ -262,6 +262,9 @@ def main() -> int:
     vector_only = "--vector-only" in sys.argv
     vector_scale = "--vector-scale" in sys.argv
     writer_rows = int(_arg("--writer-rows", "14000000"))
+    # --vector-legs reader|writer|both: run the scaled vector reader-ingest legs, the
+    # writer-export leg, or both (default). Lets each be a separate isolated cluster job.
+    vector_legs = _arg("--vector-legs", "both")
     if not heavyweight and not lightweight:
         print(
             "ERROR: --heavyweight-only and --lightweight-only are mutually exclusive "
@@ -434,6 +437,8 @@ def main() -> int:
         vector_scale=vector_scale,
         #  --writer-rows N: row count for the shared writer-source Delta table (default 14M).
         writer_rows=writer_rows,
+        #  --vector-legs reader|writer|both: which scaled vector legs to run (default both).
+        vector_legs=vector_legs,
     )
     if explain_only:
         # Plans are a spark-path concern only; never run the pure-core sections.
