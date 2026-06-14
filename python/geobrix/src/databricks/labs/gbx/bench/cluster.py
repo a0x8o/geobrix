@@ -190,6 +190,10 @@ MVT_ONLY = {mvt_only!r}
 # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
 BENCHMARK_VECTOR_TIN = {benchmark_vector_tin!r}
 VECTOR_TIN_ONLY = {vector_tin_only!r}
+# --benchmark-grid-quadbin: also run the quadbin grid benchmark (light pygx vs heavy gridx.quadbin).
+# --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip all fn benchmarks.
+BENCHMARK_GRID_QUADBIN = {benchmark_grid_quadbin!r}
+GRID_QUADBIN_ONLY = {grid_quadbin_only!r}
 # --benchmark-fanout: also run the fan-out UDTF benchmark (all 8 streaming UDTFs).
 # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
 BENCHMARK_FANOUT = {benchmark_fanout!r}
@@ -1053,6 +1057,183 @@ if _tin_rows:
     _show_md(f"TIN + legacy benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_GRID_QUADBIN = """# Quadbin grid benchmark: light pygx vs heavy gridx.quadbin, exact-output parity.
+# 4 representative shapes: pointascell (scalar) / polyfill (geom->ARRAY<cell>) /
+# tessellate (struct-array) / cellunion_agg (grouped aggregate). Both tiers expose the
+# SAME gbx_quadbin_* SQL names, so light is collected BEFORE heavy re-registers (the later
+# registration overwrites the UDF) -- the same ordering trick as the legacy parity cell.
+from databricks.labs.gbx.bench import readers as _rd
+from databricks.labs.gbx.bench import corpus_vector as _cv
+from shapely import wkb as _shp_wkb
+_quadbin_rows = []
+_QB_N_ROWS = 1000
+_QB_PAC_RES = 12   # pointascell resolution
+_QB_GEOM_RES = 8   # polyfill / tessellate resolution
+_QB_AGG_RES = 8    # cellunion_agg cell resolution
+if LIGHTWEIGHT:
+    _quadbin_rows.append(_rd.run_quadbin_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_PAC_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_GEOM_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_tessellate(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_GEOM_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
+    for _r in _quadbin_rows[-4:]:
+        _sink([_r]); lw.append(_r)
+if HEAVYWEIGHT:
+    _hw_qb = []
+    _hw_qb.append(_rd.run_quadbin_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_PAC_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_GEOM_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_tessellate(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_GEOM_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
+    for _r in _hw_qb:
+        _sink([_r]); hw.append(_r); _quadbin_rows.append(_r)
+# Exact-output parity (hard gate): rebuild the SAME deterministic corpora, collect each tier
+# through its native SQL surface, and compare. Cells: exact equality. Decoded geometry: 1e-6.
+if LIGHTWEIGHT and HEAVYWEIGHT:
+    import pyspark.sql.functions as _F_qb
+    _verdicts = []
+    def _centroid_qb(_blob):
+        _g = _shp_wkb.loads(bytes(_blob)); _c = _g.centroid
+        return (round(_c.x, 6), round(_c.y, 6))
+    # --- pointascell: exact cell-id equality (light BEFORE heavy: shared SQL name). ---
+    try:
+        _pdata, _pschema = _cv.generate_quadbin_points(_QB_N_ROWS)
+        _pdf = spark.createDataFrame(_pdata, schema=_pschema)
+        _pdf.createOrReplaceTempView("_qb_pac_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pac
+        _gx_pac.register(spark)
+        _light_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_quadbin_pointascell(lon, lat, %d) AS cell FROM _qb_pac_parity_v"
+            % _QB_PAC_RES).collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_pac
+        _hx_pac.register(spark)
+        _heavy_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_quadbin_pointascell(lon, lat, %d) AS cell FROM _qb_pac_parity_v"
+            % _QB_PAC_RES).collect()]
+        _pac_ok = (len(_light_cells) == len(_heavy_cells) > 0
+                   and _light_cells == _heavy_cells)
+        _v = ("QUADBIN POINTASCELL PARITY: PASS (%d cells, exact id equality)" % len(_light_cells)
+              if _pac_ok else "QUADBIN POINTASCELL PARITY: FAIL -- cell id mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN POINTASCELL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN POINTASCELL PARITY: PASS"), _v
+    # --- polyfill: exact per-row cell-SET equality. ---
+    try:
+        _gdata, _gschema = _cv.generate_quadbin_polygons(_QB_N_ROWS)
+        _gdf = spark.createDataFrame(_gdata, schema=_gschema)
+        _gdf.createOrReplaceTempView("_qb_geom_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pf
+        _gx_pf.register(spark)
+        _light_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_quadbin_polyfill(geom, %d) AS cells FROM _qb_geom_parity_v"
+            % _QB_GEOM_RES).collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_pf
+        _hx_pf.register(spark)
+        _heavy_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_quadbin_polyfill(geom, %d) AS cells FROM _qb_geom_parity_v"
+            % _QB_GEOM_RES).collect()]
+        _pf_ok = (len(_light_pf) == len(_heavy_pf) > 0 and _light_pf == _heavy_pf)
+        _ncells = sum(len(c) for c in _light_pf)
+        _v = ("QUADBIN POLYFILL PARITY: PASS (%d rows, %d cells, exact set equality)"
+              % (len(_light_pf), _ncells)
+              if _pf_ok else "QUADBIN POLYFILL PARITY: FAIL -- cell set mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN POLYFILL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN POLYFILL PARITY: PASS"), _v
+    # --- tessellate: exact (cell, centroid) set per row; cells exact, centroid within 1e-6. ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ts
+        _gx_ts.register(spark)
+        def _chip_set(_chips):
+            return sorted((int(c["cell"]), _centroid_qb(c["geom"])) for c in _chips)
+        _light_ts = [_chip_set(r["chips"]) for r in spark.sql(
+            "SELECT gbx_quadbin_tessellate(geom, %d) AS chips FROM _qb_geom_parity_v"
+            % _QB_GEOM_RES).collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_ts
+        _hx_ts.register(spark)
+        _heavy_ts = [_chip_set(r["chips"]) for r in spark.sql(
+            "SELECT gbx_quadbin_tessellate(geom, %d) AS chips FROM _qb_geom_parity_v"
+            % _QB_GEOM_RES).collect()]
+        _ts_ok = len(_light_ts) == len(_heavy_ts) > 0
+        if _ts_ok:
+            for _lrow, _hrow in zip(_light_ts, _heavy_ts):
+                if len(_lrow) != len(_hrow):
+                    _ts_ok = False; break
+                for (_lc, (_lx, _ly)), (_hc, (_hx2, _hy)) in zip(_lrow, _hrow):
+                    if _lc != _hc or abs(_lx - _hx2) >= 1e-6 or abs(_ly - _hy) >= 1e-6:
+                        _ts_ok = False; break
+                if not _ts_ok:
+                    break
+        _nchips = sum(len(c) for c in _light_ts)
+        _v = ("QUADBIN TESSELLATE PARITY: PASS (%d rows, %d chips, cells exact + centroid<1e-6)"
+              % (len(_light_ts), _nchips)
+              if _ts_ok else "QUADBIN TESSELLATE PARITY: FAIL -- chip/cell/centroid mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN TESSELLATE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN TESSELLATE PARITY: PASS"), _v
+    # --- cellunion_agg: per-group decoded-union geometry equality (within 1e-6). ---
+    try:
+        _adata, _aschema = _cv.generate_quadbin_cellid_arrays(_QB_N_ROWS, res=_QB_AGG_RES)
+        _adf = spark.createDataFrame(_adata, schema=_aschema)
+        _adf.createOrReplaceTempView("_qb_agg_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_ag
+        _gx_ag.register(spark)
+        _light_ag = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _qb_agg_parity_v GROUP BY group").collect()}
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_ag
+        _hx_ag.register(spark)
+        _heavy_ag = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _qb_agg_parity_v GROUP BY group").collect()}
+        _ag_ok = (_light_ag.keys() == _heavy_ag.keys() and len(_light_ag) > 0)
+        if _ag_ok:
+            for _k in _light_ag:
+                _lg = _shp_wkb.loads(_light_ag[_k]); _hg = _shp_wkb.loads(_heavy_ag[_k])
+                # Decoded-geometry equality within tolerance. shapely union_all and JTS
+                # union pick different vertex orders / multipolygon member orders, so
+                # equals()/equals_exact() report False on identical coverage. The
+                # geometrically meaningful 1e-6 bar is "area of disagreement < tol":
+                # symmetric_difference().area collapses to floating-point noise (~1e-13)
+                # when the two unions cover the same region.
+                if _lg.symmetric_difference(_hg).area >= 1e-6:
+                    _ag_ok = False; break
+        _v = ("QUADBIN CELLUNION_AGG PARITY: PASS (%d groups, decoded union equality)"
+              % len(_light_ag)
+              if _ag_ok else "QUADBIN CELLUNION_AGG PARITY: FAIL -- union geometry mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN CELLUNION_AGG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN CELLUNION_AGG PARITY: PASS"), _v
+if _quadbin_rows:
+    _df_qb = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'grid'"
+    )
+    try:
+        display(_df_qb)
+    except Exception:
+        _df_qb.show(100, truncate=False)
+    _md = results.summarize(_quadbin_rows)
+    _show_md(f"quadbin grid benchmark -- {RUN_ID}", _md)
+"""
+
 _CELL_FANOUT = """# Fan-out UDTF benchmark: light pyrx (streaming UDTF) vs heavy rasterx (generator/array),
 # flatten-BOTH parity -- each tier's output is flattened to comparable flat rows, then the
 # flat row counts are compared per function (hard gate).
@@ -1341,6 +1522,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         mvt_only=bool(cfg.get("mvt_only")),
         benchmark_vector_tin=bool(cfg.get("benchmark_vector_tin")),
         vector_tin_only=bool(cfg.get("vector_tin_only")),
+        benchmark_grid_quadbin=bool(cfg.get("benchmark_grid_quadbin")),
+        grid_quadbin_only=bool(cfg.get("grid_quadbin_only")),
         benchmark_fanout=bool(cfg.get("benchmark_fanout")),
         fanout_only=bool(cfg.get("fanout_only")),
         fanout_scale=float(cfg.get("fanout_scale", 1.0)),
@@ -1368,6 +1551,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     mvt_only = bool(cfg.get("mvt_only"))
     benchmark_vector_tin = bool(cfg.get("benchmark_vector_tin"))
     vector_tin_only = bool(cfg.get("vector_tin_only"))
+    benchmark_grid_quadbin = bool(cfg.get("benchmark_grid_quadbin"))
+    grid_quadbin_only = bool(cfg.get("grid_quadbin_only"))
     benchmark_fanout = bool(cfg.get("benchmark_fanout"))
     fanout_only = bool(cfg.get("fanout_only"))
 
@@ -1400,6 +1585,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         and not vector_only
         and not mvt_only
         and not vector_tin_only
+        and not grid_quadbin_only
         and not fanout_only
     ):
         if light and do_pure:
@@ -1420,6 +1606,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_MVT))
     if benchmark_vector_tin or vector_tin_only:
         cells.append(_cell(_CELL_VECTOR_TIN))
+    if benchmark_grid_quadbin or grid_quadbin_only:
+        cells.append(_cell(_CELL_GRID_QUADBIN))
     if benchmark_fanout or fanout_only:
         cells.append(_cell(_CELL_FANOUT))
     cells.append(_cell(_EPILOGUE))

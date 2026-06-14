@@ -311,6 +311,80 @@ def generate_legacy_structs(n_rows: int):
     return rows, schema
 
 
+# ---------------------------------------------------------------------------------------------
+# Quadbin (light pygx vs heavy gridx.quadbin) corpus builders.  Plain-Python, deterministic.
+# Each returns (rows, schema) for ``spark.createDataFrame(rows, schema)``.  Shapes mirror the
+# four benched quadbin functions:
+#   * points        -> quadbin_pointascell (scalar lon/lat -> cell)
+#   * polygons WKT  -> quadbin_polyfill (geom -> ARRAY<cell>) and quadbin_tessellate (struct-array)
+#   * cell-id arrays + group keys -> quadbin_cellunion_agg (grouped aggregate)
+# Coordinates stay well inside the WebMercator-valid band (|lat| < 85) so both tiers agree.
+# ---------------------------------------------------------------------------------------------
+
+
+def generate_quadbin_points(n_rows: int):
+    """``n_rows`` deterministic WGS84 (lon, lat) points for quadbin_pointascell.
+
+    Returns ``(rows, schema)`` where each row is ``(lon, lat)``.  Points are
+    spread pseudo-randomly-but-deterministically over the WebMercator-valid band
+    (|lat| < 85) so row ``i`` always yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]  (inside |lat| < 85)
+        rows.append((float(lon), float(lat)))
+    return rows, "lon double, lat double"
+
+
+def generate_quadbin_polygons(n_rows: int):
+    """``n_rows`` deterministic WKT polygons for quadbin_polyfill / quadbin_tessellate.
+
+    Returns ``(rows, schema)`` where each row is a single-field tuple holding a
+    WKT polygon string.  Each polygon is a small axis-aligned box at a
+    deterministic pseudo-random lon/lat (inside |lat| < 85), sized so polyfill
+    yields a handful of cells -- enough to exercise the bbox enumeration + the
+    per-cell intersect (tessellate) without ballooning the cell count."""
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35000) / 100.0 - 175.0  # leave room for +d
+        lat = (i * 37 % 16000) / 100.0 - 80.0
+        d = 0.5  # ~0.5 deg box -> several cells at the benched resolution
+        wkt = (
+            f"POLYGON(({lon} {lat}, {lon + d} {lat}, "
+            f"{lon + d} {lat + d}, {lon} {lat + d}, {lon} {lat}))"
+        )
+        rows.append((wkt,))
+    return rows, "geom string"
+
+
+def generate_quadbin_cellid_arrays(n_rows: int, res: int = 8):
+    """``n_rows`` (group_key, cell BIGINT) rows for the quadbin_cellunion_agg grouped agg.
+
+    Returns ``(rows, schema)``.  Each row carries a ``group`` key plus a single
+    quadbin ``cell`` id (one cell per row, streamed into the aggregator).  Cells
+    are computed by pure-Python quadbin math (matching both tiers) from a
+    deterministic lon/lat at ``res``; rows are distributed across a small number
+    of groups so the grouped aggregate produces several unions.  Cells within a
+    group are spatially adjacent (a k=1 footprint walked deterministically) so
+    each group's union is a contiguous coverage, not scattered specks."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    n_groups = max(1, min(8, n_rows))
+    rows = []
+    for i in range(n_rows):
+        g = i % n_groups
+        # Deterministic center per (group); offset cells within the group by a
+        # small lon/lat step so a group spans a contiguous patch of cells.
+        base_lon = (g * 41 % 340) - 170.0
+        base_lat = (g * 23 % 160) - 80.0
+        step = (i // n_groups) + 1
+        lon = base_lon + (step % 5) * 0.5
+        lat = base_lat + ((step // 5) % 5) * 0.5
+        cell = _qb.point_as_cell(float(lon), float(lat), int(res))
+        rows.append((int(g), int(cell)))
+    return rows, "group int, cell bigint"
+
+
 def build_vector_corpus(
     spark, rows: int, copies: int, formats: List[str], out_base: str, srid: str = "4326"
 ) -> dict:

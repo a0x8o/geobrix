@@ -269,6 +269,10 @@ def main() -> int:
     # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
     benchmark_vector_tin = "--benchmark-vector-tin" in sys.argv
     vector_tin_only = "--vector-tin-only" in sys.argv
+    # --benchmark-grid-quadbin: also run the quadbin grid benchmark (light pygx vs heavy gridx.quadbin).
+    # --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip all fn benchmarks.
+    benchmark_grid_quadbin = "--benchmark-grid-quadbin" in sys.argv
+    grid_quadbin_only = "--grid-quadbin-only" in sys.argv
     # --benchmark-fanout: also run the fan-out UDTF benchmark (rst_polygonize +
     #   rst_h3_rastertogridcount), light pyrx LATERAL vs heavy rasterx explode.
     # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
@@ -327,6 +331,8 @@ def main() -> int:
             run_id = f"{run_id}-mvt"
         elif vector_tin_only:
             run_id = f"{run_id}-vector-tin"
+        elif grid_quadbin_only:
+            run_id = f"{run_id}-grid-quadbin"
         elif fanout_only:
             run_id = f"{run_id}-fanout"
     functions = _arg("--functions", "")
@@ -475,6 +481,10 @@ def main() -> int:
         benchmark_vector_tin=benchmark_vector_tin,
         #  --vector-tin-only: ONLY run the TIN + legacy benchmark, skip fn benchmarks.
         vector_tin_only=vector_tin_only,
+        #  --benchmark-grid-quadbin: also run quadbin grid benchmark (light pygx vs heavy gridx.quadbin).
+        benchmark_grid_quadbin=benchmark_grid_quadbin,
+        #  --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip fn benchmarks.
+        grid_quadbin_only=grid_quadbin_only,
         #  --benchmark-fanout: also run fan-out UDTF benchmark (all 8 streaming UDTFs).
         benchmark_fanout=benchmark_fanout,
         #  --fanout-only: ONLY run the fanout benchmark, skip fn benchmarks.
@@ -496,6 +506,9 @@ def main() -> int:
         cfg["modes"] = "spark-path"
     if vector_tin_only:
         # TIN + legacy benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if grid_quadbin_only:
+        # Quadbin grid benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
     if fanout_only:
         # Fan-out UDTF benchmark is spark-path only; skip pure-core sections.
@@ -569,6 +582,7 @@ def main() -> int:
         or cfg.get("vector_only")
         or cfg.get("mvt_only")
         or cfg.get("vector_tin_only")
+        or cfg.get("grid_quadbin_only")
         or cfg.get("fanout_only")
     )
     if (

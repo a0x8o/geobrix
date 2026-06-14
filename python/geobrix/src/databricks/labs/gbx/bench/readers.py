@@ -1671,6 +1671,416 @@ def run_interp_geom(
         )
 
 
+def _register_quadbin(spark, api: str) -> None:
+    """Register exactly one quadbin tier.
+
+    light  -> ``databricks.labs.gbx.pygx`` (gx.register: spark.udf only).
+    heavy  -> ``databricks.labs.gbx.gridx.quadbin`` (JVM Scala UDFs).
+
+    Both tiers expose the SAME ``gbx_quadbin_*`` SQL names, so registering one
+    overwrites the other in the session catalog.  Each ``run_quadbin_*`` call
+    therefore registers a single tier; the light-vs-heavy parity gate (which
+    must collect light BEFORE re-registering heavy) lives in the cluster cell,
+    not here.
+    """
+    if api == "lightweight":
+        from databricks.labs.gbx.pygx import functions as gx
+
+        gx.register(spark)
+    else:
+        from databricks.labs.gbx.gridx.quadbin import functions as hx
+
+        hx.register(spark)
+
+
+def run_quadbin_pointascell(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_pointascell (scalar lon/lat -> cell) over ``n_rows`` points.
+
+    Light registers pygx (``gbx_quadbin_pointascell`` via spark.udf); heavy
+    registers gridx.quadbin (the SAME SQL name, JVM). Records ``rows`` = number
+    of cells produced. Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_points
+
+    env = capture_env(where)
+    fn = "quadbin_pointascell"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_pointascell(lon, lat, {res}) AS cell "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm non-null cell ids are produced.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_pointascell(lon, lat, {res}) AS cell "
+            "FROM _quadbin_bench_v WHERE lon IS NOT NULL LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("quadbin_pointascell produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_pointascell {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_polyfill(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_polyfill (geom -> ARRAY<cell>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.quadbin (same SQL name). Records
+    ``rows`` = number of input polygons (each producing a cell array). Returns one
+    ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_polygons
+
+    env = capture_env(where)
+    fn = "quadbin_polyfill"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_polyfill(geom, {res}) AS cells "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty cell array.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_polyfill(geom, {res}) AS cells "
+            "FROM _quadbin_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["cells"]:
+            raise RuntimeError("quadbin_polyfill produced empty cell array")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_polyfill {api} filled {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_tessellate(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_tessellate (geom -> ARRAY<STRUCT<cell,geom>>) over polygons.
+
+    Light registers pygx; heavy registers gridx.quadbin (same SQL name). Records
+    ``rows`` = number of input polygons. Returns one ResultRow (mode="spark-path",
+    category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_polygons
+
+    env = capture_env(where)
+    fn = "quadbin_tessellate"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_tessellate(geom, {res}) AS chips "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty chip array with bytes.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_tessellate(geom, {res}) AS chips "
+            "FROM _quadbin_bench_v LIMIT 1"
+        ).head(1)
+        _chips = _val[0]["chips"] if _val else None
+        if (
+            not _chips
+            or _chips[0]["geom"] is None
+            or len(bytes(_chips[0]["geom"])) == 0
+        ):
+            raise RuntimeError("quadbin_tessellate produced empty/null chips")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_tessellate {api} tessellated {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_cellunion_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_cellunion_agg (grouped aggregate) over ``n_rows`` cell ids.
+
+    Streams one cell id per row, grouped by a small key set, unioning each
+    group's cell boundaries into one EWKB MultiPolygon.  Light registers pygx
+    (a GROUPED_AGG pandas UDF); heavy registers gridx.quadbin (the SAME SQL
+    name, a JVM TypedImperativeAggregate). Records ``rows`` = number of input
+    cells. Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cellid_arrays
+
+    env = capture_env(where)
+    fn = "quadbin_cellunion_agg"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cellid_arrays(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_agg_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT group, gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _quadbin_agg_v GROUP BY group"
+        ).count()
+
+    try:
+        # Untimed validation: confirm each group produced a non-empty union blob.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _quadbin_agg_v GROUP BY group"
+        ).collect()
+        _nonempty = sum(1 for _r in _val if _r["u"] and len(bytes(_r["u"])) > 0)
+        if _nonempty == 0:
+            raise RuntimeError("quadbin_cellunion_agg produced 0 non-empty union blobs")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_cellunion_agg {api} unioned {n} cells -> {_nonempty} groups",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
 def _make_synthetic_geotiff(
     n_regions: int = 4,
     size: int = 64,

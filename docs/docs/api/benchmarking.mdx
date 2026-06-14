@@ -605,9 +605,30 @@ Decoded-output parity holds across both tiers (enforced by the cross-tier parity
 
 </TabItem>
 
-<TabItem value="grid" label="Grid (soon)">
+<TabItem value="grid" label="Grid">
 
-GridX function benchmarks (BNG, Quadbin, custom grids) are coming soon.
+### Quadbin (`quadbin_pointascell`, `quadbin_polyfill`, `quadbin_tessellate`, `quadbin_cellunion_agg`)
+
+The quadbin grid functions are benchmarked light (pygx) vs heavy (gridx.quadbin) with exact-output
+parity across four representative shapes: a scalar encode (`gbx_quadbin_pointascell`, lon/lat → cell),
+a geometry → cell-array fill (`gbx_quadbin_polyfill`), a geometry → cell-clip struct array
+(`gbx_quadbin_tessellate`), and a grouped aggregate (`gbx_quadbin_cellunion_agg`, cell ids → unioned
+coverage geometry). Both tiers expose the same `gbx_quadbin_*` SQL names, so the light tier is
+collected before the heavy tier re-registers. Parity is asserted on decoded output: **exact cell-id
+equality** for `pointascell` and `polyfill`, **exact cells with centroid match within 1e-6** for
+`tessellate`, and **decoded union-geometry equality (1e-6)** per group for `cellunion_agg`. Run it
+with `gbx:bench:cluster --grid-quadbin-only`.
+
+Cluster spark-path results (DBR 17.3 LTS; median wall-clock of one full distributed iteration over
+*N* rows; same corpus both tiers): **pending cluster run** — numbers will be filled in here once the
+quadbin cluster benchmark has been run.
+
+| Function | Rows/iter | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|---|
+| `gbx_quadbin_pointascell` | 1,000 | _pending_ | _pending_ | _pending_ |
+| `gbx_quadbin_polyfill` | 1,000 | _pending_ | _pending_ | _pending_ |
+| `gbx_quadbin_tessellate` | 1,000 | _pending_ | _pending_ | _pending_ |
+| `gbx_quadbin_cellunion_agg` | 1,000 | _pending_ | _pending_ | _pending_ |
 
 </TabItem>
 
