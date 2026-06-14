@@ -198,6 +198,10 @@ VECTOR_TIN_ONLY = {vector_tin_only!r}
 # --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip all fn benchmarks.
 BENCHMARK_GRID_QUADBIN = {benchmark_grid_quadbin!r}
 GRID_QUADBIN_ONLY = {grid_quadbin_only!r}
+# --benchmark-grid-bng: also run the BNG grid benchmark (light pygx vs heavy gridx.bng).
+# --grid-bng-only: ONLY run the BNG grid benchmark, skip all fn benchmarks.
+BENCHMARK_GRID_BNG = {benchmark_grid_bng!r}
+GRID_BNG_ONLY = {grid_bng_only!r}
 # --benchmark-fanout: also run the fan-out UDTF benchmark (all 8 streaming UDTFs).
 # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
 BENCHMARK_FANOUT = {benchmark_fanout!r}
@@ -1443,6 +1447,208 @@ if _quadbin_rows:
     _show_md(f"quadbin grid benchmark -- {RUN_ID}", _md)
 """
 
+
+_CELL_GRID_BNG = """# BNG grid benchmark: light pygx vs heavy gridx.bng, exact-output parity.
+# Representative spread of BNG functions: pointascell (geom->STRING cell) /
+# polyfill (geom->ARRAY<STRING>) / tessellate (chip struct-array) / kring
+# (scalar STRING cell-in -> ARRAY<STRING>) / cellunion_agg (grouped aggregate over
+# chip structs). Both tiers expose the SAME gbx_bng_* SQL names, so light is
+# collected BEFORE heavy re-registers (the later registration overwrites the UDF)
+# -- the same ordering trick as the quadbin parity cell. Inputs are EPSG:27700
+# (BNG eastings/northings, not WGS84); resolutions are string keys ("1km"),
+# never metres-as-Int (the BNG resolution convention).
+from databricks.labs.gbx.bench import readers as _rd
+from databricks.labs.gbx.bench import corpus_vector as _cv
+from shapely import wkb as _shp_wkb
+_bng_rows = []
+_BNG_N_ROWS = 1000
+_BNG_GEOM_RES = "1km"   # pointascell / polyfill / tessellate resolution
+_BNG_CELL_RES = "1km"   # kring cell resolution
+_BNG_AGG_RES = "1km"    # cellunion_agg chip cell resolution
+_BNG_KRING_K = 1        # kring radius
+_BNG_N_LEGS = 5         # legs per tier (keep in sync with the appends below)
+if LIGHTWEIGHT:
+    _bng_rows.append(_rd.run_bng_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _bng_rows.append(_rd.run_bng_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _bng_rows.append(_rd.run_bng_tessellate(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _bng_rows.append(_rd.run_bng_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
+    _bng_rows.append(_rd.run_bng_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
+    for _r in _bng_rows[-_BNG_N_LEGS:]:
+        _sink([_r]); lw.append(_r)
+if HEAVYWEIGHT:
+    _hw_bng = []
+    _hw_bng.append(_rd.run_bng_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _hw_bng.append(_rd.run_bng_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _hw_bng.append(_rd.run_bng_tessellate(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _hw_bng.append(_rd.run_bng_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
+    _hw_bng.append(_rd.run_bng_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
+    for _r in _hw_bng:
+        _sink([_r]); hw.append(_r); _bng_rows.append(_r)
+# Exact-output parity (hard gate): rebuild the SAME deterministic corpora, collect each tier
+# through its native SQL surface, and compare. Cell ids: exact equality. Decoded geometry: 1e-6.
+if LIGHTWEIGHT and HEAVYWEIGHT:
+    _verdicts = []
+    # --- pointascell: exact STRING cell-id equality (light BEFORE heavy: shared SQL name). ---
+    try:
+        _pdata, _pschema = _cv.generate_bng_points(_BNG_N_ROWS)
+        _pdf = spark.createDataFrame(_pdata, schema=_pschema)
+        _pdf.createOrReplaceTempView("_bng_pac_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pac
+        _gx_pac.register(spark)
+        _light_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_bng_pointascell(geom, '%s') AS cell FROM _bng_pac_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_pac
+        _hx_pac.register(spark)
+        _heavy_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_bng_pointascell(geom, '%s') AS cell FROM _bng_pac_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        _pac_ok = (len(_light_cells) == len(_heavy_cells) > 0
+                   and _light_cells == _heavy_cells)
+        _v = ("BNG POINTASCELL PARITY: PASS (%d cells, exact id equality)" % len(_light_cells)
+              if _pac_ok else "BNG POINTASCELL PARITY: FAIL -- cell id mismatch")
+    except Exception as _pe:
+        _v = "BNG POINTASCELL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG POINTASCELL PARITY: PASS"), _v
+    # --- polyfill: exact per-row cell-SET equality. ---
+    try:
+        _gdata, _gschema = _cv.generate_bng_polygons(_BNG_N_ROWS)
+        _gdf = spark.createDataFrame(_gdata, schema=_gschema)
+        _gdf.createOrReplaceTempView("_bng_geom_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pf
+        _gx_pf.register(spark)
+        _light_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_bng_polyfill(geom, '%s') AS cells FROM _bng_geom_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_pf
+        _hx_pf.register(spark)
+        _heavy_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_bng_polyfill(geom, '%s') AS cells FROM _bng_geom_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        _pf_ok = (len(_light_pf) == len(_heavy_pf) > 0 and _light_pf == _heavy_pf)
+        _ncells = sum(len(c) for c in _light_pf)
+        _v = ("BNG POLYFILL PARITY: PASS (%d rows, %d cells, exact set equality)"
+              % (len(_light_pf), _ncells)
+              if _pf_ok else "BNG POLYFILL PARITY: FAIL -- cell set mismatch")
+    except Exception as _pe:
+        _v = "BNG POLYFILL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG POLYFILL PARITY: PASS"), _v
+    # --- tessellate: exact chip cellid-SET equality per row (the load-bearing field). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ts
+        _gx_ts.register(spark)
+        def _chip_cells(_chips):
+            return sorted(c["cellid"] for c in _chips)
+        _light_ts = [_chip_cells(r["chips"]) for r in spark.sql(
+            "SELECT gbx_bng_tessellate(geom, '%s') AS chips FROM _bng_geom_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ts
+        _hx_ts.register(spark)
+        _heavy_ts = [_chip_cells(r["chips"]) for r in spark.sql(
+            "SELECT gbx_bng_tessellate(geom, '%s') AS chips FROM _bng_geom_parity_v"
+            % _BNG_GEOM_RES).collect()]
+        _ts_ok = (len(_light_ts) == len(_heavy_ts) > 0 and _light_ts == _heavy_ts)
+        _nchips = sum(len(c) for c in _light_ts)
+        _v = ("BNG TESSELLATE PARITY: PASS (%d rows, %d chips, cell-set exact)"
+              % (len(_light_ts), _nchips)
+              if _ts_ok else "BNG TESSELLATE PARITY: FAIL -- chip cell-set mismatch")
+    except Exception as _pe:
+        _v = "BNG TESSELLATE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG TESSELLATE PARITY: PASS"), _v
+    # --- kring: exact sorted cell-set per row (fixed k), shared single-cell corpus. ---
+    try:
+        _cdata, _cschema = _cv.generate_bng_cells(_BNG_N_ROWS, res=_BNG_CELL_RES)
+        _cdf = spark.createDataFrame(_cdata, schema=_cschema)
+        _cdf.createOrReplaceTempView("_bng_cell_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_kr
+        _gx_kr.register(spark)
+        _light_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_kring(cell, %d) AS ring FROM _bng_cell_parity_v"
+            % _BNG_KRING_K).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_kr
+        _hx_kr.register(spark)
+        _heavy_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_kring(cell, %d) AS ring FROM _bng_cell_parity_v"
+            % _BNG_KRING_K).collect()]
+        _kr_ok = (len(_light_kr) == len(_heavy_kr) > 0 and _light_kr == _heavy_kr)
+        _nk = sum(len(c) for c in _light_kr)
+        _v = ("BNG KRING PARITY: PASS (%d rows, %d cells, exact set equality, k=%d)"
+              % (len(_light_kr), _nk, _BNG_KRING_K)
+              if _kr_ok else "BNG KRING PARITY: FAIL -- ring set mismatch")
+    except Exception as _pe:
+        _v = "BNG KRING PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG KRING PARITY: PASS"), _v
+    # --- cellunion_agg: per-group decoded chip-GEOMETRY equality (sym-diff area < 1e-6).
+    # Light returns BINARY (the dissolved chip geom); heavy returns STRUCT<cellid, core,
+    # chip> -> decode the .chip field. Compare the load-bearing chip geometry either way. ---
+    try:
+        _adata, _aschema = _cv.generate_bng_chip_groups(_BNG_N_ROWS, res=_BNG_AGG_RES)
+        _adf = spark.createDataFrame(_adata, schema=_aschema)
+        _adf.createOrReplaceTempView("_bng_agg_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_ag
+        _gx_ag.register(spark)
+        _light_ag = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_bng_cellunion_agg(chip) AS u "
+            "FROM _bng_agg_parity_v GROUP BY group").collect() if r["u"] is not None}
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ag
+        _hx_ag.register(spark)
+        # Heavy returns STRUCT<cellid, core, chip>; the load-bearing field is .chip (BINARY).
+        _heavy_ag = {r["group"]: bytes(r["u"]["chip"]) for r in spark.sql(
+            "SELECT group, gbx_bng_cellunion_agg(chip) AS u "
+            "FROM _bng_agg_parity_v GROUP BY group").collect()
+            if r["u"] is not None and r["u"]["chip"] is not None}
+        _ag_ok = (_light_ag.keys() == _heavy_ag.keys() and len(_light_ag) > 0)
+        if _ag_ok:
+            for _k in _light_ag:
+                _lg = _shp_wkb.loads(_light_ag[_k]); _hg = _shp_wkb.loads(_heavy_ag[_k])
+                # shapely union_all vs JTS union differ in vertex/member order; the
+                # geometrically meaningful 1e-6 bar is "area of disagreement < tol":
+                # sym-diff area collapses to FP noise on equal coverage.
+                if _lg.symmetric_difference(_hg).area >= 1e-6:
+                    _ag_ok = False; break
+        _v = ("BNG CELLUNION_AGG PARITY: PASS (%d groups, decoded chip-geom equality)"
+              % len(_light_ag)
+              if _ag_ok else "BNG CELLUNION_AGG PARITY: FAIL -- chip geometry mismatch")
+    except Exception as _pe:
+        _v = "BNG CELLUNION_AGG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CELLUNION_AGG PARITY: PASS"), _v
+if _bng_rows:
+    _df_bng = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'grid'"
+    )
+    try:
+        display(_df_bng)
+    except Exception:
+        _df_bng.show(100, truncate=False)
+    _md = results.summarize(_bng_rows)
+    _show_md(f"BNG grid benchmark -- {RUN_ID}", _md)
+"""
+
 _CELL_FANOUT = """# Fan-out UDTF benchmark: light pyrx (streaming UDTF) vs heavy rasterx (generator/array),
 # flatten-BOTH parity -- each tier's output is flattened to comparable flat rows, then the
 # flat row counts are compared per function (hard gate).
@@ -1735,6 +1941,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         vector_tin_only=bool(cfg.get("vector_tin_only")),
         benchmark_grid_quadbin=bool(cfg.get("benchmark_grid_quadbin")),
         grid_quadbin_only=bool(cfg.get("grid_quadbin_only")),
+        benchmark_grid_bng=bool(cfg.get("benchmark_grid_bng")),
+        grid_bng_only=bool(cfg.get("grid_bng_only")),
         benchmark_fanout=bool(cfg.get("benchmark_fanout")),
         fanout_only=bool(cfg.get("fanout_only")),
         fanout_scale=float(cfg.get("fanout_scale", 1.0)),
@@ -1766,6 +1974,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     vector_tin_only = bool(cfg.get("vector_tin_only"))
     benchmark_grid_quadbin = bool(cfg.get("benchmark_grid_quadbin"))
     grid_quadbin_only = bool(cfg.get("grid_quadbin_only"))
+    benchmark_grid_bng = bool(cfg.get("benchmark_grid_bng"))
+    grid_bng_only = bool(cfg.get("grid_bng_only"))
     benchmark_fanout = bool(cfg.get("benchmark_fanout"))
     fanout_only = bool(cfg.get("fanout_only"))
 
@@ -1800,6 +2010,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         and not pmtiles_agg_only
         and not vector_tin_only
         and not grid_quadbin_only
+        and not grid_bng_only
         and not fanout_only
     ):
         if light and do_pure:
@@ -1824,6 +2035,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_VECTOR_TIN))
     if benchmark_grid_quadbin or grid_quadbin_only:
         cells.append(_cell(_CELL_GRID_QUADBIN))
+    if benchmark_grid_bng or grid_bng_only:
+        cells.append(_cell(_CELL_GRID_BNG))
     if benchmark_fanout or fanout_only:
         cells.append(_cell(_CELL_FANOUT))
     cells.append(_cell(_EPILOGUE))
