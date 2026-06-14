@@ -1,10 +1,11 @@
 """Spark-free tests for the light PMTiles archive assembler."""
+
 import pytest
 from pmtiles.reader import MmapSource, Reader
 
-from databricks.labs.gbx.pmtiles._agg_light import _assemble_archive, _MAX_ARCHIVE_BYTES
+from databricks.labs.gbx.pmtiles._agg_light import _MAX_ARCHIVE_BYTES, _assemble_archive
 
-_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16          # sniffs as PNG
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16  # sniffs as PNG
 
 
 def _mvt(i):  # arbitrary non-magic bytes => sniffs as MVT
@@ -18,7 +19,7 @@ def _decode(blob, tmp_path):
     with open(p, "rb") as f:
         r = Reader(MmapSource(f))
         for z in range(0, 6):
-            n = 2 ** z
+            n = 2**z
             for x in range(n):
                 for y in range(n):
                     t = r.get(z, x, y)
@@ -55,7 +56,10 @@ def test_metadata_roundtrip(tmp_path):
 
 
 def test_null_payloads_skipped(tmp_path):
-    got = _decode(_assemble_archive([None, _mvt(2), None], [0, 1, 0], [0, 1, 0], [0, 1, 0], {}), tmp_path)
+    got = _decode(
+        _assemble_archive([None, _mvt(2), None], [0, 1, 0], [0, 1, 0], [0, 1, 0], {}),
+        tmp_path,
+    )
     assert got == {(1, 1, 1): _mvt(2)}
 
 
@@ -66,7 +70,9 @@ def test_empty_group_returns_none():
 
 def test_duplicate_tileid_dropped(tmp_path):
     # two rows for the same (z,x,y): keep first, no Writer error
-    got = _decode(_assemble_archive([_mvt(1), _mvt(9)], [2, 2], [1, 1], [1, 1], {}), tmp_path)
+    got = _decode(
+        _assemble_archive([_mvt(1), _mvt(9)], [2, 2], [1, 1], [1, 1], {}), tmp_path
+    )
     assert got == {(2, 1, 1): _mvt(1)}
 
 

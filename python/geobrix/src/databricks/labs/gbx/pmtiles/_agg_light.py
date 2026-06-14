@@ -9,16 +9,16 @@ Column expressions only (no _jvm / spark.conf / rdd).
 from __future__ import annotations
 
 import io
-import json  # noqa: F401
+import json
 from typing import Optional, Sequence
 
-import pandas as pd  # noqa: F401
-from pyspark.sql import Column, SparkSession  # noqa: F401
-from pyspark.sql import functions as f  # noqa: F401
-from pyspark.sql.functions import pandas_udf  # noqa: F401
-from pyspark.sql.types import BinaryType  # noqa: F401
+import pandas as pd
 from pmtiles.tile import Compression, zxy_to_tileid
 from pmtiles.writer import Writer
+from pyspark.sql import Column, SparkSession  # noqa: F401
+from pyspark.sql import functions as f  # noqa: F401
+from pyspark.sql.functions import pandas_udf
+from pyspark.sql.types import BinaryType
 
 from databricks.labs.gbx.ds.tiles._header import build_header_info, sniff_tile_type
 from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
@@ -77,7 +77,42 @@ def _assemble_archive(
     )
     buf = io.BytesIO()
     writer = Writer(buf)
-    for (_, _, _, tileid, b) in sorted(tiles, key=lambda t: t[3]):
+    for _, _, _, tileid, b in sorted(tiles, key=lambda t: t[3]):
         writer.write_tile(tileid, b)
     writer.finalize(info.header_dict(), info.metadata)
     return buf.getvalue()
+
+
+@pandas_udf(BinaryType())
+def _pmtiles_agg_udf(
+    data: pd.Series,
+    z: pd.Series,
+    x: pd.Series,
+    y: pd.Series,
+    metadata_json: pd.Series = None,
+) -> Optional[bytes]:
+    """GROUPED_AGG: fold one group's tiles into a PMTiles archive (BINARY).
+
+    ``metadata_json`` is optional so the 4-arg SQL form
+    ``gbx_pmtiles_agg(tile, z, x, y)`` resolves; the DataFrame wrapper always
+    supplies it. Blank / whitespace-only / ``"{}"`` payloads mean no metadata.
+    """
+    meta = {}
+    if metadata_json is not None and len(metadata_json) > 0:
+        for m in metadata_json:
+            if m is not None and str(m).strip():
+                meta = json.loads(m)
+                break
+    return _assemble_archive(data, z, x, y, meta)
+
+
+def register_pmtiles_agg(spark: SparkSession = None) -> None:
+    """Register the light gbx_pmtiles_agg grouped aggregate (Serverless-safe).
+
+    Called by both pyrx.register and pyvx.register, and usable standalone.
+    """
+    global _LIGHT_REGISTERED
+    if spark is None:
+        spark = SparkSession.builder.getOrCreate()
+    spark.udf.register("gbx_pmtiles_agg", _pmtiles_agg_udf)
+    _LIGHT_REGISTERED = True
