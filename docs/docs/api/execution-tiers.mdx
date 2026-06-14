@@ -42,13 +42,13 @@ Choose **Heavyweight (rasterx)** in three cases:
 
 1. **Your environment is already JVM/GDAL-based** — you have the init script and JAR in place, or you specifically want JVM-native execution on a dedicated cluster.
 2. **You need vector OGR readers or format-specific GDAL options** — the OGR vector readers (`shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, …) and the generic `gdal` reader with exotic driver options are heavy-only. For raster I/O, the lightweight tier ships native `raster_gbx` / `gtiff_gbx` readers and a writer (no JAR; see [Lightweight Raster Readers](../readers/raster)).
-3. **You need GridX, or the VectorX TIN / legacy-geometry functions** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`), TIN surface modeling (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`), and legacy-geometry migration (`gbx_st_legacyaswkb`) are heavyweight-only. **Vector-tile encoding** (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`) is available in the lightweight `pyvx` tier — see [VectorX Function Reference](./vectorx-functions#vector-tile-output).
+3. **You need GridX, or the heavy-only `conforming` triangulation mode** — the BNG/quadbin/H3 grid APIs (`gbx_bng_*`) are heavyweight-only. The full **VectorX** function set is now available in the lightweight `pyvx` tier — vector-tile encoding (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`), TIN surface modeling (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`), and legacy-geometry migration (`gbx_st_legacyaswkb`); only the Steiner-point `conforming` triangulation mode is heavyweight-only (the default `constrained` mode runs in both tiers). See [VectorX Function Reference](./vectorx-functions).
 
-The vector OGR readers, GridX, and the TIN/legacy-geometry VectorX functions (case 3) are the remaining heavyweight-only surfaces. Raster I/O and MVT tile encoding are now available in both tiers; heavyweight's unique surface is expected to keep narrowing.
+The vector OGR readers, GridX, and the `conforming` triangulation mode are the remaining heavyweight-only surfaces. Raster I/O and the full VectorX function set are now available in both tiers; heavyweight's unique surface is expected to keep narrowing.
 
 ## Performance
 
-The one-line swap keeps your code identical across tiers. The lightweight tier is functionally complete for raster — it implements every `rst_*` function (all 107).
+The one-line swap keeps your code identical across tiers. The lightweight tier is functionally complete for raster — it implements every `rst_*` function (all 107) — and for VectorX, implementing every `gbx_st_*` function (MVT, TIN, legacy migration).
 
 On per-operation timing the lightweight tier is **competitive-to-faster for the large majority** of functions. Band math is dramatically faster, because the heavyweight tier shells out to a subprocess there. Terrain, focal filters, and discrete-grid (H3/quadbin) aggregation are a few times faster following recent vectorization. A small number of algorithm-bound operations (for example viewshed) are slower on the lightweight tier but remain sub-second in absolute terms. Metadata accessors are sub-millisecond on both.
 

@@ -15,7 +15,7 @@
 
 ## Tiers
 
-- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
+- **Lightweight tier** — pure Python (+ SQL bindings) on [rasterio](https://rasterio.readthedocs.io/)/[pyogrio](https://pyogrio.readthedocs.io/)/[shapely](https://shapely.readthedocs.io/), **no JAR, no init script, no native GDAL bundle**. Runs on **Serverless**, standard (shared), Lakeflow pipelines, and **ARM** — where the heavyweight tier can't.
 - **Heavyweight tier** — Scala (Python and SQL bindings) + native GDAL for distributed processing on classic (x86) clusters. **Same function names across tiers** — switching is a one-line import change.
 
 ## Packages
@@ -24,7 +24,7 @@
 
 - **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster).
 - **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex).
-- **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST.
+- **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST. Available in **both tiers** — lightweight `pyvx` (Serverless/ARM, pure Python) and heavyweight Scala.
 
 All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names. See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings. 
 

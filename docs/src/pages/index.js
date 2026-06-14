@@ -57,7 +57,7 @@ function HomepageFeatures() {
           />
           <Feature
             title="VectorX"
-            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types."
+            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types. Available in the lightweight tier (pyvx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier."
             link="/docs/api/vectorx-functions"
           />
         </div>
@@ -101,8 +101,9 @@ export default function Home() {
                 <p>
                   The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
                   a single wheel, no JAR and no init script, and it works everywhere — serverless,
-                  standard/shared clusters, ARM, and Lakeflow declarative pipelines. The heavyweight
-                  Scala/GDAL tier is there when you need the GDAL/OGR readers or the GridX/VectorX packages.
+                  standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
+                  likewise available lightweight (pyvx). The heavyweight Scala/GDAL tier is there when
+                  you need the GDAL/OGR readers or the GridX package.
                 </p>
                 <Link
                   className="button button--primary button--md"
