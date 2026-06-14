@@ -26,8 +26,7 @@ from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
 # Mirror heavy PMTilesAcc's 100 MiB accumulation cap so the failure mode matches.
 _MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 
-# Set True by register_pmtiles_agg (added in a later task); only the fallback
-# wrapper path consults it.
+# Set True by register_pmtiles_agg; only the fallback wrapper path consults it.
 _LIGHT_REGISTERED = False
 
 

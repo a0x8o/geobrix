@@ -63,3 +63,33 @@ def test_metadata_passthrough(spark, tmp_path):
     p.write_bytes(blob)
     with open(p, "rb") as fh:
         assert Reader(MmapSource(fh)).metadata().get("name") == "demo"
+
+
+def _agg_registered(spark):
+    names = {r.function for r in spark.sql("SHOW USER FUNCTIONS").collect()}
+    return any(n.endswith("gbx_pmtiles_agg") for n in names)
+
+
+def _drop_agg(spark):
+    # The session-scoped spark fixture is shared; an earlier test may have
+    # already registered gbx_pmtiles_agg. Drop it so this test actually
+    # proves the tier's register() reinstalls it.
+    spark.sql("DROP TEMPORARY FUNCTION IF EXISTS gbx_pmtiles_agg")
+
+
+def test_pyrx_register_installs_pmtiles_agg(spark):
+    from databricks.labs.gbx.pyrx import functions as rx
+
+    _drop_agg(spark)
+    assert not _agg_registered(spark)
+    rx.register(spark)
+    assert _agg_registered(spark)
+
+
+def test_pyvx_register_installs_pmtiles_agg(spark):
+    from databricks.labs.gbx.pyvx import functions as vx
+
+    _drop_agg(spark)
+    assert not _agg_registered(spark)
+    vx.register(spark)
+    assert _agg_registered(spark)

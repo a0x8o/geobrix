@@ -277,6 +277,9 @@ def register(spark: SparkSession = None) -> None:
     spark.udtf.register("gbx_st_triangulate", _TriangulateUDTF)
     spark.udtf.register("gbx_st_interpolateelevationbbox", _InterpElevBBoxUDTF)
     spark.udtf.register("gbx_st_interpolateelevationgeom", _InterpElevGeomUDTF)
+    from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+    register_pmtiles_agg(spark)
 
 
 def st_asmvt_pyramid(
