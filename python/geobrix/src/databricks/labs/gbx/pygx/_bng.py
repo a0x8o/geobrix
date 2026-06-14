@@ -258,3 +258,48 @@ def parse(cell_id: str) -> int:
     n_positions = half + 1
     resolution = (n_positions + 1) if quadrant == 0 else -n_positions
     return encode(e_letter, n_letter, e_bin, n_bin, quadrant, n_positions, resolution)
+
+
+def area(cell_id: int) -> float:
+    """Cell area in square KILOMETRES (BNG.area): (edgeSize/1000)^2."""
+    resolution = get_resolution_from_digits(cell_digits(cell_id))
+    edge = float(get_edge_size(resolution))
+    return (edge / 1000.0) ** 2
+
+
+def distance(cell_id: int, cell_id2: int) -> int:
+    """Manhattan grid distance in edge-size units (BNG.distance)."""
+    d1, d2 = cell_digits(cell_id), cell_digits(cell_id2)
+    edge = get_edge_size(
+        min(get_resolution_from_digits(d1), get_resolution_from_digits(d2))
+    )
+    x1, x2 = get_x(d1, edge), get_x(d2, edge)
+    y1, y2 = get_y(d1, edge), get_y(d2, edge)
+    return abs(x1 - x2) // edge + abs(y1 - y2) // edge
+
+
+def euclidean_distance(cell_id: int, cell_id2: int) -> int:
+    """Chebyshev (max of dx, dy) grid distance in edge-size units.
+
+    Mirrors BNG.euclideanDistance: along a diagonal the distance is 1 where
+    Manhattan would be 2.
+    """
+    d1, d2 = cell_digits(cell_id), cell_digits(cell_id2)
+    edge = get_edge_size(
+        min(get_resolution_from_digits(d1), get_resolution_from_digits(d2))
+    )
+    x1, x2 = get_x(d1, edge), get_x(d2, edge)
+    y1, y2 = get_y(d1, edge), get_y(d2, edge)
+    return max(abs(x1 - x2), abs(y1 - y2)) // edge
+
+
+def point_as_cell(eastings: float, northings: float, resolution) -> str:
+    """EPSG:27700 (eastings, northings) -> STRING cellid (BNG_EastNorthAsBNG core)."""
+    res = get_resolution(resolution)
+    return format(point_to_cell_id(float(eastings), float(northings), res))
+
+
+# east_north_as_bng is an alias of point_as_cell at the coordinate level; the SQL
+# split (pointascell takes a POINT geom, eastnorthasbng takes scalar e/n) happens
+# in functions.py. Both call this.
+east_north_as_bng = point_as_cell
