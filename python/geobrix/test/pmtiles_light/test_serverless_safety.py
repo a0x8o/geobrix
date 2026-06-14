@@ -8,29 +8,11 @@ from databricks.labs.gbx.pmtiles import _agg_light
 _FORBIDDEN = ("_jvm", "sparkContext", ".rdd", "spark.conf.set", "_jsc")
 
 
-def _code_tokens(module) -> str:
-    """Return source with all string literals (docstrings/comments) stripped."""
-    src = inspect.getsource(module)
-    tree = ast.parse(src)
-    # Remove all string-constant nodes (docstrings live as Expr(Constant(str)))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-            node.value.value = ""
-    # Reconstruct from AST — use the raw source minus comment lines instead
-    lines = []
-    for line in src.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("#"):
-            continue
-        lines.append(line)
-    code_only = "\n".join(lines)
-    # Also blank out triple-quoted docstrings via AST unparsing of non-string nodes
-    return code_only
-
-
 def test_no_spark_internal_access():
     src = inspect.getsource(_agg_light)
-    # Strip the module docstring (first triple-quoted block) before checking.
+    # Strip docstrings (the module docstring legitimately names _jvm/spark.conf
+    # in its "Serverless-safe" note) before scanning the real code for forbidden
+    # Spark-internal access.
     tree = ast.parse(src)
     docstring_ranges: list[tuple[int, int]] = []
     for node in ast.walk(tree):
