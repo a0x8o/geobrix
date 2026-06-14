@@ -10,7 +10,7 @@ gx.register(spark), then use on columns. Serverless-safe: spark.udf.register
 plus Column expressions only — no _jvm / spark.conf / RDD access.
 """
 
-from typing import Union
+from typing import Optional, Union
 
 import pandas as pd
 from pyspark.sql import Column, SparkSession
@@ -50,6 +50,8 @@ def _distance(a, b):
 
 
 def _polyfill(geom, res):
+    if geom is None:  # match heavy propagateNull: NULL geom -> NULL (not [])
+        return None
     return _quadbin.polyfill(geom, res)
 
 
@@ -66,6 +68,8 @@ def _cellunion(cells):
 
 
 def _tessellate(geom, res):
+    if geom is None:  # match heavy propagateNull: NULL geom -> NULL (not [])
+        return None
     # ARRAY<STRUCT<cell,geom>> — return dicts so the struct fields bind by name.
     return [{"cell": int(c), "geom": g} for (c, g) in _quadbin.tessellate(geom, res)]
 
@@ -76,7 +80,7 @@ def _tessellate(geom, res):
 
 
 @pandas_udf(BinaryType())
-def _cellunion_agg_udf(cell: pd.Series) -> bytes:
+def _cellunion_agg_udf(cell: pd.Series) -> Optional[bytes]:
     return _quadbin.cell_union([int(c) for c in cell if c is not None])
 
 
@@ -117,9 +121,9 @@ def quadbin_kring(cell: ColLike, k: ColLike) -> Column:
     return f.call_function("gbx_quadbin_kring", _col(cell), _col(k))
 
 
-def quadbin_distance(a: ColLike, b: ColLike) -> Column:
+def quadbin_distance(cell_a: ColLike, cell_b: ColLike) -> Column:
     """Chebyshev grid distance (INT) between two same-resolution cells."""
-    return f.call_function("gbx_quadbin_distance", _col(a), _col(b))
+    return f.call_function("gbx_quadbin_distance", _col(cell_a), _col(cell_b))
 
 
 def quadbin_polyfill(geom: ColLike, res: ColLike) -> Column:

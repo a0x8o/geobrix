@@ -325,3 +325,30 @@ def test_tessellate_touching_intersection(spark_with_jar):
         _assert_geom_parity(
             light_tess[cell], heavy_tess[cell], f"touching chip cell={cell}"
         )
+
+
+def test_null_geom_propagation(spark_with_jar):
+    """NULL geom -> SQL NULL (not empty array) for polyfill/tessellate, both tiers."""
+    from databricks.labs.gbx.gridx.quadbin import functions as hx
+    from databricks.labs.gbx.pygx import functions as gx
+
+    spark = spark_with_jar
+    df = spark.createDataFrame(
+        [(None,), (bytearray(_to_wkb(_box(-0.05, -0.05, 0.05, 0.05))),)], "geom binary"
+    )
+    df.createOrReplaceTempView("nullv")
+
+    def nulls(mod):
+        mod.register(spark)
+        rows = spark.sql(
+            "SELECT geom IS NULL AS g_null, "
+            "gbx_quadbin_polyfill(geom, 8) IS NULL AS pf_null, "
+            "gbx_quadbin_tessellate(geom, 8) IS NULL AS te_null FROM nullv"
+        ).collect()
+        return sorted((r["g_null"], r["pf_null"], r["te_null"]) for r in rows)
+
+    light = nulls(gx)  # light first
+    heavy = nulls(hx)  # heavy overwrites the SQL name
+    assert (True, True, True) in light  # null geom -> both fns NULL
+    assert (False, False, False) in light  # real geom -> not NULL
+    assert light == heavy

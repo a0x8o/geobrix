@@ -118,6 +118,11 @@ def polyfill(geom, resolution: int) -> list:
     x1, y1 = _lonlat_to_tile(e, s, z)  # lower-right
     x_lo, x_hi = min(x0, x1), max(x0, x1)
     y_lo, y_hi = min(y0, y1), max(y0, y1)
+    count = (x_hi - x_lo + 1) * (y_hi - y_lo + 1)
+    if count > 1_000_000:  # mirrors Quadbin.polyfillBbox maxCells
+        raise ValueError(
+            f"polyfill would produce {count} cells (max=1000000); use a lower zoom"
+        )
     return [
         quadbin.tile_to_cell((x, y, z))
         for x in range(x_lo, x_hi + 1)
@@ -132,10 +137,10 @@ def tessellate(geom, resolution: int) -> list:
     emitting (cell, EWKB) and dropping empty intersections. Mirrors heavy
     Quadbin_Tessellate.execute.
     """
-    parsed = parse_geom(geom)
     cells = polyfill(geom, resolution)
-    if parsed is None or parsed.is_empty:
+    if not cells:
         return []
+    parsed = parse_geom(geom)
     chips = []
     for cell in cells:
         cell_box = box(*quadbin.cell_to_bounding_box(int(cell)))

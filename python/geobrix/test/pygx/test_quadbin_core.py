@@ -129,3 +129,20 @@ def test_tessellate_returns_cell_geom_pairs():
 
     g0 = from_wkb(gwkb0)
     assert get_srid(g0) == 4326 and not g0.is_empty
+
+
+def test_polyfill_maxcells_guard():
+    geom = _to_wkb(_box(-179.0, -85.0, 179.0, 85.0))  # huge bbox
+    with pytest.raises(ValueError, match="max"):
+        _quadbin.polyfill(geom, 20)  # > 1,000,000 cells
+
+
+def test_kring_k0_returns_center_only():
+    cell = quadbin.point_to_cell(0.0, 0.0, 10)
+    assert _quadbin.k_ring(cell, 0) == [cell]
+
+
+def test_kring_negative_raises():
+    cell = quadbin.point_to_cell(0.0, 0.0, 10)
+    with pytest.raises(ValueError, match="k must be"):
+        _quadbin.k_ring(cell, -1)
