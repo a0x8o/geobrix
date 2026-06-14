@@ -5,10 +5,11 @@ sidebar_position: 9
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import pmtilesSqlCode from '!!raw-loader!../../tests/python/api/pmtiles_functions_sql.py';
 import Tier from '@site/src/components/Tier';
+import { Impl } from '@site/src/components/Tier';
 
 # PMTiles Function Reference
 
-<Tier heavy/> These functions are available in the **Heavyweight** execution tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
+Most PMTiles functions — the DataSource writer and all options — are available in the **Heavyweight** execution tier only. The aggregate `gbx_pmtiles_agg` is available in **both tiers** (see the per-function badge below). See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
 
 GeoBrix encodes tile pyramids (raster or vector) into the [PMTiles v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md) single-file archive format. PMTiles replaces the "directory of tiles" pattern with one compact, hash-deduplicated, range-readable file servable directly from cloud object storage. Tile content bytes (PNG / JPEG / WebP / MVT) pass through verbatim — PMTiles is container-only.
 
@@ -144,6 +145,12 @@ Examples below use **SQL**. PMTiles functions are prefixed with **`gbx_`** (e.g.
 :::
 
 ## pmtiles_agg
+
+<Tier both/> <Impl groupedAgg/>
+
+:::note Lightweight tier
+Powered by the **pmtiles** package. Grouped aggregate — `groupBy(...).agg(px.pmtiles_agg("bytes", "z", "x", "y"))` folds a group's `(bytes, z, x, y)` map tiles into one PMTiles v3 archive (`BINARY`). Registered by both `pyrx.register` and `pyvx.register` — accepts raster tiles (PNG / JPEG / WebP) or vector tiles (MVT) in either tier.
+:::
 
 Aggregate a per-tile `(z, x, y, bytes)` row set into a single PMTile v3 archive blob.
 
