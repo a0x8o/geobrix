@@ -51,7 +51,10 @@ def test_quickstart_display_constants_exist():
     """Display constants (snippets) used in quick-start.mdx must exist and be non-empty."""
     for name in (
         "REGISTER_RASTERX", "REGISTER_GRIDX", "REGISTER_VECTORX", "REGISTER_RASTERX_SCALA",
+        "REGISTER_RASTERX_LIGHT", "REGISTER_VECTORX_LIGHT", "REGISTER_QUADBIN_LIGHT",
+        "REGISTER_LIGHT_READERS",
         "READ_GEOTIFF", "READ_SHAPEFILE", "READ_GEOJSON",
+        "READ_GEOTIFF_LIGHT", "READ_SHAPEFILE_LIGHT", "USE_QUADBIN",
         "USE_RASTERX", "USE_BNG", "USE_VECTORX",
         "SQL_LIST_FUNCTIONS", "SQL_DESCRIBE", "SQL_READ_AND_USE",
     ):
@@ -64,6 +67,7 @@ def test_quickstart_output_constants_exist():
     """Output constants (for Example output blocks) must exist so docs can show results."""
     for name in (
         "READ_GEOTIFF_output", "READ_SHAPEFILE_output", "READ_GEOJSON_output",
+        "READ_GEOTIFF_LIGHT_output", "READ_SHAPEFILE_LIGHT_output", "USE_QUADBIN_output",
         "USE_RASTERX_output", "USE_BNG_output", "USE_VECTORX_output",
         "SQL_LIST_FUNCTIONS_output", "SQL_DESCRIBE_output", "SQL_READ_AND_USE_output",
     ):
@@ -112,6 +116,64 @@ def test_exec_read_shapefile_snippet(spark):
 def test_exec_read_geojson_snippet(spark):
     """Quick-start snippet READ_GEOJSON runs with sample data path."""
     _exec_snippet(spark, examples.READ_GEOJSON, "READ_GEOJSON")
+
+
+def test_exec_read_geotiff_light_snippet(spark):
+    """Quick-start snippet READ_GEOTIFF_LIGHT runs with the lightweight gtiff_gbx reader."""
+    if not os.path.isfile(SAMPLE_NYC_RASTER):
+        pytest.skip("Minimal bundle has no nyc/sentinel2 raster; run gbx:data:generate-minimal-bundle or use full bundle")
+    _exec_snippet(spark, examples.READ_GEOTIFF_LIGHT, "READ_GEOTIFF_LIGHT")
+
+
+def test_exec_read_shapefile_light_snippet(spark):
+    """Quick-start snippet READ_SHAPEFILE_LIGHT runs with the lightweight shapefile_gbx reader."""
+    if not os.path.isfile(SAMPLE_NYC_SUBWAY_SHP):
+        pytest.skip("Minimal bundle has no nyc/subway .shp.zip; run gbx:data:generate-minimal-bundle or use full bundle")
+    _exec_snippet(spark, examples.READ_SHAPEFILE_LIGHT, "READ_SHAPEFILE_LIGHT")
+
+
+def test_exec_use_quadbin_snippet(spark):
+    """Quick-start snippet USE_QUADBIN runs (register pygx + index point + resolution + .show())."""
+    _exec_snippet(spark, examples.USE_QUADBIN, "USE_QUADBIN")
+
+
+def test_read_geotiff_light_returns_tile(spark, sample_raster_path):
+    """Lightweight gtiff_gbx reader returns a 'tile' column with non-empty data, like gtiff_gdal."""
+    if not os.path.isfile(sample_raster_path):
+        pytest.skip("Minimal bundle has no nyc/sentinel2 raster; run gbx:data:generate-minimal-bundle or use full bundle")
+    result_df = examples.read_geotiff_files_light(spark, sample_raster_path)
+    assert result_df is not None
+    columns = result_df.columns
+    assert "tile" in columns, "Lightweight raster reader should emit a 'tile' column"
+    assert "source" in columns or "path" in columns, "Should have 'source' or 'path' column"
+    rows = result_df.collect()
+    if len(rows) == 0:
+        pytest.skip("Raster path exists but reader returned no rows; run gbx:data:generate-minimal-bundle")
+    assert rows[0]["tile"] is not None and len(rows[0]["tile"]) > 0, "Tile should contain bytes"
+
+
+def test_read_shapefile_light_returns_geometry(spark):
+    """Lightweight shapefile_gbx reader returns a geometry column with rows, like shapefile_ogr."""
+    if not os.path.isfile(SAMPLE_NYC_SUBWAY_SHP):
+        pytest.skip("Minimal bundle has no nyc/subway .shp.zip; run gbx:data:generate-minimal-bundle or use full bundle")
+    result_df = examples.read_shapefiles_light(spark, SAMPLE_NYC_SUBWAY_SHP)
+    assert result_df is not None
+    columns = result_df.columns
+    geom_cols = [c for c in columns if "geom" in c.lower()]
+    assert len(geom_cols) > 0, "Lightweight vector reader should emit a geometry column"
+    count = result_df.count()
+    assert count >= 1, f"Expected at least one feature from the subway shapefile, got {count}"
+
+
+def test_use_quadbin_indexes_point(spark):
+    """Quadbin example indexes an NYC point to one cell at the requested resolution."""
+    result_df = examples.use_quadbin_functions(spark, lon=-73.985, lat=40.748, res=15)
+    assert result_df is not None
+    assert "cell" in result_df.columns and "res" in result_df.columns
+    rows = result_df.collect()
+    assert len(rows) == 1, "Expected one indexed cell"
+    assert rows[0]["cell"] is not None, "quadbin cell id should be non-null"
+    assert rows[0]["res"] == 15, f"resolution should round-trip to 15, got {rows[0]['res']}"
 
 
 def test_exec_use_rasterx_snippet(spark):

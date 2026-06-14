@@ -19,6 +19,24 @@ REGISTER_RASTERX = """# Register RasterX functions (required for gbx_rst_* in SQ
 from databricks.labs.gbx.rasterx import functions as rx
 rx.register(spark)"""
 
+# Lightweight register variants (pure-Python wheel). The alias (rx/vx/gx) and the
+# gbx_* SQL names are identical to heavyweight — only the import path differs.
+REGISTER_RASTERX_LIGHT = """# Register RasterX (lightweight pyrx) — gbx_rst_* SQL names, pyspark-backed
+from databricks.labs.gbx.pyrx import functions as rx
+rx.register(spark)"""
+
+REGISTER_VECTORX_LIGHT = """# Register VectorX (lightweight pyvx) — gbx_st_* SQL names
+from databricks.labs.gbx.pyvx import functions as vx
+vx.register(spark)"""
+
+REGISTER_QUADBIN_LIGHT = """# Register GridX quadbin (lightweight pygx) — gbx_quadbin_* SQL names
+from databricks.labs.gbx.pygx import functions as gx
+gx.register(spark)"""
+
+REGISTER_LIGHT_READERS = """# Register the lightweight readers (raster + vector), then read by format string
+from databricks.labs.gbx.ds import register as gbx_readers
+gbx_readers.register(spark)   # gtiff_gbx / raster_gbx + shapefile_gbx / geojson_gbx / gpkg_gbx / file_gdb_gbx"""
+
 REGISTER_GRIDX = """# Register GridX BNG functions (required for gbx_bng_* in SQL)
 from databricks.labs.gbx.gridx.bng import functions as bx
 bx.register(spark)"""
@@ -44,6 +62,32 @@ geojson_df = spark.read.format("geojson_ogr").option("multi", "false").load(
     "/Volumes/main/default/geobrix_samples/geobrix-examples/nyc/taxi-zones/nyc_taxi_zones.geojson"
 )
 geojson_df.limit(3).show()"""
+
+READ_GEOTIFF_LIGHT = """# Read GeoTIFF rasters (lightweight gtiff_gbx reader — pure-Python, no GDAL install)
+from databricks.labs.gbx.ds import register as gbx_readers
+gbx_readers.register(spark)   # register the lightweight readers once per session
+rasters = spark.read.format("gtiff_gbx").load("/Volumes/main/default/geobrix_samples/geobrix-examples/nyc/sentinel2/nyc_sentinel2_red.tif")
+rasters.limit(3).show()"""
+
+READ_SHAPEFILE_LIGHT = """# Read shapefile (lightweight shapefile_gbx reader — pyogrio-backed, no OGR install)
+from databricks.labs.gbx.ds import register as gbx_readers
+gbx_readers.register(spark)   # register the lightweight readers once per session
+shapes = spark.read.format("shapefile_gbx").load("/Volumes/main/default/geobrix_samples/geobrix-examples/nyc/subway/nyc_subway.shp.zip")
+shapes.limit(3).show()"""
+
+USE_QUADBIN = """# Register GridX quadbin (works on BOTH tiers), index a point, inspect the cell
+from databricks.labs.gbx.pygx import functions as gx
+from pyspark.sql import Row
+from pyspark.sql.functions import lit
+gx.register(spark)
+# A point in NYC (WGS84 lon/lat) -> a resolution-15 quadbin cell, then its resolution
+points = spark.createDataFrame([Row(lon=-73.985, lat=40.748)])
+points.select(
+    gx.quadbin_pointascell("lon", "lat", lit(15)).alias("cell")
+).select(
+    "cell",
+    gx.quadbin_resolution("cell").alias("res"),
+).show()"""
 
 USE_RASTERX = """# Register, load raster, apply RasterX
 from databricks.labs.gbx.rasterx import functions as rx
@@ -112,6 +156,30 @@ READ_GEOJSON_output = """
 +----------+--------+-----+
 |...       |[BINARY]|...  |
 +----------+--------+-----+
+"""
+
+READ_GEOTIFF_LIGHT_output = """
++--------------------+----+-----+------+
+|source              |bbox|width|height|
++--------------------+----+-----+------+
+|.../nyc/sentinel2/..|... |10980|10980 |
++--------------------+----+-----+------+
+"""
+
+READ_SHAPEFILE_LIGHT_output = """
++----+--------+-----+
+|path|geom_0  |...  |
++----+--------+-----+
+|... |[BINARY]|...  |
++----+--------+-----+
+"""
+
+USE_QUADBIN_output = """
++-------------------+---+
+|cell               |res|
++-------------------+---+
+|5256690677307146239|15 |
++-------------------+---+
 """
 
 USE_RASTERX_output = """
@@ -377,6 +445,75 @@ def read_geopackage(spark, path="/path/to/packages"):
         >>> df.show()
     """
     return spark.read.format("gpkg").load(path)
+
+
+def read_geotiff_files_light(spark, path="/path/to/geotiff/files"):
+    """
+    Read GeoTIFF rasters using the lightweight ``gtiff_gbx`` reader.
+
+    Pure-Python (rasterio-backed) analogue of the heavyweight ``gtiff_gdal``
+    reader — no GDAL install required. Emits the same (source, tile, ...) shape.
+
+    Parameters:
+        spark: SparkSession instance
+        path: Path to GeoTIFF files
+
+    Returns:
+        DataFrame with raster tile data
+    """
+    from databricks.labs.gbx.ds import register as gbx_readers
+    gbx_readers.register(spark)
+    return spark.read.format("gtiff_gbx").load(path)
+
+
+def read_shapefiles_light(spark, path="/path/to/shapefiles"):
+    """
+    Read shapefile vector data using the lightweight ``shapefile_gbx`` reader.
+
+    Pure-Python (pyogrio-backed) analogue of the heavyweight ``shapefile_ogr``
+    reader — no OGR install required. Emits a ``geom_0`` geometry column (WKB),
+    matching the heavyweight OGR reader convention.
+
+    Parameters:
+        spark: SparkSession instance
+        path: Path to shapefiles (.shp or .shp.zip)
+
+    Returns:
+        DataFrame with geometry data
+    """
+    from databricks.labs.gbx.ds import register as gbx_readers
+    gbx_readers.register(spark)
+    return spark.read.format("shapefile_gbx").load(path)
+
+
+def use_quadbin_functions(spark, lon=-73.985, lat=40.748, res=15):
+    """
+    Demonstrate GridX quadbin: index a WGS84 point to a cell, read its resolution.
+
+    Quadbin is available on BOTH tiers (lightweight ``pygx`` and heavyweight
+    ``gridx.quadbin``); the import differs, the ``gbx_quadbin_*`` SQL names and
+    ``quadbin_*`` Column wrappers are identical.
+
+    Parameters:
+        spark: SparkSession instance
+        lon, lat: WGS84 coordinates of the point to index
+        res: quadbin resolution (0-26)
+
+    Returns:
+        DataFrame with the quadbin cell id and its resolution
+    """
+    from databricks.labs.gbx.pygx import functions as gx
+    from pyspark.sql import Row
+    from pyspark.sql.functions import lit
+
+    gx.register(spark)
+    points = spark.createDataFrame([Row(lon=float(lon), lat=float(lat))])
+    return points.select(
+        gx.quadbin_pointascell("lon", "lat", lit(res)).alias("cell")
+    ).select(
+        "cell",
+        gx.quadbin_resolution("cell").alias("res"),
+    )
 
 
 def use_rasterx_functions(spark, path="/path/to/rasters"):

@@ -13,24 +13,24 @@ This guide will help you get started with GeoBrix quickly after installation. Al
 
 ## Choose your execution tier
 
-GeoBrix offers two interchangeable raster tiers with the same `rst_*` function names — pick one and the rest of this guide is the same (both alias the module as `rx`). **Start with the lightweight tier (pyrx)**: it installs as a single wheel, runs everywhere, and covers the full raster set.
+GeoBrix ships in two tiers that share the same function names — pick one with the toggle below and the rest of this page follows your choice (all tabs grouped under the same tier toggle stay in sync).
 
 <Tabs groupId="gbx-tier" queryString="tier">
-<TabItem value="lightweight" label="Lightweight (pyrx) — recommended">
+<TabItem value="lightweight" label="Lightweight — recommended">
 
-Pure-Python (rasterio + NumPy), no JAR and no GDAL to install. A single wheel via `%pip` or as a cluster library, and it runs on serverless, standard/shared, ARM, and Lakeflow declarative pipelines. Covers the full **RasterX** raster set — every `rst_*` function.
+Pure-Python (rasterio / pyogrio / NumPy), no JAR and no GDAL or OGR to install. A single wheel via `%pip` or as a cluster library, and it runs on serverless, standard/shared, ARM, and Lakeflow declarative pipelines. Covers **RasterX** (every `rst_*` function), **VectorX** (`gbx_st_*`), and the **GridX quadbin** grid (`gbx_quadbin_*`), plus the lightweight readers.
 
 ```python
-%pip install geobrix                       # single wheel — no JAR, no GDAL
+%pip install geobrix                       # single wheel — no JAR, no GDAL/OGR
 
 from databricks.labs.gbx.pyrx import functions as rx
 rx.register(spark)   # installs the gbx_rst_* SQL names, pyspark-backed
 ```
 
 </TabItem>
-<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+<TabItem value="heavyweight" label="Heavyweight">
 
-JVM-native (Scala + GDAL), installed via the JAR + init script. Choose this tier when your environment is already JVM/GDAL-based, when you need the GDAL/OGR readers (`gtiff_gdal`, `gdal`, `shapefile_ogr`, …), or when you need the **GridX** or **VectorX** packages. Covers **RasterX, GridX, and VectorX**.
+JVM-native (Scala + GDAL/OGR), installed via the JAR + init script. Covers everything the lightweight tier does **plus** the heavy-only deltas: the full **GridX** grid set (BNG and custom grids), and the GDAL/OGR readers (`gtiff_gdal`, `gdal`, `shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, `file_gdb_ogr`). Choose this tier when your environment is already JVM/GDAL-based or when you need one of those deltas.
 
 ```python
 from databricks.labs.gbx.rasterx import functions as rx
@@ -40,7 +40,9 @@ rx.register(spark)
 </TabItem>
 </Tabs>
 
-See [Installation](./installation) for the two install paths and [Choosing an Execution Tier](./api/execution-tiers) for the full comparison. The **GridX** and **VectorX** sections below use the heavyweight tier.
+The two tiers expose the same module alias (`rx` / `vx` / `gx`) and the same `gbx_*` SQL names, so most code on this page is identical across tiers — only the import/register line and the reader format strings differ. The tabs below sync to your choice; where a block has no tabs, the code is identical on both tiers.
+
+See [Installation](./installation) for the two install paths and [Choosing an Execution Tier](./api/execution-tiers) for the full comparison.
 
 :::tip Set up sample data first
 The examples on this page use **sample data paths** (e.g. `/Volumes/.../geobrix-examples/nyc/...`). To run them as-is, set up sample data first: **[Sample Data Guide](./sample-data/overview)** — then use the same paths or volume in your notebook.
@@ -57,7 +59,36 @@ You do not need to register functions if you are only using the included readers
 
 ## Register Functions
 
-### Python/PySpark
+The import/register line is the one place each package genuinely differs by tier. Pick your tier; the function names you call afterward are the same either way.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight">
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="REGISTER_RASTERX_LIGHT"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+/>
+
+Register VectorX and the GridX quadbin grid the same way:
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="REGISTER_VECTORX_LIGHT"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+/>
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="REGISTER_QUADBIN_LIGHT"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+/>
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight">
 
 <CodeFromTest
   code={quickstartCode}
@@ -66,7 +97,7 @@ You do not need to register functions if you are only using the included readers
   testFile="docs/tests/python/quickstart/test_examples.py"
 />
 
-### Scala
+The same in Scala:
 
 <CodeFromTest
   code={quickstartCode}
@@ -77,7 +108,7 @@ You do not need to register functions if you are only using the included readers
   testFile="docs/tests/python/quickstart/test_examples.py"
 />
 
-Register GridX and VectorX the same way:
+Register GridX (BNG) and VectorX the same way:
 
 <CodeFromTest
   code={quickstartCode}
@@ -92,6 +123,9 @@ Register GridX and VectorX the same way:
   functionName="REGISTER_VECTORX"
   testFile="docs/tests/python/quickstart/test_examples.py"
 />
+
+</TabItem>
+</Tabs>
 
 ## List and Describe Functions
 
@@ -113,9 +147,39 @@ Register GridX and VectorX the same way:
 
 ## Reading Data
 
-Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essential Bundle).
+Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essential Bundle). The reader format string is the part that differs by tier: lightweight uses the pure-Python `*_gbx` readers (no GDAL/OGR install); heavyweight uses the GDAL/OGR readers.
 
-### Read GeoTIFF
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight">
+
+Register the lightweight readers once per session, then load by format string (`gtiff_gbx` / `raster_gbx` for rasters; `shapefile_gbx` / `geojson_gbx` / `gpkg_gbx` / `file_gdb_gbx` for vectors).
+
+#### Read GeoTIFF
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="READ_GEOTIFF_LIGHT"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+  outputConstant="READ_GEOTIFF_LIGHT_output"
+/>
+
+#### Read Shapefile
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="READ_SHAPEFILE_LIGHT"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+  outputConstant="READ_SHAPEFILE_LIGHT_output"
+/>
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight">
+
+The heavyweight tier reads through the GDAL/OGR readers — `gdal` / `gtiff_gdal` for rasters; `shapefile_ogr` / `geojson_ogr` / `gpkg_ogr` / `file_gdb_ogr` for vectors.
+
+#### Read GeoTIFF
 
 <CodeFromTest
   code={quickstartCode}
@@ -125,7 +189,7 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
   outputConstant="READ_GEOTIFF_output"
 />
 
-### Read Shapefile
+#### Read Shapefile
 
 <CodeFromTest
   code={quickstartCode}
@@ -135,7 +199,7 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
   outputConstant="READ_SHAPEFILE_output"
 />
 
-### Read GeoJSON
+#### Read GeoJSON
 
 <CodeFromTest
   code={quickstartCode}
@@ -145,9 +209,14 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
   outputConstant="READ_GEOJSON_output"
 />
 
+</TabItem>
+</Tabs>
+
 ## Using RasterX, GridX, and VectorX
 
 ### RasterX
+
+Identical on both tiers — only the import/register differs (see the tier toggle above). Once registered, the `rx.rst_*` calls are the same.
 
 <CodeFromTest
   code={quickstartCode}
@@ -157,7 +226,27 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
   outputConstant="USE_RASTERX_output"
 />
 
-### GridX (BNG)
+### GridX
+
+The **quadbin** grid is available on **both** tiers (`gx.quadbin_*` / `gbx_quadbin_*`). **BNG** and custom grids are heavyweight-only.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight">
+
+Index a point to a quadbin cell and read its resolution:
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="USE_QUADBIN"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+  outputConstant="USE_QUADBIN_output"
+/>
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight">
+
+The heavyweight tier adds the BNG grid (`gbx_bng_*`) and custom grids on top of quadbin:
 
 <CodeFromTest
   code={quickstartCode}
@@ -167,7 +256,12 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
   outputConstant="USE_BNG_output"
 />
 
+</TabItem>
+</Tabs>
+
 ### VectorX
+
+Identical on both tiers — only the import/register differs (see the tier toggle above). The `vx.st_*` calls and `gbx_st_*` SQL names are the same.
 
 <CodeFromTest
   code={quickstartCode}
@@ -178,6 +272,8 @@ Paths below assume the [Sample Data](./sample-data/overview) layout (e.g. Essent
 />
 
 ## Using SQL
+
+The `gbx_*` SQL names are identical on both tiers (only the reader format string differs — see [Reading Data](#reading-data)). This example uses a heavyweight reader; swap `shapefile_ogr` for `shapefile_gbx` on the lightweight tier.
 
 <CodeFromTest
   code={quickstartCode}
