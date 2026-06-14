@@ -2081,6 +2081,579 @@ def run_quadbin_cellunion_agg(
         )
 
 
+def run_quadbin_resolution(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_resolution (scalar cell -> INT) over ``n_rows`` cell ids.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact INT equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_resolution"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the resolution comes back as the input res.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["r"] != res:
+            raise RuntimeError("quadbin_resolution produced unexpected resolution")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_resolution {api} resolved {n} cells",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_kring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_kring (scalar cell -> ARRAY<LONG>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact sorted
+    cell-set per row at a fixed ``k``.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_kring"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_kring(cell, {k}) AS ring FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring (k=1 -> up to 9 cells).
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_kring(cell, {k}) AS ring FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("quadbin_kring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_kring {api} ringed {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_distance(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_distance (scalar (cell_a, cell_b) -> INT) over ``n_rows`` pairs.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input pairs. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact INT equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cell_pairs
+
+    env = capture_env(where)
+    fn = "quadbin_distance"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cell_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_pair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _quadbin_pair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null integer distance comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _quadbin_pair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["d"] is None:
+            raise RuntimeError("quadbin_distance produced null distance")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_distance {api} measured {n} pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_aswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_aswkb (scalar cell -> EWKB polygon) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): decoded geometry
+    within 1e-6 + SRID 4326.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_aswkb"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty EWKB polygon comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("quadbin_aswkb produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_aswkb {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_centroid(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_centroid (scalar cell -> EWKB point) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): decoded point
+    within 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_centroid"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty EWKB point comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("quadbin_centroid produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_centroid {api} encoded {n} cell centroids",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_cellunion(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_cellunion (scalar ARRAY<cell> -> EWKB) over grouped cell arrays.
+
+    Reuses the cellunion_agg corpus (``generate_quadbin_cellid_arrays``):
+    collect each group's cells into an ARRAY<LONG>, then call the scalar
+    ``gbx_quadbin_cellunion`` on the array. Light registers pygx; heavy registers
+    gridx.quadbin (the SAME SQL name). Records ``rows`` = number of unioned arrays
+    (one per group). Returns one ResultRow (mode="spark-path", category="grid").
+    Parity (cluster cell): decoded union geometry via symmetric-difference-area
+    < 1e-6 (member-ordering-robust, like the cellunion_agg leg).
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cellid_arrays
+
+    env = capture_env(where)
+    fn = "quadbin_cellunion"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cellid_arrays(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema)
+        df.createOrReplaceTempView("_quadbin_cellsrc_v")
+        # Collapse the streamed (group, cell) rows into one ARRAY<cell> per group
+        # so the scalar cellunion gets the same cell sets the agg unions.
+        arr_df = spark.sql(
+            "SELECT group, collect_list(cell) AS cells "
+            "FROM _quadbin_cellsrc_v GROUP BY group"
+        ).cache()
+        n = int(arr_df.count())
+        arr_df.createOrReplaceTempView("_quadbin_cellarr_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_cellunion(cells) AS u FROM _quadbin_cellarr_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty union blob comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_cellunion(cells) AS u FROM _quadbin_cellarr_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["u"] is None or len(bytes(_val[0]["u"])) == 0:
+            raise RuntimeError("quadbin_cellunion produced empty/null union")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_cellunion {api} unioned {n} cell arrays",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
 def _make_synthetic_geotiff(
     n_regions: int = 4,
     size: int = 64,

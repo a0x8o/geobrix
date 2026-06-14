@@ -1058,8 +1058,10 @@ if _tin_rows:
 """
 
 _CELL_GRID_QUADBIN = """# Quadbin grid benchmark: light pygx vs heavy gridx.quadbin, exact-output parity.
-# 4 representative shapes: pointascell (scalar) / polyfill (geom->ARRAY<cell>) /
-# tessellate (struct-array) / cellunion_agg (grouped aggregate). Both tiers expose the
+# ALL 10 quadbin functions: pointascell (scalar) / polyfill (geom->ARRAY<cell>) /
+# tessellate (struct-array) / cellunion_agg (grouped aggregate) / resolution (scalar INT) /
+# kring (scalar ARRAY<LONG>) / distance (scalar INT) / aswkb (scalar EWKB polygon) /
+# centroid (scalar EWKB point) / cellunion (scalar ARRAY<cell>->EWKB). Both tiers expose the
 # SAME gbx_quadbin_* SQL names, so light is collected BEFORE heavy re-registers (the later
 # registration overwrites the UDF) -- the same ordering trick as the legacy parity cell.
 from databricks.labs.gbx.bench import readers as _rd
@@ -1069,7 +1071,10 @@ _quadbin_rows = []
 _QB_N_ROWS = 1000
 _QB_PAC_RES = 12   # pointascell resolution
 _QB_GEOM_RES = 8   # polyfill / tessellate resolution
-_QB_AGG_RES = 8    # cellunion_agg cell resolution
+_QB_AGG_RES = 8    # cellunion_agg / cellunion cell resolution
+_QB_CELL_RES = 12  # resolution / kring / distance / aswkb / centroid cell resolution
+_QB_KRING_K = 1    # kring radius
+_QB_N_LEGS = 10    # legs per tier (keep in sync with the appends below)
 if LIGHTWEIGHT:
     _quadbin_rows.append(_rd.run_quadbin_pointascell(
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
@@ -1083,7 +1088,25 @@ if LIGHTWEIGHT:
     _quadbin_rows.append(_rd.run_quadbin_cellunion_agg(
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
         n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
-    for _r in _quadbin_rows[-4:]:
+    _quadbin_rows.append(_rd.run_quadbin_resolution(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, k=_QB_KRING_K, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_distance(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_aswkb(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_centroid(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _quadbin_rows.append(_rd.run_quadbin_cellunion(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
+        n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
+    for _r in _quadbin_rows[-_QB_N_LEGS:]:
         _sink([_r]); lw.append(_r)
 if HEAVYWEIGHT:
     _hw_qb = []
@@ -1097,6 +1120,24 @@ if HEAVYWEIGHT:
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
         n_rows=_QB_N_ROWS, res=_QB_GEOM_RES, where="cluster"))
     _hw_qb.append(_rd.run_quadbin_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_resolution(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, k=_QB_KRING_K, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_distance(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_aswkb(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_centroid(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
+        n_rows=_QB_N_ROWS, res=_QB_CELL_RES, where="cluster"))
+    _hw_qb.append(_rd.run_quadbin_cellunion(
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
         n_rows=_QB_N_ROWS, res=_QB_AGG_RES, where="cluster"))
     for _r in _hw_qb:
@@ -1222,6 +1263,143 @@ if LIGHTWEIGHT and HEAVYWEIGHT:
         _v = "QUADBIN CELLUNION_AGG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
     print(_v); _verdicts.append(_v)
     assert _v.startswith("QUADBIN CELLUNION_AGG PARITY: PASS"), _v
+    # --- shared single-cell corpus for the scalar cell-in legs (resolution/kring/aswkb/centroid). ---
+    _cdata, _cschema = _cv.generate_quadbin_cells(_QB_N_ROWS, res=_QB_CELL_RES)
+    _cdf = spark.createDataFrame(_cdata, schema=_cschema)
+    _cdf.createOrReplaceTempView("_qb_cell_parity_v")
+    # --- resolution: exact INT equality. ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_rs
+        _gx_rs.register(spark)
+        _light_rs = [r["r"] for r in spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _qb_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_rs
+        _hx_rs.register(spark)
+        _heavy_rs = [r["r"] for r in spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _qb_cell_parity_v").collect()]
+        _rs_ok = (len(_light_rs) == len(_heavy_rs) > 0 and _light_rs == _heavy_rs)
+        _v = ("QUADBIN RESOLUTION PARITY: PASS (%d cells, exact INT equality)" % len(_light_rs)
+              if _rs_ok else "QUADBIN RESOLUTION PARITY: FAIL -- resolution mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN RESOLUTION PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN RESOLUTION PARITY: PASS"), _v
+    # --- kring: exact sorted cell-set per row (fixed k). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_kr
+        _gx_kr.register(spark)
+        _light_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_quadbin_kring(cell, %d) AS ring FROM _qb_cell_parity_v"
+            % _QB_KRING_K).collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_kr
+        _hx_kr.register(spark)
+        _heavy_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_quadbin_kring(cell, %d) AS ring FROM _qb_cell_parity_v"
+            % _QB_KRING_K).collect()]
+        _kr_ok = (len(_light_kr) == len(_heavy_kr) > 0 and _light_kr == _heavy_kr)
+        _nk = sum(len(c) for c in _light_kr)
+        _v = ("QUADBIN KRING PARITY: PASS (%d rows, %d cells, exact set equality, k=%d)"
+              % (len(_light_kr), _nk, _QB_KRING_K)
+              if _kr_ok else "QUADBIN KRING PARITY: FAIL -- ring set mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN KRING PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN KRING PARITY: PASS"), _v
+    # --- distance: exact INT equality over (cell_a, cell_b) pairs. ---
+    try:
+        _ddata, _dschema = _cv.generate_quadbin_cell_pairs(_QB_N_ROWS, res=_QB_CELL_RES)
+        _ddf = spark.createDataFrame(_ddata, schema=_dschema)
+        _ddf.createOrReplaceTempView("_qb_pair_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_ds
+        _gx_ds.register(spark)
+        _light_ds = [r["d"] for r in spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _qb_pair_parity_v").collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_ds
+        _hx_ds.register(spark)
+        _heavy_ds = [r["d"] for r in spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _qb_pair_parity_v").collect()]
+        _ds_ok = (len(_light_ds) == len(_heavy_ds) > 0 and _light_ds == _heavy_ds)
+        _v = ("QUADBIN DISTANCE PARITY: PASS (%d pairs, exact INT equality)" % len(_light_ds)
+              if _ds_ok else "QUADBIN DISTANCE PARITY: FAIL -- distance mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN DISTANCE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN DISTANCE PARITY: PASS"), _v
+    # --- aswkb: decoded polygon within 1e-6 + SRID 4326. ---
+    try:
+        from shapely import from_wkb as _shp_from_wkb, get_srid as _shp_get_srid
+        from databricks.labs.gbx.pygx import functions as _gx_aw
+        _gx_aw.register(spark)
+        _light_aw = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _qb_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_aw
+        _hx_aw.register(spark)
+        _heavy_aw = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _qb_cell_parity_v").collect()]
+        _aw_ok = (len(_light_aw) == len(_heavy_aw) > 0)
+        if _aw_ok:
+            for _lb, _hb in zip(_light_aw, _heavy_aw):
+                _lg = _shp_from_wkb(_lb); _hg = _shp_from_wkb(_hb)
+                if (_shp_get_srid(_lg) != 4326 or _shp_get_srid(_hg) != 4326
+                        or _lg.symmetric_difference(_hg).area >= 1e-6):
+                    _aw_ok = False; break
+        _v = ("QUADBIN ASWKB PARITY: PASS (%d cells, polygon<1e-6 + SRID 4326)" % len(_light_aw)
+              if _aw_ok else "QUADBIN ASWKB PARITY: FAIL -- polygon/SRID mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN ASWKB PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN ASWKB PARITY: PASS"), _v
+    # --- centroid: decoded point within 1e-6. ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ct
+        _gx_ct.register(spark)
+        _light_ct = [_centroid_qb(r["g"]) for r in spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _qb_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_ct
+        _hx_ct.register(spark)
+        _heavy_ct = [_centroid_qb(r["g"]) for r in spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _qb_cell_parity_v").collect()]
+        _ct_ok = (len(_light_ct) == len(_heavy_ct) > 0)
+        if _ct_ok:
+            for (_lx, _ly), (_hx2, _hy) in zip(_light_ct, _heavy_ct):
+                if abs(_lx - _hx2) >= 1e-6 or abs(_ly - _hy) >= 1e-6:
+                    _ct_ok = False; break
+        _v = ("QUADBIN CENTROID PARITY: PASS (%d cells, point<1e-6)" % len(_light_ct)
+              if _ct_ok else "QUADBIN CENTROID PARITY: FAIL -- point mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN CENTROID PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN CENTROID PARITY: PASS"), _v
+    # --- cellunion: per-group decoded-union geometry equality (sym-diff area < 1e-6). ---
+    try:
+        _udata, _uschema = _cv.generate_quadbin_cellid_arrays(_QB_N_ROWS, res=_QB_AGG_RES)
+        _udf = spark.createDataFrame(_udata, schema=_uschema)
+        _udf.createOrReplaceTempView("_qb_union_src_v")
+        _uarr = spark.sql(
+            "SELECT group, collect_list(cell) AS cells FROM _qb_union_src_v GROUP BY group")
+        _uarr.createOrReplaceTempView("_qb_union_arr_v")
+        from databricks.labs.gbx.pygx import functions as _gx_cu
+        _gx_cu.register(spark)
+        _light_cu = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_quadbin_cellunion(cells) AS u FROM _qb_union_arr_v").collect()}
+        from databricks.labs.gbx.gridx.quadbin import functions as _hx_cu
+        _hx_cu.register(spark)
+        _heavy_cu = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_quadbin_cellunion(cells) AS u FROM _qb_union_arr_v").collect()}
+        _cu_ok = (_light_cu.keys() == _heavy_cu.keys() and len(_light_cu) > 0)
+        if _cu_ok:
+            for _k in _light_cu:
+                _lg = _shp_wkb.loads(_light_cu[_k]); _hg = _shp_wkb.loads(_heavy_cu[_k])
+                # Member-ordering-robust: shapely union_all vs JTS union differ in
+                # vertex/member order; sym-diff area collapses to FP noise on equal coverage.
+                if _lg.symmetric_difference(_hg).area >= 1e-6:
+                    _cu_ok = False; break
+        _v = ("QUADBIN CELLUNION PARITY: PASS (%d groups, decoded union equality)" % len(_light_cu)
+              if _cu_ok else "QUADBIN CELLUNION PARITY: FAIL -- union geometry mismatch")
+    except Exception as _pe:
+        _v = "QUADBIN CELLUNION PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("QUADBIN CELLUNION PARITY: PASS"), _v
 if _quadbin_rows:
     _df_qb = spark.sql(
         f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'grid'"

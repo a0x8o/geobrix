@@ -314,10 +314,13 @@ def generate_legacy_structs(n_rows: int):
 # ---------------------------------------------------------------------------------------------
 # Quadbin (light pygx vs heavy gridx.quadbin) corpus builders.  Plain-Python, deterministic.
 # Each returns (rows, schema) for ``spark.createDataFrame(rows, schema)``.  Shapes mirror the
-# four benched quadbin functions:
+# benched quadbin functions:
 #   * points        -> quadbin_pointascell (scalar lon/lat -> cell)
 #   * polygons WKT  -> quadbin_polyfill (geom -> ARRAY<cell>) and quadbin_tessellate (struct-array)
 #   * cell-id arrays + group keys -> quadbin_cellunion_agg (grouped aggregate)
+#   * single cell ids -> quadbin_resolution / kring / aswkb / centroid (scalar cell-in)
+#   * cell-id pairs   -> quadbin_distance (scalar two-cell-in)
+#   * cell-id arrays  -> quadbin_cellunion (scalar ARRAY<cell> -> EWKB; reuses cellid_arrays)
 # Coordinates stay well inside the WebMercator-valid band (|lat| < 85) so both tiers agree.
 # ---------------------------------------------------------------------------------------------
 
@@ -383,6 +386,57 @@ def generate_quadbin_cellid_arrays(n_rows: int, res: int = 8):
         cell = _qb.point_as_cell(float(lon), float(lat), int(res))
         rows.append((int(g), int(cell)))
     return rows, "group int, cell bigint"
+
+
+def generate_quadbin_cells(n_rows: int, res: int = 12):
+    """``n_rows`` deterministic single quadbin ``cell`` ids for the scalar legs.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(cell,)``
+    holding a BIGINT quadbin cell id.  Cells are computed by the pure-Python
+    ``_quadbin.point_as_cell`` over a deterministic lon/lat sweep at a fixed
+    ``res`` (default 12), so light and heavy see the SAME input cells (cell-id
+    math is identical to both tiers' ``point_as_cell``).  Feeds the scalar
+    cell-in legs: ``resolution``, ``kring``, ``aswkb``, ``centroid``.  Points
+    stay inside the WebMercator-valid band (|lat| < 85) so every row yields a
+    well-defined cell."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]  (inside |lat| < 85)
+        cell = _qb.point_as_cell(float(lon), float(lat), int(res))
+        rows.append((int(cell),))
+    return rows, "cell bigint"
+
+
+def generate_quadbin_cell_pairs(n_rows: int, res: int = 12):
+    """``n_rows`` deterministic (cell_a, cell_b) BIGINT pairs for quadbin_distance.
+
+    Returns ``(rows, schema)`` where each row is ``(cell_a, cell_b)`` -- two
+    quadbin cell ids at the SAME ``res`` (a precondition of quadbin_distance).
+    ``cell_a`` is the deterministic sweep cell (same as ``generate_quadbin_cells``);
+    ``cell_b`` is a second cell a small, deterministic lon/lat step away (so the
+    two are at the same resolution but generally a non-zero chessboard distance
+    apart).  Cells are computed by pure-Python ``_quadbin.point_as_cell`` so both
+    tiers see identical inputs."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]
+        # Second point a deterministic small step away, kept inside the band.
+        lon_b = lon + ((i % 5) + 1) * 0.05
+        lat_b = lat + ((i % 3) + 1) * 0.05
+        if lon_b > 179.0:
+            lon_b = lon - 0.25
+        if lat_b > 84.0:
+            lat_b = lat - 0.25
+        cell_a = _qb.point_as_cell(float(lon), float(lat), int(res))
+        cell_b = _qb.point_as_cell(float(lon_b), float(lat_b), int(res))
+        rows.append((int(cell_a), int(cell_b)))
+    return rows, "cell_a bigint, cell_b bigint"
 
 
 def build_vector_corpus(
