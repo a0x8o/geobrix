@@ -111,6 +111,10 @@ Resolution (zoom) range:
 
 Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at the given zoom.
 
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package (numpy-vectorized encoder). Encodes WGS84 lon/lat to a quadbin cell at the given zoom; bit-identical to the heavyweight `Quadbin.scala` (incl. the antimeridian/pole tile clamp).
+:::
+
 **Signature:** `quadbin_pointascell(lon: Column, lat: Column, zoom: Column): Column`
 
 **Returns:**
@@ -127,6 +131,10 @@ Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at th
 <Tier both/>
 
 Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygon of the tile in lon/lat.
+
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package + **shapely**. Cell boundary polygon as EWKB (SRID 4326).
+:::
 
 **Signature:** `quadbin_aswkb(cellId: Column): Column`
 
@@ -145,6 +153,10 @@ Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygo
 
 Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
 
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package + **shapely**. Cell centroid (bbox-corner mean, matching `Quadbin.scala`) as EWKB point (SRID 4326).
+:::
+
 **Signature:** `quadbin_centroid(cellId: Column): Column`
 
 **Returns:**
@@ -161,6 +173,10 @@ Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
 <Tier both/>
 
 Return the resolution (zoom) of a quadbin cell.
+
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package (numpy-vectorized). Extracts the zoom level from a cell id.
+:::
 
 **Signature:** `quadbin_resolution(cellId: Column): Column`
 
@@ -179,6 +195,10 @@ Return the resolution (zoom) of a quadbin cell.
 
 Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
 
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package + **shapely**. Enumerates the cells covering the geometry's bounding box at the resolution, mirroring `Quadbin.scala`'s envelope semantics.
+:::
+
 **Signature:** `quadbin_polyfill(geom: Column, zoom: Column): Column`
 
 **Returns:**
@@ -195,6 +215,10 @@ Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
 <Tier both/>
 
 Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of the center cell).
+
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package. All cells within Chebyshev distance `k` (inclusive).
+:::
 
 **Signature:** `quadbin_kring(cellId: Column, k: Column): Column`
 
@@ -213,6 +237,10 @@ Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of t
 
 Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
 
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package + **shapely**. Bbox polyfill then per-cell intersection with the input geometry; one `STRUCT<cell, geom>` per chip (EWKB, SRID 4326).
+:::
+
 **Signature:** `quadbin_tessellate(geom: Column, zoom: Column): Column`
 
 **Returns:**
@@ -229,6 +257,10 @@ Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns th
 <Tier both/>
 
 Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
+
+:::note Lightweight tier (pygx)
+Powered by **shapely** (`union_all` of the cell polygons). Dissolves an `ARRAY<LONG>` of cells into one EWKB MultiPolygon (SRID 4326).
+:::
 
 **Signature:** `quadbin_cellunion(cellIds: Column): Column`
 
@@ -247,6 +279,10 @@ Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
 
 Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partition) into a single MultiPolygon EWKB. Use this instead of `gbx_quadbin_cellunion` when your cell IDs are spread across rows rather than already collected into an array.
 
+:::note Lightweight tier (pygx)
+Powered by **shapely**. Grouped aggregate — `groupBy(...).agg(gx.quadbin_cellunion_agg("cell"))` dissolves a group's cell ids into one EWKB MultiPolygon (SRID 4326).
+:::
+
 **Signature:** `quadbin_cellunion_agg(cell: Column): Column`
 
 **Returns:**
@@ -263,6 +299,10 @@ Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partit
 <Tier both/>
 
 Chebyshev (king-move) distance between two quadbin cells at the same resolution.
+
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package. Chebyshev distance on tile coordinates; mirrors `Quadbin.scala` (errors if the two cells differ in resolution).
+:::
 
 **Signature:** `quadbin_distance(cellA: Column, cellB: Column): Column`
 
