@@ -77,6 +77,13 @@ Implemented in dependency order (each layer testable before the next):
 6. **Geometry-centric neighborhood** — `bng_geomkring`, `bng_geomkloop` and their explode UDTFs (depend on the tessellate/`lineFill`/`lineDecompose` machinery — BFS walk along LineStrings via `kRing`).
 7. **Aggregators** — `bng_cellintersection_agg`, `bng_cellunion_agg` (grouped-agg `pandas_udf` returning BINARY directly).
 
+### BNG known-issue validation (Mosaic lineage)
+
+Two BNG bugs were flagged in upstream Mosaic and may have been inherited by the heavy port. Because pygx holds **exact cell-set / geometry parity** with heavy, a bug present in heavy would otherwise be *propagated* into light. Stance (same as the pyvx legacy holes/Z fixes): during Phase 2, **validate each against current `gridx/grid/BNG.scala`**; if still present, **fix in BOTH tiers** so parity holds on *correct* behavior, and **reference the Mosaic issue** in the commit message + the beta release notes. If already fixed or not applicable in the geobrix port, record that finding (no change).
+
+- **[mosaic#434](https://github.com/databrickslabs/mosaic/issues/434)** — affects `bng_aswkb` / `bng_aswkt` / `bng_centroid` / `bng_cellarea`: a **100km** grid reference whose two-letter code is `"NE"` / `"NW"` / `"SE"` / `"SW"` is misread as a *quadrant* (negative) resolution and given a half-dimension geometry. The codec (`format`/`parse`/`cellIdToGeometry`) must disambiguate a genuine 100km two-letter reference from a quadrant suffix. Parity test must include these four cells (expect full 100km × 100km = 10¹⁰ m² area).
+- **[mosaic#423](https://github.com/databrickslabs/mosaic/issues/423)** — affects `bng_tessellate` / `bng_tessellateexplode`: when the input polygon is **aligned to the BNG grid** at the resolution, the per-border-cell intersection yields spurious **POINT/LINESTRING** chips at shared vertices/edges alongside the correct polygon chips. Tessellation must **filter intersection results to areal geometries** (Polygon/MultiPolygon) only. Parity test must include a grid-aligned polygon and assert no degenerate (non-areal) chips in either tier.
+
 ## Data flow
 
 ```
