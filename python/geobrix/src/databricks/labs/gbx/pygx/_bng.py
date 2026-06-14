@@ -490,6 +490,11 @@ def polyfill_str(geom, resolution) -> list:
 # ---------------------------------------------------------------------------
 
 
+# Tolerance (metres) for promoting a near-full border chip to a core cell --
+# matches heavy BNG.tessellate's equalsExact(cellGeom, 0.1) (BNG.scala ~L803).
+_FULL_CELL_TOL = 0.1
+
+
 def get_buffer_radius(resolution: int) -> float:
     """Optimal polyfill buffer radius (BNG.getBufferRadius): edgeSize*sqrt(2)/2.
 
@@ -537,9 +542,15 @@ def tessellate(geometry, resolution: int, keep_core_geom: bool = False) -> list:
             adjusted = intersect.difference(cell_geom.boundary)
         else:
             adjusted = intersect
-        # 0.1 m tolerance: BNG coords are integer metres, so a near-full chip is
-        # a full cell (promote to core). Matches heavy equalsExact(cellGeom, 0.1).
-        is_core = adjusted.equals_exact(cell_geom, 0.1)
+        # shapely.intersection renormalizes the ring start vertex, so equals_exact
+        # (vertex-order sensitive) can't detect a full-cell chip the way JTS
+        # equalsExact does. Use start-point-insensitive mutual near-containment
+        # within the same 0.1 m tolerance, matching heavy BNG.tessellate's
+        # equalsExact(cellGeom, 0.1) (BNG.scala ~L803): chip ~= whole cell within
+        # 0.1 m -> it's a core cell. (BNG coords are integer metres.)
+        is_core = cell_geom.buffer(_FULL_CELL_TOL).contains(
+            adjusted
+        ) and adjusted.buffer(_FULL_CELL_TOL).contains(cell_geom)
         if is_core:
             chips.append((cell, True, cell_geom if keep_core_geom else None))
         else:
