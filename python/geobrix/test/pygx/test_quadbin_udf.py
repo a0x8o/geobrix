@@ -71,3 +71,50 @@ def test_cellunion_and_agg(spark):
     df = spark.createDataFrame([(c,) for c in cells], "cell long")
     a = df.agg(gx.quadbin_cellunion_agg("cell").alias("u")).collect()[0]["u"]
     assert from_wkb(bytes(a)).geom_type in ("Polygon", "MultiPolygon")
+
+
+def test_cellunion_array_input_column(spark):
+    """cellunion is now a pandas_udf consuming an ARRAY<LONG> column per row."""
+    gx.register(spark)
+    import quadbin
+
+    cells = list(quadbin.k_ring(quadbin.point_to_cell(0.0, 0.0, 8), 1))
+    df = spark.createDataFrame([(cells,), (cells,)], "cells array<long>")
+    rows = df.select(gx.quadbin_cellunion("cells").alias("u")).collect()
+    assert len(rows) == 2
+    for r in rows:
+        assert from_wkb(bytes(r["u"])).geom_type in ("Polygon", "MultiPolygon")
+
+
+def test_polyfill_tessellate_null_geom(spark):
+    """NULL geom -> SQL NULL for the pandas_udf polyfill/tessellate (propagateNull)."""
+    gx.register(spark)
+    df = spark.createDataFrame(
+        [(None,), (bytearray(to_wkb(box(-0.05, -0.05, 0.05, 0.05))),)], "g binary"
+    )
+    df.createOrReplaceTempView("nv")
+    rows = spark.sql(
+        "SELECT g IS NULL AS gn, "
+        "gbx_quadbin_polyfill(g, 12) IS NULL AS pfn, "
+        "gbx_quadbin_tessellate(g, 12) IS NULL AS ten FROM nv"
+    ).collect()
+    by_null = {r["gn"]: (r["pfn"], r["ten"]) for r in rows}
+    assert by_null[True] == (True, True)  # null geom -> both NULL
+    assert by_null[False] == (False, False)  # real geom -> both non-NULL
+
+
+def test_tessellate_arraystruct_return_shape(spark):
+    """tessellate pandas_udf returns ARRAY<STRUCT<cell:long, geom:binary>>."""
+    gx.register(spark)
+    df = spark.createDataFrame(
+        [(bytearray(to_wkb(box(-0.05, -0.05, 0.05, 0.05))),)], "g binary"
+    )
+    df.createOrReplaceTempView("tv")
+    chips = spark.sql(
+        "SELECT t.cell, t.geom FROM tv "
+        "LATERAL VIEW explode(gbx_quadbin_tessellate(g, 12)) AS t"
+    ).collect()
+    assert len(chips) > 0
+    for c in chips:
+        assert isinstance(c["cell"], int)
+        assert from_wkb(bytes(c["geom"])).geom_type in ("Polygon", "MultiPolygon")

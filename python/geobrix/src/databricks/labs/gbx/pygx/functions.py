@@ -84,32 +84,65 @@ def _distance_udf(a: pd.Series, b: pd.Series) -> pd.Series:
     )
 
 
-# --- scalar UDF implementations (geometry-returning + agg) ----------------------------------
+# --- geometry-returning UDFs (pandas_udf, Series -> Series) ----------------------------------
+# These wrap the same scalar _quadbin oracle functions (the parity source) but
+# loop over an Arrow batch inside the pandas_udf, mirroring _kring_udf/_distance_udf.
+# The win is the batched JVM<->Python Arrow transfer, not numpy — these are
+# geometry ops with per-row shapely work. NULL propagation is preserved per row
+# (None geom -> None) so heavy's propagateNull semantics still hold.
 
 
-def _polyfill(geom, res):
-    if geom is None:  # match heavy propagateNull: NULL geom -> NULL (not [])
-        return None
-    return _quadbin.polyfill(geom, res)
+@pandas_udf(BinaryType())
+def _aswkb_udf(cell: pd.Series) -> pd.Series:
+    return pd.Series([_quadbin.as_wkb(int(c)) if c is not None else None for c in cell])
 
 
-def _aswkb(cell):
-    return _quadbin.as_wkb(cell)
+@pandas_udf(BinaryType())
+def _centroid_udf(cell: pd.Series) -> pd.Series:
+    return pd.Series(
+        [_quadbin.centroid(int(c)) if c is not None else None for c in cell]
+    )
 
 
-def _centroid(cell):
-    return _quadbin.centroid(cell)
+@pandas_udf(BinaryType())
+def _cellunion_udf(cells: pd.Series) -> pd.Series:
+    # cells is a Series of arrays (ARRAY<LONG>); per-row union. None/empty -> None.
+    return pd.Series(
+        [
+            (_quadbin.cell_union(list(cs)) if cs is not None and len(cs) else None)
+            for cs in cells
+        ]
+    )
 
 
-def _cellunion(cells):
-    return _quadbin.cell_union(list(cells) if cells else cells)
+@pandas_udf(ArrayType(LongType()))
+def _polyfill_udf(geom: pd.Series, res: pd.Series) -> pd.Series:
+    # None geom -> None (match heavy propagateNull); else bbox polyfill at res.
+    return pd.Series(
+        [
+            (_quadbin.polyfill(g, int(r)) if g is not None else None)
+            for g, r in zip(geom, res)
+        ]
+    )
 
 
-def _tessellate(geom, res):
-    if geom is None:  # match heavy propagateNull: NULL geom -> NULL (not [])
-        return None
-    # ARRAY<STRUCT<cell,geom>> — return dicts so the struct fields bind by name.
-    return [{"cell": int(c), "geom": g} for (c, g) in _quadbin.tessellate(geom, res)]
+@pandas_udf(ArrayType(QUADBIN_CELL_SCHEMA))
+def _tessellate_udf(geom: pd.Series, res: pd.Series) -> pd.Series:
+    # ARRAY<STRUCT<cell,geom>> — None geom -> None; else dicts so struct fields
+    # bind by name. (Scalar pandas_udf w/ ArrayType(StructType) return.)
+    return pd.Series(
+        [
+            (
+                [
+                    {"cell": int(c), "geom": gm}
+                    for (c, gm) in _quadbin.tessellate(g, int(r))
+                ]
+                if g is not None
+                else None
+            )
+            for g, r in zip(geom, res)
+        ]
+    )
 
 
 # --- grouped-aggregate pandas UDF -----------------------------------------------------------
@@ -131,13 +164,11 @@ def register(spark: SparkSession = None) -> None:
     spark.udf.register("gbx_quadbin_resolution", _resolution_udf)
     spark.udf.register("gbx_quadbin_kring", _kring_udf)
     spark.udf.register("gbx_quadbin_distance", _distance_udf)
-    spark.udf.register("gbx_quadbin_polyfill", _polyfill, ArrayType(LongType()))
-    spark.udf.register("gbx_quadbin_aswkb", _aswkb, BinaryType())
-    spark.udf.register("gbx_quadbin_centroid", _centroid, BinaryType())
-    spark.udf.register("gbx_quadbin_cellunion", _cellunion, BinaryType())
-    spark.udf.register(
-        "gbx_quadbin_tessellate", _tessellate, ArrayType(QUADBIN_CELL_SCHEMA)
-    )
+    spark.udf.register("gbx_quadbin_polyfill", _polyfill_udf)
+    spark.udf.register("gbx_quadbin_aswkb", _aswkb_udf)
+    spark.udf.register("gbx_quadbin_centroid", _centroid_udf)
+    spark.udf.register("gbx_quadbin_cellunion", _cellunion_udf)
+    spark.udf.register("gbx_quadbin_tessellate", _tessellate_udf)
     spark.udf.register("gbx_quadbin_cellunion_agg", _cellunion_agg_udf)
 
 
