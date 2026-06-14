@@ -116,6 +116,42 @@ def test_grid_geom_negative_celly():
     assert cells == [(2.5, 7.5), (2.5, 2.5), (7.5, 7.5), (7.5, 2.5)]
 
 
+def test_triangulate_skips_empty_breakline():
+    # F1: an empty LineString -> np.asarray(coords) has shape (0,) with no second
+    # axis; b.shape[1] raised IndexError. Empty breaklines must be skipped, and a
+    # normal breakline in the same list still triangulates.
+    pts = np.array([[0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0]], dtype=float)
+    bls = [
+        np.empty((0,), dtype=float),  # empty breakline
+        np.array([[0.0, 2.0], [4.0, 2.0]]),  # normal breakline
+    ]
+    tris = _tin.triangulate(pts, bls, 0.0, 0.0)
+    assert len(tris) > 0
+
+
+def test_triangulate_collinear_points_returns_empty():
+    # F2: scipy Delaunay on collinear points raises QhullError ("Initial simplex
+    # is flat"). Heavy returns gracefully (no triangles); light must return [].
+    pts = np.array(
+        [[0, 0, 0], [1, 1, 0], [2, 2, 0], [3, 3, 0]], dtype=float
+    )  # all on y=x
+    assert _tin.triangulate(pts, [], 0.0, 0.0) == []
+
+
+def test_zsnap_snaps_just_beyond_endpoint():
+    # F3: a vertex within tol of a breakline ENDPOINT but just beyond it (s slightly
+    # > 1) must still be snapped to that endpoint's Z (heavy's circular buffer cap),
+    # not left at the mass-point Z.
+    tol = 0.1
+    # Breakline along x, endpoint at (4,2,10). Vertex just past it at x=4.05 (s>1),
+    # within tol of the endpoint.
+    bl = [np.array([[0.0, 2.0, 5.0], [4.0, 2.0, 10.0]])]
+    tri = np.array([[4.05, 2.0, 0.0], [5.0, 0.0, 0.0], [5.0, 4.0, 0.0]])
+    out = _tin._zsnap([tri], bl, tol)
+    # The first vertex (just beyond the endpoint) should snap to endpoint Z=10.0.
+    assert abs(out[0][0, 2] - 10.0) < 1e-9
+
+
 def test_interpolate_known_plane_and_outside_hull():
     pts = np.array([[0, 0, 0], [1, 0, 1], [1, 1, 2], [0, 1, 1]], dtype=float)
     tris = _tin.triangulate(pts, [], 0.0, 0.0)

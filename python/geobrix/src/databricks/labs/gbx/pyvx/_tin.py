@@ -8,7 +8,7 @@ Heavy parity target: vectorx.jts.InterpolateElevation (mode="constrained").
 from typing import List, Sequence
 
 import numpy as np
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, QhullError
 
 
 def _merge_vertices(pts: np.ndarray, tol: float) -> np.ndarray:
@@ -49,6 +49,8 @@ def triangulate(
         bl_coords = []
         for bl in breaklines:
             b = np.asarray(bl, dtype=float)
+            if len(b) == 0:
+                continue  # empty LineString -> no constraint coords, skip
             if b.shape[1] < 3:
                 b = np.column_stack([b[:, 0], b[:, 1], np.zeros(len(b))])
             bl_coords.append(b[:, :3])
@@ -58,7 +60,12 @@ def triangulate(
     pts = _merge_vertices(pts, merge_tolerance)
     if len(pts) < 3:
         return []
-    tri = Delaunay(pts[:, :2])
+    try:
+        tri = Delaunay(pts[:, :2])
+    except QhullError:
+        # Collinear/degenerate input ("Initial simplex is flat"): no 2D simplex
+        # exists. Heavy returns gracefully (no triangles); match it.
+        return []
     simplices = tri.simplices.copy()
     if breaklines:
         simplices = _recover_constraints(pts[:, :2], simplices, tri, breaklines)
@@ -220,5 +227,14 @@ def _zsnap(triangles, breaklines, tol):
                         proj = a[:2] + s * ab
                         if np.hypot(*(p[:2] - proj)) <= tol:
                             t[vi, 2] = a[2] + s * (b[2] - a[2])
+                    else:
+                        # Endpoint-cap region: a vertex just beyond an endpoint
+                        # (s<0 or s>1) is missed by the clamped projection but is
+                        # caught by heavy's circular buffer (point.buffer(tol)).
+                        # Snap to whichever endpoint is within tol.
+                        if np.hypot(*(p[:2] - a[:2])) <= tol:
+                            t[vi, 2] = a[2]
+                        elif np.hypot(*(p[:2] - b[:2])) <= tol:
+                            t[vi, 2] = b[2]
         out.append(t)
     return out

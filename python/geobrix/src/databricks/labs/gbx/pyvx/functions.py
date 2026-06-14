@@ -1,4 +1,8 @@
-"""pyvx light VectorX API — MVT functions (Serverless-safe).
+"""pyvx light VectorX API — MVT, legacy-geometry, and TIN functions (Serverless-safe).
+
+Covers the MVT aggregator/pyramid (gbx_st_asmvt, gbx_st_asmvt_pyramid), legacy
+Mosaic-geometry decoding (gbx_st_legacyaswkb), and constrained-Delaunay TIN
+generators (gbx_st_triangulate, gbx_st_interpolateelevation{bbox,geom}).
 
 Signatures mirror databricks.labs.gbx.vectorx.functions so light <-> heavy is a
 one-line import swap. Register once with vx.register(spark), then use on columns.
