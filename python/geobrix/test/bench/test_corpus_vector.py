@@ -1,8 +1,6 @@
-import logging
 import os
 import zipfile
 
-import pytest
 from shapely import from_wkb
 
 
@@ -40,14 +38,16 @@ def test_transcode_vector_seed(spark, tmp_path):
     for fmt in fmts:
         assert fmt in out
     # shapefile_gbx seed must be a .shp.zip (self-contained archive for dir-read parity)
-    assert out["shapefile_gbx"].endswith(".shp.zip"), (
-        f"expected .shp.zip for shapefile_gbx, got {out['shapefile_gbx']}"
-    )
+    assert out["shapefile_gbx"].endswith(
+        ".shp.zip"
+    ), f"expected .shp.zip for shapefile_gbx, got {out['shapefile_gbx']}"
     # The .shp.zip archive must contain at least the .shp component at the zip root
     with zipfile.ZipFile(out["shapefile_gbx"]) as zf:
         names = zf.namelist()
     assert any(n.endswith(".shp") for n in names), f".shp missing from zip: {names}"
-    assert not any("/" in n for n in names), f"zip entries should be flat (no subdir): {names}"
+    assert not any(
+        "/" in n for n in names
+    ), f"zip entries should be flat (no subdir): {names}"
     # All three formats must read back via their *_gbx reader
     for fmt in fmts:
         back = spark.read.format(fmt).load(out[fmt])
@@ -102,5 +102,7 @@ def test_build_vector_corpus(spark, tmp_path):
         assert spark.read.format(fmt).load(out[fmt]["seed"]).count() == 50
     # shapefile copies must all be .shp.zip files
     for copy_path in out["shapefile_gbx"]["copies"]:
-        assert copy_path.endswith(".shp.zip"), f"expected .shp.zip copy, got {copy_path}"
+        assert copy_path.endswith(
+            ".shp.zip"
+        ), f"expected .shp.zip copy, got {copy_path}"
         assert os.path.exists(copy_path)

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("scipy")
-from databricks.labs.gbx.pyvx import _tin
+from databricks.labs.gbx.pyvx import _tin  # noqa: E402
 
 
 def test_triangulate_square_gives_two_triangles():
@@ -13,18 +13,27 @@ def test_triangulate_square_gives_two_triangles():
 
 
 def test_merge_tolerance_dedups_near_coincident():
-    pts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [1e-9, 1e-9, 0]], dtype=float)
-    tris = _tin.triangulate(pts, breaklines=[], merge_tolerance=1e-6, snap_tolerance=0.0)
+    pts = np.array(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [1e-9, 1e-9, 0]], dtype=float
+    )
+    tris = _tin.triangulate(
+        pts, breaklines=[], merge_tolerance=1e-6, snap_tolerance=0.0
+    )
     assert len(tris) == 2
 
 
 def test_empty_or_too_few_points():
     assert _tin.triangulate(np.zeros((0, 3)), [], 0.0, 0.0) == []
-    assert _tin.triangulate(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]), [], 0.0, 0.0) == []
+    assert (
+        _tin.triangulate(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]), [], 0.0, 0.0)
+        == []
+    )
 
 
 def test_breakline_appears_as_triangle_edges():
-    pts = np.array([[0,0,0],[4,0,0],[4,4,0],[0,4,0],[1,3,0],[3,1,0]], dtype=float)
+    pts = np.array(
+        [[0, 0, 0], [4, 0, 0], [4, 4, 0], [0, 4, 0], [1, 3, 0], [3, 1, 0]], dtype=float
+    )
     bl = [np.array([[1.0, 3.0], [3.0, 1.0]])]
     tris = _tin.triangulate(pts, bl, 0.0, 0.0)
     edges = set()
@@ -81,12 +90,15 @@ def test_interpolate_z_on_edge_at_utm_magnitude():
     # absolute 1e-12 tol is effectively zero (orient2d is an area ~coord^2), so a
     # cell center dead-on a triangle edge gets spuriously dropped. Must interpolate.
     bx, by = 530000.0, 180000.0
-    pts = np.array([
-        [bx, by, 0.0],
-        [bx + 100.0, by, 10.0],
-        [bx + 100.0, by + 100.0, 20.0],
-        [bx, by + 100.0, 10.0],
-    ], dtype=float)
+    pts = np.array(
+        [
+            [bx, by, 0.0],
+            [bx + 100.0, by, 10.0],
+            [bx + 100.0, by + 100.0, 20.0],
+            [bx, by + 100.0, 10.0],
+        ],
+        dtype=float,
+    )
     tris = _tin.triangulate(pts, [], 0.0, 0.0)
     # Point exactly on the diagonal edge shared by the two triangles.
     z = _tin.interpolate_z(tris, bx + 50.0, by + 50.0)
@@ -105,7 +117,7 @@ def test_grid_geom_negative_celly():
 
 
 def test_interpolate_known_plane_and_outside_hull():
-    pts = np.array([[0,0,0],[1,0,1],[1,1,2],[0,1,1]], dtype=float)
+    pts = np.array([[0, 0, 0], [1, 0, 1], [1, 1, 2], [0, 1, 1]], dtype=float)
     tris = _tin.triangulate(pts, [], 0.0, 0.0)
     z = _tin.interpolate_z(tris, 0.5, 0.5)
     assert abs(z - 1.0) < 1e-9

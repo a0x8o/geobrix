@@ -1,7 +1,7 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")
-from shapely import get_srid, set_srid, to_wkb, to_wkt  # noqa: E402
+from shapely import get_srid, set_srid, to_wkb  # noqa: E402
 from shapely.geometry import Point  # noqa: E402
 
 from databricks.labs.gbx.pyvx._geom import parse_geom  # noqa: E402

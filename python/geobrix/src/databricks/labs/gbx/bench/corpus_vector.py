@@ -90,7 +90,8 @@ def _zip_gdb(gdb_path: str) -> str:
     exposes the .gdb for OpenFileGDB.
 
     Built on driver-local disk then sequential-copied to the target (FUSE-safe -- see
-    _zip_shapefile).  Removes the original .gdb directory after.  Returns the zip path."""
+    _zip_shapefile).  Removes the original .gdb directory after.  Returns the zip path.
+    """
     gdb_name = os.path.basename(gdb_path.rstrip("/"))  # e.g. "seed.gdb"
     zip_path = gdb_path + ".zip"
     local_dir = tempfile.mkdtemp(prefix="gbx_zipgdb_")
@@ -101,7 +102,8 @@ def _zip_gdb(gdb_path: str) -> str:
                 for fname in filenames:
                     full = os.path.join(dirpath, fname)
                     zf.write(
-                        full, arcname=os.path.join(gdb_name, os.path.relpath(full, gdb_path))
+                        full,
+                        arcname=os.path.join(gdb_name, os.path.relpath(full, gdb_path)),
                     )
         shutil.copy(local_zip, zip_path)  # sequential -> FUSE-safe
     finally:
@@ -149,7 +151,7 @@ def replicate_vector_seed(seed_path: str, n_copies: int, copies_dir: str) -> Lis
     # Preserve the full extension after the first dot (e.g. "shp.zip", "gdb.zip",
     # "geojson", "gpkg") so copy_0.shp.zip / copy_0.gdb.zip are named correctly.
     dot = base.find(".")
-    ext = base[dot + 1:] if dot != -1 else ""
+    ext = base[dot + 1 :] if dot != -1 else ""
     paths: List[str] = []
     for i in range(n_copies):
         dst = os.path.join(copies_dir, f"copy_{i}.{ext}" if ext else f"copy_{i}")

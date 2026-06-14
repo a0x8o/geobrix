@@ -1,7 +1,6 @@
 """Pure-function tests for H3 raster tessellation (rst_h3_tessellate)."""
 
 import h3
-import numpy as np
 import pytest
 from rasterio.features import geometry_mask
 from shapely.geometry import Polygon

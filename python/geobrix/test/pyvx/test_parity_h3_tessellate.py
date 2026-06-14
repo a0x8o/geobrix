@@ -32,7 +32,9 @@ from pathlib import Path
 import pytest
 
 # Light core (h3-py + rasterio) and heavy (JNI GDAL) deps; skip cleanly if absent.
-rasterio = pytest.importorskip("rasterio", reason="rasterio not installed (geobrix[light] required)")
+rasterio = pytest.importorskip(
+    "rasterio", reason="rasterio not installed (geobrix[light] required)"
+)
 pytest.importorskip("h3", reason="h3-py not installed (geobrix[light] required)")
 import numpy as np  # noqa: E402
 
@@ -55,7 +57,9 @@ _TESS_RES = 5
 @pytest.fixture(scope="module")
 def spark_with_jar():
     if not _JARS:
-        pytest.skip("no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker")
+        pytest.skip(
+            "no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker"
+        )
     from pyspark.sql import SparkSession
 
     logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -101,7 +105,9 @@ def _raster_4326_bytes() -> bytes:
         count=1,
         dtype="float32",
         crs="EPSG:4326",
-        transform=rasterio.transform.from_origin(_ORIGIN[0], _ORIGIN[1], _RES_DEG, _RES_DEG),
+        transform=rasterio.transform.from_origin(
+            _ORIGIN[0], _ORIGIN[1], _RES_DEG, _RES_DEG
+        ),
     )
     with MemoryFile() as mf:
         with mf.open(**prof) as dst:
@@ -111,8 +117,9 @@ def _raster_4326_bytes() -> bytes:
 
 def _light_cells(spark, raster: bytes, mode: str) -> set:
     """Light pyrx cell set: feed bytes through pyrx.rst_fromcontent, LATERAL tessellate."""
-    from databricks.labs.gbx.pyrx import functions as prx
     from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.pyrx import functions as prx
 
     prx.register(spark)
     df = spark.createDataFrame([(bytearray(raster),)], ["raster"]).select(
@@ -128,15 +135,18 @@ def _light_cells(spark, raster: bytes, mode: str) -> set:
 
 def _heavy_cells(spark, raster: bytes, mode: str) -> set:
     """Heavy rasterx cell set: feed bytes through rasterx.rst_fromcontent, select generator."""
-    from databricks.labs.gbx.rasterx import functions as hx
     from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.rasterx import functions as hx
 
     hx.register(spark)
     df = spark.createDataFrame([(bytearray(raster),)], ["raster"]).select(
         hx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
     rows = (
-        df.select(hx.rst_h3_tessellate(f.col("tile"), f.lit(_TESS_RES), mode).alias("tt"))
+        df.select(
+            hx.rst_h3_tessellate(f.col("tile"), f.lit(_TESS_RES), mode).alias("tt")
+        )
         .select(f.col("tt.cellid").alias("cellid"))
         .collect()
     )

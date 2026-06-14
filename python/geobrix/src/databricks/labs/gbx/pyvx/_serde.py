@@ -1,12 +1,8 @@
 """Geometry + attribute marshalling for pyvx MVT encoding (Spark-free)."""
+
 from typing import Any, Dict
 
-from pyspark.sql.types import (
-    BinaryType,
-    IntegerType,
-    StructField,
-    StructType,
-)
+from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
 # Output tile struct, identical to the heavy generator's row shape.
 TILE_SCHEMA = StructType(

@@ -926,13 +926,17 @@ def run_mvt_agg(
     # Each tile gets roughly equal features.  Geometries are small squares in
     # tile-local [0, 4096] coordinates (WKB); attrs is a struct with native types.
     try:
-        from shapely.geometry import box as _box
-        from shapely import to_wkb as _to_wkb
         import pyspark.sql.functions as _F
         from pyspark.sql.types import (
-            StructType, StructField, IntegerType, BinaryType,
-            DoubleType, StringType,
+            BinaryType,
+            DoubleType,
+            IntegerType,
+            StringType,
+            StructField,
+            StructType,
         )
+        from shapely import to_wkb as _to_wkb
+        from shapely.geometry import box as _box
 
         # Build tile addresses: a small z=3 grid so (z,x,y) is always valid.
         z = 3
@@ -956,19 +960,24 @@ def run_mvt_agg(
             wkb = bytes(_to_wkb(geom))
             rows_data.append((tz, tx, ty, wkb, i, float(i) * 0.1, f"feat_{i}"))
 
-        schema = StructType([
-            StructField("z", IntegerType(), False),
-            StructField("x", IntegerType(), False),
-            StructField("y", IntegerType(), False),
-            StructField("geom", BinaryType(), True),
-            StructField("id", IntegerType(), True),
-            StructField("score", DoubleType(), True),
-            StructField("label", StringType(), True),
-        ])
+        schema = StructType(
+            [
+                StructField("z", IntegerType(), False),
+                StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False),
+                StructField("geom", BinaryType(), True),
+                StructField("id", IntegerType(), True),
+                StructField("score", DoubleType(), True),
+                StructField("label", StringType(), True),
+            ]
+        )
         raw_df = spark.createDataFrame(rows_data, schema=schema)
         # Pack id/score/label into a attrs struct so the aggregator gets a struct column.
         df = raw_df.select(
-            "z", "x", "y", "geom",
+            "z",
+            "x",
+            "y",
+            "geom",
             _F.struct(
                 _F.col("id"),
                 _F.col("score"),
@@ -1012,7 +1021,11 @@ def run_mvt_agg(
 
         return (
             df.groupBy("z", "x", "y")
-            .agg(asmvt_fn(_F2.col("geom"), _F2.col("attrs"), _F2.lit("layer")).alias("mvt"))
+            .agg(
+                asmvt_fn(_F2.col("geom"), _F2.col("attrs"), _F2.lit("layer")).alias(
+                    "mvt"
+                )
+            )
             .count()
         )
 
@@ -1026,10 +1039,16 @@ def run_mvt_agg(
 
         _validation = (
             df.groupBy("z", "x", "y")
-            .agg(asmvt_fn(_F3.col("geom"), _F3.col("attrs"), _F3.lit("layer")).alias("mvt"))
+            .agg(
+                asmvt_fn(_F3.col("geom"), _F3.col("attrs"), _F3.lit("layer")).alias(
+                    "mvt"
+                )
+            )
             .collect()
         )
-        _nonempty = sum(1 for _r in _validation if _r["mvt"] and len(bytes(_r["mvt"])) > 0)
+        _nonempty = sum(
+            1 for _r in _validation if _r["mvt"] and len(bytes(_r["mvt"])) > 0
+        )
         if _nonempty == 0:
             raise RuntimeError(
                 f"st_asmvt {api} produced {len(_validation)} group(s) but every MVT blob "
@@ -1058,10 +1077,14 @@ def run_mvt_agg(
             iter_p90_s=stats["iter_p90_ms"] / 1000.0,
             iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
             avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
-            per_tile_avg_s=(ms / n_tile_groups / 1000.0) if (ms and n_tile_groups) else 0.0,
+            per_tile_avg_s=(
+                (ms / n_tile_groups / 1000.0) if (ms and n_tile_groups) else 0.0
+            ),
             per_tile_avg_ms=(ms / n_tile_groups) if (ms and n_tile_groups) else 0.0,
             throughput_mpix_s=0.0,
-            throughput_rows_s=(n_tile_groups / (ms / 1000.0)) if (ms and n_tile_groups) else 0.0,
+            throughput_rows_s=(
+                (n_tile_groups / (ms / 1000.0)) if (ms and n_tile_groups) else 0.0
+            ),
             peak_rss_mb=peak_rss_mb(),
             status="ok",
             note=f"st_asmvt {api} {n} features -> {n_tile_groups} tiles",

@@ -5,6 +5,7 @@ shapely geometry, preserving Z and polygon holes, then serializes to WKB.
 Heavy parity target: databricks.labs.gbx.vectorx.jts.legacy (with the Z-drop
 and holes-drop bugs fixed in both tiers).
 """
+
 from typing import Any, List, Optional, Sequence
 
 from shapely import to_wkb
@@ -66,4 +67,6 @@ def legacy_to_wkb(row: Any) -> Optional[bytes]:
     if row is None:
         return None
     geom = legacy_to_geom(row)
-    return to_wkb(geom)  # shapely default: ISO flavor, dim 3 -> Z preserved when present
+    return to_wkb(
+        geom
+    )  # shapely default: ISO flavor, dim 3 -> Z preserved when present

@@ -1230,7 +1230,13 @@ def build_bench_notebook(cfg: dict) -> dict:
         # run view leads with the per-section result cells, not this wall of setup code.
         _cell(setup, collapsed=True),
     ]
-    if not readers_only and not pmtiles_only and not vector_only and not mvt_only and not fanout_only:
+    if (
+        not readers_only
+        and not pmtiles_only
+        and not vector_only
+        and not mvt_only
+        and not fanout_only
+    ):
         if light and do_pure:
             cells.append(_cell(_CELL_LIGHT_PURE))
         if heavy and do_pure:

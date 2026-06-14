@@ -170,7 +170,9 @@ def iter_tessellate_h3(ds, resolution: int, mode: str = "covering"):
         try:
             # all_touched=True: boundary pixels touched by the hexagon edge are
             # included in the chip, consistent with the covering selection intent.
-            clipped = edit.clip_to_geom(ds, shapely.wkb.dumps(cell_poly), all_touched=True)
+            clipped = edit.clip_to_geom(
+                ds, shapely.wkb.dumps(cell_poly), all_touched=True
+            )
         except ValueError:
             # rasterio.mask raises ValueError when the shape does not overlap.
             continue

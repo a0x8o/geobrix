@@ -64,7 +64,9 @@ _JARS = sorted((_HERE.parents[2] / "lib").glob("geobrix-*-jar-with-dependencies.
 @pytest.fixture(scope="module")
 def spark_with_jar():
     if not _JARS:
-        pytest.skip("no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker")
+        pytest.skip(
+            "no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker"
+        )
     from pyspark.sql import SparkSession
 
     logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -131,7 +133,12 @@ def _heavy_triangles(df, mode):
     return df.select(
         f.call_function(
             "gbx_st_triangulate",
-            f.col("pts"), f.col("bl"), f.col("mt"), f.col("st"), f.col("spf"), f.lit(mode),
+            f.col("pts"),
+            f.col("bl"),
+            f.col("mt"),
+            f.col("st"),
+            f.col("spf"),
+            f.lit(mode),
         ).alias("triangle")
     ).collect()
 
@@ -161,7 +168,8 @@ def _interp_grid_light(spark, view, mode):
     rows = spark.sql(
         "SELECT t.elevation_point AS p FROM " + view + ", LATERAL "
         "gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, xmin, ymin, xmax, ymax, w, h, srid, '"
-        + mode + "') t"
+        + mode
+        + "') t"
     ).collect()
     return _grid_dict(rows, "p")
 
@@ -172,9 +180,19 @@ def _interp_grid_heavy(df, mode):
     rows = df.select(
         f.call_function(
             "gbx_st_interpolateelevationbbox",
-            f.col("pts"), f.col("bl"), f.col("mt"), f.col("st"), f.col("spf"),
-            f.col("xmin"), f.col("ymin"), f.col("xmax"), f.col("ymax"),
-            f.col("w"), f.col("h"), f.col("srid"), f.lit(mode),
+            f.col("pts"),
+            f.col("bl"),
+            f.col("mt"),
+            f.col("st"),
+            f.col("spf"),
+            f.col("xmin"),
+            f.col("ymin"),
+            f.col("xmax"),
+            f.col("ymax"),
+            f.col("w"),
+            f.col("h"),
+            f.col("srid"),
+            f.lit(mode),
         ).alias("p")
     ).collect()
     return _grid_dict(rows, "p")
@@ -224,9 +242,9 @@ def test_triangulate_parity_no_breaklines(spark_with_jar):
     light_rows = _light_triangles(spark, "tin_nob", "constrained")
     heavy_rows = _heavy_triangles(df, "constrained")
 
-    assert len(light_rows) == len(heavy_rows) > 0, (
-        f"triangle count mismatch: light={len(light_rows)} heavy={len(heavy_rows)}"
-    )
+    assert (
+        len(light_rows) == len(heavy_rows) > 0
+    ), f"triangle count mismatch: light={len(light_rows)} heavy={len(heavy_rows)}"
 
     lc = _triangle_centroids(light_rows)
     hc = _triangle_centroids(heavy_rows)
@@ -238,9 +256,13 @@ def test_triangulate_parity_no_breaklines(spark_with_jar):
         return None
 
     miss_lh = _unmatched(lc, hc)
-    assert miss_lh is None, f"light centroid {miss_lh} has no heavy match within 1e-6; heavy={hc}"
+    assert (
+        miss_lh is None
+    ), f"light centroid {miss_lh} has no heavy match within 1e-6; heavy={hc}"
     miss_hl = _unmatched(hc, lc)
-    assert miss_hl is None, f"heavy centroid {miss_hl} has no light match within 1e-6; light={lc}"
+    assert (
+        miss_hl is None
+    ), f"heavy centroid {miss_hl} has no light match within 1e-6; light={lc}"
 
 
 def test_interpolate_parity_surface_closeness(spark_with_jar):
@@ -269,9 +291,9 @@ def test_interpolate_parity_surface_closeness(spark_with_jar):
     )
     assert len(light) > 0, "no in-hull cells produced"
     for k in light:
-        assert abs(light[k] - heavy[k]) < 1e-6, (
-            f"Z mismatch at {k}: light={light[k]} heavy={heavy[k]}"
-        )
+        assert (
+            abs(light[k] - heavy[k]) < 1e-6
+        ), f"Z mismatch at {k}: light={light[k]} heavy={heavy[k]}"
 
 
 def test_triangulate_breakline_edges_present_both(spark_with_jar):
@@ -347,10 +369,16 @@ def test_conforming_is_heavy_only(spark_with_jar):
     heavy_rows = df.select(
         f.call_function(
             "gbx_st_triangulate",
-            f.col("pts"), f.col("bl"), f.col("mt"), f.col("st"), f.col("spf"),
+            f.col("pts"),
+            f.col("bl"),
+            f.col("mt"),
+            f.col("st"),
+            f.col("spf"),
             f.lit("conforming"),
         ).alias("triangle")
     ).collect()
 
     assert len(heavy_rows) > 0, "heavy conforming triangulation produced no triangles"
-    assert all(wkb.loads(bytes(r["triangle"])).geom_type == "Polygon" for r in heavy_rows)
+    assert all(
+        wkb.loads(bytes(r["triangle"])).geom_type == "Polygon" for r in heavy_rows
+    )

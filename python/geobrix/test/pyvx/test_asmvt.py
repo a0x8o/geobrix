@@ -1,6 +1,9 @@
 import pytest
 
-mvt = pytest.importorskip("mapbox_vector_tile", reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)")
+mvt = pytest.importorskip(
+    "mapbox_vector_tile",
+    reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)",
+)
 from shapely import to_wkb  # noqa: E402
 from shapely.geometry import Point  # noqa: E402
 
@@ -13,7 +16,9 @@ def test_st_asmvt_aggregates_group_to_one_tile(spark):
         (0, 0, 0, bytearray(to_wkb(Point(100.0, 200.0))), "a", 1),
         (0, 0, 0, bytearray(to_wkb(Point(300.0, 400.0))), "b", 2),
     ]
-    df = spark.createDataFrame(rows, "z int, x int, y int, geom binary, name string, pop int")
+    df = spark.createDataFrame(
+        rows, "z int, x int, y int, geom binary, name string, pop int"
+    )
     from pyspark.sql import functions as f
 
     out = (
@@ -42,7 +47,9 @@ def test_st_asmvt_accepts_wkt(spark):
         (0, 0, 0, "POINT (100 200)", "a", 1),
         (0, 0, 0, "SRID=4326;POINT (300 400)", "b", 2),
     ]
-    df = spark.createDataFrame(rows, "z int, x int, y int, geom string, name string, pop int")
+    df = spark.createDataFrame(
+        rows, "z int, x int, y int, geom string, name string, pop int"
+    )
     out = (
         df.groupBy("z", "x", "y")
         .agg(vx.st_asmvt(f.col("geom"), f.struct("name", "pop"), "layer").alias("mvt"))

@@ -38,9 +38,7 @@ def _asmvt_udf(geom: pd.Series, attrs: pd.Series, layer: pd.Series) -> bytes:
     # routes it through the shared _geom.parse_geom contract. Empty/None geoms are
     # dropped there (parse_geom -> None / is_empty), so no per-encoding length check here.
     feats = [
-        {"geometry": g, "properties": a}
-        for g, a in zip(geom, attrs)
-        if g is not None
+        {"geometry": g, "properties": a} for g, a in zip(geom, attrs) if g is not None
     ]
     return _mvt.encode_layer(feats, layer_name=layer_name)
 

@@ -1,4 +1,5 @@
 """Pure-Python MVT encoding + XYZ pyramid tiling (Spark-free, Serverless-safe)."""
+
 import math
 from typing import Any, Dict, Iterator, List, Tuple
 

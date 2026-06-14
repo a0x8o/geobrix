@@ -1,10 +1,13 @@
 import pytest
 
-mvt = pytest.importorskip("mapbox_vector_tile", reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)")
+mvt = pytest.importorskip(
+    "mapbox_vector_tile",
+    reason="mapbox-vector-tile not installed (geobrix[light] or [test] required)",
+)
 from shapely import to_wkb  # noqa: E402
 from shapely.geometry import Point  # noqa: E402
 
-from databricks.labs.gbx.pyvx import functions as vx
+from databricks.labs.gbx.pyvx import functions as vx  # noqa: E402
 
 
 def test_st_asmvt_pyramid_fans_out_per_tile(spark):
@@ -50,7 +53,9 @@ def test_pyramid_cap_raises(spark):
     vx.register(spark)
     from shapely.geometry import box
 
-    df = spark.createDataFrame([(bytearray(to_wkb(box(-179, -85, 179, 85))),)], "geom binary")
+    df = spark.createDataFrame(
+        [(bytearray(to_wkb(box(-179, -85, 179, 85))),)], "geom binary"
+    )
     df.createOrReplaceTempView("big")
     import pytest
 

@@ -1,14 +1,19 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")
-from shapely.geometry import Point, LineString, MultiPoint, Polygon, MultiPolygon  # noqa: E402
 from shapely import wkb  # noqa: E402
+from shapely.geometry import LineString, MultiPoint, MultiPolygon, Point  # noqa: E402
 
-from databricks.labs.gbx.pyvx import _legacy
+from databricks.labs.gbx.pyvx import _legacy  # noqa: E402
 
 
 def _row(type_id, boundaries, holes=None, srid=0):
-    return {"typeId": type_id, "srid": srid, "boundaries": boundaries, "holes": holes or []}
+    return {
+        "typeId": type_id,
+        "srid": srid,
+        "boundaries": boundaries,
+        "holes": holes or [],
+    }
 
 
 def test_point_xy():
@@ -49,7 +54,9 @@ def test_polygon_preserves_holes():
 
 
 def test_multipolygon_preserves_holes():
-    sq = lambda o, s: [[o, o], [o + s, o], [o + s, o + s], [o, o + s], [o, o]]
+    def sq(o, s):
+        return [[o, o], [o + s, o], [o + s, o + s], [o, o + s], [o, o]]
+
     poly0 = sq(0.0, 10.0)
     hole0 = sq(2.0, 2.0)
     poly1 = sq(20.0, 5.0)

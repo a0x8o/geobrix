@@ -30,7 +30,9 @@ _JARS = sorted((_HERE.parents[2] / "lib").glob("geobrix-*-jar-with-dependencies.
 @pytest.fixture(scope="module")
 def spark_with_jar():
     if not _JARS:
-        pytest.skip("no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker")
+        pytest.skip(
+            "no geobrix JAR staged under python/geobrix/lib/ — run in geobrix-dev Docker"
+        )
     from pyspark.sql import SparkSession
 
     logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -67,10 +69,23 @@ def spark_with_jar():
 def test_legacy_parity_polygon_with_hole_and_z(spark_with_jar):
     spark = spark_with_jar
     from shapely import wkb
+
     from databricks.labs.gbx.pyvx import functions as vx
 
-    outer = [[0.0, 0.0, 1.0], [10.0, 0.0, 1.0], [10.0, 10.0, 1.0], [0.0, 10.0, 1.0], [0.0, 0.0, 1.0]]
-    hole = [[2.0, 2.0, 1.0], [4.0, 2.0, 1.0], [4.0, 4.0, 1.0], [2.0, 4.0, 1.0], [2.0, 2.0, 1.0]]
+    outer = [
+        [0.0, 0.0, 1.0],
+        [10.0, 0.0, 1.0],
+        [10.0, 10.0, 1.0],
+        [0.0, 10.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ]
+    hole = [
+        [2.0, 2.0, 1.0],
+        [4.0, 2.0, 1.0],
+        [4.0, 4.0, 1.0],
+        [2.0, 4.0, 1.0],
+        [2.0, 2.0, 1.0],
+    ]
     schema = (
         "g struct<typeId:int,srid:int,"
         "boundaries:array<array<array<double>>>,"
@@ -83,13 +98,17 @@ def test_legacy_parity_polygon_with_hole_and_z(spark_with_jar):
 
     # light first
     vx.register(spark)
-    light = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legv").collect()[0]["w"])
+    light = bytes(
+        spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legv").collect()[0]["w"]
+    )
 
     # heavy overwrites the same SQL name
     from databricks.labs.gbx.vectorx.jts.legacy import functions as hx
 
     hx.register(spark)
-    heavy = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legv").collect()[0]["w"])
+    heavy = bytes(
+        spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legv").collect()[0]["w"]
+    )
 
     lg, hg = wkb.loads(light), wkb.loads(heavy)
     assert lg.equals(hg)
@@ -101,6 +120,7 @@ def test_legacy_parity_multipolygon_hole_on_second(spark_with_jar):
     spark = spark_with_jar
     from shapely import wkb
     from shapely.geometry import MultiPolygon
+
     from databricks.labs.gbx.pyvx import functions as vx
 
     def sq(o, s):
@@ -115,27 +135,33 @@ def test_legacy_parity_multipolygon_hole_on_second(spark_with_jar):
         "holes:array<array<array<array<double>>>>>"
     )
     df = spark.createDataFrame(
-        [(
-            {
-                "typeId": 6,
-                "srid": 0,
-                "boundaries": [poly0, poly1],
-                "holes": [[], [hole1]],
-            },
-        )],
+        [
+            (
+                {
+                    "typeId": 6,
+                    "srid": 0,
+                    "boundaries": [poly0, poly1],
+                    "holes": [[], [hole1]],
+                },
+            )
+        ],
         schema,
     )
     df.createOrReplaceTempView("legmp")
 
     # light first
     vx.register(spark)
-    light = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"])
+    light = bytes(
+        spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"]
+    )
 
     # heavy overwrites the same SQL name
     from databricks.labs.gbx.vectorx.jts.legacy import functions as hx
 
     hx.register(spark)
-    heavy = bytes(spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"])
+    heavy = bytes(
+        spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM legmp").collect()[0]["w"]
+    )
 
     lg, hg = wkb.loads(light), wkb.loads(heavy)
     assert isinstance(lg, MultiPolygon) and isinstance(hg, MultiPolygon)
