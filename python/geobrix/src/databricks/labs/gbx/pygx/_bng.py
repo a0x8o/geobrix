@@ -470,3 +470,104 @@ def polyfill_str(geom, resolution) -> list:
     res = get_resolution(resolution)
     parsed = parse_geom(geom)
     return [format(c) for c in polyfill(parsed, res)]
+
+
+# ---------------------------------------------------------------------------
+# tessellation (BNG.tessellate)
+#
+# Splits the input geometry into per-cell chips, each a (Long cellid, core,
+# chip) tuple. Mirrors BNG.tessellate (gridx/grid/BNG.scala line 754):
+#   * radius = edgeSize * sqrt(2) / 2  (half the cell diagonal -> no blind spots)
+#   * carved = geometry.buffer(-radius); polyfill(carved) -> CORE cells (fully
+#     inside, chip == None unless keep_core_geom).
+#   * border = polyfill(borderGeometry) minus core, where borderGeometry is a
+#     1%-grown, simplified buffer of either the geometry (if carved is empty) or
+#     its boundary; each border cell's chip is cell_geom.intersection(geometry).
+#     A near-full intersection (equals_exact(cell_geom, 0.1)) is PROMOTED to core.
+#   * mosaic#423 fix: the final result keeps only chips whose geometry type
+#     matches the INPUT geometry type (drops degenerate POINT/LINESTRING chips
+#     produced by grid-aligned edges/vertices touching a Polygon input).
+# ---------------------------------------------------------------------------
+
+
+def get_buffer_radius(resolution: int) -> float:
+    """Optimal polyfill buffer radius (BNG.getBufferRadius): edgeSize*sqrt(2)/2.
+
+    Half the cell diagonal -- buffering by this avoids polyfill blind spots near
+    the geometry boundary.
+    """
+    return get_edge_size(resolution) * math.sqrt(2) / 2.0
+
+
+def tessellate(geometry, resolution: int, keep_core_geom: bool = False) -> list:
+    """Split ``geometry`` into per-cell chips (BNG.tessellate).
+
+    Returns a list of ``(Long cellid, core: bool, chip: shapely|None)``. ``core``
+    cells are fully inside the geometry (chip ``None`` unless ``keep_core_geom``);
+    border cells carry the clipped intersection. The ``*_str`` wrapper formats the
+    id and emits plain WKB (no SRID).
+    """
+    if geometry is None or geometry.is_empty:
+        return []
+
+    in_type = geometry.geom_type
+    radius = get_buffer_radius(resolution)
+    carved = geometry.buffer(-radius)
+
+    # 1% grow ensures the union of carved + border has no holes inside the
+    # original area; simplify by 1% of the radius (matches JTS.simplify).
+    if carved.is_empty:
+        border_geom = geometry.buffer(radius * 1.01).simplify(0.01 * radius)
+    else:
+        border_geom = geometry.boundary.buffer(radius * 1.01).simplify(0.01 * radius)
+
+    core_set = set(polyfill(carved, resolution))
+    border = [c for c in polyfill(border_geom, resolution) if c not in core_set]
+
+    chips = []
+    for cell in core_set:
+        core_geom = cell_id_to_geometry(cell) if keep_core_geom else None
+        chips.append((cell, True, core_geom))
+    for cell in border:
+        cell_geom = cell_id_to_geometry(cell)
+        intersect = cell_geom.intersection(geometry)
+        if intersect.is_empty:
+            continue  # heavy: (cell, false, intersect).filterNot(_._3.isEmpty)
+        if intersect.geom_type == "GeometryCollection":
+            adjusted = intersect.difference(cell_geom.boundary)
+        else:
+            adjusted = intersect
+        # 0.1 m tolerance: BNG coords are integer metres, so a near-full chip is
+        # a full cell (promote to core). Matches heavy equalsExact(cellGeom, 0.1).
+        is_core = adjusted.equals_exact(cell_geom, 0.1)
+        if is_core:
+            chips.append((cell, True, cell_geom if keep_core_geom else None))
+        else:
+            chips.append((cell, False, adjusted))
+
+    # mosaic#423: drop degenerate (non-areal) chips by keeping only chips whose
+    # geometry type matches the input geometry type. Heavy (line 813):
+    #   .filter(t => t._3 == null || t._3.getGeometryType == inGeomType)
+    # A POINT/LINESTRING intersection of a grid-aligned vertex/edge against a
+    # Polygon input is dropped, leaving only areal (Polygon/MultiPolygon) chips.
+    return [
+        (cell, core, chip)
+        for (cell, core, chip) in chips
+        if chip is None or chip.geom_type == in_type
+    ]
+
+
+def tessellate_str(geom, resolution, keep_core_geom: bool = False) -> list:
+    """String-id wrapper over :func:`tessellate`.
+
+    ``geom`` is any WKB/EWKB/WKT/EWKT input (via ``parse_geom``); ``resolution``
+    is a BNG Int index or resolutionMap string key. Returns
+    ``(cellid: str, core: bool, chip: WKB bytes | None)`` -- chip WKB has NO SRID
+    (heavy ``JTS.toWKB``).
+    """
+    res = get_resolution(resolution)
+    parsed = parse_geom(geom)
+    return [
+        (format(c), core, (_to_wkb(chip) if chip is not None else None))
+        for (c, core, chip) in tessellate(parsed, res, keep_core_geom)
+    ]
