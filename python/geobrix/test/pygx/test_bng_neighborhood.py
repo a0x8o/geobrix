@@ -1,5 +1,3 @@
-import pytest
-
 from databricks.labs.gbx.pygx import _bng
 
 

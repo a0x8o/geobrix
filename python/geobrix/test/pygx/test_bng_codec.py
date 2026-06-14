@@ -1,7 +1,7 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")  # _bng imports shapely at module load
-from databricks.labs.gbx.pygx import _bng
+from databricks.labs.gbx.pygx import _bng  # noqa: E402  (after importorskip guard)
 
 
 def test_resolution_index_and_string_keys():

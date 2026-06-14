@@ -1,7 +1,7 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")
-from databricks.labs.gbx.pygx import _bng
+from databricks.labs.gbx.pygx import _bng  # noqa: E402  (after importorskip guard)
 
 
 def test_cellarea_100km_is_10000_sqkm():
