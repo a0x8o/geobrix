@@ -51,8 +51,8 @@ Heavy source: `src/main/scala/com/databricks/labs/gbx/gridx/quadbin/` + `gridx/g
 | `gbx_quadbin_pointascell` | scalar | BIGINT | `quadbin.point_to_cell(lon, lat, res)` (res ∈ [0,26]) |
 | `gbx_quadbin_resolution` | scalar | INT | `quadbin.get_resolution(cell)` |
 | `gbx_quadbin_kring` | scalar | ARRAY\<BIGINT\> | `quadbin.k_ring(cell, k)` |
-| `gbx_quadbin_distance` | scalar | INT | `quadbin.cell_distance(a, b)` (same-resolution; error otherwise, mirror heavy) |
-| `gbx_quadbin_polyfill` | scalar | ARRAY\<BIGINT\> | `quadbin.polyfill_bbox(geom.bounds, res)` — bbox/envelope semantics, matching heavy (res ∈ [0,20]) |
+| `gbx_quadbin_distance` | scalar | INT | **custom** — the installed `quadbin` 0.2.x has no `cell_distance`; compute Chebyshev distance from `cell_to_tile(a)`/`cell_to_tile(b)` (`max(\|dx\|,\|dy\|)`), same-resolution-or-error, matching `Quadbin.scala` |
+| `gbx_quadbin_polyfill` | scalar | ARRAY\<BIGINT\> | **custom** — no `polyfill_bbox` in 0.2.x; enumerate the cells of the geometry's **bounding box** at the resolution (via `cell_to_tile`/`tile_to_cell` tile range, or `geometry_to_cells` on the bbox polygon), matching `Quadbin.scala`'s `getEnvelopeInternal` bbox semantics (res ∈ [0,20]). Hold to exact cell-set parity. |
 | `gbx_quadbin_aswkb` | scalar | BINARY (EWKB polygon, SRID 4326) | cell → bbox (lib) → shapely polygon → `to_wkb(..., include_srid=True)` |
 | `gbx_quadbin_centroid` | scalar | BINARY (EWKB point) | cell bbox center → shapely Point → EWKB |
 | `gbx_quadbin_cellunion` | scalar | BINARY (EWKB MultiPolygon) | each cell → shapely polygon → `unary_union` → EWKB |
