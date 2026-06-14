@@ -23,7 +23,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Notebooks',
-      collapsed: false,
+      collapsed: true,
       items: [
         'notebooks/eo-series',
         'notebooks/xview',
@@ -32,7 +32,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Sample Data',
-      collapsed: false,
+      collapsed: true,
       items: [
         'sample-data/overview',
         'sample-data/setup',
@@ -44,26 +44,26 @@ const sidebars = {
     {
       type: 'category',
       label: 'Readers & Writers',
-      collapsed: false,
+      collapsed: true,
       items: [
         'readers/overview',
         'writers/overview',
         {
           type: 'category',
           label: 'Readers',
-          collapsed: false,
+          collapsed: true,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/vector'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
+            { type: 'category', label: 'General', collapsed: true, items: ['readers/raster', 'readers/vector'] },
+            { type: 'category', label: 'Named', collapsed: true, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
           ],
         },
         {
           type: 'category',
           label: 'Writers',
-          collapsed: false,
+          collapsed: true,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster', 'writers/vector'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
+            { type: 'category', label: 'General', collapsed: true, items: ['writers/raster', 'writers/vector'] },
+            { type: 'category', label: 'Named', collapsed: true, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
           ],
         },
       ],
@@ -71,7 +71,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Functions',
-      collapsed: false,
+      collapsed: true,
       items: [
         'api/overview',
         'api/tile-structure',
@@ -80,7 +80,7 @@ const sidebars = {
         {
           type: 'category',
           label: 'RasterX',
-          collapsed: false,
+          collapsed: true,
           link: { type: 'doc', id: 'api/raster-functions' },
           items: [
             'api/h3-raster-tessellation',
@@ -92,7 +92,7 @@ const sidebars = {
         {
           type: 'category',
           label: 'Performance & Benchmarking',
-          collapsed: false,
+          collapsed: true,
           items: [
             'api/performance',
             'api/benchmarking',
@@ -111,7 +111,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Advanced Usage',
-      collapsed: false,
+      collapsed: true,
       items: [
         'advanced/overview',
         'advanced/custom-udfs',
