@@ -23,7 +23,11 @@ import math
 from typing import Any
 
 from shapely import to_wkb as _to_wkb
+from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
+from shapely.geometry import mapping as _mapping
+
+from ._geom import parse_geom
 
 CRS_ID = 27700
 NAME = "BNG"
@@ -387,3 +391,82 @@ def k_ring_str(cell_id_str: str, n: int) -> list:
 def k_loop_str(cell_id_str: str, k: int) -> list:
     """String-id wrapper over :func:`k_loop` (parse -> walk -> format)."""
     return [format(c) for c in k_loop(parse(cell_id_str), int(k))]
+
+
+# ---------------------------------------------------------------------------
+# coverage (BNG.polyfill)
+#
+# Centroid-membership BFS flood-fill. Mirrors BNG.polyfill (gridx/grid/BNG.scala
+# line 207): seed the queue with the cell ids of EVERY geometry coordinate plus
+# the centroid's coordinate(s), then BFS over kLoop(.,1) neighbours, INCLUDING a
+# cell iff its own centroid is ``contains``-ed by the input geometry. Neighbours
+# are enqueued only from cells that are themselves contained, exactly as heavy --
+# a contained cell seeds the expansion of its 8 neighbours; an excluded cell is a
+# dead end. The membership test is centroid-in-geometry (NOT intersects), which
+# matches H3/quadbin and is what gives exact cell-set parity with the heavy tier.
+# ---------------------------------------------------------------------------
+
+
+def _seed_coords(geometry) -> list:
+    """All vertex coords across any geometry type (mirrors getCoordinates).
+
+    Walks the GeoJSON coordinate tree so Point/Line/Polygon/Multi*/Geometry
+    collections all yield their flat list of (x, y) vertices, matching the
+    Scala ``geometry.getCoordinates`` used to seed the BFS.
+    """
+    pts: list = []
+
+    def _walk(obj):
+        if isinstance(obj, (list, tuple)):
+            if obj and isinstance(obj[0], (int, float)):
+                pts.append((obj[0], obj[1]))
+            else:
+                for o in obj:
+                    _walk(o)
+
+    if geometry.geom_type == "GeometryCollection":
+        for part in geometry.geoms:
+            _walk(_mapping(part).get("coordinates", []))
+    else:
+        _walk(_mapping(geometry).get("coordinates", []))
+    return pts
+
+
+def polyfill(geometry, resolution: int) -> list:
+    """Long cell ids whose centroid is contained by the geometry (BNG.polyfill).
+
+    Centroid-membership BFS flood-fill seeded from every vertex coordinate plus
+    the geometry centroid. Returns Long cell ids (the ``*_str`` wrapper formats).
+    """
+    if geometry is None or geometry.is_empty:
+        return []
+
+    centroid = geometry.centroid
+    seeds = _seed_coords(geometry) + [(centroid.x, centroid.y)]
+    queue = [point_to_cell_id(px, py, resolution) for (px, py) in seeds]
+
+    visited: set = set()
+    out: list = []
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        center = cell_id_to_geometry(current).centroid
+        if geometry.contains(_Point(center.x, center.y)):
+            out.append(current)
+            for nb in k_loop(current, 1):
+                if nb not in visited:
+                    queue.append(nb)
+    return out
+
+
+def polyfill_str(geom, resolution) -> list:
+    """String-id wrapper over :func:`polyfill` (parse geom -> walk -> format).
+
+    ``geom`` is any WKB/EWKB/WKT/EWKT input (via ``parse_geom``); ``resolution``
+    is a BNG Int index or resolutionMap string key.
+    """
+    res = get_resolution(resolution)
+    parsed = parse_geom(geom)
+    return [format(c) for c in polyfill(parsed, res)]
