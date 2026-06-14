@@ -15,20 +15,20 @@ GridX is **partially lightweight** as of v0.4.0: the **quadbin** functions (`gbx
 
 ![GridX](../../../resources/images/GridX.png)
 
-Complete reference for all GridX discrete-global-grid functions — British National Grid (BNG) and CARTO Quadbin v0.
+Complete reference for all GridX discrete-global-grid functions — CARTO Quadbin v0 and British National Grid (BNG).
 
 ## Overview
 
-GridX is GeoBrix's discrete-global-grid indexing package. As of v0.4.0 it ships two grid systems: **British National Grid (BNG)** for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned global indexing.
+GridX is GeoBrix's discrete-global-grid indexing package. As of v0.4.0 it ships two grid systems: **CARTO quadbin v0** for web-mercator-aligned global indexing and **British National Grid (BNG)** for Great Britain workloads.
 
-- **BNG (British National Grid)** — the Ordnance Survey National Grid (OSGB36) used in Great Britain for spatial indexing and location-based services. Specialized for UK-based spatial data.
 - **Quadbin (CARTO v0)** — a global zoom-indexed tile addressing scheme aligned with web-mercator slippy maps, compatible with CARTO's CDB_QuadKey IDs. Cell `(z, x, y)` coordinates align with the same XYZ tile grid that PMTiles / MVT readers consume — natural for slippy-map heatmaps and global analytics.
+- **BNG (British National Grid)** — the Ordnance Survey National Grid (OSGB36) used in Great Britain for spatial indexing and location-based services. Specialized for UK-based spatial data.
 
 :::note Registration and import paths
-- BNG: `databricks.labs.gbx.gridx.bng` (Python) / `com.databricks.labs.gbx.gridx.bng` (Scala)
 - Quadbin: `databricks.labs.gbx.gridx.quadbin` (Python) / `com.databricks.labs.gbx.gridx.quadbin` (Scala)
+- BNG: `databricks.labs.gbx.gridx.bng` (Python) / `com.databricks.labs.gbx.gridx.bng` (Scala)
 
-Use `RegisterBatch` with `functions=gridx.bng` or `functions=gridx.quadbin` to register just one subpackage, or `functions=all` for everything.
+Use `RegisterBatch` with `functions=gridx.quadbin` or `functions=gridx.bng` to register just one subpackage, or `functions=all` for everything.
 :::
 
 ## Key Features
@@ -40,58 +40,6 @@ Use `RegisterBatch` with `functions=gridx.bng` or `functions=gridx.quadbin` to r
 - **Multi-Resolution Support**: Work with different grid resolutions (BNG: 1–6 integer indices; Quadbin: zoom 0..26)
 - **K-Ring / K-Loop Neighbourhoods**: Filled rings and hollow rings for both grid systems
 - **Polyfill and Tessellation**: Cover geometries with cells; tessellation returns per-cell clipped chip geometries
-
-## British National Grid (BNG)
-
-<Tier heavy/> BNG functions (`gbx_bng_*`) are heavyweight-only.
-
-The British National Grid is the national coordinate system for Great Britain, based on the Ordnance Survey National Grid (OSGB36). It divides Great Britain into grid squares identified by letter-based prefixes and numeric coordinates.
-
-### BNG Structure
-
-- **Grid Squares**: 100km x 100km squares identified by two letters (e.g., "TQ" for London, "NT" for Edinburgh)
-- **Eastings and Northings**: Numeric coordinates within each grid square (EPSG:27700)
-- **Resolution Indices**: Integer indices 1..6 (1=100km, 2=10km, 3=1km, 4=100m, 5=10m, 6=1m); negative indices select quadrant sub-cells. String keys (e.g. `"1km"`, `"100m"`) are also accepted via `BNG.resolutionMap`.
-
-### BNG Grid Reference Format
-
-BNG references follow the format: `[Letters][Eastings][Northings]`
-
-Examples:
-- `TQ 38 80` — 1km precision (Tower of London area)
-- `TQ 3800 8000` — 100m precision
-- `TQ 38000 80000` — 10m precision
-- `SU 12 34` — Different grid square
-
-### Precision Levels
-
-| Precision | Grid Size | Example | Use Case |
-|-----------|-----------|---------|----------|
-| 100000m | 100km x 100km | TQ | Regional analysis |
-| 10000m | 10km x 10km | TQ38 | District-level |
-| 1000m | 1km x 1km | TQ3080 | Local area analysis |
-| 100m | 100m x 100m | TQ308808 | Neighborhood level |
-| 10m | 10m x 10m | TQ30808080 | Building level |
-| 1m | 1m x 1m | TQ3080080800 | Precise location |
-
-### Major Grid Squares
-
-Major 100km grid squares in Great Britain:
-- **TQ** — London area
-- **SU** — South Hampshire
-- **NT** — Edinburgh area
-- **SD** — Lake District
-- **ST** — Bristol area
-
-## Quadbin (CARTO v0)
-
-<Tier both/> Quadbin runs in both tiers. The lightweight tier is the `pygx` quadbin package — powered by the **quadbin** library + shapely; `quadbin_distance` / `quadbin_polyfill` cell math mirrors the heavyweight `Quadbin.scala`, and geometry outputs are EWKB SRID 4326 — identical `gbx_quadbin_*` SQL names, so it is a drop-in swap.
-
-GeoBrix v0.4.0 adds a `gridx/quadbin` subpackage implementing the [CARTO quadbin v0](https://github.com/CartoDB/quadbin) 64-bit packed `(z, x, y)` tile encoding used by Snowflake, dbt, Felt, and CARTO. Coordinates are EPSG:4326 lon/lat on the user-facing API; cells are encoded as web-mercator XYZ tiles internally. Resolutions range from `0` (whole world) to `26` (sub-metre).
-
-:::note Registration
-Quadbin functions are under **gridx.quadbin** — independent of `gridx.bng`. Call `functions.register(spark)` once per session to install the `gbx_quadbin_*` SQL functions.
-:::
 
 ## Usage Examples
 
@@ -139,6 +87,254 @@ Run this once before the examples below. It registers GridX (BNG) so you can use
 <CodeFromTest code={gridxFunctionsExamples} functionName="gridx_setup_example" language="python" source="docs/tests/python/api/gridx_functions.py" testFile="docs/tests/python/api/test_gridx_functions.py" outputConstant="gridx_setup_example_output" />
 
 ---
+
+## Quadbin (CARTO v0)
+
+<Tier both/> Quadbin runs in both tiers. The lightweight tier is the `pygx` quadbin package — powered by the **quadbin** library + shapely; `quadbin_distance` / `quadbin_polyfill` cell math mirrors the heavyweight `Quadbin.scala`, and geometry outputs are EWKB SRID 4326 — identical `gbx_quadbin_*` SQL names, so it is a drop-in swap.
+
+GeoBrix v0.4.0 adds a `gridx/quadbin` subpackage implementing the [CARTO quadbin v0](https://github.com/CartoDB/quadbin) 64-bit packed `(z, x, y)` tile encoding used by Snowflake, dbt, Felt, and CARTO. Coordinates are EPSG:4326 lon/lat on the user-facing API; cells are encoded as web-mercator XYZ tiles internally. Resolutions range from `0` (whole world) to `26` (sub-metre).
+
+:::note Registration
+Quadbin functions are under **gridx.quadbin** — independent of `gridx.bng`. Call `functions.register(spark)` once per session to install the `gbx_quadbin_*` SQL functions.
+:::
+
+CARTO Quadbin v0 cells encode `(z, x, y)` web-mercator tile coordinates as a single `BIGINT`. Cell IDs are interoperable with CARTO's CDB_QuadKey and align with the slippy-map tile grid used by `gbx_rst_xyzpyramid` and `gbx_st_asmvt_pyramid`. Exact cell-set parity between the lightweight and heavyweight tiers is enforced by the cross-tier parity suite.
+
+Resolution (zoom) range:
+- `gbx_quadbin_pointascell`, `gbx_quadbin_resolution`, `gbx_quadbin_kring`, `gbx_quadbin_distance` accept zoom `0..26`.
+- `gbx_quadbin_polyfill` and `gbx_quadbin_tessellate` accept zoom `0..20`.
+
+### quadbin_pointascell
+
+<Tier both/>
+
+**Scalar UDF** (returns `LONG`)
+
+Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at the given zoom.
+
+**Signature:** `quadbin_pointascell(lon: Column, lat: Column, zoom: Column): Column`
+
+**Returns:**
+- `BIGINT` quadbin cell ID
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_pointascell_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_pointascell_sql_example_output" />
+
+---
+
+### quadbin_aswkb
+
+<Tier both/>
+
+**Scalar UDF** (returns `BINARY` — EWKB polygon, SRID 4326)
+
+Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygon of the tile in lon/lat.
+
+**Signature:** `quadbin_aswkb(cellId: Column): Column`
+
+**Returns:**
+- Binary EWKB polygon (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_aswkb_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_centroid
+
+<Tier both/>
+
+**Scalar UDF** (returns `BINARY` — EWKB point, SRID 4326)
+
+Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
+
+**Signature:** `quadbin_centroid(cellId: Column): Column`
+
+**Returns:**
+- Binary EWKB point (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_centroid_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_resolution
+
+<Tier both/>
+
+**Scalar UDF** (returns `INT`)
+
+Return the resolution (zoom) of a quadbin cell.
+
+**Signature:** `quadbin_resolution(cellId: Column): Column`
+
+**Returns:**
+- `INT` zoom level (0..26)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_resolution_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_polyfill
+
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<LONG>`)
+
+Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
+
+**Signature:** `quadbin_polyfill(geom: Column, zoom: Column): Column`
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs covering the bbox
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_polyfill_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_polyfill_sql_example_output" />
+
+---
+
+### quadbin_kring
+
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<LONG>`)
+
+Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of the center cell).
+
+**Signature:** `quadbin_kring(cellId: Column, k: Column): Column`
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs (length `(2k+1)^2`)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_kring_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_kring_sql_example_output" />
+
+---
+
+### quadbin_tessellate
+
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<STRUCT<cell, geom>>`)
+
+Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
+
+**Signature:** `quadbin_tessellate(geom: Column, zoom: Column): Column`
+
+**Returns:**
+- `ARRAY<STRUCT<cell: BIGINT, geom: BINARY>>`
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_tessellate_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_cellunion
+
+<Tier both/>
+
+**Scalar UDF** (`ARRAY<LONG>` → EWKB MultiPolygon)
+
+Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
+
+**Signature:** `quadbin_cellunion(cellIds: Column): Column`
+
+**Returns:**
+- Binary EWKB multipolygon (SRID-tagged 4326)
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+### quadbin_cellunion_agg
+
+<Tier both/>
+
+**Grouped-aggregate UDF** (returns EWKB MultiPolygon)
+
+Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partition) into a single MultiPolygon EWKB. Use this instead of `gbx_quadbin_cellunion` when your cell IDs are spread across rows rather than already collected into an array.
+
+**Signature:** `quadbin_cellunion_agg(cell: Column): Column`
+
+**Returns:**
+- `BINARY` EWKB multipolygon (SRID-tagged 4326) representing the dissolved coverage
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_agg_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_cellunion_agg_sql_example_output" />
+
+---
+
+### quadbin_distance
+
+<Tier both/>
+
+**Scalar UDF** (returns `INT`)
+
+Chebyshev (king-move) distance between two quadbin cells at the same resolution.
+
+**Signature:** `quadbin_distance(cellA: Column, cellB: Column): Column`
+
+**Returns:**
+- `INT` cell-step distance
+
+**SQL:**
+
+<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_distance_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
+
+---
+
+## British National Grid (BNG)
+
+<Tier heavy/> BNG functions (`gbx_bng_*`) are heavyweight-only.
+
+The British National Grid is the national coordinate system for Great Britain, based on the Ordnance Survey National Grid (OSGB36). It divides Great Britain into grid squares identified by letter-based prefixes and numeric coordinates.
+
+### BNG Structure
+
+- **Grid Squares**: 100km x 100km squares identified by two letters (e.g., "TQ" for London, "NT" for Edinburgh)
+- **Eastings and Northings**: Numeric coordinates within each grid square (EPSG:27700)
+- **Resolution Indices**: Integer indices 1..6 (1=100km, 2=10km, 3=1km, 4=100m, 5=10m, 6=1m); negative indices select quadrant sub-cells. String keys (e.g. `"1km"`, `"100m"`) are also accepted via `BNG.resolutionMap`.
+
+### BNG Grid Reference Format
+
+BNG references follow the format: `[Letters][Eastings][Northings]`
+
+Examples:
+- `TQ 38 80` — 1km precision (Tower of London area)
+- `TQ 3800 8000` — 100m precision
+- `TQ 38000 80000` — 10m precision
+- `SU 12 34` — Different grid square
+
+### Precision Levels
+
+| Precision | Grid Size | Example | Use Case |
+|-----------|-----------|---------|----------|
+| 100000m | 100km x 100km | TQ | Regional analysis |
+| 10000m | 10km x 10km | TQ38 | District-level |
+| 1000m | 1km x 1km | TQ3080 | Local area analysis |
+| 100m | 100m x 100m | TQ308808 | Neighborhood level |
+| 10m | 10m x 10m | TQ30808080 | Building level |
+| 1m | 1m x 1m | TQ3080080800 | Precise location |
+
+### Major Grid Squares
+
+Major 100km grid squares in Great Britain:
+- **TQ** — London area
+- **SU** — South Hampshire
+- **NT** — Edinburgh area
+- **SD** — Lake District
+- **ST** — Bristol area
 
 ## Conversion Functions
 
@@ -706,6 +902,33 @@ Explode tessellated cells into separate rows.
 
 ---
 
+## BNG Reference Format
+
+### Standard Format
+BNG references follow: `[Letters][Eastings][Northings]`
+
+### Common Resolutions
+
+| Resolution | Grid Size | Example | Use Case |
+|------------|-----------|---------|----------|
+| 100000m | 100km × 100km | TQ | Regional |
+| 10000m | 10km × 10km | TQ38 | District |
+| 1000m | 1km × 1km | TQ3080 | Local area |
+| 100m | 100m × 100m | TQ308808 | Neighborhood |
+| 10m | 10m × 10m | TQ30808080 | Building |
+| 1m | 1m × 1m | TQ3080080800 | Precise location |
+
+### Major Grid Squares
+
+Major 100km grid squares in Great Britain:
+- **TQ** - London area
+- **SU** - South Hampshire
+- **NT** - Edinburgh area
+- **SD** - Lake District
+- **ST** - Bristol area
+
+---
+
 ## Custom Grid Functions
 
 <Tier heavy/> Custom-grid functions (`gbx_custom_*`) are heavyweight-only.
@@ -879,233 +1102,6 @@ Return all custom grid cells within `k` steps of a center cell (filled neighborh
 **SQL:**
 
 <CodeFromTest code={gridxFunctionsSqlExamples} functionName="custom_kring_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="custom_kring_sql_example_output" />
-
----
-
-## Quadbin
-
-<Tier both/> Available in both tiers (lightweight `pygx` + heavyweight Scala), with exact cell-set parity enforced by the cross-tier parity suite.
-
-CARTO Quadbin v0 cells encode `(z, x, y)` web-mercator tile coordinates as a single `BIGINT`. Cell IDs are interoperable with CARTO's CDB_QuadKey and align with the slippy-map tile grid used by `gbx_rst_xyzpyramid` and `gbx_st_asmvt_pyramid`.
-
-Resolution (zoom) range:
-- `gbx_quadbin_pointascell`, `gbx_quadbin_resolution`, `gbx_quadbin_kring`, `gbx_quadbin_distance` accept zoom `0..26`.
-- `gbx_quadbin_polyfill` and `gbx_quadbin_tessellate` accept zoom `0..20`.
-
-### quadbin_pointascell
-
-<Tier both/>
-
-**Scalar UDF** (returns `LONG`)
-
-Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at the given zoom.
-
-**Signature:** `quadbin_pointascell(lon: Column, lat: Column, zoom: Column): Column`
-
-**Returns:**
-- `BIGINT` quadbin cell ID
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_pointascell_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_pointascell_sql_example_output" />
-
----
-
-### quadbin_aswkb
-
-<Tier both/>
-
-**Scalar UDF** (returns `BINARY` — EWKB polygon, SRID 4326)
-
-Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygon of the tile in lon/lat.
-
-**Signature:** `quadbin_aswkb(cellId: Column): Column`
-
-**Returns:**
-- Binary EWKB polygon (SRID-tagged 4326)
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_aswkb_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-### quadbin_centroid
-
-<Tier both/>
-
-**Scalar UDF** (returns `BINARY` — EWKB point, SRID 4326)
-
-Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
-
-**Signature:** `quadbin_centroid(cellId: Column): Column`
-
-**Returns:**
-- Binary EWKB point (SRID-tagged 4326)
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_centroid_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-### quadbin_resolution
-
-<Tier both/>
-
-**Scalar UDF** (returns `INT`)
-
-Return the resolution (zoom) of a quadbin cell.
-
-**Signature:** `quadbin_resolution(cellId: Column): Column`
-
-**Returns:**
-- `INT` zoom level (0..26)
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_resolution_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-### quadbin_polyfill
-
-<Tier both/>
-
-**Scalar UDF** (returns `ARRAY<LONG>`)
-
-Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
-
-**Signature:** `quadbin_polyfill(geom: Column, zoom: Column): Column`
-
-**Returns:**
-- `ARRAY<BIGINT>` of cell IDs covering the bbox
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_polyfill_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_polyfill_sql_example_output" />
-
----
-
-### quadbin_kring
-
-<Tier both/>
-
-**Scalar UDF** (returns `ARRAY<LONG>`)
-
-Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of the center cell).
-
-**Signature:** `quadbin_kring(cellId: Column, k: Column): Column`
-
-**Returns:**
-- `ARRAY<BIGINT>` of cell IDs (length `(2k+1)^2`)
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_kring_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_kring_sql_example_output" />
-
----
-
-### quadbin_tessellate
-
-<Tier both/>
-
-**Scalar UDF** (returns `ARRAY<STRUCT<cell, geom>>`)
-
-Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
-
-**Signature:** `quadbin_tessellate(geom: Column, zoom: Column): Column`
-
-**Returns:**
-- `ARRAY<STRUCT<cell: BIGINT, geom: BINARY>>`
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_tessellate_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-### quadbin_cellunion
-
-<Tier both/>
-
-**Scalar UDF** (`ARRAY<LONG>` → EWKB MultiPolygon)
-
-Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
-
-**Signature:** `quadbin_cellunion(cellIds: Column): Column`
-
-**Returns:**
-- Binary EWKB multipolygon (SRID-tagged 4326)
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-### quadbin_cellunion_agg
-
-<Tier both/>
-
-**Grouped-aggregate UDF** (returns EWKB MultiPolygon)
-
-Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partition) into a single MultiPolygon EWKB. Use this instead of `gbx_quadbin_cellunion` when your cell IDs are spread across rows rather than already collected into an array.
-
-**Signature:** `quadbin_cellunion_agg(cell: Column): Column`
-
-**Returns:**
-- `BINARY` EWKB multipolygon (SRID-tagged 4326) representing the dissolved coverage
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_cellunion_agg_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" outputConstant="quadbin_cellunion_agg_sql_example_output" />
-
----
-
-### quadbin_distance
-
-<Tier both/>
-
-**Scalar UDF** (returns `INT`)
-
-Chebyshev (king-move) distance between two quadbin cells at the same resolution.
-
-**Signature:** `quadbin_distance(cellA: Column, cellB: Column): Column`
-
-**Returns:**
-- `INT` cell-step distance
-
-**SQL:**
-
-<CodeFromTest code={gridxFunctionsSqlExamples} functionName="quadbin_distance_sql_example" language="sql" source="docs/tests/python/api/gridx_functions_sql.py" testFile="docs/tests/python/api/test_gridx_functions_sql.py" />
-
----
-
-## BNG Reference Format
-
-### Standard Format
-BNG references follow: `[Letters][Eastings][Northings]`
-
-### Common Resolutions
-
-| Resolution | Grid Size | Example | Use Case |
-|------------|-----------|---------|----------|
-| 100000m | 100km × 100km | TQ | Regional |
-| 10000m | 10km × 10km | TQ38 | District |
-| 1000m | 1km × 1km | TQ3080 | Local area |
-| 100m | 100m × 100m | TQ308808 | Neighborhood |
-| 10m | 10m × 10m | TQ30808080 | Building |
-| 1m | 1m × 1m | TQ3080080800 | Precise location |
-
-### Major Grid Squares
-
-Major 100km grid squares in Great Britain:
-- **TQ** - London area
-- **SU** - South Hampshire
-- **NT** - Edinburgh area
-- **SD** - Lake District
-- **ST** - Bristol area
 
 ---
 
