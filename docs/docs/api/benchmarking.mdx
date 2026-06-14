@@ -587,8 +587,21 @@ asserted on decoded output, per the established posture: **triangle count + cent
 non-constraint diagonals), **per-cell surface closeness within 1e-6** for elevation interpolation, and
 **decoded-geometry equality** for legacy migration. Run it with `gbx:bench:cluster --vector-tin-only`.
 
-> **Numbers pending cluster run.** Light-vs-heavy timing results will be filled in after the
-> benchmark cluster run completes.
+Cluster spark-path results (DBR 17.3 LTS; median wall-clock of one full distributed iteration over
+*N* tiles; same corpus both tiers):
+
+| Function | Tiles/iter | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|---|
+| `gbx_st_interpolateelevationgeom` | 125 | 0.49 | 0.56 | 0.88× |
+| `gbx_st_legacyaswkb` | 1,000 | 0.39 | 0.48 | 0.82× |
+| `gbx_st_interpolateelevationbbox` | 245 | 0.40 | 0.53 | 0.75× |
+| `gbx_st_triangulate` | 220 | 0.41 | 0.70 | 0.60× |
+
+The heavyweight JVM/JTS tier is modestly faster across all four. The lightweight tier is competitive
+on legacy migration and elevation interpolation (~0.75–0.88×) and ~1.7× behind on `st_triangulate`:
+the gap is the JVM↔Python serialization of the geometry arrays crossing the UDTF boundary (the same
+boundary cost seen for other byte-heavy lightweight UDTFs), not the triangulation compute itself.
+Decoded-output parity holds across both tiers (enforced by the cross-tier parity test suite, above).
 
 </TabItem>
 
