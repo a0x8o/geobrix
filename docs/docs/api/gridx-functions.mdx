@@ -146,6 +146,10 @@ Functions to convert BNG cell IDs to standard geometry formats.
 
 ### bng_aswkb
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Convert a BNG cell ID to Well-Known Binary (WKB) format.
 
 **Signature:** `bng_aswkb(cellId: Column): Column`
@@ -163,6 +167,10 @@ Convert a BNG cell ID to Well-Known Binary (WKB) format.
 ---
 
 ### bng_aswkt
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Convert a BNG cell ID to Well-Known Text (WKT) format.
 
@@ -186,6 +194,10 @@ Fundamental operations on BNG cells.
 
 ### bng_cellarea
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Calculate the area of a BNG grid cell.
 
 **Signature:** `bng_cellarea(cellId: Column): Column`
@@ -203,6 +215,10 @@ Calculate the area of a BNG grid cell.
 ---
 
 ### bng_centroid
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Get the centroid (center point) of a BNG cell.
 
@@ -222,6 +238,10 @@ Get the centroid (center point) of a BNG cell.
 
 ### bng_distance
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Calculate distance between two BNG cells.
 
 **Signature:** `bng_distance(cell1: Column, cell2: Column): Column`
@@ -240,6 +260,10 @@ Calculate distance between two BNG cells.
 ---
 
 ### bng_euclideandistance
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Calculate Euclidean distance between two BNG cells.
 
@@ -264,6 +288,10 @@ Operations combining multiple cells.
 
 ### bng_cellintersection
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Get the intersection of two BNG cells.
 
 **Signature:** `bng_cellintersection(cell1: Column, cell2: Column): Column`
@@ -282,6 +310,10 @@ Get the intersection of two BNG cells.
 ---
 
 ### bng_cellunion
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Get the union of two BNG cells.
 
@@ -306,6 +338,10 @@ Convert coordinates or geometries to BNG cells.
 
 ### bng_eastnorthasbng
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Convert easting/northing coordinates to a BNG cell reference.
 
 **Signature:** `bng_eastnorthasbng(easting: Column, northing: Column, resolution: Column): Column`
@@ -325,6 +361,10 @@ Convert easting/northing coordinates to a BNG cell reference.
 ---
 
 ### bng_pointascell
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Convert a point geometry to a BNG grid cell. The point must be supplied as **WKT or WKB** (GeoBrix does not accept native Databricks geometry types).
 
@@ -355,6 +395,10 @@ Generate neighboring cells using k-ring patterns.
 
 ### bng_kring
 
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRING>`)
+
 Generate a k-ring of cells around a center cell (filled disk).
 
 **Signature:** `bng_kring(cellId: Column, k: Column): Column`
@@ -373,6 +417,10 @@ Generate a k-ring of cells around a center cell (filled disk).
 ---
 
 ### bng_kloop
+
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRING>`)
 
 Generate a k-loop of cells around a center cell (hollow ring).
 
@@ -393,6 +441,10 @@ Generate a k-loop of cells around a center cell (hollow ring).
 
 ### bng_geomkring
 
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRING>`)
+
 Generate a k-ring of cells around a geometry at specified resolution.
 
 **Signature:** `bng_geomkring(geom: Column, resolution: Column, k: Column): Column`
@@ -412,6 +464,10 @@ Generate a k-ring of cells around a geometry at specified resolution.
 ---
 
 ### bng_geomkloop
+
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRING>`)
 
 Generate a k-loop of cells around a geometry at specified resolution.
 
@@ -437,6 +493,10 @@ Fill geometries with grid cells.
 
 ### bng_polyfill
 
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRING>`)
+
 Fill a geometry with BNG cells at specified resolution.
 
 **Signature:** `bng_polyfill(geometry: Column, resolution: Column): Column`
@@ -455,6 +515,10 @@ Fill a geometry with BNG cells at specified resolution.
 ---
 
 ### bng_tessellate
+
+<Tier heavy/>
+
+**Scalar UDF** (returns `ARRAY<STRUCT>`)
 
 Tessellate a geometry into BNG cells with their geometries.
 
@@ -479,6 +543,10 @@ Aggregate multiple cells into a single result.
 
 ### bng_cellintersection_agg
 
+<Tier heavy/>
+
+**Grouped-aggregate UDF**
+
 Aggregate intersection of multiple BNG cells.
 
 **Signature:** `bng_cellintersection_agg(cellId: Column): Column`
@@ -496,6 +564,10 @@ Aggregate intersection of multiple BNG cells.
 ---
 
 ### bng_cellunion_agg
+
+<Tier heavy/>
+
+**Grouped-aggregate UDF**
 
 Aggregate union of multiple BNG cells.
 
@@ -519,6 +591,10 @@ Explode array results into individual rows.
 
 ### bng_kringexplode
 
+<Tier heavy/>
+
+**Generator (UDTF)**
+
 Explode k-ring cells into separate rows.
 
 **Signature:** `bng_kringexplode(cellId: Column, k: Column): Column`
@@ -538,6 +614,10 @@ Explode k-ring cells into separate rows.
 
 ### bng_kloopexplode
 
+<Tier heavy/>
+
+**Generator (UDTF)**
+
 Explode k-loop cells into separate rows.
 
 **Signature:** `bng_kloopexplode(cellId: Column, k: Column): Column`
@@ -556,6 +636,10 @@ Explode k-loop cells into separate rows.
 ---
 
 ### bng_geomkringexplode
+
+<Tier heavy/>
+
+**Generator (UDTF)**
 
 Explode geometry k-ring cells into separate rows.
 
@@ -577,6 +661,10 @@ Explode geometry k-ring cells into separate rows.
 
 ### bng_geomkloopexplode
 
+<Tier heavy/>
+
+**Generator (UDTF)**
+
 Explode geometry k-loop cells into separate rows.
 
 **Signature:** `bng_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column`
@@ -596,6 +684,10 @@ Explode geometry k-loop cells into separate rows.
 ---
 
 ### bng_tessellateexplode
+
+<Tier heavy/>
+
+**Generator (UDTF)**
 
 Explode tessellated cells into separate rows.
 
@@ -622,6 +714,10 @@ A custom grid is a user-defined regular rectangular grid specified by its spatia
 
 ### gbx_custom_grid
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Define a user-specified regular grid from an origin, extent, cell size, split factor, and SRID.
 
 **Signature:** `gbx_custom_grid(boundXMin, boundXMax, boundYMin, boundYMax, cellSplits, rootCellSizeX, rootCellSizeY, srid)`
@@ -647,6 +743,10 @@ Define a user-specified regular grid from an origin, extent, cell size, split fa
 
 ### gbx_custom_pointascell
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Index a point geometry into a custom grid cell ID at the specified resolution level.
 
 **Signature:** `gbx_custom_pointascell(point, grid, resolution)`
@@ -667,6 +767,10 @@ Index a point geometry into a custom grid cell ID at the specified resolution le
 
 ### gbx_custom_cellaswkb
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Return the WKB footprint polygon of a custom grid cell.
 
 **Signature:** `gbx_custom_cellaswkb(cell, grid)`
@@ -685,6 +789,10 @@ Return the WKB footprint polygon of a custom grid cell.
 ---
 
 ### gbx_custom_cellaswkt
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Return the WKT footprint polygon of a custom grid cell.
 
@@ -705,6 +813,10 @@ Return the WKT footprint polygon of a custom grid cell.
 
 ### gbx_custom_centroid
 
+<Tier heavy/>
+
+**Scalar UDF**
+
 Return the centroid of a custom grid cell as a WKB point.
 
 **Signature:** `gbx_custom_centroid(cell, grid)`
@@ -723,6 +835,10 @@ Return the centroid of a custom grid cell as a WKB point.
 ---
 
 ### gbx_custom_polyfill
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Fill a geometry with all custom grid cell IDs at the specified resolution.
 
@@ -743,6 +859,10 @@ Fill a geometry with all custom grid cell IDs at the specified resolution.
 ---
 
 ### gbx_custom_kring
+
+<Tier heavy/>
+
+**Scalar UDF**
 
 Return all custom grid cells within `k` steps of a center cell (filled neighborhood, Chebyshev distance).
 
@@ -774,6 +894,10 @@ Resolution (zoom) range:
 
 ### quadbin_pointascell
 
+<Tier both/>
+
+**Scalar UDF** (returns `LONG`)
+
 Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at the given zoom.
 
 **Signature:** `quadbin_pointascell(lon: Column, lat: Column, zoom: Column): Column`
@@ -788,6 +912,10 @@ Convert a lon/lat coordinate (EPSG:4326) to the quadbin cell containing it at th
 ---
 
 ### quadbin_aswkb
+
+<Tier both/>
+
+**Scalar UDF** (returns `BINARY` — EWKB polygon, SRID 4326)
 
 Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygon of the tile in lon/lat.
 
@@ -804,6 +932,10 @@ Return the quadbin cell footprint as EWKB (SRID=4326) — the four-corner polygo
 
 ### quadbin_centroid
 
+<Tier both/>
+
+**Scalar UDF** (returns `BINARY` — EWKB point, SRID 4326)
+
 Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
 
 **Signature:** `quadbin_centroid(cellId: Column): Column`
@@ -818,6 +950,10 @@ Return the quadbin cell centroid as an EWKB POINT (SRID=4326).
 ---
 
 ### quadbin_resolution
+
+<Tier both/>
+
+**Scalar UDF** (returns `INT`)
 
 Return the resolution (zoom) of a quadbin cell.
 
@@ -834,6 +970,10 @@ Return the resolution (zoom) of a quadbin cell.
 
 ### quadbin_polyfill
 
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<LONG>`)
+
 Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
 
 **Signature:** `quadbin_polyfill(geom: Column, zoom: Column): Column`
@@ -848,6 +988,10 @@ Polyfill a geometry's bounding box with all quadbin cells at the given zoom.
 ---
 
 ### quadbin_kring
+
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<LONG>`)
 
 Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of the center cell).
 
@@ -864,6 +1008,10 @@ Return all cells within Chebyshev distance `k` of a quadbin cell (inclusive of t
 
 ### quadbin_tessellate
 
+<Tier both/>
+
+**Scalar UDF** (returns `ARRAY<STRUCT<cell, geom>>`)
+
 Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
 
 **Signature:** `quadbin_tessellate(geom: Column, zoom: Column): Column`
@@ -878,6 +1026,10 @@ Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns th
 ---
 
 ### quadbin_cellunion
+
+<Tier both/>
+
+**Scalar UDF** (`ARRAY<LONG>` → EWKB MultiPolygon)
 
 Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
 
@@ -894,6 +1046,10 @@ Union an `ARRAY<BIGINT>` of quadbin cells into a single MultiPolygon EWKB.
 
 ### quadbin_cellunion_agg
 
+<Tier both/>
+
+**Grouped-aggregate UDF** (returns EWKB MultiPolygon)
+
 Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partition) into a single MultiPolygon EWKB. Use this instead of `gbx_quadbin_cellunion` when your cell IDs are spread across rows rather than already collected into an array.
 
 **Signature:** `quadbin_cellunion_agg(cell: Column): Column`
@@ -908,6 +1064,10 @@ Aggregate-level union: dissolve a column of quadbin cell IDs (grouped per partit
 ---
 
 ### quadbin_distance
+
+<Tier both/>
+
+**Scalar UDF** (returns `INT`)
 
 Chebyshev (king-move) distance between two quadbin cells at the same resolution.
 

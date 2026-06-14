@@ -38,7 +38,7 @@ Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases
 
 ```python
 from databricks.labs.gbx.ds.register import register   # *_gbx readers/writers
-from databricks.labs.gbx.pyrx import functions as rx    # gbx_rst_* functions
+from databricks.labs.gbx.pyrx import functions as rx   # gbx_rst_* functions
 
 register(spark)
 rx.register(spark)   # optional — only to call the gbx_rst_* SQL functions
@@ -88,7 +88,7 @@ Light vector readers/writers exchange geometry as **WKB/WKT** with companion `*_
 
 ## Building, deploying, releasing
 
-See the [`scripts`](./scripts) folder and the [docs](https://databrickslabs.github.io/geobrix/).
+See the [`scripts`](./scripts) folder and the [docs](https://databrickslabs.github.io/geobrix/docs/developers).
 
 ## Support
 
