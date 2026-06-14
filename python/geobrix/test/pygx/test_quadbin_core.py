@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("quadbin")
 import quadbin  # noqa: E402
 
-from databricks.labs.gbx.pygx import _quadbin
+from databricks.labs.gbx.pygx import _quadbin  # noqa: E402
 
 
 def test_pointascell_matches_lib():
@@ -70,3 +70,38 @@ def test_cellunion_is_ewkb_and_covers_cells():
 def test_cellunion_empty_or_none_is_none():
     assert _quadbin.cell_union([]) is None
     assert _quadbin.cell_union(None) is None
+
+
+from shapely import to_wkb as _to_wkb  # noqa: E402
+from shapely.geometry import box as _box  # noqa: E402
+
+
+def test_polyfill_bbox_cells_resolution():
+    geom = _to_wkb(_box(-0.1, -0.1, 0.1, 0.1))
+    cells = _quadbin.polyfill(geom, 12)
+    assert len(cells) > 0
+    assert all(_quadbin.resolution(c) == 12 for c in cells)
+
+
+def test_polyfill_resolution_validation():
+    with pytest.raises(ValueError):
+        _quadbin.polyfill(_to_wkb(_box(0, 0, 1, 1)), 21)  # > 20
+
+
+def test_polyfill_accepts_wkt_and_ewkt():
+    cells_wkt = _quadbin.polyfill(
+        "POLYGON ((-0.1 -0.1, 0.1 -0.1, 0.1 0.1, -0.1 0.1, -0.1 -0.1))", 12
+    )
+    assert len(cells_wkt) > 0
+
+
+def test_tessellate_returns_cell_geom_pairs():
+    geom = _to_wkb(_box(-0.05, -0.05, 0.05, 0.05))
+    chips = _quadbin.tessellate(geom, 12)
+    assert len(chips) > 0
+    cell0, gwkb0 = chips[0]
+    assert isinstance(cell0, int)
+    from shapely import from_wkb, get_srid
+
+    g0 = from_wkb(gwkb0)
+    assert get_srid(g0) == 4326 and not g0.is_empty
