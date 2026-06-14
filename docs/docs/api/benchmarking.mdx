@@ -231,14 +231,18 @@ that every group emits a non-empty archive before timing. Run it with
 
 | Aggregator | Tier | Whole-job median (1,000 tiles) | Per-tile | Speedup |
 |---|---|---|---|---|
-| `pmtiles_agg` | lightweight | 0.74 s | 0.74 ms | — |
-| `pmtiles_agg` | heavyweight | 0.70 s | 0.70 ms | **~0.94×** (≈ parity) |
+| `pmtiles_agg` | lightweight | 0.74 s | 0.74 ms | **~1.07×** (≈ parity) |
+| `pmtiles_agg` | heavyweight | 0.70 s | 0.70 ms | — |
 
-The two tiers run within **~6%** of each other (light min 0.65 s overlaps heavy p90
-0.76 s), so the gap sits inside the run-to-run noise band for a grouped aggregate of
-this size. Both tiers produce **spec-valid PMTiles v3 archives** that decode to the
-same tile set; both write the directory with `internal_compression = none` for
-v0.4.0, so the archives are decode-identical. The lightweight aggregator is a
+The lightweight tier runs at the heavyweight median **×1.07** (0.742 s vs 0.695 s).
+The distributions overlap — light min 0.654 s sits below the heavyweight p90 of
+0.758 s — so the gap is inside the run-to-run noise band for a grouped aggregate of
+this size; the two tiers are effectively at parity. Both produce **spec-valid PMTiles
+v3 archives** that decode to the **same tile set**. The archives are *not*
+byte-identical: the lightweight writer GZIP-compresses the internal directories while
+the heavyweight writer leaves them uncompressed (`none`) — both are spec-valid and
+decode identically. Decoded-tile parity (light == heavy) is checked separately by the
+JAR-gated `test/ds/test_pmtiles_agg_parity.py`. The lightweight aggregator is a
 grouped-aggregate Arrow UDF (`pandas_udf`) folding each group's tiles into an
 in-memory archive — the same execution shape as `gbx_st_asmvt`.
 

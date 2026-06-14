@@ -44,6 +44,13 @@ functions.register(spark)
 
 The DataSource writer (`.write.format("pmtiles")`) does NOT need registration — it is wired through `META-INF/services` as soon as the GeoBrix JAR is on the Spark classpath.
 
+On the lightweight tier, `gbx_pmtiles_agg` is installed automatically by `pyrx.register(spark)` **and** `pyvx.register(spark)` (PMTiles is format-agnostic, so it belongs to both). To install only the aggregate — without the rest of a tier — call the standalone helper:
+
+```python
+from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+register_pmtiles_agg(spark)   # installs gbx_pmtiles_agg (Serverless-safe)
+```
+
 ## Quick start
 
 ### UDAF: aggregate to a single blob
