@@ -22,15 +22,24 @@ case class InternalGeometry(
         GeometryTypeEnum.fromTypeId(typeId) match {
             case GeometryTypeEnum.POINT              => JTS.point(boundaries.head.head.toCoordinate)
             case GeometryTypeEnum.MULTIPOINT         => JTS.multiPoint(boundaries.head.map(p => JTS.point(p.toCoordinate)))
-            case GeometryTypeEnum.LINESTRING         => JTS.lineStringXYs(boundaries.head.map(c => (c.coords(0), c.coords(1))).toBuffer)
+            case GeometryTypeEnum.LINESTRING         => JTS.lineStringCoords(boundaries.head.map(_.toCoordinate).toSeq)
+            // JTS boundary coercion can surface a LinearRing typeId; decode it as a LineString (Z-aware), matching light.
+            case GeometryTypeEnum.LINEARRING         => JTS.lineStringCoords(boundaries.head.map(_.toCoordinate).toSeq)
             case GeometryTypeEnum.MULTILINESTRING    =>
-                JTS.multiLineString(boundaries.map(ls => JTS.lineStringXYs(ls.map(c => (c.coords(0), c.coords(1))).toBuffer)))
+                JTS.multiLineString(boundaries.map(ls => JTS.lineStringCoords(ls.map(_.toCoordinate).toSeq)))
             case GeometryTypeEnum.POLYGON            =>
-                // TODO: handle holes
-                JTS.polygonFromCoords(boundaries.head.map(c => c.toCoordinate))
+                val shell = boundaries.head.map(_.toCoordinate).toSeq
+                val rings = if (holes.nonEmpty) holes.head.map(_.map(_.toCoordinate).toSeq).toSeq else Seq.empty
+                JTS.polygonWithHoles(shell, rings)
             case GeometryTypeEnum.MULTIPOLYGON       =>
-                // TODO: handle holes
-                JTS.multiPolygonFromXYs(boundaries.map(_.map(c => (c.coords(0), c.coords(1))).toArray))
+                val polys = boundaries.indices.map { i =>
+                    val shell = boundaries(i).map(_.toCoordinate).toSeq
+                    val rings =
+                        if (i < holes.length && holes(i).nonEmpty) holes(i).map(_.map(_.toCoordinate).toSeq).toSeq
+                        else Seq.empty
+                    JTS.polygonWithHoles(shell, rings)
+                }
+                JTS.multiPolygon(polys)
             case GeometryTypeEnum.GEOMETRYCOLLECTION =>
                 // TODO: implement
                 throw new IllegalAccessException("GeometryCollection not implemented")

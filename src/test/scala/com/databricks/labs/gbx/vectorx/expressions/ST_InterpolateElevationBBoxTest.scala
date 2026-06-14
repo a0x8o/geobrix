@@ -60,7 +60,8 @@ class ST_InterpolateElevationBBoxTest extends AnyFunSuite {
             Literal(100.0), // ymax
             Literal(10),    // width_px  (Int)
             Literal(10),    // height_px (Int)
-            Literal(32633)  // srid      (Int)
+            Literal(32633), // srid      (Int)
+            Literal("constrained")
         )
 
         val rows = evalExpr(expr)
@@ -94,7 +95,8 @@ class ST_InterpolateElevationBBoxTest extends AnyFunSuite {
             Literal(100.0),
             Literal(10L),    // width_px  as Long
             Literal(10L),    // height_px as Long
-            Literal(32633L)  // srid      as Long
+            Literal(32633L), // srid      as Long
+            Literal("constrained")
         )
 
         val rows = evalExpr(expr)
@@ -115,6 +117,38 @@ class ST_InterpolateElevationBBoxTest extends AnyFunSuite {
         val lit = Literal(0.0)
         an[IllegalArgumentException] should be thrownBy {
             ST_InterpolateElevationBBox.builder()(Seq(lit, lit, lit))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 4: 12-arg builder defaults to constrained; conforming also yields 100
+    // -----------------------------------------------------------------------
+    test("ST_InterpolateElevationBBox.builder defaults the 12-arg call to constrained mode") {
+        val pts = cornerPoints
+        val built = ST_InterpolateElevationBBox.builder()(Seq(
+            geomArrayLit(pts: _*), emptyArrayLit, Literal(0.0), Literal(0.01),
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
+            Literal(0.0), Literal(0.0), Literal(100.0), Literal(100.0),
+            Literal(10), Literal(10), Literal(32633)
+        )).asInstanceOf[ST_InterpolateElevationBBox]
+
+        built.modeExpr shouldBe Literal("constrained")
+        evalExpr(built).length shouldBe 100
+    }
+
+    test("st_interpolateelevationbbox mode=conforming yields the 100-point grid for a tilted plane") {
+        val pts = cornerPoints
+        val expr = ST_InterpolateElevationBBox(
+            geomArrayLit(pts: _*), emptyArrayLit, Literal(0.0), Literal(0.01),
+            Literal.create(UTF8String.fromString("NONENCROACHING"), StringType),
+            Literal(0.0), Literal(0.0), Literal(100.0), Literal(100.0),
+            Literal(10), Literal(10), Literal(32633), Literal("conforming")
+        )
+        val rows = evalExpr(expr)
+        rows.length shouldBe 100
+        rows.foreach { row =>
+            val pt = JTS.fromWKB(row.getBinary(0)).asInstanceOf[Point]
+            pt.getCoordinate.getZ should be(planeZ(pt.getX, pt.getY) +- 1e-6)
         }
     }
 }

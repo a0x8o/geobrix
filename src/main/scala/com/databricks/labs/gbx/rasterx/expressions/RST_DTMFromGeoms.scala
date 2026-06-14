@@ -147,7 +147,10 @@ object RST_DTMFromGeoms extends WithExpressionInfo {
         val mp = JTS.multiPoint(points.toArray)
         mp.setSRID(srid)
         val grid = InterpolateElevation.pointGridBBox(xmin, ymin, xmax, ymax, widthPx, heightPx, srid)
-        val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid, mergeTolerance, snapTolerance)
+        // Pin to the conforming (Steiner) path: rst_dtmfromgeoms keeps its established behavior;
+        // the constrained/conforming mode switch is scoped to the VectorX TIN expressions.
+        val interpolated = InterpolateElevation.interpolate(
+            mp, breaklines, grid, mergeTolerance, snapTolerance, None, "conforming")
 
         val ds = VectorRasterBridge.buildEmptyRaster(xmin, ymin, xmax, ymax, widthPx, heightPx, srid, noData)
         try {

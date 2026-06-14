@@ -60,4 +60,4 @@ runs:
         # pyproject sets pythonpath=["src"]; exclude integration (network) tests.
         # test/ds = lightweight DataSource readers/writer + the tiled-output
         # framework (raster_gbx/gtiff_gbx/pmtiles_gbx); same light-dep set as pyrx.
-        pytest test/pyrx test/ds -m "not integration" -v
+        pytest test/pyrx test/ds test/pyvx -m "not integration" -v

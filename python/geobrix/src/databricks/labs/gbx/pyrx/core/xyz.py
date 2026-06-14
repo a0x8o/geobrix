@@ -129,11 +129,12 @@ def intersecting_tiles(ds, min_z, max_z) -> list:
     return out
 
 
-def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> list:
-    """Render every intersecting (z, x, y) tile across [min_z, max_z].
+def iter_pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear"):
+    """Render every intersecting (z, x, y) tile across [min_z, max_z], streaming.
 
-    Returns a list of ``{"z","x","y","bytes"}`` dicts. Validates zoom guards and
-    the tile-count guard BEFORE rendering any tile.
+    Yields ``(z, x, y, bytes)`` tuples one tile at a time — never buffers the full
+    pyramid (large-fan-out OOM guard). Validates zoom guards, the render args, and
+    the tile-count guard BEFORE rendering (and yielding) any tile.
     """
     lo, hi = _validate_zoom_range(min_z, max_z)
     # Validate render args up front (so bad format/size fails fast, not per-tile).
@@ -147,12 +148,22 @@ def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> lis
         if total > MAX_TILE_COUNT:
             _raise_count(lo, hi)
 
-    out = []
     for z in range(lo, hi + 1):
         for t in _TMS.tiles(west, south, east, north, [z]):
             b = render_tile(ds, t.z, t.x, t.y, fmt, size, resampling)
-            out.append({"z": t.z, "x": t.x, "y": t.y, "bytes": b})
-    return out
+            yield (t.z, t.x, t.y, b)
+
+
+def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> list:
+    """Render every intersecting (z, x, y) tile across [min_z, max_z].
+
+    Returns a list of ``{"z","x","y","bytes"}`` dicts. List-materializing wrapper
+    around :func:`iter_pyramid`.
+    """
+    return [
+        {"z": z, "x": x, "y": y, "bytes": b}
+        for z, x, y, b in iter_pyramid(ds, min_z, max_z, fmt, size, resampling)
+    ]
 
 
 def _validate_zoom_range(min_z, max_z) -> tuple:

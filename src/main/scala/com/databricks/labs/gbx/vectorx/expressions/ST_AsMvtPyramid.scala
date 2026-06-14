@@ -9,13 +9,12 @@ import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expressio
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 
-import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
 import scala.collection.mutable.ArrayBuffer
 
 /** Generator: explode one `(geom_wkb, attrs)` row into one output row per intersecting
  *  `(z, x, y)` tile across a zoom range, encoded as MVT bytes.
  *
- *  Pattern-mirrors [[com.databricks.labs.gbx.rasterx.expressions.web.RST_XYZPyramid]] (Wave 5).
+ *  Pattern-mirrors [[com.databricks.labs.gbx.rasterx.expressions.web.RST_XYZPyramid]].
  *  Same single-input-row to many-output-rows shape, codegen-fallback. The output element schema
  *  wraps `(z, x, y, mvt_bytes)` in a single `tile` column to satisfy Spark 4.0's multi-output
  *  generator analysis (callers `.alias("t")` and unpack via `t.tile.z`, `t.tile.mvt_bytes`).
@@ -86,44 +85,34 @@ case class ST_AsMvtPyramid(
         case other                => throw new IllegalArgumentException(s"gbx_st_asmvt_pyramid: $fieldName must be Int/Long; got $other")
     }
 
-    /** Decode the per-feature attribute struct into a `Map[String, String]` consumable by
-     *  [[MvtWriter.encode]]. All values are stringified (matches Wave 1's `ST_AsMvt` scope).
-     *  Null fields are dropped — `MvtWriter` skips missing keys per its schema-derivation rule.
+    /** Decode the per-feature attribute struct into a `Map[String, Any]` consumable by
+     *  [[MvtWriter.encode]], preserving each field's native runtime type (Int/Long/Double/
+     *  Boolean/String) so the pyramid's tiles carry native MVT value types — matching
+     *  `ST_AsMvt`. This runs in-process per row, so values are read straight off the
+     *  `InternalRow` (no serialization round-trip). Null fields are dropped — `MvtWriter`
+     *  skips missing keys per its schema-derivation rule.
      */
     private def decodeAttrs(row: InternalRow): Map[String, Any] = {
         if (row == null) return Map.empty[String, Any]
         val schema = attrsExpr.dataType.asInstanceOf[StructType]
-        val out = new ByteArrayOutputStream()
-        val dos = new DataOutputStream(out)
-        dos.writeInt(schema.fields.length)
+        val b = Map.newBuilder[String, Any]
         var i = 0
         while (i < schema.fields.length) {
-            val key = schema.fields(i).name.getBytes("UTF-8")
-            dos.writeInt(key.length); dos.write(key)
-            if (row.isNullAt(i)) {
-                dos.writeInt(-1)
-            } else {
-                val raw = row.get(i, schema.fields(i).dataType)
-                val s = raw.toString.getBytes("UTF-8")
-                dos.writeInt(s.length); dos.write(s)
+            if (!row.isNullAt(i)) {
+                val name = schema.fields(i).name
+                val dt = schema.fields(i).dataType
+                val value: Any = dt match {
+                    case _: ByteType | _: ShortType | _: IntegerType =>
+                        row.get(i, dt).asInstanceOf[Number].intValue()
+                    case _: LongType   => row.getLong(i)
+                    case _: FloatType | _: DoubleType =>
+                        row.get(i, dt).asInstanceOf[Number].doubleValue()
+                    case _: BooleanType => row.getBoolean(i)
+                    case _              => row.get(i, dt).toString
+                }
+                b += name -> value
             }
             i += 1
-        }
-        dos.flush()
-        val bytes = out.toByteArray
-        val in = new DataInputStream(new ByteArrayInputStream(bytes))
-        val n = in.readInt()
-        val b = Map.newBuilder[String, Any]
-        var j = 0
-        while (j < n) {
-            val kl = in.readInt(); val kb = new Array[Byte](kl); in.readFully(kb)
-            val key = new String(kb, "UTF-8")
-            val vl = in.readInt()
-            if (vl >= 0) {
-                val vb = new Array[Byte](vl); in.readFully(vb)
-                b += key -> new String(vb, "UTF-8")
-            }
-            j += 1
         }
         b.result()
     }

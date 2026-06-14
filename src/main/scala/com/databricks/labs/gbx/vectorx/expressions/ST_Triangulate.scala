@@ -22,7 +22,7 @@ import com.databricks.labs.gbx.vectorx.jts.{InterpolateElevation, JTS, Triangula
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression}
+import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression, Literal}
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -33,7 +33,8 @@ case class ST_Triangulate(
     breaklinesArray: Expression,
     mergeTolerance: Expression,
     snapTolerance: Expression,
-    splitPointFinder: Expression
+    splitPointFinder: Expression,
+    modeExpr: Expression
 ) extends CollectionGenerator
       with Serializable
       with CodegenFallback {
@@ -44,10 +45,10 @@ case class ST_Triangulate(
     override def elementSchema: StructType = ST_Triangulate.elementSchemaStatic
 
     override def children: Seq[Expression] =
-        Seq(pointsArray, breaklinesArray, mergeTolerance, snapTolerance, splitPointFinder)
+        Seq(pointsArray, breaklinesArray, mergeTolerance, snapTolerance, splitPointFinder, modeExpr)
 
     override def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3), nc(4))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] = {
         val pointsVal = pointsArray.eval(input)
@@ -78,8 +79,16 @@ case class ST_Triangulate(
         }
         val finder = TriangulationSplitPointTypeEnum.fromString(finderStr)
 
+        val modeStr = modeExpr.eval(input) match {
+            case s: UTF8String => s.toString
+            case s: String     => s
+            case null          => throw new IllegalArgumentException(
+                "gbx_st_triangulate: mode must not be null")
+            case other         => other.toString
+        }
+
         val mp = JTS.multiPoint(pts)
-        val triangles = InterpolateElevation.triangulate(mp, breaklines, mergeTol, snapTol, Some(finder))
+        val triangles = InterpolateElevation.triangulate(mp, breaklines, mergeTol, snapTol, Some(finder), modeStr)
 
         triangles.iterator.map { t =>
             InternalRow(JTS.toWKB(t))
@@ -142,15 +151,16 @@ object ST_Triangulate extends WithExpressionInfo {
     override def name: String = "gbx_st_triangulate"
 
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
-        case 5 => ST_Triangulate(c(0), c(1), c(2), c(3), c(4))
+        case 5 => ST_Triangulate(c(0), c(1), c(2), c(3), c(4), Literal("constrained"))
+        case 6 => ST_Triangulate(c(0), c(1), c(2), c(3), c(4), c(5))
         case n => throw new IllegalArgumentException(
-            s"gbx_st_triangulate takes exactly 5 arguments " +
-            s"(points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder); got $n"
+            s"gbx_st_triangulate takes 5 or 6 arguments " +
+            s"(points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, [mode]); got $n"
         )
     }
 
     override def usageArgs: String =
-        "points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder"
+        "points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, mode"
 
     override def description: String =
         "Generator: emit one row per TIN triangle polygon (WKB BINARY) from a constrained Delaunay triangulation."

@@ -51,10 +51,10 @@ def test_register_enables_tile_returning_sql_composition(spark):
 def test_register_enables_polygonize_sql(spark):
     prx.register(spark)
     _tile_view(spark, epsg=4326)
-    # polygonize SQL UDF requires explicit band and connectedness args (no SQL defaults).
-    n = spark.sql("SELECT size(gbx_rst_polygonize(tile, 1, 4)) AS n FROM t").first()[
-        "n"
-    ]
+    # polygonize is a LATERAL UDTF; count rows it yields.
+    n = spark.sql(
+        "SELECT COUNT(*) AS n FROM t, LATERAL gbx_rst_polygonize(tile, 1, 4) p"
+    ).first()["n"]
     assert n >= 1
 
 
@@ -97,8 +97,10 @@ def test_register_enables_tilexyz_sql(spark):
 def test_register_enables_xyzpyramid_sql(spark):
     prx.register(spark)
     _rgb_tile_view(spark)
+    # xyzpyramid is a streaming UDTF; count the rows it yields.
     n = spark.sql(
-        "SELECT size(gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear')) AS n FROM t"
+        "SELECT count(*) AS n FROM t, "
+        "LATERAL gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 64, 'bilinear') p"
     ).first()["n"]
     assert n >= 1
 
@@ -106,21 +108,21 @@ def test_register_enables_xyzpyramid_sql(spark):
 def test_register_enables_h3_rastertogrid_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=4, height=3, epsg=4326)
-    # nested ARRAY<ARRAY<struct>>: outer size == band count (1).
-    n = spark.sql(
-        "SELECT size(gbx_rst_h3_rastertogridcount(tile, 6)) AS n FROM t"
-    ).first()["n"]
-    assert n == 1
+    # UDTF returns flat (band, cellID, measure) rows; sum of counts == 12 pixels.
+    rows = spark.sql(
+        "SELECT t.band, t.measure FROM t, LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    assert all(r["band"] == 1 for r in rows)
+    assert sum(r["measure"] for r in rows) == 12
 
 
 def test_register_enables_quadbin_rastertogrid_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=4, height=3, epsg=4326)
-    # explode both levels and confirm counts sum to the 12 valid pixels.
+    # UDTF returns flat (band, cellID, measure) rows; sum of counts == 12 pixels.
     total = spark.sql(
-        "SELECT sum(c.measure) AS total FROM t "
-        "LATERAL VIEW explode(gbx_rst_quadbin_rastertogridcount(tile, 10)) AS b "
-        "LATERAL VIEW explode(b) AS c"
+        "SELECT sum(t.measure) AS total FROM t, "
+        "LATERAL gbx_rst_quadbin_rastertogridcount(tile, 10) t"
     ).first()["total"]
     assert total == 12
 
@@ -584,9 +586,9 @@ def test_register_enables_index_sql(spark):
 def test_register_enables_h3_tessellate_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=8, height=8, epsg=4326)
+    # h3_tessellate is a streaming UDTF; count the cells it yields.
     n = spark.sql(
-        "SELECT count(*) AS n FROM t "
-        "LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 4)) AS cell"
+        "SELECT count(*) AS n FROM t, LATERAL gbx_rst_h3_tessellate(tile, 4) cell"
     ).first()["n"]
     assert n > 0
 

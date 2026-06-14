@@ -88,9 +88,9 @@ def test_multi_partition_merge(spark, tmp_path):
         "geom_0_srid string, geom_0_srid_proj string",
     ).repartition(4)
     assert df.rdd.getNumPartitions() == 4
-    df.write.format("vector_gbx").mode("overwrite").option("driverName", "GeoJSON").save(
-        out
-    )
+    df.write.format("vector_gbx").mode("overwrite").option(
+        "driverName", "GeoJSON"
+    ).save(out)
     back = spark.read.format("vector_gbx").load(out)
     assert back.count() == 50
     assert {r["name"] for r in back.collect()} == {str(i) for i in range(50)}
@@ -187,7 +187,9 @@ def test_file_gdb_writer_roundtrip(spark, tmp_path):
 
     register(spark)
     if importlib.util.find_spec("osgeo") is None:
-        pytest.skip("native osgeo (heavy GDAL natives) not present; file_gdb_gbx write requires osgeo")
+        pytest.skip(
+            "native osgeo (heavy GDAL natives) not present; file_gdb_gbx write requires osgeo"
+        )
     out = str(tmp_path / "out.gdb")
     _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
     back = spark.read.format("file_gdb_gbx").load(out)
@@ -236,7 +238,9 @@ def test_file_gdb_clear_error_without_osgeo(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "noosgeo.gdb")
     with pytest.raises(Exception) as ei:
-        _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(out)
+        _wkb_df(spark).coalesce(1).write.format("file_gdb_gbx").mode("overwrite").save(
+            out
+        )
     assert "osgeo" in str(ei.value).lower() or "native" in str(ei.value).lower()
 
 
@@ -253,7 +257,9 @@ def test_classic_write_path_roundtrip(spark, tmp_path):
     from databricks.labs.gbx.ds.vector import VectorGbxWriter
 
     out = str(tmp_path / "classic.gpkg")
-    w = VectorGbxWriter(out, _wkb_df(spark).schema, "GPKG", {"driverName": "GPKG"}, True)
+    w = VectorGbxWriter(
+        out, _wkb_df(spark).schema, "GPKG", {"driverName": "GPKG"}, True
+    )
     tbl = pa.table(
         {
             "name": ["a", "b"],

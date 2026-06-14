@@ -854,6 +854,1360 @@ def run_vector_write(
         )
 
 
+def run_mvt_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_features: int = 500,
+    n_tiles: int = 10,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time a grouped st_asmvt aggregation over synthetic in-memory features.
+
+    Builds ``n_features`` features distributed across ``n_tiles`` (z,x,y) keys,
+    each with a WKB polygon (tile-local coordinates) plus a mixed-type attrs struct
+    (int id, double score, str label). Registers the chosen tier, caches the
+    DataFrame, then times a ``groupBy("z","x","y").agg(st_asmvt(...))`` job to
+    completion. Returns a single ResultRow (mode="spark-path", category="mvt").
+
+    ``api`` controls which tier is registered and timed:
+        "lightweight"  → ``databricks.labs.gbx.pyvx.functions``
+        "heavyweight"  → ``databricks.labs.gbx.vectorx.functions``
+    """
+    env = capture_env(where)
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+            asmvt_fn = vx.st_asmvt
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+            asmvt_fn = hx.st_asmvt
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build a synthetic features DataFrame with n_features rows across n_tiles keys.
+    # Each tile gets roughly equal features.  Geometries are small squares in
+    # tile-local [0, 4096] coordinates (WKB); attrs is a struct with native types.
+    try:
+        import pyspark.sql.functions as _F
+        from pyspark.sql.types import (
+            BinaryType,
+            DoubleType,
+            IntegerType,
+            StringType,
+            StructField,
+            StructType,
+        )
+        from shapely import to_wkb as _to_wkb
+        from shapely.geometry import box as _box
+
+        # Build tile addresses: a small z=3 grid so (z,x,y) is always valid.
+        z = 3
+        tile_addresses = [(z, i % 8, (i // 8) % 8) for i in range(n_tiles)]
+
+        rows_data = []
+        for i in range(n_features):
+            tz, tx, ty = tile_addresses[i % n_tiles]
+            # Spread each tile's squares across the FULL [0, 4096] tile extent on a
+            # coarse grid. The heavy MVT driver (OGR, EPSG:3857, single 0/0/0 tile)
+            # quantizes the whole layer to EXTENT=4096, so squares packed into a tiny
+            # coordinate band collapse to sub-pixel and the driver drops them (empty
+            # tile). Light keeps them (it treats the coords as already tile-local), so
+            # a packed band silently breaks light-vs-heavy parity. A 16x16 grid over
+            # the extent (step 256) keeps every square distinct + above the
+            # quantization floor in both tiers.
+            slot = (i // n_tiles) % 256
+            cx = 128 + (slot % 16) * 256
+            cy = 128 + (slot // 16) * 256
+            geom = _box(cx - 32, cy - 32, cx + 32, cy + 32)
+            wkb = bytes(_to_wkb(geom))
+            rows_data.append((tz, tx, ty, wkb, i, float(i) * 0.1, f"feat_{i}"))
+
+        schema = StructType(
+            [
+                StructField("z", IntegerType(), False),
+                StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False),
+                StructField("geom", BinaryType(), True),
+                StructField("id", IntegerType(), True),
+                StructField("score", DoubleType(), True),
+                StructField("label", StringType(), True),
+            ]
+        )
+        raw_df = spark.createDataFrame(rows_data, schema=schema)
+        # Pack id/score/label into a attrs struct so the aggregator gets a struct column.
+        df = raw_df.select(
+            "z",
+            "x",
+            "y",
+            "geom",
+            _F.struct(
+                _F.col("id"),
+                _F.col("score"),
+                _F.col("label"),
+            ).alias("attrs"),
+        ).cache()
+        n = int(df.count())
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    def _job():
+        import pyspark.sql.functions as _F2
+
+        return (
+            df.groupBy("z", "x", "y")
+            .agg(
+                asmvt_fn(_F2.col("geom"), _F2.col("attrs"), _F2.lit("layer")).alias(
+                    "mvt"
+                )
+            )
+            .count()
+        )
+
+    try:
+        # Guard against a tier that "succeeds" (10 groups counted) but emits all-NULL or
+        # all-empty MVT blobs -- e.g. the heavy OGR MVT driver dropping every feature to a
+        # sub-pixel collapse. Counting groups alone masks that, so validate (once, untimed)
+        # that at least one group produced a non-empty blob; a collapse becomes a status=
+        # "error" row (via the except below), not a misleading "ok".
+        import pyspark.sql.functions as _F3
+
+        _validation = (
+            df.groupBy("z", "x", "y")
+            .agg(
+                asmvt_fn(_F3.col("geom"), _F3.col("attrs"), _F3.lit("layer")).alias(
+                    "mvt"
+                )
+            )
+            .collect()
+        )
+        _nonempty = sum(
+            1 for _r in _validation if _r["mvt"] and len(bytes(_r["mvt"])) > 0
+        )
+        if _nonempty == 0:
+            raise RuntimeError(
+                f"st_asmvt {api} produced {len(_validation)} group(s) but every MVT blob "
+                "is NULL/empty -- features collapsed (check coordinate extent vs the "
+                "encoder's quantization)."
+            )
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        n_tile_groups = min(n, n_tiles)
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(
+                (ms / n_tile_groups / 1000.0) if (ms and n_tile_groups) else 0.0
+            ),
+            per_tile_avg_ms=(ms / n_tile_groups) if (ms and n_tile_groups) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(
+                (n_tile_groups / (ms / 1000.0)) if (ms and n_tile_groups) else 0.0
+            ),
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"st_asmvt {api} {n} features -> {n_tile_groups} tiles",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="st_asmvt",
+            category="mvt",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
+def _tin_result_row(
+    *,
+    run_id: str,
+    api: str,
+    fn: str,
+    category: str,
+    env: dict,
+    rows: int,
+    status: str,
+    note: str,
+    stats: Optional[dict] = None,
+    warmup: int = 0,
+) -> "ResultRow":
+    """Compact ResultRow builder for the TIN/legacy spark-path legs.
+
+    When ``stats`` is None (error path) the timing fields are zeroed and
+    ``measured_iters`` is 0; otherwise they are filled from ``time_iters``
+    output and per-row metrics are amortized over ``rows`` (output rows --
+    triangles / interpolated points / decoded geometries)."""
+    if stats is None:
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=category,
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=rows,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status=status,
+            note=note[-500:],
+            output_fingerprint="",
+            **env,
+        )
+    ms = stats["iter_median_ms"]
+    return ResultRow(
+        run_id=run_id,
+        api=api,
+        fn=fn,
+        category=category,
+        mode="spark-path",
+        tile_px=0,
+        bands=0,
+        dtype="",
+        srid=0,
+        rows=rows,
+        nodata_frac=0.0,
+        warmup_iters=stats["warmup_iters"],
+        measured_iters=stats["measured_iters"],
+        iter_median_s=ms / 1000.0,
+        iter_min_s=stats["iter_min_ms"] / 1000.0,
+        iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+        iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+        avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+        per_tile_avg_s=(ms / rows / 1000.0) if (ms and rows) else 0.0,
+        per_tile_avg_ms=(ms / rows) if (ms and rows) else 0.0,
+        throughput_mpix_s=0.0,
+        throughput_rows_s=(rows / (ms / 1000.0)) if (ms and rows) else 0.0,
+        peak_rss_mb=peak_rss_mb(),
+        status=status,
+        note=note[-500:],
+        output_fingerprint="",
+        **env,
+    )
+
+
+def run_legacy_aswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_legacyaswkb decode over ``n_rows`` synthetic legacy structs.
+
+    Light (``api="lightweight"``) registers ``databricks.labs.gbx.pyvx`` and
+    times ``SELECT gbx_st_legacyaswkb(g) FROM v``. Heavy (``api="heavyweight"``)
+    registers ``databricks.labs.gbx.vectorx.jts.legacy`` -- the SAME SQL name --
+    and times the same query. (The shared name means a light+heavy parity cell
+    must collect light BEFORE registering heavy; that ordering lives in the
+    cluster cell, not here -- each call registers exactly one tier.)
+    Returns a single ResultRow (mode="spark-path", category="legacy").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_legacy_structs
+
+    env = capture_env(where)
+    fn = "st_legacyaswkb"
+    cat = "legacy"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx.jts.legacy import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_legacy_structs(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_legacy_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_st_legacyaswkb(g) AS w FROM _legacy_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the decode produces non-null WKB.
+        _val = spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM _legacy_bench_v").head(
+            1
+        )
+        if not _val or _val[0]["w"] is None or len(bytes(_val[0]["w"])) == 0:
+            raise RuntimeError("st_legacyaswkb produced null/empty WKB")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"st_legacyaswkb {api} decoded {n} geometries",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_triangulate(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_triangulate over ``n_rows`` synthetic point arrays.
+
+    Light registers pyvx UDTFs and times the SQL ``LATERAL`` TVF; heavy
+    registers vectorx and times the JVM generator-Column form (the surfaces
+    occupy different catalog paths and coexist). Records ``rows`` = number of
+    output triangles. Returns one ResultRow (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_triangulate"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.triangle FROM _tin_bench_v, LATERAL "
+                "gbx_st_triangulate(pts, bl, mt, st, spf, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_triangulate",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.lit("constrained"),
+                ).alias("triangle")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_triangulate produced no triangles")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_triangulate {api} -> {n_out} triangles",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_interp_bbox(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_interpolateelevationbbox over ``n_rows`` synthetic point arrays.
+
+    Light = SQL ``LATERAL`` UDTF; heavy = JVM generator-Column. Records
+    ``rows`` = number of interpolated grid points. Returns one ResultRow
+    (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_interpolateelevationbbox"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.elevation_point AS p FROM _tin_bench_v, LATERAL "
+                "gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, "
+                "xmin, ymin, xmax, ymax, w, h, srid, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_interpolateelevationbbox",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.col("xmin"),
+                    _f.col("ymin"),
+                    _f.col("xmax"),
+                    _f.col("ymax"),
+                    _f.col("w"),
+                    _f.col("h"),
+                    _f.col("srid"),
+                    _f.lit("constrained"),
+                ).alias("p")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_interpolateelevationbbox produced no points")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_interpolateelevationbbox {api} -> {n_out} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_interp_geom(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_interpolateelevationgeom over ``n_rows`` synthetic point arrays.
+
+    Light = SQL ``LATERAL`` UDTF (arg order: pts, bl, mt, st, spf, origin, cols,
+    rows, cell_x, cell_y, mode); heavy = JVM generator-Column (same arg order).
+    Records ``rows`` = number of interpolated grid points. Returns one ResultRow
+    (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_interpolateelevationgeom"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.elevation_point AS p FROM _tin_bench_v, LATERAL "
+                "gbx_st_interpolateelevationgeom(pts, bl, mt, st, spf, "
+                "origin, cols, rows_n, cell_x, cell_y, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_interpolateelevationgeom",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.col("origin"),
+                    _f.col("cols"),
+                    _f.col("rows_n"),
+                    _f.col("cell_x"),
+                    _f.col("cell_y"),
+                    _f.lit("constrained"),
+                ).alias("p")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_interpolateelevationgeom produced no points")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_interpolateelevationgeom {api} -> {n_out} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def _make_synthetic_geotiff(
+    n_regions: int = 4,
+    size: int = 64,
+    *,
+    bands: int = 1,
+    bounds: tuple = (-0.5, 51.3, 0.5, 51.7),
+    checkerboard: int = 0,
+) -> bytes:
+    """Build a minimal in-memory GeoTIFF with distinct value structure.
+
+    The tile is ``size x size`` pixels, ``bands``-band float32, EPSG:4326.
+
+    Value structure (drives the fan-out of each consuming function):
+      * ``checkerboard > 0``: paint a ``checkerboard x checkerboard`` grid of
+        alternating integer values -- yields MANY connected components for
+        rst_polygonize and many distinct cell measures for the grid counters.
+      * otherwise: split into ``n_regions`` horizontal bands of distinct value
+        (the original behaviour) -- a handful of large components.
+
+    ``bounds`` is the WGS84 (minx, miny, maxx, maxy) extent; a wider extent
+    spans more H3 cells / XYZ tiles. ``bands`` > 1 drives rst_separatebands.
+
+    Returns raw GTiff bytes suitable for the ``raster`` field of a tile struct.
+    """
+    import io as _io
+
+    import numpy as np
+    from rasterio.crs import CRS
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_bounds
+
+    def _one_band(seed: float) -> "np.ndarray":
+        arr = np.zeros((size, size), dtype=np.float32)
+        if checkerboard and checkerboard > 0:
+            # Paint a checkerboard of distinct values: adjacent cells differ so
+            # polygonize sees ``checkerboard^2`` separate connected components.
+            cell = max(1, size // checkerboard)
+            last = checkerboard - 1
+            for by in range(checkerboard):
+                r0 = by * cell
+                r1 = size if by == last else (by + 1) * cell
+                for bx in range(checkerboard):
+                    c0 = bx * cell
+                    c1 = size if bx == last else (bx + 1) * cell
+                    # Distinct value per block; +seed so bands differ.
+                    val = float((by * checkerboard + bx) % 251 + 1) + seed
+                    arr[r0:r1, c0:c1] = val
+        else:
+            step = max(1, size // n_regions)
+            for i in range(n_regions):
+                row_start = i * step
+                row_end = (i + 1) * step if i < n_regions - 1 else size
+                arr[row_start:row_end, :] = float(i + 1) + seed
+        return arr
+
+    minx, miny, maxx, maxy = bounds
+    transform = from_bounds(minx, miny, maxx, maxy, size, size)
+    crs = CRS.from_epsg(4326)
+
+    buf = _io.BytesIO()
+    with MemoryFile() as mf:
+        with mf.open(
+            driver="GTiff",
+            dtype="float32",
+            width=size,
+            height=size,
+            count=max(1, bands),
+            crs=crs,
+            transform=transform,
+        ) as ds:
+            for b in range(max(1, bands)):
+                ds.write(_one_band(seed=float(b) * 0.0), b + 1)
+        buf.write(mf.read())
+    return buf.getvalue()
+
+
+# Fan-out functions covered by run_fanout_udtf.  Order is stable for parity loops.
+FANOUT_FUNCTIONS = [
+    "rst_polygonize",
+    "rst_h3_rastertogridcount",
+    "rst_xyzpyramid",
+    "rst_h3_tessellate",
+    "rst_retile",
+    "rst_tooverlappingtiles",
+    "rst_maketiles",
+    "rst_separatebands",
+]
+
+# Per-function synthetic-input + invocation spec.  ``scale`` (default 1.0) is the
+# tunable that dials the fan-out up/down; sizes below are the scale=1.0 defaults
+# chosen to be meaningful yet finish in a couple of minutes on ~20 workers.
+#
+# Each entry returns (tile_kwargs, light_lateral, heavy_lateral) where the LATERAL
+# fragments are the part AFTER "LATERAL" in the SQL, and ``heavy_lateral`` already
+# flattens the heavy tier to the SAME granularity as the light flat UDTF rows:
+#   * polygonize  -> heavy ARRAY<struct>           -> explode  (single)
+#   * gridcount   -> heavy ARRAY<ARRAY<struct>>    -> explode∘explode (double)
+#   * 5 tilers    -> heavy CollectionGenerator     -> LATERAL VIEW gbx_.. (no explode)
+#   * xyzpyramid  -> heavy CollectionGenerator emits flat rows -> LATERAL VIEW (no explode)
+
+
+def _fanout_spec(fn: str, scale: float):
+    """Return (tile_kwargs, light_sql, heavy_sql) for a fan-out function.
+
+    ``light_sql`` / ``heavy_sql`` are full SQL strings over the temp view
+    ``_fanout_bench_ras`` (column ``tile``) that each produce FLAT rows so the
+    two row counts are directly comparable (the flatten-both parity gate).
+    """
+    s = max(0.1, float(scale))
+
+    if fn == "rst_polygonize":
+        # Many connected components -> large polygon fan-out.
+        cb = max(2, int(round(16 * (s**0.5))))
+        size = max(64, int(round(256 * (s**0.5))))
+        tile_kwargs = dict(size=size, checkerboard=cb)
+        light = "SELECT t.* FROM _fanout_bench_ras, LATERAL gbx_rst_polygonize(tile, 1, 4) t"
+        # Heavy returns ARRAY<struct> -> single explode.
+        heavy = (
+            "SELECT p.* FROM _fanout_bench_ras "
+            "LATERAL VIEW explode(gbx_rst_polygonize(tile, 1, 4)) e AS p"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_h3_rastertogridcount":
+        # Fine H3 resolution + wide extent -> many cells.
+        res = 9 if s <= 1.0 else 10
+        # Wider extent at higher scale -> more cells.
+        span = 0.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_h3_rastertogridcount(tile, {res}) t"
+        )
+        # Heavy returns ARRAY<ARRAY<struct>> (bands x cells) -> DOUBLE explode.
+        heavy = (
+            "SELECT c.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW explode(gbx_rst_h3_rastertogridcount(tile, {res})) eb AS band_cells "
+            "LATERAL VIEW explode(band_cells) ec AS c"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_xyzpyramid":
+        # Deep zoom range over a multi-degree extent -> thousands of tiles.
+        min_z = 4
+        max_z = 9 if s <= 1.0 else 10
+        span = 1.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_xyzpyramid(tile, {min_z}, {max_z}, 'PNG', 256, 'bilinear') t"
+        )
+        # Heavy generator emits flat rows directly -> LATERAL VIEW, NO explode.
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW gbx_rst_xyzpyramid(tile, {min_z}, {max_z}, 'PNG', 256, 'bilinear') t AS tile"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_h3_tessellate":
+        res = 8 if s <= 1.0 else 9
+        span = 0.5 * (s**0.5)
+        bounds = (-span, 51.5 - span, span, 51.5 + span)
+        tile_kwargs = dict(size=max(128, int(round(256 * (s**0.5)))), bounds=bounds)
+        # Pass explicit mode='covering' (the default) so the bench leg is
+        # unambiguous and a future 'centroid' variant can be added by changing
+        # this one argument. Heavy uses LATERAL VIEW (CollectionGenerator, flat
+        # rows, no explode) -- same pattern as rst_xyzpyramid.
+        mode = "covering"
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_h3_tessellate(tile, {res}, '{mode}') t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW gbx_rst_h3_tessellate(tile, {res}, '{mode}') t AS tile"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn in ("rst_retile", "rst_tooverlappingtiles"):
+        # Large raster with small tile size -> many tiles.
+        size = max(512, int(round(1024 * (s**0.5))))
+        tw = th = 64
+        tile_kwargs = dict(size=size)
+        if fn == "rst_retile":
+            light = (
+                "SELECT t.* FROM _fanout_bench_ras, "
+                f"LATERAL gbx_rst_retile(tile, {tw}, {th}) t"
+            )
+            heavy = (
+                "SELECT t.* FROM _fanout_bench_ras "
+                f"LATERAL VIEW gbx_rst_retile(tile, {tw}, {th}) t AS tile"
+            )
+        else:
+            overlap = 8
+            light = (
+                "SELECT t.* FROM _fanout_bench_ras, "
+                f"LATERAL gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap}) t"
+            )
+            heavy = (
+                "SELECT t.* FROM _fanout_bench_ras "
+                f"LATERAL VIEW gbx_rst_tooverlappingtiles(tile, {tw}, {th}, {overlap}) t AS tile"
+            )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_maketiles":
+        # Large raster + small per-tile MB budget -> many power-of-4 sub-tiles.
+        size = max(512, int(round(1024 * (s**0.5))))
+        size_mb = 1
+        tile_kwargs = dict(size=size)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, "
+            f"LATERAL gbx_rst_maketiles(tile, {size_mb}) t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            f"LATERAL VIEW gbx_rst_maketiles(tile, {size_mb}) t AS tile"
+        )
+        return tile_kwargs, light, heavy
+
+    if fn == "rst_separatebands":
+        # MANY bands (hyperspectral / large-band case) -> large per-row fan-out.
+        nbands = max(8, int(round(64 * s)))
+        tile_kwargs = dict(size=64, bands=nbands)
+        light = (
+            "SELECT t.* FROM _fanout_bench_ras, LATERAL gbx_rst_separatebands(tile) t"
+        )
+        heavy = (
+            "SELECT t.* FROM _fanout_bench_ras "
+            "LATERAL VIEW gbx_rst_separatebands(tile) t AS tile"
+        )
+        return tile_kwargs, light, heavy
+
+    raise ValueError(f"unknown fanout fn: {fn}")
+
+
+def run_fanout_udtf(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    fn: str,
+    scale: float = 1.0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time one of the 8 fan-out functions, light (UDTF) vs heavy (generator/array).
+
+    Builds a per-function synthetic GeoTIFF tile sized to drive ``fn`` into a
+    LARGE fan-out (the regime where streaming UDTFs help -- see ``_fanout_spec``),
+    wraps it in a one-row DataFrame matching the tile struct schema, then times
+    the flattened invocation to completion. Returns a single ResultRow
+    (mode="spark-path", category="fanout").
+
+    Both tiers are invoked via SQL and flattened to the SAME granularity so the
+    output row counts are directly comparable (flatten-both parity):
+        * light = streaming UDTF via ``LATERAL gbx_<fn>(...)`` -> already flat.
+        * heavy = its Scala counterpart, flattened to match:
+            - ARRAY<struct>        (polygonize)  -> single ``explode``
+            - ARRAY<ARRAY<struct>> (gridcount)   -> double ``explode``
+            - CollectionGenerator  (5 tilers)    -> ``LATERAL VIEW gbx_.. (no explode)``
+            - CollectionGenerator emitting flat rows (xyzpyramid) -> ``LATERAL VIEW``
+
+    ``api`` controls which tier is timed:
+        "lightweight"  -> registers pyrx UDTFs
+        "heavyweight"  -> registers rasterx (needs the JAR -> cluster-only)
+    ``fn`` is one of ``FANOUT_FUNCTIONS``.
+    ``scale`` dials the synthetic fan-out up/down (default 1.0).
+    """
+    env = capture_env(where)
+
+    # Resolve the per-function synthetic-input + invocation spec up front so a bad
+    # fn name fails loudly rather than silently benching nothing.
+    try:
+        tile_kwargs, light_sql, heavy_sql = _fanout_spec(fn, scale)
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"spec error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyrx import functions as prx
+
+            prx.register(spark)
+        else:
+            from databricks.labs.gbx.rasterx import functions as rx
+
+            rx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build a synthetic tile DataFrame (one row).
+    try:
+        from pyspark.sql.types import (
+            BinaryType,
+            LongType,
+            MapType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        tile_bytes = _make_synthetic_geotiff(**tile_kwargs)
+        _w = int(tile_kwargs.get("size", 64))
+        _bands = int(tile_kwargs.get("bands", 1))
+        tile_schema = StructType(
+            [
+                StructField("cellid", LongType(), nullable=False),
+                StructField("raster", BinaryType(), nullable=False),
+                StructField(
+                    "metadata",
+                    MapType(StringType(), StringType()),
+                    nullable=True,
+                ),
+            ]
+        )
+        tile_row = (
+            0,
+            bytearray(tile_bytes),
+            {
+                "driver": "GTiff",
+                "width": str(_w),
+                "height": str(_w),
+                "count": str(_bands),
+            },
+        )
+        df = spark.createDataFrame([tile_row], schema=tile_schema)
+        import pyspark.sql.functions as _F
+
+        # Wrap as a struct column named "tile" matching the gbx_rst_* UDTF expectation.
+        df = df.select(_F.struct("cellid", "raster", "metadata").alias("tile")).cache()
+        df.count()  # materialise
+
+        # Register as a temp view for SQL path.
+        df.createOrReplaceTempView("_fanout_bench_ras")
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build the job closure: both tiers go through SQL and are flattened to the
+    # SAME granularity (flatten-both parity).  ``light_sql`` is the streaming UDTF
+    # LATERAL form; ``heavy_sql`` flattens the Scala counterpart per _fanout_spec.
+    try:
+        sql = light_sql if api == "lightweight" else heavy_sql
+
+        def _job():
+            return spark.sql(sql).count()
+
+        # Validate once (untimed): guard against 0-row / all-empty output.
+        actual_rows = int(_job())
+        if actual_rows == 0:
+            raise RuntimeError(
+                f"{fn} ({api}) produced 0 output rows -- check tile content or "
+                "registration (all-empty/null guard)."
+            )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=f"job build/validate error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    try:
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=_w,
+            bands=_bands,
+            dtype="float32",
+            srid=4326,
+            rows=actual_rows,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / actual_rows / 1000.0) if (ms and actual_rows) else 0.0,
+            per_tile_avg_ms=(ms / actual_rows) if (ms and actual_rows) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(
+                (actual_rows / (ms / 1000.0)) if (ms and actual_rows) else 0.0
+            ),
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"{fn} {api} -> {actual_rows} output rows",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category="fanout",
+            mode="spark-path",
+            tile_px=_w,
+            bands=_bands,
+            dtype="float32",
+            srid=4326,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=0.0,
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _list_tifs(corpus_dir: str) -> List[str]:
     """Return all *.tif / *.tiff paths under corpus_dir."""
     import glob

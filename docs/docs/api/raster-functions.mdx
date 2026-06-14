@@ -6,6 +6,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import Tier from '@site/src/components/Tier';
+import { Impl } from '@site/src/components/Tier';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
 import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
@@ -545,7 +546,7 @@ Combine or merge rasters in group-by (6 total).
 
 ### rst_combineavg_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_combineavg_agg("tile"))` returns the NoData-aware per-pixel mean as one tile per group; input tiles must share the same grid (shape/extent/CRS). In SQL `gbx_rst_combineavg_agg` returns the raster BINARY (cellid dropped); wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -559,7 +560,7 @@ Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_comb
 
 ### rst_derivedband_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `groupBy(...).agg(rx.rst_derivedband_agg("tile", pyfunc, funcName))` stacks the group's tiles as bands and applies your pixel function, returning one tile per group. In SQL `gbx_rst_derivedband_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -573,7 +574,7 @@ Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `gro
 
 ### rst_dtmfromgeoms_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **SciPy** (`scipy.spatial.Delaunay`). Aggregate — builds one TIN DTM tile per group from the group's Z-valued points via barycentric interpolation over an **unconstrained** Delaunay triangulation; `breaklines`, `merge_tolerance`, and `snap_tolerance` are accepted but not enforced (the heavyweight tier builds a constrained TIN). In SQL `gbx_rst_dtmfromgeoms_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -591,7 +592,7 @@ Streaming aggregator that accepts one Z-valued point WKB per row and produces a 
 
 ### rst_frombands_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio**. Aggregate — `groupBy(...).agg(rx.rst_frombands_agg("tile", "band_index"))` stacks the group's tiles into one multi-band tile ordered by ascending `band_index`. In SQL `gbx_rst_frombands_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -609,7 +610,7 @@ Streaming aggregator that collects ordered per-band tiles (one row per band) int
 
 ### rst_merge_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.rst_merge_agg("tile"))` merges the group's tiles into one mosaic tile (output spans the union extent). In SQL `gbx_rst_merge_agg` returns the merged raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -623,7 +624,7 @@ Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.r
 
 ### rst_rasterize_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.features`). Aggregate — burns the group's `(geom, value)` rows into one tile over the given extent/size/SRID (last-wins on overlap). In SQL `gbx_rst_rasterize_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -641,7 +642,7 @@ Streaming aggregator that burns geometry/value pairs (one row per feature) into 
 
 ### rst_gridfrompoints_agg
 
-<Tier both/>
+<Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **SciPy** (`cKDTree` IDW). Aggregate — `groupBy(...).agg(rx.rst_gridfrompoints_agg(...))` inverse-distance-interpolates the group's points into one Float64 grid tile (NoData −9999). In SQL `gbx_rst_gridfrompoints_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
@@ -771,13 +772,13 @@ Produce multiple tiles or bands (5 total).
 
 ### rst_h3_tessellate
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning an `ARRAY<tile>` (one per cell, `cellid` = H3 cell id) — `explode()` for one row per cell. The heavyweight tier emits the cells as separate generator rows.
+Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning one row per cell via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
-**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column): Column` — Tessellate raster to H3 cells.
+**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column, mode: Column = "covering"): Column` — Tessellate raster to H3 cells. `mode` is `"covering"` (default — every overlapping cell, clipped) or `"centroid"` (pixel-centroid single-assignment partition). See [H3 Raster Tessellation](./h3-raster-tessellation) for the full mode guide.
 
 **SQL:**
 
@@ -785,10 +786,10 @@ Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell a
 
 ### rst_maketiles
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). It derives a square tile size from the MB budget and always partitions; it does not honor the heavyweight `size_in_mb = -1` (single tile) or `0` (64 MB) sentinels or the power-of-four split, so tile counts and dimensions differ.
+Powered by **rasterio**. Streams one tile row per subdivided region via streaming UDTF. It derives a square tile size from the MB budget and always partitions; it does not honor the heavyweight `size_in_mb = -1` (single tile) or `0` (64 MB) sentinels or the power-of-four split, so tile counts and dimensions differ.
 :::
 
 **Signature:** `rst_maketiles(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Subdivide into smaller tiles.
@@ -799,10 +800,10 @@ Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `e
 
 ### rst_retile
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+Powered by **rasterio**. Streams one tile row per retiled region via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column` — Retile to uniform dimensions.
@@ -813,10 +814,10 @@ Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `e
 
 ### rst_separatebands
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of single-band tiles in a single row — call `explode()` to get one row per band (the heavyweight tier emits the bands as separate rows).
+Powered by **rasterio**. Streams one band-tile row per band via streaming UDTF — O(1) worker memory regardless of band count (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_separatebands(tile: Column): Column` — Split multi-band into array of bands.
@@ -827,10 +828,10 @@ Powered by **rasterio**. Returns an `ARRAY` of single-band tiles in a single row
 
 ### rst_tooverlappingtiles
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Returns an `ARRAY` of tiles in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows).
+Powered by **rasterio**. Streams one tile row per overlapping region via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
 **Signature:** `rst_tooverlappingtiles(tile: Column, tileWidth: Column, tileHeight: Column, overlap: Column): Column` — Create overlapping tiles.
@@ -847,7 +848,7 @@ Aggregate raster values to H3 grid cells (5 total).
 
 ### rst_h3_rastertogridavg
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -861,7 +862,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridcount
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -875,7 +876,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmax
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -889,7 +890,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmin
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -903,7 +904,7 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 
 ### rst_h3_rastertogridmedian
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -923,7 +924,7 @@ Aggregate raster values to CARTO quadbin v0 grid cells. Each function returns an
 
 ### rst_quadbin_rastertogridavg
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -937,7 +938,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridcount
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`, where `measure` is the per-cell pixel count (integer). The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -951,7 +952,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmax
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -965,7 +966,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmin
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -979,7 +980,7 @@ Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band)
 
 ### rst_quadbin_rastertogridmedian
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **quadbin**. Returns an `ARRAY` (one element per band) of `ARRAY<struct(cellID, measure)>`. The raster is interpreted as EPSG:4326 lon/lat — reproject upstream with `rst_transform` if your source CRS differs.
@@ -1351,10 +1352,10 @@ Powered by **rio-tiler** + **morecantile**. Out-of-extent tiles return a transpa
 
 ### rst_xyzpyramid
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rio-tiler** + **morecantile**. Returns an `ARRAY<struct(z, x, y, bytes)>` in a single row — call `explode()` to get one row per tile (the heavyweight tier emits the tiles as separate rows). Bounded by `max_z <= 20` and at most 1,000,000 candidate tiles.
+Powered by **rio-tiler** + **morecantile**. Streams one XYZ tile row per intersecting tile via streaming UDTF. Bounded by `max_z <= 20` and at most 1,000,000 candidate tiles.
 :::
 
 **Signature:** `rst_xyzpyramid(tile: Column, minZoom: Column, maxZoom: Column): Column` — Generator: explode a raster into one row per intersecting `(z, x, y)` tile across a zoom range, producing PNG bytes per tile. Use `LATERAL VIEW` to materialize the rows; the output struct exposes `z`, `x`, `y`, and `bytes`.
@@ -1385,13 +1386,20 @@ Powered by **rasterio** (`rasterio.features`).
 
 ### rst_polygonize
 
-<Tier both/>
+<Tier both/> <Impl udtf/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** (`rasterio.features`).
+Powered by **rasterio** (`rasterio.features`). In pyrx, `gbx_rst_polygonize` is a
+streaming Python UDTF — invoke it as a SQL LATERAL table function to stream polygon
+rows without buffering (avoids OOM on rasters with unbounded polygon fan-out):
+
+```sql
+SELECT t.geom_wkb, t.value
+FROM <table>, LATERAL gbx_rst_polygonize(tile, band, connectedness) t
+```
 :::
 
-**Signature:** `rst_polygonize(tile: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
+**Signature (heavyweight):** `rst_polygonize(tile: Column, band: Column, connectedness: Column): Column` — Trace contiguous-value regions of a tile into an array of features. Each feature carries the source pixel value as the `value` field.
 
 **SQL:**
 

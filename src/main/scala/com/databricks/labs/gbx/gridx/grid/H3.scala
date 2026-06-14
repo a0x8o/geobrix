@@ -129,7 +129,10 @@ object H3 extends Serializable {
                 (for (i <- 0 until cellGeom.getNumGeometries) yield {
                     cellGeom.getGeometryN(i).getCoordinates.map(c => JTS.point(c).distance(centroid)).max
                 }).max
-
+            case _              =>
+                // Non-polygonal geometry (point/line/collection): no meaningful polyfill buffer; skip buffering.
+                // Guards against a MatchError on unexpected centroid-cell geometry types.
+                0.0
         }
     }
 

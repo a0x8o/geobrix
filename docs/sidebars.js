@@ -81,9 +81,18 @@ const sidebars = {
           collapsed: false,
           items: [
             'api/execution-tiers',
-            'api/benchmarking',
+            {
+              type: 'category',
+              label: 'Performance & Benchmarking',
+              collapsed: false,
+              items: [
+                'api/performance',
+                'api/benchmarking',
+              ],
+            },
             'api/raster-functions',
             'api/raster-functions-heavyweight',
+            'api/h3-raster-tessellation',
             'api/gridx-functions',
             'api/vectorx-functions',
             'api/pmtiles-functions',

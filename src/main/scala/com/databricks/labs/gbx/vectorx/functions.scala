@@ -15,9 +15,11 @@ import org.apache.spark.sql.{Column, SparkSession}
   * functions available in SQL. (VectorX data sources are registered separately via
   * `META-INF/services/org.apache.spark.sql.sources.DataSourceRegister`.)
   *
-  * As of v0.4.0 this package exposes the `gbx_st_asmvt` MVT aggregator (see [[ST_AsMvt]])
-  * and the `gbx_st_asmvt_pyramid` generator (see [[ST_AsMvtPyramid]]); subsequent waves
-  * add more.
+  * This package exposes the `gbx_st_asmvt` MVT aggregator (see [[ST_AsMvt]]), the
+  * `gbx_st_asmvt_pyramid` generator (see [[ST_AsMvtPyramid]]), the `gbx_st_triangulate`
+  * constrained-Delaunay TIN generator (see [[ST_Triangulate]]), and the
+  * `gbx_st_interpolateelevationbbox`/`gbx_st_interpolateelevationgeom` elevation
+  * generators (see [[ST_InterpolateElevationBBox]], [[ST_InterpolateElevationGeom]]).
   */
 object functions extends Serializable {
 

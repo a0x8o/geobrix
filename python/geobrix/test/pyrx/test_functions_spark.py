@@ -289,12 +289,12 @@ def test_rst_polygonize(spark):
         src = mf.read()
     df = spark.createDataFrame([(src,)], ["raster"])
     df = df.select(prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"))
-    # rst_polygonize returns ARRAY<struct(geom_wkb, value)>; explode and inspect.
-    rows = (
-        df.select(f.explode(prx.rst_polygonize("tile")).alias("p"))
-        .select(f.col("p.value").alias("v"), f.col("p.geom_wkb").alias("g"))
-        .collect()
-    )
+    # rst_polygonize is a streaming UDTF — invoke via SQL LATERAL.
+    df.createOrReplaceTempView("ras")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.geom_wkb AS g, t.value AS v FROM ras, LATERAL gbx_rst_polygonize(tile, 1, 4) t"
+    ).collect()
     vals = [r["v"] for r in rows]
     assert 5.0 in vals
     assert all(r["g"] is not None for r in rows)
@@ -446,24 +446,46 @@ def test_rst_mapalgebra(spark):
 
 def test_rst_separatebands(spark):
     df = _tile_df(spark, width=4, height=3, count=3)
-    parts = df.select(f.explode(prx.rst_separatebands("tile")).alias("t"))
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_sepbands")
+    # rst_separatebands is a streaming UDTF — invoke via SQL LATERAL.
+    parts = spark.sql(
+        "SELECT t.cellid, t.raster, t.metadata FROM _ras_sepbands, "
+        "LATERAL gbx_rst_separatebands(tile) t"
+    )
     assert parts.count() == 3
-    assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+    assert (
+        parts.select(
+            prx.rst_numbands(f.struct("cellid", "raster", "metadata")).alias("n")
+        ).first()["n"]
+        == 1
+    )
 
 
 def test_rst_retile(spark):
     df = _tile_df(spark, width=4, height=4)
-    parts = df.select(f.explode(prx.rst_retile("tile", 2, 2)).alias("t"))
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_retile")
+    parts = spark.sql(
+        "SELECT t.cellid, t.raster, t.metadata FROM _ras_retile, "
+        "LATERAL gbx_rst_retile(tile, 2, 2) t"
+    )
     assert parts.count() == 4
     row = parts.select(
-        prx.rst_width("t").alias("w"), prx.rst_height("t").alias("h")
+        prx.rst_width(f.struct("cellid", "raster", "metadata")).alias("w"),
+        prx.rst_height(f.struct("cellid", "raster", "metadata")).alias("h"),
     ).first()
     assert (row["w"], row["h"]) == (2, 2)
 
 
 def test_rst_tooverlappingtiles(spark):
     df = _tile_df(spark, width=4, height=4)
-    parts = df.select(f.explode(prx.rst_tooverlappingtiles("tile", 2, 2, 1)).alias("t"))
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_overlap")
+    parts = spark.sql(
+        "SELECT t.cellid FROM _ras_overlap, "
+        "LATERAL gbx_rst_tooverlappingtiles(tile, 2, 2, 1) t"
+    )
     assert parts.count() >= 4
 
 
@@ -528,9 +550,19 @@ def test_rst_maketiles(spark):
     df = spark.createDataFrame([(src,)], ["raster"]).select(
         prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
-    parts = df.select(f.explode(prx.rst_maketiles("tile", 1)).alias("t"))
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_maketiles")
+    parts = spark.sql(
+        "SELECT t.cellid, t.raster, t.metadata FROM _ras_maketiles, "
+        "LATERAL gbx_rst_maketiles(tile, 1) t"
+    )
     assert parts.count() == 16
-    assert parts.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+    assert (
+        parts.select(
+            prx.rst_numbands(f.struct("cellid", "raster", "metadata")).alias("n")
+        ).first()["n"]
+        == 1
+    )
 
 
 # --- web-mercator XYZ tiling (rst_tilexyz / rst_xyzpyramid) -----------------
@@ -591,15 +623,13 @@ def test_rst_tilexyz_null_tile_transparent(spark):
 
 def test_rst_xyzpyramid_array(spark):
     df = _rgb_tile_df(spark)
-    rows = (
-        df.select(
-            f.explode(prx.rst_xyzpyramid("tile", f.lit(1), f.lit(3), "PNG", 64)).alias(
-                "t"
-            )
-        )
-        .select("t.z", "t.x", "t.y", "t.bytes")
-        .collect()
-    )
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_pyramid")
+    # rst_xyzpyramid is a streaming UDTF — invoke via SQL LATERAL.
+    rows = spark.sql(
+        "SELECT t.z, t.x, t.y, t.bytes FROM _ras_pyramid, "
+        "LATERAL gbx_rst_xyzpyramid(tile, 1, 3, 'PNG', 64, 'bilinear') t"
+    ).collect()
     assert len(rows) > 0
     for r in rows:
         assert r["z"] in (1, 2, 3)
@@ -609,44 +639,98 @@ def test_rst_xyzpyramid_array(spark):
 # --- raster->grid aggregation (h3 + quadbin) --------------------------------
 def test_rst_h3_rastertogridcount(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    # outer array (1 band) -> inner array of (cellID, measure); count sums to 12.
-    rows = (
-        df.select(f.explode(prx.rst_h3_rastertogridcount("tile", f.lit(6))).alias("b"))
-        .select(f.explode("b").alias("c"))
-        .select(f.col("c.cellID").alias("cid"), f.col("c.measure").alias("m"))
-        .collect()
-    )
-    assert sum(r["m"] for r in rows) == 12
-    assert all(0 < r["cid"] < 2**63 for r in rows)
+    df.createOrReplaceTempView("_ras_h3_count")
+    prx.register(spark)
+    # UDTF yields flat (band, cellID, measure); count sums to 4x3=12.
+    rows = spark.sql(
+        "SELECT t.band, t.cellID, t.measure FROM _ras_h3_count, "
+        "LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    assert sum(r["measure"] for r in rows) == 12
+    assert all(0 < r["cellID"] < 2**63 for r in rows)
 
 
 def test_rst_quadbin_rastertogridcount(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    rows = (
-        df.select(
-            f.explode(prx.rst_quadbin_rastertogridcount("tile", f.lit(10))).alias("b")
-        )
-        .select(f.explode("b").alias("c"))
-        .select(f.col("c.measure").alias("m"))
-        .collect()
-    )
-    assert sum(r["m"] for r in rows) == 12
+    df.createOrReplaceTempView("_ras_qb_count")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.measure FROM _ras_qb_count, "
+        "LATERAL gbx_rst_quadbin_rastertogridcount(tile, 10) t"
+    ).collect()
+    assert sum(r["measure"] for r in rows) == 12
 
 
 def test_rst_h3_rastertogridavg_multiband_outer_length(spark):
     df = _tile_df(spark, width=4, height=3, count=2)
-    n = df.select(
-        f.size(prx.rst_h3_rastertogridavg("tile", f.lit(5))).alias("n")
-    ).first()["n"]
-    assert n == 2
+    df.createOrReplaceTempView("_ras_h3_avg_mb")
+    prx.register(spark)
+    # 2-band raster: expect 2 distinct band values in the UDTF output.
+    rows = spark.sql(
+        "SELECT DISTINCT t.band FROM _ras_h3_avg_mb, "
+        "LATERAL gbx_rst_h3_rastertogridavg(tile, 5) t"
+    ).collect()
+    assert len(rows) == 2
 
 
 def test_rst_quadbin_rastertogridmedian(spark):
     df = _tile_df(spark, width=4, height=3, count=1)
-    n = df.select(
-        f.size(prx.rst_quadbin_rastertogridmedian("tile", f.lit(8))).alias("n")
-    ).first()["n"]
-    assert n == 1
+    df.createOrReplaceTempView("_ras_qb_median")
+    prx.register(spark)
+    # 1-band raster: should return rows with band=1.
+    rows = spark.sql(
+        "SELECT DISTINCT t.band FROM _ras_qb_median, "
+        "LATERAL gbx_rst_quadbin_rastertogridmedian(tile, 8) t"
+    ).collect()
+    assert len(rows) == 1
+
+
+# --- rastertogrid UDTF LATERAL tests (new flat schema) ----------------------
+def test_rst_h3_rastertogridcount_udtf_lateral(spark):
+    """UDTF emits flat (band, cellID, measure) rows via LATERAL."""
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_test")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.band, t.cellID, t.measure "
+        "FROM _ras_test, LATERAL gbx_rst_h3_rastertogridcount(tile, 6) t"
+    ).collect()
+    # 1-band raster: all rows have band=1
+    assert all(
+        r["band"] == 1 for r in rows
+    ), "all rows should have band=1 for 1-band raster"
+    # sum of cell counts == total pixel count (4x3=12)
+    assert sum(r["measure"] for r in rows) == 12
+    assert all(0 < r["cellID"] < 2**63 for r in rows)
+
+
+def test_rastertogrid_all_10_register_and_return_flat_rows(spark):
+    """Smoke: all 10 UDTFs register and return flat (band, cellID, measure) rows."""
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_smoke")
+    prx.register(spark)
+    for name, res in [
+        ("gbx_rst_h3_rastertogridavg", 6),
+        ("gbx_rst_h3_rastertogridcount", 6),
+        ("gbx_rst_h3_rastertogridmax", 6),
+        ("gbx_rst_h3_rastertogridmin", 6),
+        ("gbx_rst_h3_rastertogridmedian", 6),
+        ("gbx_rst_quadbin_rastertogridavg", 10),
+        ("gbx_rst_quadbin_rastertogridcount", 10),
+        ("gbx_rst_quadbin_rastertogridmax", 10),
+        ("gbx_rst_quadbin_rastertogridmin", 10),
+        ("gbx_rst_quadbin_rastertogridmedian", 10),
+    ]:
+        rows = spark.sql(
+            f"SELECT t.band, t.cellID, t.measure FROM _ras_smoke, LATERAL {name}(tile, {res}) t"
+        ).collect()
+        assert len(rows) > 0, f"{name} returned no rows"
+        assert all(
+            r["band"] == 1 for r in rows
+        ), f"{name}: band should be 1 for 1-band raster"
+        assert all(
+            r["cellID"] is not None for r in rows
+        ), f"{name}: cellID must not be None"
 
 
 # --- Group 1: per-band statistics & accessors -------------------------------
@@ -1157,15 +1241,51 @@ def test_rst_h3_tessellate(spark):
     import h3
 
     df = _tile_df(spark, width=8, height=8, epsg=4326)
-    parts = df.select(f.explode(prx.rst_h3_tessellate("tile", 4)).alias("t"))
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_tessellate")
+    # rst_h3_tessellate is a streaming UDTF — invoke via SQL LATERAL.
+    parts = spark.sql(
+        "SELECT t.cellid, t.raster, t.metadata FROM _ras_tessellate, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4) t"
+    )
     assert parts.count() > 0
     rows = parts.select(
-        prx.rst_numbands("t").alias("n"),
-        f.col("t.cellid").alias("cid"),
+        prx.rst_numbands(f.struct("cellid", "raster", "metadata")).alias("n"),
+        f.col("cellid").alias("cid"),
     ).collect()
     for r in rows:
         assert r["n"] == 1
         assert h3.is_valid_cell(h3.int_to_str(r["cid"]))
+
+
+def test_h3_tessellate_mode_sql(spark):
+    import pytest
+
+    df = _tile_df(spark, width=8, height=8, epsg=4326)
+    prx.register(spark)
+    df.createOrReplaceTempView("_ras_tessellate_mode")
+    # 2-arg (default mode) — must still work for backward compat.
+    n_default = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4) t"
+    ).count()
+    # explicit covering — same result as default.
+    n_cover = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'covering') t"
+    ).count()
+    # centroid — non-zero, may differ from covering.
+    n_centroid = spark.sql(
+        "SELECT t.* FROM _ras_tessellate_mode, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'centroid') t"
+    ).count()
+    assert n_default == n_cover and n_cover > 0 and n_centroid > 0
+    # bad mode must raise.
+    with pytest.raises(Exception):
+        spark.sql(
+            "SELECT t.* FROM _ras_tessellate_mode, "
+            "LATERAL gbx_rst_h3_tessellate(tile, 4, 'bogus') t"
+        ).count()
 
 
 def test_rst_proximity_column_api(spark):

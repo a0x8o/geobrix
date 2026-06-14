@@ -1,0 +1,201 @@
+---
+sidebar_position: 7
+title: H3 Raster Tessellation
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# H3 Raster Tessellation
+
+`rst_h3_tessellate` maps a raster tile onto an [H3 hexagonal grid](https://h3geo.org/), producing one clipped chip per cell. This page explains the two tessellation modes, how they relate to `rst_h3_rastertogrid*`, CRS handling, and the cross-tier guarantee.
+
+---
+
+## Lineage
+
+The raster-to-H3 technique was pioneered by [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (`rst_tessellate`, `rst_rastertogridavg`/`count`/`max`/`min`/`median`). The same technique has since been adopted by Databricks-native H3 functions (for vector only currently) — see the H3 geospatial functions reference ([AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) · [Azure](https://learn.microsoft.com/azure/databricks/sql/language-manual/sql-ref-h3-geospatial-functions) · [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-h3-geospatial-functions)):
+
+- `h3_coverash3` ([AWS](https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_coverash3) · [Azure](https://learn.microsoft.com/azure/databricks/sql/language-manual/functions/h3_coverash3) · [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/functions/h3_coverash3)) — returns every H3 cell that overlaps a geometry (the covering set).
+- `h3_tessellateaswkb` ([AWS](https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_tessellateaswkb) · [Azure](https://learn.microsoft.com/azure/databricks/sql/language-manual/functions/h3_tessellateaswkb) · [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/functions/h3_tessellateaswkb)) — for each covering-set cell, returns the geometry clipped to that cell (the chip).
+
+GeoBrix carries the **raster** side of this family (`rst_h3_tessellate`, `rst_h3_rastertogrid*`) and is designed to complement the native `h3_*` functions, not replace them. Use GeoBrix to bring raster data onto an H3 grid; use Databricks-native `h3_coverash3` / `h3_tessellateaswkb` for vector geometry operations on the same grid.
+
+---
+
+## The two tessellation modes
+
+`rst_h3_tessellate(tile, resolution, mode)` supports two modes, selected by the optional third parameter (`mode` defaults to `'covering'`):
+
+| | `'covering'` (default) | `'centroid'` |
+|---|---|---|
+| **Cell selection** | Every H3 cell that *overlaps* the tile (the covering set) | The one cell whose hexagon contains each pixel's centroid |
+| **Output per cell** | Raster chip clipped to the cell's hexagon | Raster chip containing only the pixels assigned to that cell |
+| **Border pixels** | Shared across neighbouring tiles (a border pixel appears in both) | Each pixel in exactly one cell — no double-count across tiles |
+| **Use when** | Building a full coverage index; reconstructing a complete raster from chips; tiling a single source | Binning a collection of overlapping tiles into H3 cells without double-counting; feeding `rst_h3_rastertogrid*` equivalents |
+
+### Border behaviour
+
+```
+Tile extent (─── = border)
+
+         ┌───────────────────┐
+         │   Tile T          │
+         │     ┌────┬────┐   │
+         │     │ A  │ B  │   │  ← covering: both A and B included
+         │─────┤    │    ├───│    (border pixels shared with neighbour)
+         │     │ A  │ B  │   │
+         │     └────┴────┘   │  ← centroid: each pixel goes to exactly
+         └───────────────────┘    one of A or B, never both
+```
+
+**`covering`:** any H3 hexagon that geometrically overlaps the tile is included; the clip uses `all_touched=True` so boundary pixels go into every cell that touches them. When you later union chips across neighbouring tiles that share a border cell, the overlap is expected and correct — each tile contributed its own view of that cell.
+
+**`centroid`:** each pixel's centroid coordinate is mapped to a single H3 cell. A pixel sitting exactly on a hexagon boundary goes to one cell and one cell only. The set of output cells emerges from the data (cells with at least one assigned pixel), without a separate covering-set step. This forms a **partition**: every valid pixel in the input appears in exactly one output chip, and the union of all chips reproduces the full valid-pixel set.
+
+### When to use each mode
+
+Use **`covering`** when:
+- You are indexing a column of rasters or a set of tiles and want complete coverage at each cell boundary (regardless of neighbors).
+- You intend to join or aggregate chips from multiple tiles that together tile the study area.
+- You want the same semantics as Databricks-native `h3_tessellateaswkb` (which is also a covering-set clip).
+
+Use **`centroid`** when:
+- You are indexing a column of rasters or a set of tiles (e.g. cloud-burst scenes, time-series composites) and want non-duplicating coverage at each cell boundary such that each pixel is assigned a single cellid.
+- You are building a deduplication pipeline — process chips independently, knowing no pixel was counted twice.
+- You want a chip-emitting variant of `rst_h3_rastertogrid*` (same pixel-centroid assignment, but returning raster chips rather than scalar measures).
+
+---
+
+## SQL usage
+
+Both modes use `LATERAL` (streaming UDTF). The two-argument form keeps backward compatibility; pass the third argument to select a mode.
+
+```sql
+-- covering mode (default — identical to two-argument call)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;
+
+-- centroid mode — pixel-centroid single-assignment
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid') t;
+
+-- backward-compatible two-argument form (covering)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7) t;
+```
+
+Each row in the result is a tile struct with `cellid` (the H3 cell integer ID), `raster` (clipped raster bytes), and `metadata`.
+
+---
+
+## Python usage
+
+Both tiers (`pyrx` lightweight, `rasterx` heavyweight) expose `rst_h3_tessellate` with the same signature. Switch tiers with a one-line import change; the function call is identical.
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx   # lightweight tier
+
+# covering mode (default)
+chips = df.select(rx.rst_h3_tessellate("tile", 7))
+chips = df.select(rx.rst_h3_tessellate("tile", 7, mode="covering"))
+
+# centroid mode
+chips = df.select(rx.rst_h3_tessellate("tile", 7, mode="centroid"))
+```
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx   # heavyweight tier
+
+# covering mode (default)
+chips = df.select(rx.rst_h3_tessellate("tile", 7))
+chips = df.select(rx.rst_h3_tessellate("tile", 7, mode="covering"))
+
+# centroid mode
+chips = df.select(rx.rst_h3_tessellate("tile", 7, mode="centroid"))
+```
+
+</TabItem>
+</Tabs>
+
+---
+
+## Relationship to `rst_h3_rastertogrid*`
+
+The five `rst_h3_rastertogrid*` functions (`avg`, `count`, `max`, `min`, `median`) use the **same pixel-centroid assignment rule** as `centroid` mode. The difference is the output:
+
+| | `rst_h3_tessellate(..., 'centroid')` | `rst_h3_rastertogrid*` |
+|---|---|---|
+| Output per cell | Raster **chip** (bytes, full tile struct) | Scalar **measure** (avg/count/max/min/median) |
+| Return type | One row per cell via UDTF | `ARRAY<ARRAY<struct(cellID, measure)>>` (one element per band) |
+| Use for | Per-cell raster chips, downstream raster ops | Numeric aggregation into the H3 grid |
+
+Both approaches assign each pixel to exactly one cell via its centroid coordinate — no pixel is double-counted.
+
+```sql
+-- chip-emitting variant (centroid mode)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid') t;
+
+-- scalar-reducing variant
+SELECT path, gbx_rst_h3_rastertogridavg(tile, 7) AS h3_avg
+FROM rasters;
+```
+
+---
+
+## CRS handling
+
+`rst_h3_tessellate` reprojects the tile extent to **EPSG:4326** internally before the H3 cell lookups. You do not need to pre-transform your tile; any CRS supported by GDAL will be handled.
+
+`rst_h3_rastertogrid*` does not reproject. It interprets pixel coordinates as EPSG:4326 lon/lat directly. If your tiles are in a projected CRS (e.g. UTM), reproject them upstream with `rst_transform` before calling any `rst_h3_rastertogrid*` function.
+
+---
+
+## Cross-tier parity
+
+Both tiers compute the same cell sets and the same per-cell chip pixels for each mode:
+
+- **`covering` mode:** lightweight (`pyrx`) calls h3-py 4.x `polygon_to_cells_experimental(..., contain='overlap')`; heavyweight (`rasterx`) hand-rolls the equivalent covering set using JTS geometry intersection (H3-Java is pinned at 3.7.0, which predates the v4 covering primitive). The mechanisms differ, but the output is the same overlapping set — verified by the per-mode parity tests.
+- **`centroid` mode:** both tiers assign each pixel via its centroid lat/lon to a single H3 cell using the same point-in-hexagon lookup; the chip pixels are identical by construction.
+
+Parity is test-enforced: for each mode, tests assert that light and heavy produce the same cell set and the same per-cell chip pixels on a border-containing tile.
+
+---
+
+## Databricks-native H3 connection
+
+After tessellating a raster with `rst_h3_tessellate`, the `cellid` field in each output row is a standard H3 integer cell ID. You can join or aggregate directly against Databricks-native H3 functions in the same query:
+
+```sql
+-- Join raster chips with vector H3 data
+SELECT chips.cellid, chips.tile, vectors.name
+FROM (
+  SELECT t.*
+  FROM rasters,
+  LATERAL gbx_rst_h3_tessellate(tile, 7) t
+) chips
+JOIN h3_indexed_vectors vectors
+  ON chips.cellid = vectors.h3_cell_id;
+
+-- Compute mean elevation per H3 cell from chips
+SELECT cellid, AVG(gbx_rst_avg(tile)) AS mean_elevation
+FROM (
+  SELECT t.*
+  FROM dem_tiles,
+  LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid') t
+)
+GROUP BY cellid;
+```
+
+Use Databricks-native `h3_coverash3` and `h3_tessellateaswkb` for the **vector** side of the same grid (polygon covering sets, geometry chips); use GeoBrix `rst_h3_tessellate` for the **raster** side.

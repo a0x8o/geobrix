@@ -5,9 +5,6 @@
 """
 
 import json
-import os
-
-import pytest
 
 from databricks.labs.gbx.bench import readers
 
@@ -83,7 +80,9 @@ def test_run_vector_write_from_table(spark, tmp_path):
 
     try:
         # Build the writer-schema source table (same schema as the cluster pipeline).
-        generate_polygon_seed(spark, n_rows).write.mode("overwrite").saveAsTable(src_tbl)
+        generate_polygon_seed(spark, n_rows).write.mode("overwrite").saveAsTable(
+            src_tbl
+        )
 
         out_dir = str(tmp_path / "vec_out")
         r = readers.run_vector_write(

@@ -37,6 +37,16 @@ def _col(x: ColLike) -> Union[Column, str]:
     return f.lit(x)
 
 
+def _mode_col(mode: ColLike) -> Column:
+    """Resolve the optional ``mode`` arg to a literal Column.
+
+    A bare ``str`` (the common case — ``"constrained"`` / ``"conforming"``) is a
+    constant value, not a column reference, so it is wrapped with ``f.lit``. A
+    ``Column`` passes through unchanged for callers driving mode from data.
+    """
+    return f.lit(mode) if isinstance(mode, str) else _col(mode)
+
+
 def register(spark: SparkSession) -> None:
     """Register VectorX expression-level SQL functions with the Spark session.
 
@@ -58,7 +68,7 @@ def st_asmvt(geom_wkb: ColLike, attrs: ColLike, layer_name: ColLike) -> Column:
 
     Args:
         geom_wkb: Per-row geometry in WKB (BINARY) column, in tile-local coordinates.
-        attrs:    Per-row attribute struct column (all fields stringified in v0.4.0).
+        attrs:    Per-row attribute struct column (encoded with native MVT value types).
         layer_name: Constant MVT layer name. Pass a plain ``str`` for a literal layer
                     name (auto-wrapped with ``f.lit``), or a ``Column`` to reference
                     a column. To reference a column by name, use ``f.col("...")``.
@@ -94,7 +104,7 @@ def st_asmvt_pyramid(
 
     Args:
         geom_wkb:   Per-feature geometry in WKB (BINARY) column.
-        attrs:      Per-feature attribute struct column (all fields stringified in v0.4.0).
+        attrs:      Per-feature attribute struct column (encoded with native MVT value types).
         min_z:      Inclusive minimum zoom level.
         max_z:      Inclusive maximum zoom level (<= 20).
         layer_name: Constant MVT layer name. Pass a plain ``str`` for a literal
@@ -127,8 +137,9 @@ def st_triangulate(
     merge_tolerance: ColLike,
     snap_tolerance: ColLike,
     split_point_finder: ColLike,
+    mode: ColLike = "constrained",
 ) -> Column:
-    """Generator: emit one row per TIN triangle polygon from a constrained Delaunay triangulation.
+    """Generator: emit one row per TIN triangle polygon from a Delaunay triangulation.
 
     Each output row is a struct ``STRUCT<triangle BINARY>`` containing a WKB-encoded triangle
     polygon. Invoke directly in ``select(...)`` as a top-level generator — do not wrap in
@@ -147,6 +158,10 @@ def st_triangulate(
         snap_tolerance:     Snap tolerance for the triangulator (``DOUBLE``).
         split_point_finder: Strategy name for constrained edge splitting. Valid values:
                             ``"NONENCROACHING"`` (default) and ``"MIDPOINT"``.
+        mode:               Triangulation mode (``STRING``). ``"constrained"`` (default) recovers
+                            breakline edges without inserting Steiner points; ``"conforming"``
+                            inserts Steiner points for a conforming constrained Delaunay TIN.
+                            Pass a plain ``str`` (auto-wrapped with ``f.lit``).
 
     Returns:
         Generator Column producing one ``STRUCT<triangle BINARY>`` row per TIN triangle.
@@ -158,6 +173,7 @@ def st_triangulate(
         _col(merge_tolerance),
         _col(snap_tolerance),
         _col(split_point_finder),
+        _mode_col(mode),
     )
 
 
@@ -174,6 +190,7 @@ def st_interpolateelevationbbox(
     width_px: ColLike,
     height_px: ColLike,
     srid: ColLike,
+    mode: ColLike = "constrained",
 ) -> Column:
     """Generator: emit one Z-interpolated grid point per cell over a bounding-box-defined grid.
 
@@ -196,6 +213,10 @@ def st_interpolateelevationbbox(
         width_px:           Number of grid columns (``INT``).
         height_px:          Number of grid rows (``INT``).
         srid:               Spatial reference ID to assign to output points (``INT``).
+        mode:               Triangulation mode (``STRING``). ``"constrained"`` (default) recovers
+                            breakline edges without Steiner points; ``"conforming"`` inserts
+                            Steiner points for a conforming constrained Delaunay TIN. Pass a plain
+                            ``str`` (auto-wrapped with ``f.lit``).
 
     Returns:
         Generator Column producing one ``STRUCT<elevation_point BINARY>`` row per interpolated
@@ -215,6 +236,7 @@ def st_interpolateelevationbbox(
         _col(width_px),
         _col(height_px),
         _col(srid),
+        _mode_col(mode),
     )
 
 
@@ -229,6 +251,7 @@ def st_interpolateelevationgeom(
     grid_rows: ColLike,
     cell_size_x: ColLike,
     cell_size_y: ColLike,
+    mode: ColLike = "constrained",
 ) -> Column:
     """Generator: emit one Z-interpolated grid point per cell over an origin-defined grid.
 
@@ -253,6 +276,10 @@ def st_interpolateelevationgeom(
         grid_rows:          Number of grid rows (``INT``).
         cell_size_x:        Width of each grid cell in the CRS units (``DOUBLE``).
         cell_size_y:        Height of each grid cell in the CRS units (``DOUBLE``).
+        mode:               Triangulation mode (``STRING``). ``"constrained"`` (default) recovers
+                            breakline edges without Steiner points; ``"conforming"`` inserts
+                            Steiner points for a conforming constrained Delaunay TIN. Pass a plain
+                            ``str`` (auto-wrapped with ``f.lit``).
 
     Returns:
         Generator Column producing one ``STRUCT<elevation_point BINARY>`` row per interpolated
@@ -270,4 +297,5 @@ def st_interpolateelevationgeom(
         _col(grid_rows),
         _col(cell_size_x),
         _col(cell_size_y),
+        _mode_col(mode),
     )

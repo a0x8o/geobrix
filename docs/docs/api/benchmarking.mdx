@@ -525,11 +525,83 @@ The spark-path numbers above are wall-clock for a whole distributed job, so they
 This repartitioning is **benchmark-harness tuning** — it lives in the bench code that runs from a repo checkout, **not** in the GeoBrix product. The lightweight **pyrx** tier never mutates Spark configuration: it only registers UDFs and builds Column expressions, so it is safe on **Serverless / Spark Connect**, where runtime `spark.conf.set(...)` and JVM-bridge access are not permitted. On Serverless you therefore can't hand-tune partitions; you rely on the platform's managed AQE and default partitioning. Treat the tuned figures above as the controlled, like-for-like comparison number — not as what a Serverless user sets by hand.
 :::
 
+### Fan-out generators (streaming UDTFs)
+
+These functions are streaming Python UDTFs on the lightweight tier (one input tile → many output rows via `LATERAL`); the benchmark times the lightweight UDTF against the equivalent heavyweight Scala generator at matched fan-out and asserts that both tiers produce the **same flat row count** — decoded-feature parity as a hard gate.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 20 workers · synthetic fan-out corpus · whole-job
+> wall-clock, 1 measured iteration. **Parity gate:** all functions listed passed — light and heavy
+> produced the same flat row count. Run with `gbx:bench:cluster --fanout-only`.
+
+| Function | rows (fan-out) | light (s) | heavy (s) | light edge |
+|---|---|---|---|---|
+| `rst_polygonize` | 256 | 0.262 | 0.196 | heavy faster |
+| `rst_h3_rastertogridcount` | 58,123 | 0.46 | 0.35 | heavy faster |
+| `rst_xyzpyramid` | 78 | 0.774 | 0.674 | heavy faster |
+| `rst_maketiles` | 16 | 0.341 | 0.254 | heavy faster |
+| `rst_retile` | 256 | 0.528 | **0.549** | **light faster** |
+| `rst_separatebands` | 64 | **0.292** | 0.372 | **light faster** |
+| `rst_tooverlappingtiles` | 324 | 0.633 | **0.608** | heavy ~parity |
+
+Across the converted fan-out functions, light runs **at parity or faster** than the heavyweight JVM generators for `rst_retile` and `rst_separatebands` — with decoded-row parity as a hard gate for every result in the table. The streaming-UDTF model amortizes the JVM↔Python boundary across the full fan-out (the boundary is paid once per input tile, not once per output row), which is why the at-scale cost difference is smaller than for scalar transforms. See the [Performance page](./execution-tiers) for the streaming-UDTF architecture.
+
+> **`rst_h3_tessellate` numbers are pending a cluster re-bench.** The covering/centroid `mode` work has
+> landed — light and heavy now agree on cell assignment for both modes (test-enforced cross-tier parity;
+> see the [H3 tessellation explainer](./h3-raster-tessellation)) — and timings will be added on the next
+> cluster run.
+
 </TabItem>
 
-<TabItem value="vector" label="Vector (soon)">
+<TabItem value="vector" label="Vector">
 
-VectorX function benchmarks (e.g. `gbx_st_asmvt`, TIN / elevation surface modeling) are coming soon.
+### MVT encoding (`st_asmvt`)
+
+The `st_asmvt` aggregator encodes a group of tile-local features into one Mapbox Vector Tile (MVT)
+protobuf blob. The benchmark groups **500 synthetic features into 10 tiles** and times the
+`groupBy("z","x","y").agg(st_asmvt(geom, attrs, "layer"))` whole-job wall-clock on each tier, then
+**decodes both tiers' tiles and asserts feature-level parity** (geometry + native-typed attributes
+match). Run it with `gbx:bench:cluster --mvt-only`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 20 workers · 500 features → 10 tiles · whole-job
+> wall-clock median, one measured iteration.
+
+| Tier | Function | Median (500 feat → 10 tiles) | Ratio |
+|---|---|---|---|
+| lightweight | `pyvx.st_asmvt` | 0.589 s | **~1.06×** (≈ parity) |
+| heavyweight | `vectorx.st_asmvt` | 0.555 s | — |
+
+The pure-Python lightweight aggregator (a grouped-aggregate pandas UDF over `mapbox-vector-tile`)
+runs **at parity with the heavyweight JVM/OGR aggregator** (~6% apart). Both encode attributes with
+**native protobuf value types** and take features in tile-local `[0, extent]` coordinates, so the
+decoded tiles are **feature-equivalent** — a hard parity gate; the benchmark fails if the tiers
+diverge. Tiles compose with `gbx_pmtiles_agg` for end-to-end publishing.
+
+### TIN & legacy migration (`st_triangulate`, `st_interpolateelevation*`, `st_legacyaswkb`)
+
+The constrained-Delaunay TIN generators (`gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`,
+`gbx_st_interpolateelevationgeom`) and the legacy-geometry migration function (`gbx_st_legacyaswkb`)
+are benchmarked light (pyvx) vs heavy (vectorx) with decoded-output parity. Light invokes the TIN
+generators as PySpark UDTFs (SQL `LATERAL`); heavy invokes the JVM generator expressions. Parity is
+asserted on decoded output, per the established posture: **triangle count + centroid match within
+1e-6** for triangulation (not triangle identity — no-Steiner constrained recovery may pick different
+non-constraint diagonals), **per-cell surface closeness within 1e-6** for elevation interpolation, and
+**decoded-geometry equality** for legacy migration. Run it with `gbx:bench:cluster --vector-tin-only`.
+
+Cluster spark-path results (DBR 17.3 LTS; median wall-clock of one full distributed iteration over
+*N* tiles; same corpus both tiers):
+
+| Function | Tiles/iter | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|---|
+| `gbx_st_interpolateelevationgeom` | 125 | 0.49 | 0.56 | 0.88× |
+| `gbx_st_legacyaswkb` | 1,000 | 0.39 | 0.48 | 0.82× |
+| `gbx_st_interpolateelevationbbox` | 245 | 0.40 | 0.53 | 0.75× |
+| `gbx_st_triangulate` | 220 | 0.41 | 0.70 | 0.60× |
+
+The heavyweight JVM/JTS tier is modestly faster across all four. The lightweight tier is competitive
+on legacy migration and elevation interpolation (~0.75–0.88×) and ~1.7× behind on `st_triangulate`:
+the gap is the JVM↔Python serialization of the geometry arrays crossing the UDTF boundary (the same
+boundary cost seen for other byte-heavy lightweight UDTFs), not the triangulation compute itself.
+Decoded-output parity holds across both tiers (enforced by the cross-tier parity test suite, above).
 
 </TabItem>
 

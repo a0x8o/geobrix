@@ -554,17 +554,27 @@ def rst_frombands(bands: ColLike) -> Column:
 # Generators
 
 
-def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_tessellate(
+    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+) -> Column:
     """Tessellate the raster into H3 cells at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        mode: ``"covering"`` (default) keeps every cell whose hexagon overlaps
+            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
+            each valid pixel to the one cell whose hexagon contains its centroid
+            (chips partition the valid pixels). String literals are auto-wrapped
+            in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (H3 index, tile) or similar.
     """
-    return f.call_function("gbx_rst_h3_tessellate", _col(tile), _col(resolution))
+    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    return f.call_function(
+        "gbx_rst_h3_tessellate", _col(tile), _col(resolution), mode_col
+    )
 
 
 def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:

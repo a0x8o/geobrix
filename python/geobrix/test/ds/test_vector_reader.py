@@ -123,8 +123,6 @@ def test_shapefile_gbx_reads_directory_of_shp_zip(spark, tmp_path):
     """A directory of copy_*.shp.zip files is enumerated and read by shapefile_gbx.
     Each .shp.zip contains a small shapefile written by the shapefile_gbx writer so
     the round-trip exercises the actual path the scaled bench uses."""
-    import zipfile
-
     from databricks.labs.gbx.bench.corpus_vector import (
         generate_polygon_seed,
         transcode_vector_seed,
@@ -133,7 +131,9 @@ def test_shapefile_gbx_reads_directory_of_shp_zip(spark, tmp_path):
     register(spark)
     n_features = 10
     seed_df = generate_polygon_seed(spark, n_features)
-    seeds = transcode_vector_seed(spark, seed_df, ["shapefile_gbx"], str(tmp_path / "seeds"))
+    seeds = transcode_vector_seed(
+        spark, seed_df, ["shapefile_gbx"], str(tmp_path / "seeds")
+    )
     shp_zip = seeds["shapefile_gbx"]
     assert shp_zip.endswith(".shp.zip")
 

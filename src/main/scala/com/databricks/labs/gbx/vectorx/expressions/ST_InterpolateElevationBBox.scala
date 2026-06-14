@@ -32,7 +32,7 @@ import com.databricks.labs.gbx.vectorx.jts.{InterpolateElevation, JTS, Triangula
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression}
+import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression, Literal}
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -50,7 +50,8 @@ case class ST_InterpolateElevationBBox(
     ymax: Expression,
     widthPx: Expression,
     heightPx: Expression,
-    srid: Expression
+    srid: Expression,
+    modeExpr: Expression
 ) extends CollectionGenerator
       with Serializable
       with CodegenFallback {
@@ -62,10 +63,10 @@ case class ST_InterpolateElevationBBox(
 
     override def children: Seq[Expression] =
         Seq(pointsArray, breaklinesArray, mergeTolerance, snapTolerance, splitPointFinder,
-            xmin, ymin, xmax, ymax, widthPx, heightPx, srid)
+            xmin, ymin, xmax, ymax, widthPx, heightPx, srid, modeExpr)
 
     override def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7), nc(8), nc(9), nc(10), nc(11))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7), nc(8), nc(9), nc(10), nc(11), nc(12))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] = {
         val pointsVal = pointsArray.eval(input)
@@ -100,6 +101,14 @@ case class ST_InterpolateElevationBBox(
         }
         val finder = TriangulationSplitPointTypeEnum.fromString(finderStr)
 
+        val modeStr = modeExpr.eval(input) match {
+            case s: UTF8String => s.toString
+            case s: String     => s
+            case null          => throw new IllegalArgumentException(
+                "gbx_st_interpolateelevationbbox: mode must not be null")
+            case other         => other.toString
+        }
+
         val xminVal  = readDouble(xmin.eval(input), "xmin")
         val yminVal  = readDouble(ymin.eval(input), "ymin")
         val xmaxVal  = readDouble(xmax.eval(input), "xmax")
@@ -113,7 +122,7 @@ case class ST_InterpolateElevationBBox(
         val grid = InterpolateElevation.pointGridBBox(xminVal, yminVal, xmaxVal, ymaxVal,
                                                       widthVal, heightVal, sridVal)
         val interpolated = InterpolateElevation.interpolate(mp, breaklines, grid,
-                                                            mergeTol, snapTol, Some(finder))
+                                                            mergeTol, snapTol, Some(finder), modeStr)
 
         interpolated.iterator.map { p =>
             InternalRow(JTS.toWKB3(p))
@@ -188,17 +197,21 @@ object ST_InterpolateElevationBBox extends WithExpressionInfo {
         case 12 => ST_InterpolateElevationBBox(
             c(0), c(1), c(2), c(3), c(4),
             c(5), c(6), c(7), c(8),
-            c(9), c(10), c(11))
+            c(9), c(10), c(11), Literal("constrained"))
+        case 13 => ST_InterpolateElevationBBox(
+            c(0), c(1), c(2), c(3), c(4),
+            c(5), c(6), c(7), c(8),
+            c(9), c(10), c(11), c(12))
         case n => throw new IllegalArgumentException(
-            s"gbx_st_interpolateelevationbbox takes exactly 12 arguments " +
+            s"gbx_st_interpolateelevationbbox takes 12 or 13 arguments " +
             s"(points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, " +
-            s"xmin, ymin, xmax, ymax, width_px, height_px, srid); got $n"
+            s"xmin, ymin, xmax, ymax, width_px, height_px, srid, [mode]); got $n"
         )
     }
 
     override def usageArgs: String =
         "points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, " +
-        "xmin, ymin, xmax, ymax, width_px, height_px, srid"
+        "xmin, ymin, xmax, ymax, width_px, height_px, srid, mode"
 
     override def description: String =
         "Generator: emit one row per Z-interpolated grid cell center (WKB BINARY) " +
