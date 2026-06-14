@@ -214,6 +214,34 @@ diverge — so the timing above is a like-for-like comparison of identical outpu
 > scratch and assembles on the driver, the same model the sharded/mosaic output
 > uses at scale.
 
+### Tiled output aggregate (`pmtiles_agg`)
+
+`gbx_pmtiles_agg` is the grouped-aggregate companion to the PMTiles writer: it
+folds a group of `(tile, z, x, y)` rows into **one PMTiles archive per group key**
+inside a `groupBy(...).agg(pmtiles_agg(...))` job. It is format-agnostic — the same
+function archives raster *or* vector tiles — and is registered from both lightweight
+tiers (`pyrx` and `pyvx`), reusing the same archive assembler as the PMTiles writer.
+The benchmark folds **1,000 tiles into a single archive** on each tier and verifies
+that every group emits a non-empty archive before timing. Run it with
+`gbx:bench:cluster --pmtiles-agg-only --row-counts 1000`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 1,000 synthetic tiles → one
+> `.pmtiles` archive per tier · `groupBy().agg()` whole-job wall-clock · 5 measured
+> iterations, median reported.
+
+| Aggregator | Tier | Whole-job median (1,000 tiles) | Per-tile | Speedup |
+|---|---|---|---|---|
+| `pmtiles_agg` | lightweight | 0.74 s | 0.74 ms | — |
+| `pmtiles_agg` | heavyweight | 0.70 s | 0.70 ms | **~0.94×** (≈ parity) |
+
+The two tiers run within **~6%** of each other (light min 0.65 s overlaps heavy p90
+0.76 s), so the gap sits inside the run-to-run noise band for a grouped aggregate of
+this size. Both tiers produce **spec-valid PMTiles v3 archives** that decode to the
+same tile set; both write the directory with `internal_compression = none` for
+v0.4.0, so the archives are decode-identical. The lightweight aggregator is a
+grouped-aggregate Arrow UDF (`pandas_udf`) folding each group's tiles into an
+in-memory archive — the same execution shape as `gbx_st_asmvt`.
+
 ### Vector readers
 
 The vector readers are benchmarked on a scaled corpus: **5 × 1,000,000-feature** files

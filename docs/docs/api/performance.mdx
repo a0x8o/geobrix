@@ -141,6 +141,14 @@ These functions are Arrow-backed `pandas_udf(BinaryType())` aggregators used ins
 |---|---|---|
 | `gbx_quadbin_cellunion_agg` | `quadbin_cellunion_agg` | Dissolve a group of quadbin cell IDs into one unioned MultiPolygon (EWKB) |
 
+**Tiled output — format-agnostic (pyrx + pyvx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_pmtiles_agg` | `pmtiles_agg` | Fold a group of `(tile, z, x, y)` rows into one PMTiles archive per key |
+
+`gbx_pmtiles_agg` is the grouped-aggregate companion to the PMTiles writer. Because a PMTiles archive can hold raster *or* vector tiles, it is **tier-neutral**: registered from both `pyrx` and `pyvx`, resolving to the same canonical wrapper, and it reuses the same archive assembler the PMTiles writer uses. It is the natural composition target for `gbx_st_asmvt` (encode features → MVT tiles → fold tiles into an archive) and the raster tiling functions.
+
 Python usage:
 
 ```python
@@ -152,6 +160,10 @@ df.groupBy("z", "x", "y").agg(vx.st_asmvt("geom", "attrs", "layer").alias("mvt")
 
 # GridX: dissolve quadbin cell ids into one unioned coverage geometry per group
 df.groupBy("region").agg(gx.quadbin_cellunion_agg("cell").alias("coverage"))
+
+# PMTiles: fold a group of tiles into one archive per group key (raster or vector)
+from databricks.labs.gbx.pmtiles import functions as pt
+df.groupBy("layer").agg(pt.pmtiles_agg("tile", "z", "x", "y").alias("archive"))
 ```
 
 </TabItem>
@@ -304,6 +316,7 @@ Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `
 | `pyvx/_tin.py` | SciPy + shapely | `st_triangulate`, `st_interpolateelevationbbox`, `st_interpolateelevationgeom` (UDTF) |
 | `pyvx/_legacy.py` | shapely | `st_legacyaswkb` (scalar) |
 | `pygx/_quadbin.py` | quadbin + shapely | All `quadbin_*` cell math + EWKB geometry (`pointascell`, `polyfill`, `tessellate`, `cellunion`/`cellunion_agg`, …) |
+| `pmtiles/_agg_light.py` | pmtiles | `pmtiles_agg` (grouped-agg; registered from pyrx + pyvx) |
 
 </TabItem>
 
