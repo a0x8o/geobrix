@@ -25,7 +25,14 @@ def point_as_cell(lon: float, lat: float, resolution: int) -> int:
     z = int(resolution)
     if z < 0 or z > _MAX_RES:
         raise ValueError(f"quadbin resolution must be in [0,{_MAX_RES}]; got {z}")
-    return quadbin.point_to_cell(float(lon), float(lat), z)
+    # Match heavy Quadbin.scala pointToCell exactly: derive the (x, y) tile via the
+    # heavy lonLatToTile clamp (floor + clamp to [0, n-1]), then pack via the
+    # canonical CARTO tile_to_cell. NOTE: we do NOT delegate to quadbin.point_to_cell
+    # — it wraps lon at the antimeridian (lon=180 -> xTile 0), whereas heavy floors
+    # to n then clamps to n-1 (keeps the easternmost tile). Routing through
+    # _lonlat_to_tile makes the antimeridian/pole edges bit-identical to heavy.
+    x, y = _lonlat_to_tile(float(lon), float(lat), z)
+    return quadbin.tile_to_cell((x, y, z))
 
 
 def resolution(cell: int) -> int:
@@ -56,9 +63,14 @@ def as_wkb(cell: int) -> bytes:
 
 
 def centroid(cell: int) -> bytes:
-    pt = quadbin.cell_to_point(int(cell))
-    lon, lat = pt["coordinates"] if isinstance(pt, dict) else tuple(pt)
-    return _ewkb(Point(lon, lat))
+    # Match heavy Quadbin.scala cellCenter exactly: the ARITHMETIC MEAN of the
+    # cell bbox corners ((lonMin+lonMax)/2, (latMin+latMax)/2). NOTE: we do NOT use
+    # quadbin.cell_to_point — it returns the TRUE inverse-mercator cell center,
+    # whose latitude differs from the corner-mean (heavy averages the two
+    # mercator-projected corner latitudes). The corner-mean keeps light bit-faithful
+    # to heavy's centroid.
+    w, s, e, n = quadbin.cell_to_bounding_box(int(cell))
+    return _ewkb(Point((w + e) / 2.0, (s + n) / 2.0))
 
 
 def cell_union(cells):

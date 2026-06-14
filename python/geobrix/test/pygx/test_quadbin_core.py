@@ -7,9 +7,23 @@ from databricks.labs.gbx.pygx import _quadbin  # noqa: E402
 
 
 def test_pointascell_matches_lib():
+    # Interior points agree with the lib (no clamp involved).
     cell = _quadbin.point_as_cell(-122.4194, 37.7749, 10)
     assert cell == quadbin.point_to_cell(-122.4194, 37.7749, 10)
     assert _quadbin.resolution(cell) == 10
+
+
+def test_pointascell_antimeridian_matches_heavy_not_lib():
+    """At lon=180 the heavy Scala floors to xTile=n then clamps to n-1 (easternmost
+    tile); the quadbin lib instead WRAPS lon=180 to xTile=0. point_as_cell must
+    follow heavy (route through lonLatToTile + tile_to_cell), so it diverges from
+    quadbin.point_to_cell here — this is the exact-parity contract, not a bug."""
+    z = 14
+    n = 1 << z
+    cell = _quadbin.point_as_cell(180.0, 85.05112878, z)
+    # easternmost tile (x == n-1), NOT the wrapped x==0 the lib would give
+    assert cell == quadbin.tile_to_cell((n - 1, 0, z))
+    assert cell != quadbin.point_to_cell(180.0, 85.05112878, z)
 
 
 def test_resolution_bitformula():
@@ -59,6 +73,16 @@ def test_centroid_is_ewkb_point_srid4326():
     cell = quadbin.point_to_cell(0.0, 0.0, 10)
     g = from_wkb(_quadbin.centroid(cell))
     assert g.geom_type == "Point" and get_srid(g) == 4326
+
+
+def test_centroid_is_bbox_corner_mean_matches_heavy():
+    """Centroid is the ARITHMETIC MEAN of the bbox corners (heavy cellCenter),
+    NOT the lib's true inverse-mercator center (whose latitude differs)."""
+    cell = quadbin.point_to_cell(-122.4194, 37.7749, 10)
+    g = from_wkb(_quadbin.centroid(cell))
+    w, s, e, n = quadbin.cell_to_bounding_box(cell)
+    assert abs(g.x - (w + e) / 2.0) < 1e-12
+    assert abs(g.y - (s + n) / 2.0) < 1e-12
 
 
 def test_cellunion_is_ewkb_and_covers_cells():
