@@ -582,3 +582,211 @@ def tessellate_str(geom, resolution, keep_core_geom: bool = False) -> list:
         (format(c), core, (_to_wkb(chip) if chip is not None else None))
         for (c, core, chip) in tessellate(parsed, res, keep_core_geom)
     ]
+
+
+# ---------------------------------------------------------------------------
+# geometry-centric neighborhood (BNG.geometryKRing / geometryKLoop)
+#
+# Cover the geometry with chips (getChips), then expand the BORDER chips by a
+# cell k_ring/k_loop. Core cells (fully inside) are kept as-is for k-ring; for
+# k-loop they form part of the inner n-ring that is subtracted to hollow out the
+# result. All emitted ids are filtered by ``is_valid`` (in-bounds + indexable),
+# mirroring the heavy ``.filter(BNG.isValid)`` on both walks (BNG.scala L635/645).
+# ---------------------------------------------------------------------------
+
+
+def is_valid(cell_id: int) -> bool:
+    """Whether a Long cell id is in-bounds + indexable (BNG.isValid, BNG.scala L305).
+
+    EPSG:27700 origin coords must satisfy 0<=x<=700000, 0<=y<=1300000, and the
+    letter-grid indices must fall within the LETTER_MAP dimensions.
+    """
+    digits = cell_digits(cell_id)
+    x_letter = int("".join(str(d) for d in digits[3:5]))
+    y_letter = int("".join(str(d) for d in digits[1:3]))
+    resolution = get_resolution_from_digits(digits)
+    edge = get_edge_size(resolution)
+    x = get_x(digits, edge)
+    y = get_y(digits, edge)
+    return (
+        0 <= x <= 700000
+        and 0 <= y <= 1300000
+        and x_letter < len(LETTER_MAP)
+        and y_letter < len(LETTER_MAP[0])
+    )
+
+
+def get_chips(geometry, resolution: int, keep_core_geom: bool = False) -> list:
+    """Per-cell chips covering ``geometry`` (BNG.getChips, BNG.scala L648).
+
+    Dispatched on geometry type:
+      * Point          -> single border chip at the point's cell (core False).
+      * MultiPoint     -> one border chip per point.
+      * Line/MultiLine -> ``_line_fill`` (BFS walk along each line).
+      * else (Polygon/MultiPolygon/...) -> ``tessellate``.
+
+    Returns ``(Long cellid, core: bool, chip: shapely|None)`` tuples. For Point
+    inputs the chip is the point only when ``keep_core_geom`` (matches heavy
+    ``pointChip``); line chips always carry the clipped line segment.
+    """
+    gt = geometry.geom_type
+    if gt == "Point":
+        return _point_chip(geometry, resolution, keep_core_geom)
+    if gt == "MultiPoint":
+        return _multi_point_chips(geometry, resolution, keep_core_geom)
+    if gt in ("LineString", "MultiLineString"):
+        return _line_fill(geometry, resolution)
+    return list(tessellate(geometry, resolution, keep_core_geom))
+
+
+def _point_chip(geometry, resolution: int, keep_core_geom: bool) -> list:
+    """Single non-core chip at the point's cell (BNG.pointChip, BNG.scala L662)."""
+    chip = geometry if keep_core_geom else None
+    return [(point_to_cell_id(geometry.x, geometry.y, resolution), False, chip)]
+
+
+def _multi_point_chips(geometry, resolution: int, keep_core_geom: bool) -> list:
+    """One ``_point_chip`` per sub-point (BNG.multiPointChips, BNG.scala L673)."""
+    out: list = []
+    for p in geometry.geoms:
+        out += _point_chip(p, resolution, keep_core_geom)
+    return out
+
+
+def _line_fill(geometry, resolution: int) -> list:
+    """Decompose each line into per-cell chips (BNG.lineFill, BNG.scala L682)."""
+    lines = [geometry] if geometry.geom_type == "LineString" else list(geometry.geoms)
+    out: list = []
+    for line in lines:
+        out += _line_decompose(line, resolution)
+    return out
+
+
+def _line_decompose(line, resolution: int) -> list:
+    """BFS walk along a LineString yielding ``(cellid, False, segment)`` chips.
+
+    Faithful port of ``BNG.lineDecompose`` (BNG.scala L698): start at the line's
+    start-point cell; for each queued cell, intersect the line with the cell
+    polygon and -- if non-empty -- emit the segment chip and enqueue the cell's
+    unseen ``k_ring(.,1)`` neighbours. The ``traversed.size == 1`` special case
+    re-seeds the walk when the very first cell's intersection is empty (the start
+    point lies exactly on a cell boundary).
+    """
+    start = line.coords[0]
+    start_cell = point_to_cell_id(start[0], start[1], resolution)
+    queue = [start_cell]
+    traversed: set = set()
+    chips: list = []
+    while queue:
+        traversed |= set(queue)
+        next_queue: list = []
+        for current in queue:
+            cell_geom = cell_id_to_geometry(current)
+            seg = line.intersection(cell_geom)
+            if not seg.is_empty:
+                chips.append((current, False, seg))
+                for nb in k_ring(current, 1):
+                    if nb not in traversed and nb not in next_queue:
+                        next_queue.append(nb)
+            elif len(traversed) == 1:
+                for nb in k_ring(current, 1):
+                    if nb not in traversed and nb not in next_queue:
+                        next_queue.append(nb)
+        queue = next_queue
+    return chips
+
+
+def geometry_k_ring(geometry, resolution: int, k: int) -> set:
+    """k-ring of cell ids covering ``geometry`` (BNG.geometryKRing, BNG.scala L639).
+
+    Core (interior) cells are kept; border cells are each expanded by
+    ``k_ring(.,k)``. The union is filtered by ``is_valid``.
+    """
+    chips = get_chips(geometry, resolution, keep_core_geom=False)
+    core_ids = {c for (c, core, _) in chips if core}
+    border = [c for (c, core, _) in chips if not core]
+    border_kring = {x for c in border for x in k_ring(c, k)}
+    return {c for c in (core_ids | border_kring) if is_valid(c)}
+
+
+def geometry_k_loop(geometry, resolution: int, k: int) -> set:
+    """Hollow k-loop of cell ids around ``geometry`` (BNG.geometryKLoop, L619).
+
+    Subtracts the inner n-ring (n = k-1: core ids + border ``k_ring(.,n)``) from
+    the border ``k_loop(.,k)``, then filters by ``is_valid``.
+    """
+    n = k - 1
+    chips = get_chips(geometry, resolution, keep_core_geom=False)
+    core_ids = {c for (c, core, _) in chips if core}
+    border = [c for (c, core, _) in chips if not core]
+    border_nring = {x for c in border for x in k_ring(c, n)}
+    n_ring = core_ids | border_nring
+    border_kloop = {x for c in border for x in k_loop(c, k)}
+    return {c for c in (border_kloop - n_ring) if is_valid(c)}
+
+
+def geometry_k_ring_str(geom, resolution, k) -> list:
+    """String-id wrapper over :func:`geometry_k_ring` (parse geom -> walk -> format)."""
+    res = get_resolution(resolution)
+    return [format(c) for c in geometry_k_ring(parse_geom(geom), res, int(k))]
+
+
+def geometry_k_loop_str(geom, resolution, k) -> list:
+    """String-id wrapper over :func:`geometry_k_loop` (parse geom -> walk -> format)."""
+    res = get_resolution(resolution)
+    return [format(c) for c in geometry_k_loop(parse_geom(geom), res, int(k))]
+
+
+# ---------------------------------------------------------------------------
+# chip-pair ops (BNG_CellUnion / BNG_CellIntersection expressions)
+#
+# Operate on chip structs ``(cellid, core, chip)`` -- the tessellate/getChips
+# output -- NOT on cell-id arrays like quadbin. Faithful port of the heavy
+# left-hand rule in BNG_CellUnion.executeString / BNG_CellIntersection.executeString:
+#   * different cell ids   -> (left cellid, left core, empty polygon)
+#   * either chip is core  -> that whole chip survives (left checked first)
+#   * else                 -> left.union(right) / left.intersection(right)
+# The result reuses the LEFT chip's core flag (chip1._2), matching heavy.
+# Chip geometry is plain (no SRID); the *_str wrappers emit plain WKB.
+# ---------------------------------------------------------------------------
+
+
+def _empty_polygon():
+    """Empty Polygon, mirroring heavy ``JTS.emptyPolygon`` (no SRID)."""
+    from shapely.geometry import Polygon as _Polygon
+
+    return _Polygon()
+
+
+def cell_union(left, right):
+    """Union two chips ``(cellid, core, shapely)`` (BNG_CellUnion, left-hand rule).
+
+    Different cell ids -> empty polygon; a core chip on either side wins (left
+    first); otherwise the geometric union of the two chip geometries.
+    """
+    lc, lcore, lg = left
+    rc, rcore, rg = right
+    if lc != rc:
+        return (lc, lcore, _empty_polygon())
+    if lcore:
+        return left
+    if rcore:
+        return right
+    return (lc, lcore, lg.union(rg))
+
+
+def cell_intersection(left, right):
+    """Intersect two chips ``(cellid, core, shapely)`` (BNG_CellIntersection).
+
+    Same left-hand rule as :func:`cell_union`: different ids -> empty polygon; a
+    core chip wins (left first); otherwise the geometric intersection.
+    """
+    lc, lcore, lg = left
+    rc, rcore, rg = right
+    if lc != rc:
+        return (lc, lcore, _empty_polygon())
+    if lcore:
+        return left
+    if rcore:
+        return right
+    return (lc, lcore, lg.intersection(rg))
