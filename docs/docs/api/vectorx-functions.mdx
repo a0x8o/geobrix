@@ -16,9 +16,9 @@ import { Impl } from '@site/src/components/Tier';
 VectorX augments the product's native `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-geometry migration helpers. As of v0.4.0 it covers:
 
 - **Vector tile encoding** — `gbx_st_asmvt` aggregator + `gbx_st_asmvt_pyramid` generator for publishing Mapbox Vector Tile (MVT) layers, available in **both** the lightweight (`pyvx`) and heavyweight (`vectorx`) tiers
-- **TIN surface modeling** — `gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`, and `gbx_st_interpolateelevationgeom` for constrained-Delaunay triangulation and grid elevation interpolation from Z-valued points (heavyweight only)
+- **TIN surface modeling** — `gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`, and `gbx_st_interpolateelevationgeom` for Delaunay triangulation and grid elevation interpolation from Z-valued points, in **both** tiers (with a `constrained`/`conforming` mode selector)
 - **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB (heavyweight only)
-- **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating from DBLabs Mosaic (heavyweight only)
+- **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating geometries written by DBLabs Mosaic, in **both** tiers
 
 :::note Import paths
 - Vector tile encoding lightweight: `databricks.labs.gbx.pyvx` (Python)
@@ -30,16 +30,20 @@ VectorX augments the product's native `ST_*` functions with vector-tile encoding
 Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
 :::
 
+:::note Geometry input encodings
+Every `gbx_st_*` geometry input accepts **WKB, EWKB, WKT, and EWKT** interchangeably. WKB/WKT carry no SRID; EWKB/EWKT carry one. Pass whichever encoding your upstream produces — no separate conversion step is required.
+:::
+
 ## Tier availability
 
 | Function | Lightweight (pyvx) | Heavyweight (vectorx) |
 |---|---|---|
 | `st_asmvt` | Supported | Supported |
 | `st_asmvt_pyramid` | Supported | Supported |
-| `st_triangulate` | Planned | Supported |
-| `st_interpolateelevationbbox` | Planned | Supported |
-| `st_interpolateelevationgeom` | Planned | Supported |
-| `st_legacyaswkb` | — | Supported |
+| `st_triangulate` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_interpolateelevationbbox` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_interpolateelevationgeom` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_legacyaswkb` | Supported | Supported |
 
 ---
 
@@ -326,56 +330,84 @@ df.select(
 
 ## Triangulation and elevation
 
-These generators build a constrained Delaunay triangulated irregular network (TIN) from Z-valued mass points and optional breaklines, then either expose the triangles directly or sample the surface on a regular grid to produce elevation points. Useful for surface modeling, DTM/DEM derivation, and elevation sampling from survey point clouds.
+These generators build a Delaunay triangulated irregular network (TIN) from Z-valued mass points and optional breaklines, then either expose the triangles directly or sample the surface on a regular grid to produce elevation points. Useful for surface modeling, DTM/DEM derivation, and elevation sampling from survey point clouds. All three are available in **both** tiers; breaklines are honored in both.
 
-:::note Lightweight tier
-TIN and elevation functions are available in the **Heavyweight** tier only in v0.4.0. Lightweight support is planned for a future release.
+### Triangulation modes: `constrained` vs `conforming`
+
+Each TIN function takes a trailing `mode` argument (default `'constrained'`):
+
+| Mode | Tiers | Behavior |
+|---|---|---|
+| `constrained` *(default)* | Lightweight **and** heavyweight | Constrained Delaunay triangulation. Breaklines are honored as forced edges with **no Steiner points** — the output vertex set is exactly your input mass points plus breakline vertices. Identical algorithm in both tiers, so the result is a seamless cross-tier swap. |
+| `conforming` | Heavyweight only | JTS conforming-Delaunay triangulation: the mesh may insert additional **Steiner points** along breakline segments to satisfy the Delaunay property near constraints. Produces a smoother mesh around dense breaklines at the cost of extra vertices. |
+
+The lightweight tier raises `NotImplementedError` on `mode='conforming'` — it has no Steiner-point refinement. This is a **documented, intentional divergence**, analogous to the [H3 covering note](./gridx-functions) elsewhere in these docs: the two tiers agree exactly in the default (`constrained`) mode, and the heavyweight tier offers `conforming` as a deliberate opt-in superset. If you need a result that is byte-identical across tiers, stay on `constrained` (the default).
+
+:::note Invocation surface
+In the **lightweight** tier these TIN generators are PySpark UDTFs with **no Python DataFrame Column form** — invoke them via SQL `LATERAL` (e.g. `... , LATERAL gbx_st_triangulate(...) t`), the same pattern as `gbx_st_asmvt_pyramid`. In the **heavyweight** tier they are exposed as generator Columns (usable in `select(...)`) and via SQL `LATERAL VIEW`. SQL `LATERAL` works for **both** tiers; the Python DataFrame Column form is heavyweight-only for these generators.
 :::
 
 ### gbx_st_triangulate
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
-Builds a constrained Delaunay TIN from mass-point geometries (with Z values) and optional breakline geometries, emitting one triangle polygon per row. Use this when you need the raw triangulation — e.g., to inspect mesh quality, clip triangles to an area of interest, or feed a custom sampler.
+Builds a Delaunay TIN from mass-point geometries (with Z values) and optional breakline geometries, emitting one triangle polygon per row. Use this when you need the raw triangulation — e.g., to inspect mesh quality, clip triangles to an area of interest, or feed a custom sampler.
 
-**Signature:** `gbx_st_triangulate(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder)`
+**Signature:** `gbx_st_triangulate(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, mode)`
 
 **Parameters:**
-- `points` (`BINARY`) — Column of WKB point geometries with Z values (the mass points that define the surface).
-- `breaklines` (`BINARY`) — Column of WKB linestring geometries that the mesh must honor as edges (e.g., ridge lines, drainage channels). Pass `NULL` or an empty geometry column if no breaklines are needed.
+- `points` — Array column of point geometries with Z values (the mass points that define the surface). Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Array column of linestring geometries that the mesh must honor as edges (e.g., ridge lines, drainage channels). Pass an empty array if no breaklines are needed.
 - `mergeTolerance` (`DOUBLE`) — Distance below which coincident points are merged before triangulation.
 - `snapTolerance` (`DOUBLE`) — Distance within which points are snapped to breakline vertices.
-- `splitPointFinder` (`STRING`) — Conforming-mesh refinement strategy. Use `'NONENCROACHING'` for a mesh that avoids encroaching on breakline segments; other valid values depend on the underlying JTS implementation.
+- `splitPointFinder` (`STRING`) — Conforming-mesh refinement strategy. Use `'NONENCROACHING'` for a mesh that avoids encroaching on breakline segments; `'MIDPOINT'` is also valid (heavyweight `conforming` mode).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only). See [Triangulation modes](#triangulation-modes-constrained-vs-conforming) above.
 
-**Generator:** Emits one row per output triangle. Use with `LATERAL VIEW` to materialize the triangles; the output schema column is `triangle` (`BINARY` WKB polygon).
+**Generator:** Emits one row per output triangle. Use with SQL `LATERAL` to materialize the triangles; the output schema column is `triangle` (`BINARY` WKB polygon).
 
-**SQL:**
+**SQL** (works in both tiers after `vx.register(spark)`):
 
 <CodeFromTest code={vectorxSqlCode} functionName="st_triangulate_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_triangulate_sql_example_output" />
+
+**PySpark** (heavyweight DataFrame Column form):
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql import functions as F
+
+df.select(
+    vx.st_triangulate(
+        F.col("masspoints"), F.col("breaklines"), 0.01, 0.01, "NONENCROACHING"
+    ).alias("t")
+).select("t.triangle")
+```
+
+In the lightweight tier, call the registered UDTF via SQL `LATERAL` (shown above) — there is no `vx.st_triangulate(...)` Column form.
 
 ---
 
 ### gbx_st_interpolateelevationbbox
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Builds a TIN from mass points and breaklines, then samples elevation on a regular pixel grid covering an **explicit bounding box**. Use this when you already know the output extent in absolute coordinates — for example, when snapping to a fixed tile extent or aligning with a raster grid.
 
-**Signature:** `gbx_st_interpolateelevationbbox(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, xmin, ymin, xmax, ymax, widthPx, heightPx, srid)`
+**Signature:** `gbx_st_interpolateelevationbbox(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, mode)`
 
 **Parameters:**
-- `points` (`BINARY`) — WKB mass-point geometries with Z values.
-- `breaklines` (`BINARY`) — WKB breakline geometries (or `NULL`).
+- `points` — Mass-point geometries with Z values. Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Breakline geometries (or an empty array).
 - `mergeTolerance` (`DOUBLE`) — Merge distance for coincident points.
 - `snapTolerance` (`DOUBLE`) — Snap distance to breakline vertices.
 - `splitPointFinder` (`STRING`) — Conforming-mesh strategy (e.g. `'NONENCROACHING'`).
 - `xmin`, `ymin`, `xmax`, `ymax` (`DOUBLE`) — Bounding box corners in the coordinate reference system given by `srid`.
 - `widthPx`, `heightPx` (`INT`) — Number of grid columns and rows. Together with the bbox dimensions these determine the cell size.
 - `srid` (`INT`) — EPSG code of the bounding box coordinates (e.g. `27700` for British National Grid).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only).
 
-**Generator:** Emits one row per grid cell. The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with `LATERAL VIEW` to materialize the grid.
+**Generator:** Emits one row per in-hull grid cell (cells whose centers fall outside the TIN convex hull are dropped). The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with SQL `LATERAL` to materialize the grid.
 
-**SQL:**
+**SQL** (works in both tiers):
 
 <CodeFromTest code={vectorxSqlCode} functionName="st_interpolateelevationbbox_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_interpolateelevationbbox_sql_example_output" />
 
@@ -383,26 +415,27 @@ Builds a TIN from mass points and breaklines, then samples elevation on a regula
 
 ### gbx_st_interpolateelevationgeom
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Builds a TIN from mass points and breaklines, then samples elevation on a regular grid **anchored to a geometry origin** with explicit cell sizes. Use this when the grid must be defined relative to a known point — for example, when the grid origin comes from data (a survey control point) or when different rows need different grid placements.
 
-**Signature:** `gbx_st_interpolateelevationgeom(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, gridOrigin, gridCols, gridRows, cellSizeX, cellSizeY)`
+**Signature:** `gbx_st_interpolateelevationgeom(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, gridOrigin, gridCols, gridRows, cellSizeX, cellSizeY, mode)`
 
 **Parameters:**
-- `points` (`BINARY`) — WKB mass-point geometries with Z values.
-- `breaklines` (`BINARY`) — WKB breakline geometries (or `NULL`).
+- `points` — Mass-point geometries with Z values. Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Breakline geometries (or an empty array).
 - `mergeTolerance` (`DOUBLE`) — Merge distance for coincident points.
 - `snapTolerance` (`DOUBLE`) — Snap distance to breakline vertices.
 - `splitPointFinder` (`STRING`) — Conforming-mesh strategy (e.g. `'NONENCROACHING'`).
-- `gridOrigin` (`BINARY`) — WKB POINT geometry anchoring the top-left corner of the output grid. The CRS is inherited from this geometry — no separate `srid` argument.
+- `gridOrigin` — POINT geometry anchoring the top-left corner of the output grid. The output SRID is inherited from this geometry (encode as EWKB/EWKT to carry a non-zero SRID) — no separate `srid` argument.
 - `gridCols`, `gridRows` (`INT`) — Number of grid columns and rows.
 - `cellSizeX` (`DOUBLE`) — Horizontal cell size in the geometry's units (positive steps right).
 - `cellSizeY` (`DOUBLE`) — Vertical cell size in the geometry's units. Pass a **negative** value to step downward (standard raster convention, e.g. `-10.0` for 10-unit cells stepping south).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only).
 
-**Generator:** Emits one row per grid cell. The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with `LATERAL VIEW` to materialize the grid.
+**Generator:** Emits one row per in-hull grid cell. The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with SQL `LATERAL` to materialize the grid.
 
-**SQL:**
+**SQL** (works in both tiers):
 
 <CodeFromTest code={vectorxSqlCode} functionName="st_interpolateelevationgeom_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_interpolateelevationgeom_sql_example_output" />
 
@@ -412,13 +445,21 @@ Builds a TIN from mass points and breaklines, then samples elevation on a regula
 
 ### st_legacyaswkb
 
-<Tier heavy/>
+<Tier both/>
 
-Converts a legacy Mosaic geometry string to Well-Known Binary (WKB). Use this when migrating data written by DBLabs Mosaic — pass the raw geometry column through `st_legacyaswkb` to obtain a standard WKB binary that all downstream ST functions accept.
+Migrates a legacy DBLabs Mosaic geometry value to standard Well-Known Binary (WKB). Pass the raw legacy geometry column through `st_legacyaswkb` to obtain a WKB binary that all downstream `ST_*` functions accept — the practical first step when moving a Mosaic-era table onto the product's native `GEOMETRY`/`GEOGRAPHY` types.
 
-**Parameters:** `legacyGeometry` — Column containing legacy geometry string (e.g. `{1, [[[x, y]]], [[]]}`).
+A scalar function in **both** tiers (same registered name, same output bytes), so the migration query is a one-line tier swap.
 
-**Returns:** Binary WKB column.
+**Parameters:** `legacyGeometry` — Column containing a legacy Mosaic geometry value (e.g. `{1, [[[x, y]]], [[]]}`).
+
+**Returns:** `BINARY` — standard WKB.
+
+**Migration notes:**
+- **Z values are preserved.** 3D legacy geometries round-trip through `st_legacyaswkb` with their Z coordinate intact.
+- **Polygon holes (interior rings) are preserved.**
+- **SRID is applied separately at ingestion.** The output is plain WKB and carries no SRID; assign the CRS when you read it back, e.g. `ST_GeomFromWKB(gbx_st_legacyaswkb(geom_legacy), 27700)`.
+- **M (measure) values are out of scope** for this conversion.
 
 ## Common setup
 

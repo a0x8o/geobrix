@@ -62,11 +62,13 @@ def st_triangulate_sql_example():
     """Build a Delaunay triangulation from mass-point and breakline geometries (SQL).
 
     Accepts a column of mass-point geometries (`masspoints`), a column of breakline
-    geometries (`breaklines`), a snap tolerance, a minimum triangle area, and a
-    conforming-mesh strategy. Returns one triangle geometry per row.
+    geometries (`breaklines`), a snap tolerance, a minimum triangle area, a
+    conforming-mesh strategy, and a triangulation `mode` (`'constrained'` default,
+    available in both tiers; `'conforming'` is heavyweight-only). Returns one
+    triangle geometry per row.
     """
     return """
-SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING') AS triangle FROM survey;
+SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING', 'constrained') AS triangle FROM survey;
 """
 
 
@@ -84,11 +86,12 @@ def st_interpolateelevationbbox_sql_example():
 
     Builds a triangulated irregular network from mass points and breaklines, then
     samples it on a grid of `cols x rows` cells within the specified bounding box
-    (xmin, ymin, xmax, ymax) in the given SRID. Returns one point-with-Z geometry
-    per grid cell.
+    (xmin, ymin, xmax, ymax) in the given SRID. A trailing `mode` argument selects
+    the triangulation strategy (`'constrained'` default, both tiers; `'conforming'`
+    heavyweight-only). Returns one point-with-Z geometry per grid cell.
     """
     return """
-SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700) AS elev_point FROM survey;
+SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700, 'constrained') AS elev_point FROM survey;
 """
 
 
@@ -107,10 +110,12 @@ def st_interpolateelevationgeom_sql_example():
     Builds a triangulated irregular network from mass points and breaklines, then
     samples it on a grid anchored to the bounding box of the supplied geometry.
     `cell_width` and `cell_height` control the grid resolution (negative height
-    steps downward). Returns one point-with-Z geometry per grid cell.
+    steps downward). A trailing `mode` argument selects the triangulation strategy
+    (`'constrained'` default, both tiers; `'conforming'` heavyweight-only). Returns
+    one point-with-Z geometry per grid cell.
     """
     return """
-SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0) AS elev_point FROM survey;
+SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0, 'constrained') AS elev_point FROM survey;
 """
 
 

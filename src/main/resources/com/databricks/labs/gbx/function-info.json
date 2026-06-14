@@ -110,7 +110,7 @@
       "examples": "Examples:\n      > SELECT cell.cellID as h3_cell, cell.measure as min_value FROM rasters LATERAL VIEW explode(gbx_rst_h3_rastertogridmin(tile, 7)[0]) AS cell;"
     },
     "gbx_rst_h3_tessellate": {
-      "examples": "Examples:\n      > SELECT path, h3_tile.cellid as h3_cell, h3_tile as tile, gbx_rst_avg(h3_tile) as avg_value FROM rasters LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 7)) AS h3_tile;"
+      "examples": "Examples:\n      > SELECT t.* FROM rasters, LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;"
     },
     "gbx_rst_height": {
       "examples": "Examples:\n      > SELECT gbx_rst_height(tile) as height, gbx_rst_width(tile) as width FROM rasters;"
@@ -422,16 +422,16 @@
       "examples": "Examples:\n      > SELECT unhex('010300000001000000050000000000000000003EC000000000000024400000000000003E4000000000000024400000000000003E4000000000000034400000000000003EC000000000000034400000000000003EC00000000000002440') AS geom_wkb, named_struct('name', 'region-a', 'id', 1L) AS attrs ) SELECT t.tile.z AS z, length(t.tile.mvt_bytes) AS mvt_bytes_len FROM features LATERAL VIEW gbx_st_asmvt_pyramid(geom_wkb, attrs, 2, 2, 'regions') t AS tile;"
     },
     "gbx_st_interpolateelevationbbox": {
-      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700) AS elev_point FROM survey;"
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700, 'constrained') AS elev_point FROM survey;"
     },
     "gbx_st_interpolateelevationgeom": {
-      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0) AS elev_point FROM survey;"
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0, 'constrained') AS elev_point FROM survey;"
     },
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
     },
     "gbx_st_triangulate": {
-      "examples": "Examples:\n      > SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING') AS triangle FROM survey;"
+      "examples": "Examples:\n      > SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING', 'constrained') AS triangle FROM survey;"
     },
     "_package_pmtiles": "--- pmtiles ---",
     "gbx_pmtiles_agg": {
