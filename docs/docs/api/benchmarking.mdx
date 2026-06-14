@@ -620,15 +620,23 @@ equality** for `pointascell` and `polyfill`, **exact cells with centroid match w
 with `gbx:bench:cluster --grid-quadbin-only`.
 
 Cluster spark-path results (DBR 17.3 LTS; median wall-clock of one full distributed iteration over
-*N* rows; same corpus both tiers): **pending cluster run** — numbers will be filled in here once the
-quadbin cluster benchmark has been run.
+*N* rows; same corpus both tiers):
 
 | Function | Rows/iter | Heavy (s) | Light (s) | Light speedup |
 |---|---|---|---|---|
-| `gbx_quadbin_pointascell` | 1,000 | _pending_ | _pending_ | _pending_ |
-| `gbx_quadbin_polyfill` | 1,000 | _pending_ | _pending_ | _pending_ |
-| `gbx_quadbin_tessellate` | 1,000 | _pending_ | _pending_ | _pending_ |
-| `gbx_quadbin_cellunion_agg` | 1,000 | _pending_ | _pending_ | _pending_ |
+| `gbx_quadbin_tessellate` | 1,000 | 0.26 | 0.30 | 0.86× |
+| `gbx_quadbin_cellunion_agg` | 1,000 | 0.39 | 0.51 | 0.76× |
+| `gbx_quadbin_polyfill` | 1,000 | 0.28 | 0.50 | 0.55× |
+| `gbx_quadbin_pointascell` | 1,000 | 0.31 | 0.77 | 0.40× |
+
+The heavyweight JVM tier is faster on all four, and **exact cell-set parity holds** across the tiers
+(enforced both in-cell and by the `test_parity_quadbin` cross-tier suite). The gap is widest for the
+cheapest-compute scalar op (`gbx_quadbin_pointascell`, ~2.5× slower): these are sub-millisecond-per-row
+cell-math functions, so the **per-row Python-UDF dispatch crossing the JVM↔Python boundary dominates**
+the lightweight timing — overhead the JVM tier does not pay. Absolute costs are sub-millisecond per
+tile. The lightweight `pygx` tier's value here is **Serverless/ARM reach and no-JVM/JAR install**, not
+raw per-op speed; a vectorized (`pandas_udf`) encoder pass is a planned optimization to close the
+scalar-op gap.
 
 </TabItem>
 

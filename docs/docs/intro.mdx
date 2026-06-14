@@ -6,7 +6,7 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 
 # Introduction to GeoBrix
 
-GeoBrix is a high-performance spatial processing library. Its raster functions come in two execution tiers: a lightweight pure-Python tier (pyrx) that additionally runs on serverless, shared, and ARM compute, and a heavyweight Scala/GDAL tier (rasterx) for distributed processing on classic clusters (natives for x86 arch only). See [Choosing an Execution Tier](./api/execution-tiers). VectorX functions (MVT tiles, TIN surfaces, and legacy-geometry migration) are likewise available in a lightweight pure-Python tier (pyvx) alongside the heavyweight Scala tier. The heavyweight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run on the Databricks Runtime (DBR).
+GeoBrix is a high-performance spatial processing library. Its raster functions come in two execution tiers: a lightweight pure-Python tier (pyrx) that additionally runs on serverless, shared, and ARM compute, and a heavyweight Scala/GDAL tier (rasterx) for distributed processing on classic clusters (natives for x86 arch only). See [Choosing an Execution Tier](./api/execution-tiers). VectorX functions (MVT tiles, TIN surfaces, and legacy-geometry migration) are likewise available in a lightweight pure-Python tier (pyvx) alongside the heavyweight Scala tier, as are the GridX CARTO quadbin functions (pygx); GridX's BNG and custom grids remain heavyweight-only. The heavyweight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run on the Databricks Runtime (DBR).
 
 ![GeoBrix Logo](../../resources/images/GeoBriX.png)
 

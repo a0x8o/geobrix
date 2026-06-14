@@ -11,7 +11,7 @@ import Tier from '@site/src/components/Tier';
 
 # GridX Function Reference
 
-<Tier heavy/> These functions are available in the **Heavyweight** execution tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
+GridX is **partially lightweight** as of v0.4.0: the **quadbin** functions (`gbx_quadbin_*`) run in both tiers <Tier both/>, while the **BNG** (`gbx_bng_*`) and **custom-grid** (`gbx_custom_*`) functions are heavyweight-only <Tier heavy/>. Each section below is marked with its tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
 
 ![GridX](../../../resources/images/GridX.png)
 
@@ -42,6 +42,8 @@ Use `RegisterBatch` with `functions=gridx.bng` or `functions=gridx.quadbin` to r
 - **Polyfill and Tessellation**: Cover geometries with cells; tessellation returns per-cell clipped chip geometries
 
 ## British National Grid (BNG)
+
+<Tier heavy/> BNG functions (`gbx_bng_*`) are heavyweight-only.
 
 The British National Grid is the national coordinate system for Great Britain, based on the Ordnance Survey National Grid (OSGB36). It divides Great Britain into grid squares identified by letter-based prefixes and numeric coordinates.
 
@@ -82,6 +84,8 @@ Major 100km grid squares in Great Britain:
 - **ST** — Bristol area
 
 ## Quadbin (CARTO v0)
+
+<Tier both/> Quadbin runs in both tiers. The lightweight tier is the `pygx` quadbin package — powered by the **quadbin** library + shapely; `quadbin_distance` / `quadbin_polyfill` cell math mirrors the heavyweight `Quadbin.scala`, and geometry outputs are EWKB SRID 4326 — identical `gbx_quadbin_*` SQL names, so it is a drop-in swap.
 
 GeoBrix v0.4.0 adds a `gridx/quadbin` subpackage implementing the [CARTO quadbin v0](https://github.com/CartoDB/quadbin) 64-bit packed `(z, x, y)` tile encoding used by Snowflake, dbt, Felt, and CARTO. Coordinates are EPSG:4326 lon/lat on the user-facing API; cells are encoded as web-mercator XYZ tiles internally. Resolutions range from `0` (whole world) to `26` (sub-metre).
 
@@ -612,6 +616,8 @@ Explode tessellated cells into separate rows.
 
 ## Custom Grid Functions
 
+<Tier heavy/> Custom-grid functions (`gbx_custom_*`) are heavyweight-only.
+
 A custom grid is a user-defined regular rectangular grid specified by its spatial extent, root cell size, and a recursive split factor. Cell IDs are `BIGINT` values; hierarchy is controlled by `cell_splits` (each level subdivides root cells into `cell_splits x cell_splits` sub-cells). Use custom grids when neither BNG nor quadbin matches your coordinate reference system or cell-size requirements — for example, a national grid in EPSG:27700 with non-standard tile sizes.
 
 ### gbx_custom_grid
@@ -757,6 +763,8 @@ Return all custom grid cells within `k` steps of a center cell (filled neighborh
 ---
 
 ## Quadbin
+
+<Tier both/> Available in both tiers (lightweight `pygx` + heavyweight Scala), with exact cell-set parity enforced by the cross-tier parity suite.
 
 CARTO Quadbin v0 cells encode `(z, x, y)` web-mercator tile coordinates as a single `BIGINT`. Cell IDs are interoperable with CARTO's CDB_QuadKey and align with the slippy-map tile grid used by `gbx_rst_xyzpyramid` and `gbx_st_asmvt_pyramid`.
 

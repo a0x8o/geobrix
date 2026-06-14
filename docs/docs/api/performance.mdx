@@ -135,6 +135,12 @@ These functions are Arrow-backed `pandas_udf(BinaryType())` aggregators used ins
 |---|---|---|
 | `gbx_st_asmvt` | `st_asmvt` | Encode a group of tile-local features into one MVT protobuf blob |
 
+**GridX (pygx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_quadbin_cellunion_agg` | `quadbin_cellunion_agg` | Dissolve a group of quadbin cell IDs into one unioned MultiPolygon (EWKB) |
+
 Python usage:
 
 ```python
@@ -143,6 +149,9 @@ df.groupBy("cellid").agg(rx.rst_merge_agg("tile").alias("merged"))
 
 # VectorX: encode features into MVT tiles
 df.groupBy("z", "x", "y").agg(vx.st_asmvt("geom", "attrs", "layer").alias("mvt"))
+
+# GridX: dissolve quadbin cell ids into one unioned coverage geometry per group
+df.groupBy("region").agg(gx.quadbin_cellunion_agg("cell").alias("coverage"))
 ```
 
 </TabItem>
@@ -253,6 +262,22 @@ These functions are `pandas_udf`-backed (Arrow batch) scalar transforms: one inp
 |---|---|---|
 | `gbx_st_legacyaswkb` | `st_legacyaswkb` | Decode a legacy Mosaic geometry struct to WKB (Z + holes preserved) |
 
+**GridX (pygx) — quadbin cell ops**
+
+The quadbin scalar functions register as plain per-row `spark.udf.register` UDFs (not Arrow `pandas_udf`), to keep the package Serverless-safe with no Spark-config or JVM access. They return scalars (`BIGINT`/`INT`/EWKB `BINARY`) or arrays. Because the per-row compute is sub-millisecond, the per-row Python-UDF dispatch crossing the JVM↔Python boundary is the dominant cost relative to the heavyweight JVM tier (which has no such boundary) — see [the perf narrative below](#where-the-lightweight-tier-wins--and-where-it-doesnt). A vectorized (`pandas_udf`) encoder pass is a planned optimization to close that gap.
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_quadbin_pointascell` | `quadbin_pointascell` | lon/lat (EPSG:4326) → quadbin cell ID at zoom |
+| `gbx_quadbin_resolution` | `quadbin_resolution` | quadbin cell ID → zoom level |
+| `gbx_quadbin_distance` | `quadbin_distance` | Chebyshev cell-step distance between two cells |
+| `gbx_quadbin_kring` | `quadbin_kring` | cell ID → array of cells within distance `k` |
+| `gbx_quadbin_polyfill` | `quadbin_polyfill` | geometry → array of covering cell IDs |
+| `gbx_quadbin_tessellate` | `quadbin_tessellate` | geometry → array of `STRUCT<cell, geom>` clips |
+| `gbx_quadbin_aswkb` | `quadbin_aswkb` | cell ID → footprint polygon (EWKB SRID 4326) |
+| `gbx_quadbin_centroid` | `quadbin_centroid` | cell ID → centroid point (EWKB SRID 4326) |
+| `gbx_quadbin_cellunion` | `quadbin_cellunion` | array of cell IDs → unioned MultiPolygon (EWKB) |
+
 </TabItem>
 
 <TabItem value="cores" label="Vectorized cores">
@@ -278,6 +303,7 @@ Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `
 | `pyvx/_mvt.py` | mapbox-vector-tile + shapely | `st_asmvt` (grouped-agg), `st_asmvt_pyramid` (UDTF) |
 | `pyvx/_tin.py` | SciPy + shapely | `st_triangulate`, `st_interpolateelevationbbox`, `st_interpolateelevationgeom` (UDTF) |
 | `pyvx/_legacy.py` | shapely | `st_legacyaswkb` (scalar) |
+| `pygx/_quadbin.py` | quadbin + shapely | All `quadbin_*` cell math + EWKB geometry (`pointascell`, `polyfill`, `tessellate`, `cellunion`/`cellunion_agg`, …) |
 
 </TabItem>
 
@@ -312,5 +338,8 @@ The `gbx_st_asmvt` MVT aggregator runs within ~6% of the heavyweight JVM/OGR agg
 
 **Heavyweight still faster:**
 Algorithm-bound GDAL operations — `rst_viewshed` (xrspatial/Numba), `rst_proximity`, `rst_contour`, `rst_polygonize` — run slower on the lightweight tier because no Python library matches the GDAL implementation. These are correct and production-usable; the heavyweight tier is simply the better choice when those specific operations dominate the workload.
+
+**GridX quadbin (pygx) — heavyweight faster, by the per-row UDF tax:**
+The quadbin functions are cheap-compute cell math, so the cluster spark-path numbers are dominated not by the work but by the **per-row Python-UDF dispatch crossing the JVM↔Python boundary** — overhead the heavyweight JVM tier does not pay. On a cluster (1,000 rows, both tiers) heavy is faster on all four shapes: `gbx_quadbin_tessellate` 0.86×, `gbx_quadbin_cellunion_agg` 0.76×, `gbx_quadbin_polyfill` 0.55×, and the cheapest scalar op `gbx_quadbin_pointascell` 0.40× (≈2.5× slower) — the gap is largest exactly where the per-row compute is smallest, because the dispatch tax then dominates. Absolute costs are sub-millisecond per tile, exact cell-set parity holds across both tiers, and a vectorized (`pandas_udf`) encoder pass is a planned optimization to close the scalar-op gap. The lightweight tier's value here is **Serverless/ARM reach and no-JVM/JAR install**, not raw per-op speed. See [Benchmarking — Grid](./benchmarking) for the full table.
 
 For output consistency: the two tiers agree within tolerance on the large majority of functions. The known divergences (`rst_convolve`, `rst_resample`, `rst_derivedband`, `rst_contour`) are at NoData/edge boundaries; interior pixel values agree. See [Benchmarking — Results](./benchmarking#results) for the per-function consistency labels.

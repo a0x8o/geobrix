@@ -52,7 +52,7 @@ function HomepageFeatures() {
           />
           <Feature
             title="GridX"
-            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
+            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. CARTO quadbin is available in the lightweight tier (pygx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier; BNG and custom grids are heavyweight."
             link="/docs/api/gridx-functions"
           />
           <Feature
@@ -102,8 +102,9 @@ export default function Home() {
                   The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
                   a single wheel, no JAR and no init script, and it works everywhere — serverless,
                   standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
-                  likewise available lightweight (pyvx). The heavyweight Scala/GDAL tier is there when
-                  you need the GDAL/OGR readers or the GridX package.
+                  likewise available lightweight (pyvx), as is GridX quadbin (pygx). The heavyweight
+                  Scala/GDAL tier is there when you need the GDAL/OGR readers or the heavyweight-only
+                  GridX grids (BNG and custom grids).
                 </p>
                 <Link
                   className="button button--primary button--md"
