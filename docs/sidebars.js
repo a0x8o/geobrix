@@ -76,6 +76,19 @@ const sidebars = {
         'api/overview',
         'api/tile-structure',
         'api/execution-tiers',
+        'api/language-bindings',
+        {
+          type: 'category',
+          label: 'RasterX',
+          collapsed: false,
+          link: { type: 'doc', id: 'api/raster-functions' },
+          items: [
+            'api/h3-raster-tessellation',
+          ],
+        },
+        { type: 'doc', id: 'api/vectorx-functions', label: 'VectorX' },
+        { type: 'doc', id: 'api/gridx-functions', label: 'GridX' },
+        { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
         {
           type: 'category',
           label: 'Performance & Benchmarking',
@@ -85,12 +98,6 @@ const sidebars = {
             'api/benchmarking',
           ],
         },
-        'api/raster-functions',
-        'api/h3-raster-tessellation',
-        'api/gridx-functions',
-        'api/vectorx-functions',
-        'api/pmtiles-functions',
-        'api/language-bindings',
       ],
     },
     // Temporarily hidden until Examples section is ready to ship
