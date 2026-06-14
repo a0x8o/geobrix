@@ -35,12 +35,19 @@ def test_geomkring_box_superset_of_polyfill():
 
 
 def test_geomkloop_excludes_inner_ring():
-    geom = _towkb(_box2(530000.0, 180000.0, 535000.0, 185000.0))
+    # A sub-cell box (single border chip, no core cells) so the k=2 loop is a
+    # genuine non-empty hollow ring -- a multi-cell box can legitimately diff to
+    # empty (border n-ring + core cover the whole k-loop), which would make the
+    # non-emptiness check vacuous.
+    geom = _towkb(_box2(530200.0, 180200.0, 530800.0, 180800.0))
     res = _bng.get_resolution("1km")
     gkr1 = set(_bng.geometry_k_ring_str(geom, res, 1))
     gkl2 = set(_bng.geometry_k_loop_str(geom, res, 2))
-    # k-loop at 2 is disjoint from the k-ring at 1 (hollow outer ring).
-    assert gkl2.isdisjoint(gkr1) or len(gkl2) > 0
+    # k-loop at 2 is disjoint from the k-ring at 1 (hollow outer ring); the
+    # inner-ring subtraction removes everything covered by the k-ring at 1.
+    assert gkl2.isdisjoint(gkr1)
+    # ...and the hollow outer ring is non-empty.
+    assert len(gkl2) > 0
 
 
 def test_cell_union_same_cell_merges_chips():
@@ -108,6 +115,87 @@ def test_cell_union_core_chip_wins():
     border_left = (cid_s, False, _box2(530000, 180000, 530500, 181000))
     core_right = (cid_s, True, full)
     assert _bng.cell_union(border_left, core_right) == core_right
+
+
+def _geom_equals(a, b):
+    """Start-point-insensitive geometry equality (mutual near-containment).
+
+    shapely renormalizes the ring start vertex on intersection/union, so
+    ``equals_exact`` is unreliable; use ``equals`` (topological) with an
+    area-approx fallback.
+    """
+    return a.equals(b) or a.area == pytest.approx(b.area, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Chip-op branch ordering (heavy BNG_CellUnion/BNG_CellIntersection eval order)
+#
+# Heavy evalLong/evalString check the CORE flag FIRST (chip1.core -> chip1;
+# chip2.core -> chip2) BEFORE the cellid-equality check. So a CORE chip with a
+# mismatched cellid must return that core chip, NOT an empty polygon. Union and
+# intersection share the identical eval order. These cover, for both ops:
+#   (a) core-left + different cellid   -> left
+#   (b) core-right + different cellid  -> right (left non-core)
+#   (c) both non-core + different cellid -> (left cellid, left core, empty)
+#   (d) both non-core + same cellid    -> geometric op
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("op", [_bng.cell_union, _bng.cell_intersection])
+def test_chipop_core_left_mismatched_cellid_returns_left(op):
+    # Heavy: if (chip1.core) return chip1 -- BEFORE the cellid check.
+    cid_l = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
+    cid_r = _bng.east_north_as_bng(540000.0, 180000.0, "1km")
+    left = (cid_l, True, _bng.cell_id_to_geometry(_bng.parse(cid_l)))
+    right = (cid_r, False, _box2(540000, 180000, 541000, 181000))
+    assert op(left, right) == left
+
+
+@pytest.mark.parametrize("op", [_bng.cell_union, _bng.cell_intersection])
+def test_chipop_core_right_mismatched_cellid_returns_right(op):
+    # Heavy: chip1 non-core, then if (chip2.core) return chip2 -- still BEFORE
+    # the cellid check (the cellid mismatch never gets a chance to empty it).
+    cid_l = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
+    cid_r = _bng.east_north_as_bng(540000.0, 180000.0, "1km")
+    left = (cid_l, False, _box2(530000, 180000, 531000, 181000))
+    right = (cid_r, True, _bng.cell_id_to_geometry(_bng.parse(cid_r)))
+    assert op(left, right) == right
+
+
+@pytest.mark.parametrize("op", [_bng.cell_union, _bng.cell_intersection])
+def test_chipop_both_noncore_mismatched_cellid_is_empty(op):
+    # Heavy execute*: different cell ids -> (chip1._1, chip1._2, emptyPolygon).
+    cid_l = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
+    cid_r = _bng.east_north_as_bng(540000.0, 180000.0, "1km")
+    left = (cid_l, False, _box2(530000, 180000, 531000, 181000))
+    right = (cid_r, False, _box2(540000, 180000, 541000, 181000))
+    cell, core, chip = op(left, right)
+    assert cell == cid_l  # left cellid
+    assert core is False  # left core flag
+    assert chip.is_empty  # empty polygon
+
+
+def test_chipop_both_noncore_same_cell_union_merges():
+    # Heavy: else -> chip1.union(chip2).
+    cid_s = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
+    full = _bng.cell_id_to_geometry(_bng.parse(cid_s))
+    left = (cid_s, False, _box2(530000, 180000, 530500, 181000))
+    right = (cid_s, False, _box2(530500, 180000, 531000, 181000))
+    cell, core, chip = _bng.cell_union(left, right)
+    assert cell == cid_s
+    assert core is False
+    assert _geom_equals(chip, full)
+
+
+def test_chipop_both_noncore_same_cell_intersection_clips():
+    # Heavy: else -> chip1.intersection(chip2).
+    cid_s = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
+    left = (cid_s, False, _box2(530000, 180000, 531000, 181000))
+    right = (cid_s, False, _box2(530000, 180000, 530500, 181000))
+    cell, core, chip = _bng.cell_intersection(left, right)
+    assert cell == cid_s
+    assert core is False
+    assert _geom_equals(chip, _box2(530000, 180000, 530500, 181000))
 
 
 def test_line_fill_chips_follow_line():

@@ -742,12 +742,18 @@ def geometry_k_loop_str(geom, resolution, k) -> list:
 #
 # Operate on chip structs ``(cellid, core, chip)`` -- the tessellate/getChips
 # output -- NOT on cell-id arrays like quadbin. Faithful port of the heavy
-# left-hand rule in BNG_CellUnion.executeString / BNG_CellIntersection.executeString:
-#   * different cell ids   -> (left cellid, left core, empty polygon)
-#   * either chip is core  -> that whole chip survives (left checked first)
-#   * else                 -> left.union(right) / left.intersection(right)
-# The result reuses the LEFT chip's core flag (chip1._2), matching heavy.
-# Chip geometry is plain (no SRID); the *_str wrappers emit plain WKB.
+# eval order in BNG_CellUnion.evalLong/evalString and
+# BNG_CellIntersection.evalLong/evalString (BNG_CellUnion.scala L37-63 /
+# BNG_CellIntersection.scala L37-63), which is IDENTICAL for union and
+# intersection:
+#   1. ``if (chip1.core) return chip1``  -- LEFT core early-exit, FIRST
+#   2. ``if (chip2.core) return chip2``  -- RIGHT core early-exit, SECOND
+#   3. else execute*: different cell ids -> (left cellid, left core, empty)
+#                     else -> left.union(right) / left.intersection(right)
+# The core-flag check happens BEFORE the cellid-equality check, so a CORE chip
+# with a mismatched cellid returns that core chip (NOT an empty polygon). The
+# geometric-op result reuses the LEFT chip's core flag (chip1._2). Chip geometry
+# is plain (no SRID); the *_str wrappers emit plain WKB.
 # ---------------------------------------------------------------------------
 
 
@@ -759,34 +765,36 @@ def _empty_polygon():
 
 
 def cell_union(left, right):
-    """Union two chips ``(cellid, core, shapely)`` (BNG_CellUnion, left-hand rule).
+    """Union two chips ``(cellid, core, shapely)`` (BNG_CellUnion eval order).
 
-    Different cell ids -> empty polygon; a core chip on either side wins (left
-    first); otherwise the geometric union of the two chip geometries.
+    Core-flag early-exit FIRST (left core -> left; right core -> right), then the
+    cellid check (different ids -> empty polygon), then the geometric union. A
+    core chip with a mismatched cellid returns the core chip, matching heavy.
     """
     lc, lcore, lg = left
     rc, rcore, rg = right
-    if lc != rc:
-        return (lc, lcore, _empty_polygon())
     if lcore:
         return left
     if rcore:
         return right
+    if lc != rc:
+        return (lc, lcore, _empty_polygon())
     return (lc, lcore, lg.union(rg))
 
 
 def cell_intersection(left, right):
     """Intersect two chips ``(cellid, core, shapely)`` (BNG_CellIntersection).
 
-    Same left-hand rule as :func:`cell_union`: different ids -> empty polygon; a
-    core chip wins (left first); otherwise the geometric intersection.
+    IDENTICAL eval order to :func:`cell_union` (heavy union/intersection share it):
+    core-flag early-exit FIRST (left core -> left; right core -> right), then the
+    cellid check (different ids -> empty polygon), then the geometric intersection.
     """
     lc, lcore, lg = left
     rc, rcore, rg = right
-    if lc != rc:
-        return (lc, lcore, _empty_polygon())
     if lcore:
         return left
     if rcore:
         return right
+    if lc != rc:
+        return (lc, lcore, _empty_polygon())
     return (lc, lcore, lg.intersection(rg))
