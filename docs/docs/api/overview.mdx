@@ -145,11 +145,7 @@ SQL functions are registered via Python or Scala. Once registered, they are avai
 
 ## API Languages
 
-GeoBrix provides the same functionality across three languages:
-
-- [Scala API →](./scala) — native implementation; most direct access
-- [Python API →](./python) — PySpark bindings with Pythonic idioms
-- [SQL API →](./sql) — functions registered in the Spark catalog, usable from any SQL context
+GeoBrix provides the same functionality across three languages — SQL, Python, and Scala. See [Language Bindings](./language-bindings) for the registration and import patterns each surface uses, and the one-line lightweight-vs-heavyweight raster swap.
 
 ## Scalar values vs `lit(...)` wrapping
 
@@ -198,7 +194,5 @@ SELECT gbx_bng_pointascell(pt, '1km') FROM ...;
 - [Raster Function Reference](./raster-functions)
 - [GridX Function Reference](./gridx-functions)
 - [VectorX Function Reference](./vectorx-functions)
-- [Scala API Reference](./scala)
-- [Python API Reference](./python)
-- [SQL API Reference](./sql)
+- [Language Bindings](./language-bindings)
 - [Examples](../examples/overview)
