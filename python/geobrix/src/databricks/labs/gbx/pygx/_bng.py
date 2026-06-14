@@ -344,3 +344,46 @@ def cell_aswkt(cell_id: int) -> str:
 def cell_centroid(cell_id: int) -> bytes:
     """Cell centre as plain WKB POINT (no SRID)."""
     return _to_wkb(cell_id_to_geometry(cell_id).centroid)
+
+
+def k_loop(cell_id: int, k: int) -> list:
+    """Hollow square ring of Long cell ids at radius k (BNG.kLoop).
+
+    Walks the four corners plus the interior edge runs of the square at
+    distance ``k * edgeSize`` around the cell centre, mapping each point back
+    to a cell id. Mirrors the Scala ``until ... by edgeSize`` (exclusive upper
+    bound) edge runs via Python ``range`` (also exclusive).
+    """
+    digits = cell_digits(cell_id)
+    resolution = get_resolution_from_digits(digits)
+    edge = get_edge_size(resolution)
+    x = get_x(digits, edge)
+    y = get_y(digits, edge)
+    xmin, xmax = x - k * edge, x + k * edge
+    ymin, ymax = y - k * edge, y + k * edge
+    pts = [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin)]
+    pts += [(xmin, yy) for yy in range(ymin + edge, ymax, edge)]  # left
+    pts += [(xmax, yy) for yy in range(ymin + edge, ymax, edge)]  # right
+    pts += [(xx, ymax) for xx in range(xmin + edge, xmax, edge)]  # up
+    pts += [(xx, ymin) for xx in range(xmin + edge, xmax, edge)]  # down
+    return [point_to_cell_id(px, py, resolution) for (px, py) in pts]
+
+
+def k_ring(cell_id: int, n: int) -> list:
+    """Center + all k-loops 1..n of Long cell ids (BNG.kRing)."""
+    if n == 1:
+        return [cell_id] + k_loop(cell_id, 1)
+    out = [cell_id]
+    for k in range(1, n + 1):
+        out += k_loop(cell_id, k)
+    return out
+
+
+def k_ring_str(cell_id_str: str, n: int) -> list:
+    """String-id wrapper over :func:`k_ring` (parse -> walk -> format)."""
+    return [format(c) for c in k_ring(parse(cell_id_str), int(n))]
+
+
+def k_loop_str(cell_id_str: str, k: int) -> list:
+    """String-id wrapper over :func:`k_loop` (parse -> walk -> format)."""
+    return [format(c) for c in k_loop(parse(cell_id_str), int(k))]
