@@ -619,32 +619,22 @@ equality** for `pointascell` and `polyfill`, **exact cells with centroid match w
 `tessellate`, and **decoded union-geometry equality (1e-6)** per group for `cellunion_agg`. Run it
 with `gbx:bench:cluster --grid-quadbin-only`.
 
-Cluster spark-path results — **all 10 quadbin functions** (DBR 17.3 LTS; median wall-clock over 5
-measured iterations of one full distributed pass over *N* rows; same corpus both tiers):
+All 10 quadbin functions were benchmarked on a cluster (1,000 rows, both tiers). **Exact cell-set
+parity holds for all 10** (test-enforced — in-cell and by the `test_parity_quadbin` cross-tier suite).
 
-| Function | Rows/iter | Heavy (s) | Light (s) | Light speedup |
-|---|---|---|---|---|
-| `gbx_quadbin_aswkb` | 1,000 | 0.16 | 0.14 | 1.18× |
-| `gbx_quadbin_kring` | 1,000 | 0.18 | 0.16 | 1.14× |
-| `gbx_quadbin_polyfill` | 1,000 | 0.16 | 0.14 | 1.11× |
-| `gbx_quadbin_resolution` | 1,000 | 0.17 | 0.16 | 1.06× |
-| `gbx_quadbin_distance` | 1,000 | 0.17 | 0.17 | 1.02× |
-| `gbx_quadbin_cellunion` | 8 | 0.24 | 0.24 | 1.00× |
-| `gbx_quadbin_centroid` | 1,000 | 0.16 | 0.17 | 0.93× |
-| `gbx_quadbin_tessellate` | 1,000 | 0.19 | 0.21 | 0.91× |
-| `gbx_quadbin_cellunion_agg` | 1,000 | 0.28 | 0.33 | 0.86× |
-| `gbx_quadbin_pointascell` | 1,000 | 0.18 | 0.22 | 0.85× |
+On *timing*, these are **sub-millisecond cell-math** operations, so the spark-path wall-clock is
+dominated by per-row JVM↔Python dispatch and **cluster run-to-run variance**, not by the work itself —
+the same (unchanged) function varied by ~±40% between repeated 5-iteration runs. Precise per-function
+speedups therefore do not reproduce and aren't meaningful to publish at this granularity; across runs
+the lightweight tier sits **roughly at parity** with the heavyweight JVM tier on the whole quadbin
+surface (sometimes faster, sometimes modestly slower, within that variance).
 
-**Exact cell-set parity holds** for all 10 across the tiers (enforced both in-cell and by the
-`test_parity_quadbin` cross-tier suite). On speed the lightweight tier is **competitive-to-faster on
-most quadbin functions** — 6 of 10 are at or above heavyweight parity. The cheap cell-id functions
-(`pointascell`, `resolution`, `distance`, `kring`) are **vectorized `pandas_udf`s**, so the JVM↔Python
-boundary is crossed once per Arrow batch rather than once per row. The four still modestly behind
-(0.85–0.93×) are the per-row geometry/aggregation ops (`centroid`, `tessellate`, `cellunion_agg`,
-`pointascell`), where WKB serialization or the shapely union/intersection across the boundary is the
-cost the JVM tier avoids. Absolute costs are sub-millisecond per row (`cellunion` is per-group, so
-fewer rows but more cells each). On top of this, the lightweight `pygx` tier adds **Serverless/ARM
-reach and no-JVM/JAR install**.
+The implementation is **scale-aware**: scalar/bounded-output ops (`pointascell`, `resolution`,
+`distance`, `aswkb`, `centroid`, `cellunion`) use vectorized/batched `pandas_udf`s, while
+**array-returning** ops (`kring`, `polyfill`, `tessellate`) use plain row-at-a-time UDFs so a single
+batch never buffers many large variable-length outputs (a memory-safety choice for large
+geometries/zoom levels). The lightweight `pygx` tier's decisive advantage here is **Serverless/ARM
+reach and no-JVM/JAR install**, with timing competitive with the heavyweight tier.
 
 </TabItem>
 

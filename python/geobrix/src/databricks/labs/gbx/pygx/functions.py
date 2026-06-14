@@ -31,11 +31,16 @@ def _col(x: ColLike) -> Union[Column, str]:
     return f.lit(x)
 
 
-# --- vectorized cell-id UDFs (pandas_udf) ---------------------------------------------------
-# The cheap, pure-cell-id functions (pointascell/resolution/distance/kring) are
-# vectorized pandas_udf (Series -> Series) so the per-row plain-Python-UDF
-# dispatch tax is amortized over an Arrow batch. They are bit-exact with the
-# scalar _quadbin functions (the parity oracle), so cross-tier parity holds.
+# --- impl rule: scalar-output -> pandas_udf ; array-output -> plain @udf --------------------
+# Scalar/bounded-output functions (pointascell/resolution/distance + the single-
+# geometry aswkb/centroid/cellunion) use pandas_udf: pointascell/resolution are
+# numpy-vectorized (a real win), the rest amortize the Arrow batch transfer, and a
+# batch of scalars is bounded in memory. ARRAY-returning functions (kring/polyfill/
+# tessellate) use a PLAIN @udf instead: a scalar pandas_udf buffers a whole Arrow
+# batch (~10k rows) of output at once, so variable-length array outputs (polyfill
+# can emit up to ~1M cells/row; tessellate many chips/row) risk worker OOM at scale
+# — a plain @udf streams row-by-row (peak memory ~ one row's output). All wrap the
+# same scalar _quadbin oracle, so cross-tier parity holds either way.
 
 
 @pandas_udf(LongType())
@@ -58,22 +63,6 @@ def _resolution_udf(cell: pd.Series) -> pd.Series:
     return pd.Series(_quadbin.resolution_vec(cells).astype(np.int32))
 
 
-@pandas_udf(ArrayType(LongType()))
-def _kring_udf(cell: pd.Series, k: pd.Series) -> pd.Series:
-    # k_ring is a per-cell BFS in the quadbin lib (no array kernel); loop per
-    # element inside the udf — the win is the batched Arrow transfer, not compute.
-    return pd.Series(
-        [
-            (
-                _quadbin.k_ring(int(c), int(kk))
-                if c is not None and kk is not None
-                else None
-            )
-            for c, kk in zip(cell, k)
-        ]
-    )
-
-
 @pandas_udf(IntegerType())
 def _distance_udf(a: pd.Series, b: pd.Series) -> pd.Series:
     # Same-resolution-or-error; Chebyshev on cell_to_tile coords. Looped per
@@ -84,12 +73,10 @@ def _distance_udf(a: pd.Series, b: pd.Series) -> pd.Series:
     )
 
 
-# --- geometry-returning UDFs (pandas_udf, Series -> Series) ----------------------------------
-# These wrap the same scalar _quadbin oracle functions (the parity source) but
-# loop over an Arrow batch inside the pandas_udf, mirroring _kring_udf/_distance_udf.
-# The win is the batched JVM<->Python Arrow transfer, not numpy — these are
-# geometry ops with per-row shapely work. NULL propagation is preserved per row
-# (None geom -> None) so heavy's propagateNull semantics still hold.
+# --- single-geometry UDFs (pandas_udf, bounded scalar output) --------------------------------
+# aswkb/centroid/cellunion return ONE geometry per row (bounded output), so a
+# pandas_udf batch is memory-safe; they loop over the batch calling the scalar
+# _quadbin oracle (the win is the batched Arrow transfer). NULL preserved per row.
 
 
 @pandas_udf(BinaryType())
@@ -115,34 +102,30 @@ def _cellunion_udf(cells: pd.Series) -> pd.Series:
     )
 
 
-@pandas_udf(ArrayType(LongType()))
-def _polyfill_udf(geom: pd.Series, res: pd.Series) -> pd.Series:
-    # None geom -> None (match heavy propagateNull); else bbox polyfill at res.
-    return pd.Series(
-        [
-            (_quadbin.polyfill(g, int(r)) if g is not None else None)
-            for g, r in zip(geom, res)
-        ]
-    )
+# --- array-returning UDFs (PLAIN @udf, row-by-row for scale safety) --------------------------
+# kring/polyfill/tessellate emit variable-length arrays per row; a scalar pandas_udf
+# would buffer a whole Arrow batch of these at once (OOM risk at scale), so they are
+# plain row-at-a-time UDFs. NULL geom -> NULL (heavy propagateNull).
 
 
-@pandas_udf(ArrayType(QUADBIN_CELL_SCHEMA))
-def _tessellate_udf(geom: pd.Series, res: pd.Series) -> pd.Series:
-    # ARRAY<STRUCT<cell,geom>> — None geom -> None; else dicts so struct fields
-    # bind by name. (Scalar pandas_udf w/ ArrayType(StructType) return.)
-    return pd.Series(
-        [
-            (
-                [
-                    {"cell": int(c), "geom": gm}
-                    for (c, gm) in _quadbin.tessellate(g, int(r))
-                ]
-                if g is not None
-                else None
-            )
-            for g, r in zip(geom, res)
-        ]
-    )
+def _kring(cell, k):
+    if cell is None or k is None:
+        return None
+    return _quadbin.k_ring(int(cell), int(k))
+
+
+def _polyfill(geom, res):
+    if geom is None:
+        return None
+    return _quadbin.polyfill(geom, int(res))
+
+
+def _tessellate(geom, res):
+    if geom is None:
+        return None
+    return [
+        {"cell": int(c), "geom": gm} for (c, gm) in _quadbin.tessellate(geom, int(res))
+    ]
 
 
 # --- grouped-aggregate pandas UDF -----------------------------------------------------------
@@ -160,15 +143,20 @@ def register(spark: SparkSession = None) -> None:
     _env.assert_quadbin_available()
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
+    # scalar-output -> pandas_udf (vectorized / bounded batch)
     spark.udf.register("gbx_quadbin_pointascell", _pointascell_udf)
     spark.udf.register("gbx_quadbin_resolution", _resolution_udf)
-    spark.udf.register("gbx_quadbin_kring", _kring_udf)
     spark.udf.register("gbx_quadbin_distance", _distance_udf)
-    spark.udf.register("gbx_quadbin_polyfill", _polyfill_udf)
     spark.udf.register("gbx_quadbin_aswkb", _aswkb_udf)
     spark.udf.register("gbx_quadbin_centroid", _centroid_udf)
     spark.udf.register("gbx_quadbin_cellunion", _cellunion_udf)
-    spark.udf.register("gbx_quadbin_tessellate", _tessellate_udf)
+    # array-output -> plain @udf (row-by-row, scale-safe)
+    spark.udf.register("gbx_quadbin_kring", _kring, ArrayType(LongType()))
+    spark.udf.register("gbx_quadbin_polyfill", _polyfill, ArrayType(LongType()))
+    spark.udf.register(
+        "gbx_quadbin_tessellate", _tessellate, ArrayType(QUADBIN_CELL_SCHEMA)
+    )
+    # grouped aggregate
     spark.udf.register("gbx_quadbin_cellunion_agg", _cellunion_agg_udf)
 
 
