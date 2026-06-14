@@ -33,3 +33,31 @@ def distance(cell_a: int, cell_b: int) -> int:
     ax, ay = quadbin.cell_to_tile(int(cell_a))[:2]
     bx, by = quadbin.cell_to_tile(int(cell_b))[:2]
     return int(max(abs(ax - bx), abs(ay - by)))
+
+
+from shapely import set_srid, to_wkb, union_all  # noqa: E402
+from shapely.geometry import Point, box  # noqa: E402
+
+
+def _ewkb(geom) -> bytes:
+    return to_wkb(set_srid(geom, 4326), include_srid=True)
+
+
+def as_wkb(cell: int) -> bytes:
+    w, s, e, n = quadbin.cell_to_bounding_box(int(cell))
+    return _ewkb(box(w, s, e, n))
+
+
+def centroid(cell: int) -> bytes:
+    pt = quadbin.cell_to_point(int(cell))
+    lon, lat = pt["coordinates"] if isinstance(pt, dict) else tuple(pt)
+    return _ewkb(Point(lon, lat))
+
+
+def cell_union(cells):
+    if not cells:
+        return None
+    polys = [box(*quadbin.cell_to_bounding_box(int(c))) for c in cells if c is not None]
+    if not polys:
+        return None
+    return _ewkb(union_all(polys))

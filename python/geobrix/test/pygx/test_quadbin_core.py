@@ -42,3 +42,31 @@ def test_distance_mismatched_resolution_raises():
 def test_pointascell_resolution_validation():
     with pytest.raises(ValueError):
         _quadbin.point_as_cell(0.0, 0.0, 27)
+
+
+from shapely import from_wkb, get_srid  # noqa: E402
+
+
+def test_aswkb_is_ewkb_polygon_srid4326():
+    cell = quadbin.point_to_cell(0.0, 0.0, 10)
+    g = from_wkb(_quadbin.as_wkb(cell))
+    assert g.geom_type == "Polygon" and get_srid(g) == 4326
+    w, s, e, n = quadbin.cell_to_bounding_box(cell)
+    assert abs(g.bounds[0] - w) < 1e-9 and abs(g.bounds[2] - e) < 1e-9
+
+
+def test_centroid_is_ewkb_point_srid4326():
+    cell = quadbin.point_to_cell(0.0, 0.0, 10)
+    g = from_wkb(_quadbin.centroid(cell))
+    assert g.geom_type == "Point" and get_srid(g) == 4326
+
+
+def test_cellunion_is_ewkb_and_covers_cells():
+    cells = list(quadbin.k_ring(quadbin.point_to_cell(0.0, 0.0, 8), 1))
+    g = from_wkb(_quadbin.cell_union(cells))
+    assert g.geom_type in ("Polygon", "MultiPolygon") and get_srid(g) == 4326
+
+
+def test_cellunion_empty_or_none_is_none():
+    assert _quadbin.cell_union([]) is None
+    assert _quadbin.cell_union(None) is None

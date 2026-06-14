@@ -1,6 +1,6 @@
 """Shared geometry-input parsing for the pygx light tier.
 
-Every geom-accepting pyvx function uses parse_geom so the accepted encodings
+Every geom-accepting pygx function uses parse_geom so the accepted encodings
 (WKB / EWKB / WKT / EWKT) stay consistent across the ST surface and match the
 heavyweight tier (which accepts BINARY|STRING for geometry inputs).
 """
