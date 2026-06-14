@@ -7,7 +7,7 @@ import TabItem from '@theme/TabItem';
 
 # Lightweight Tier: Implementation Techniques
 
-The **lightweight (pyrx / pyvx) tier** is a pure-Python/PySpark implementation that installs as a wheel with no JAR, no init script, and no GDAL system install. It runs wherever Spark runs — Serverless, shared/standard clusters, ARM, and Lakeflow declarative pipelines — and covers the full raster and vector-tile function set.
+The **lightweight (pyrx / pyvx) tier** is a pure-Python/PySpark implementation that installs as a wheel with no JAR, no init script, and no GDAL system install. It runs wherever Spark runs — Serverless, shared/standard clusters, ARM, and Lakeflow declarative pipelines — and covers the full raster and VectorX function set (vector-tile encoding, TIN surface modeling, and legacy-geometry migration).
 
 The lightweight tier is seeing **increasing investment** precisely because of that reach. Functions that run on Serverless and ARM expand the audience that can use GeoBrix without infrastructure friction; that is the direction the product is moving, and the lightweight tier is how GeoBrix gets there now.
 
@@ -51,10 +51,10 @@ The compute underneath each UDF shape comes from best-in-class Python libraries 
 |---|---|
 | **rasterio** | Tile open/decode, clip, warp, resample, CoG conversion, band I/O |
 | **NumPy** | Band math (spectral indices, map algebra, thresholding), array ops |
-| **SciPy** | Focal filtering (`rst_filter`, `rst_convolve`) |
+| **SciPy** | Focal filtering (`rst_filter`, `rst_convolve`); Delaunay triangulation + barycentric interpolation for the TIN functions (`st_triangulate`, `st_interpolateelevation*`) |
 | **rio-tiler** | XYZ / web-tile output (`rst_tilexyz`, `rst_xyzpyramid`) |
 | **xarray-spatial** | Terrain analysis (slope, hillshade, aspect, tri, tpi, roughness, viewshed) |
-| **shapely** | WKB geometry handling (clip, polygonize, rasterize, grid aggregation) |
+| **shapely** | WKB geometry handling (clip, polygonize, rasterize, grid aggregation); TIN geometry parse and legacy-struct decode to WKB (`st_legacyaswkb`) |
 | **pyogrio** | Vector reader I/O (Arrow-native columnar batches — OGR-free) |
 | **mapbox-vector-tile** | MVT protobuf encode / decode (`st_asmvt`, `st_asmvt_pyramid`) |
 
@@ -99,6 +99,9 @@ These functions are Python UDTFs registered via `spark.udtf.register(...)`. Each
 | SQL name | Python name | Output per input group |
 |---|---|---|
 | `gbx_st_asmvt_pyramid` | (SQL LATERAL only) | One MVT tile row per zoom-level tile in the pyramid |
+| `gbx_st_triangulate` | (SQL LATERAL only) | One row per triangle in the constrained-Delaunay tessellation |
+| `gbx_st_interpolateelevationbbox` | (SQL LATERAL only) | One elevation point per in-hull grid cell over a bounding box |
+| `gbx_st_interpolateelevationgeom` | (SQL LATERAL only) | One elevation point per in-hull grid cell over a geometry |
 
 SQL invocation (LATERAL table function):
 
@@ -244,11 +247,17 @@ These functions are `pandas_udf`-backed (Arrow batch) scalar transforms: one inp
 | `gbx_rst_gridfrompoints` | `rst_gridfrompoints` |
 | `gbx_rst_dtmfromgeoms` | `rst_dtmfromgeoms` |
 
+**VectorX (pyvx) — legacy-geometry migration**
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_st_legacyaswkb` | `st_legacyaswkb` | Decode a legacy Mosaic geometry struct to WKB (Z + holes preserved) |
+
 </TabItem>
 
 <TabItem value="cores" label="Vectorized cores">
 
-Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `pyvx/core/`. No subprocess calls; no native bridge per operation.
+Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `pyvx/`. No subprocess calls; no native bridge per operation.
 
 | Module | Library | Functions served |
 |---|---|---|
@@ -266,7 +275,9 @@ Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `
 | `pyrx/core/grid.py` | rasterio + shapely + h3/quadbin | `rst_h3_tessellate`, discrete-grid rastertogrid (UDTF path) |
 | `pyrx/core/bridge.py` | rasterio + shapely | `rst_rasterize`, `rst_gridfrompoints`, `rst_dtmfromgeoms` |
 | `pyrx/core/polygonize.py` | rasterio + shapely | `rst_polygonize` (UDTF path) |
-| `pyvx/core/mvt.py` | mapbox-vector-tile + shapely | `st_asmvt` (grouped-agg), `st_asmvt_pyramid` (UDTF) |
+| `pyvx/_mvt.py` | mapbox-vector-tile + shapely | `st_asmvt` (grouped-agg), `st_asmvt_pyramid` (UDTF) |
+| `pyvx/_tin.py` | SciPy + shapely | `st_triangulate`, `st_interpolateelevationbbox`, `st_interpolateelevationgeom` (UDTF) |
+| `pyvx/_legacy.py` | shapely | `st_legacyaswkb` (scalar) |
 
 </TabItem>
 
@@ -297,7 +308,7 @@ Band math — `rst_ndvi`, `rst_index`, `rst_mapalgebra`, `rst_threshold`, and th
 Tiling, warps, terrain, and the aggregators win by 2–20× in pure-core. At Spark-path scale, byte-heavy operations (those that move large tile buffers over the JVM–Python boundary per row) see some of this win erode. Band math and the largest reductions (`rst_dtmfromgeoms_agg` at 18× on a cluster) sustain their advantage because compute savings outweigh boundary cost.
 
 **Near-parity:**
-The `gbx_st_asmvt` MVT aggregator runs within ~6% of the heavyweight JVM/OGR aggregator on a cluster. Small metadata accessors (`rst_width`, `rst_srid`, …) are sub-millisecond on both tiers; the JVM-native path can edge them out by a fraction of a millisecond — irrelevant at scale but visible in pure-core.
+The `gbx_st_asmvt` MVT aggregator runs within ~6% of the heavyweight JVM/OGR aggregator on a cluster. The VectorX TIN and legacy-migration functions sit just behind the JVM/JTS tier on the cluster spark-path: legacy decoding (`gbx_st_legacyaswkb`) and elevation interpolation (`gbx_st_interpolateelevationbbox`, `gbx_st_interpolateelevationgeom`) run within ~0.75–0.88× of heavy, while `gbx_st_triangulate` runs ~1.7× slower. That gap is the JVM↔Python serialization of the geometry arrays crossing the UDTF boundary — the same boundary cost seen for other byte-heavy lightweight UDTFs — not the triangulation compute itself; decoded-output parity holds across both tiers. Small metadata accessors (`rst_width`, `rst_srid`, …) are sub-millisecond on both tiers; the JVM-native path can edge them out by a fraction of a millisecond — irrelevant at scale but visible in pure-core.
 
 **Heavyweight still faster:**
 Algorithm-bound GDAL operations — `rst_viewshed` (xrspatial/Numba), `rst_proximity`, `rst_contour`, `rst_polygonize` — run slower on the lightweight tier because no Python library matches the GDAL implementation. These are correct and production-usable; the heavyweight tier is simply the better choice when those specific operations dominate the workload.
