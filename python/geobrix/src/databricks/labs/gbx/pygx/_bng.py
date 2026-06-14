@@ -22,6 +22,9 @@ Mosaic-lineage bug status (validated against this port):
 import math
 from typing import Any
 
+from shapely import to_wkb as _to_wkb
+from shapely.geometry import box as _box
+
 CRS_ID = 27700
 NAME = "BNG"
 
@@ -303,3 +306,41 @@ def point_as_cell(eastings: float, northings: float, resolution) -> str:
 # split (pointascell takes a POINT geom, eastnorthasbng takes scalar e/n) happens
 # in functions.py. Both call this.
 east_north_as_bng = point_as_cell
+
+
+# ---------------------------------------------------------------------------
+# cell -> geometry (BNG.cellIdToGeometry / aswkb / aswkt / centroid)
+#
+# Heavy emits PLAIN WKB (no SRID) via JTS.toWKB and plain WKT via JTS.toWKT.
+# BNG does NOT stamp an SRID (unlike quadbin, which is EWKB SRID 4326), so the
+# cell polygon is built with shapely ``box`` and serialized WITHOUT include_srid.
+# ---------------------------------------------------------------------------
+
+
+def cell_id_to_geometry(cell_id: int):
+    """Closed BNG cell polygon (shapely), NO SRID (BNG.cellIdToGeometry).
+
+    The ring is (x,y),(x+e,y),(x+e,y+e),(x,y+e),(x,y) from getX/getY/getEdgeSize
+    in EPSG:27700 eastings/northings.
+    """
+    digits = cell_digits(cell_id)
+    resolution = get_resolution_from_digits(digits)
+    edge = get_edge_size(resolution)
+    x = get_x(digits, edge)
+    y = get_y(digits, edge)
+    return _box(x, y, x + edge, y + edge)
+
+
+def cell_aswkb(cell_id: int) -> bytes:
+    """Cell polygon as plain WKB (no SRID; heavy uses toWKB, not toEWKB)."""
+    return _to_wkb(cell_id_to_geometry(cell_id))  # include_srid defaults False
+
+
+def cell_aswkt(cell_id: int) -> str:
+    """Cell polygon as WKT text (BNG.asWKT)."""
+    return cell_id_to_geometry(cell_id).wkt
+
+
+def cell_centroid(cell_id: int) -> bytes:
+    """Cell centre as plain WKB POINT (no SRID)."""
+    return _to_wkb(cell_id_to_geometry(cell_id).centroid)
