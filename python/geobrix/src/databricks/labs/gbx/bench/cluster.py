@@ -186,6 +186,10 @@ VECTOR_ONLY = {vector_only!r}
 # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
 BENCHMARK_MVT = {benchmark_mvt!r}
 MVT_ONLY = {mvt_only!r}
+# --benchmark-pmtiles-agg: also run the pmtiles_agg grouped-agg benchmark (light vs heavy).
+# --pmtiles-agg-only: ONLY run the pmtiles_agg benchmark, skip all fn benchmarks.
+BENCHMARK_PMTILES_AGG = {benchmark_pmtiles_agg!r}
+PMTILES_AGG_ONLY = {pmtiles_agg_only!r}
 # --benchmark-vector-tin: also run the TIN + legacy benchmark (light pyvx vs heavy vectorx).
 # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
 BENCHMARK_VECTOR_TIN = {benchmark_vector_tin!r}
@@ -899,6 +903,33 @@ if _mvt_rows:
         _df_mvt.show(100, truncate=False)
     _md = results.summarize(_mvt_rows)
     _show_md(f"mvt benchmark -- {RUN_ID}", _md)
+"""
+
+_CELL_PMTILES_AGG = """# PMTiles agg benchmark: light pmtiles_agg vs heavy pmtiles_agg (grouped-agg, both on-cluster)
+from databricks.labs.gbx.bench import readers as _rd
+_pmtiles_agg_rows = []
+_PA_N_TILES = 1000
+_PA_N_GROUPS = 1
+if LIGHTWEIGHT:
+    _r = _rd.run_pmtiles_agg(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="lightweight", n_tiles=_PA_N_TILES, n_groups=_PA_N_GROUPS,
+                             where="cluster")
+    _sink([_r]); lw.append(_r); _pmtiles_agg_rows.append(_r)
+if HEAVYWEIGHT:
+    _r = _rd.run_pmtiles_agg(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED,
+                             api="heavyweight", n_tiles=_PA_N_TILES, n_groups=_PA_N_GROUPS,
+                             where="cluster")
+    _sink([_r]); hw.append(_r); _pmtiles_agg_rows.append(_r)
+if _pmtiles_agg_rows:
+    _df_pa = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'pmtiles_agg'"
+    )
+    try:
+        display(_df_pa)
+    except Exception:
+        _df_pa.show(100, truncate=False)
+    _md = results.summarize(_pmtiles_agg_rows)
+    _show_md(f"pmtiles_agg benchmark -- {RUN_ID}", _md)
 """
 
 _CELL_VECTOR_TIN = """# TIN + legacy benchmark: light pyvx vs heavy vectorx, decoded-output parity.
@@ -1698,6 +1729,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         vector_formats=str(cfg.get("vector_formats", "") or ""),
         benchmark_mvt=bool(cfg.get("benchmark_mvt")),
         mvt_only=bool(cfg.get("mvt_only")),
+        benchmark_pmtiles_agg=bool(cfg.get("benchmark_pmtiles_agg")),
+        pmtiles_agg_only=bool(cfg.get("pmtiles_agg_only")),
         benchmark_vector_tin=bool(cfg.get("benchmark_vector_tin")),
         vector_tin_only=bool(cfg.get("vector_tin_only")),
         benchmark_grid_quadbin=bool(cfg.get("benchmark_grid_quadbin")),
@@ -1727,6 +1760,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     vector_only = bool(cfg.get("vector_only"))
     benchmark_mvt = bool(cfg.get("benchmark_mvt"))
     mvt_only = bool(cfg.get("mvt_only"))
+    benchmark_pmtiles_agg = bool(cfg.get("benchmark_pmtiles_agg"))
+    pmtiles_agg_only = bool(cfg.get("pmtiles_agg_only"))
     benchmark_vector_tin = bool(cfg.get("benchmark_vector_tin"))
     vector_tin_only = bool(cfg.get("vector_tin_only"))
     benchmark_grid_quadbin = bool(cfg.get("benchmark_grid_quadbin"))
@@ -1762,6 +1797,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         and not pmtiles_only
         and not vector_only
         and not mvt_only
+        and not pmtiles_agg_only
         and not vector_tin_only
         and not grid_quadbin_only
         and not fanout_only
@@ -1782,6 +1818,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_VECTOR))
     if benchmark_mvt or mvt_only:
         cells.append(_cell(_CELL_MVT))
+    if benchmark_pmtiles_agg or pmtiles_agg_only:
+        cells.append(_cell(_CELL_PMTILES_AGG))
     if benchmark_vector_tin or vector_tin_only:
         cells.append(_cell(_CELL_VECTOR_TIN))
     if benchmark_grid_quadbin or grid_quadbin_only:

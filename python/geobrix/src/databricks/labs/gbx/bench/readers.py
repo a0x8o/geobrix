@@ -1123,6 +1123,245 @@ def run_mvt_agg(
         )
 
 
+def run_pmtiles_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_tiles: int = 1000,
+    n_groups: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time a grouped pmtiles_agg over synthetic in-memory PNG tiles.
+
+    Folds ``n_tiles`` synthetic PNG tiles distributed across ``n_groups``
+    (z,x,y) addresses into PMTiles archive(s) via a
+    ``groupBy(g).agg(pmtiles_agg(tile, z, x, y))`` job. Registers the chosen
+    tier, caches the DataFrame, then times the aggregation to completion.
+    Returns a single ResultRow (mode="spark-path", category="pmtiles_agg").
+
+    Both tiers resolve the same canonical ``pmtiles_agg`` wrapper
+    (``databricks.labs.gbx.pmtiles.functions.pmtiles_agg`` ->
+    ``gbx_pmtiles_agg``); ``api`` only controls which register path installs
+    the SQL function:
+        "lightweight"  -> ``register_pmtiles_agg`` (pure-Python grouped agg)
+        "heavyweight"  -> ``functions.register`` (Scala UDAF via the JAR)
+    """
+    env = capture_env(where)
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+            register_pmtiles_agg(spark)
+        else:
+            from databricks.labs.gbx.pmtiles import functions as _pt_reg
+
+            _pt_reg.register(spark)
+        from databricks.labs.gbx.pmtiles import functions as pt
+
+        agg_fn = pt.pmtiles_agg
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build n_tiles distinct (z, x, y) synthetic PNG tiles spread across n_groups
+    # group keys. z is chosen so side*side >= n_tiles (no duplicate addresses).
+    try:
+        from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
+
+        png_header = b"\x89PNG\r\n\x1a\n"
+        z = max(1, (max(1, n_tiles) - 1).bit_length() // 2 + 1)
+        while (2**z) ** 2 < n_tiles:
+            z += 1
+        side = 2**z
+        n_groups = max(1, int(n_groups))
+
+        rows_data = []
+        for i in range(n_tiles):
+            x = i % side
+            y = (i // side) % side
+            rows_data.append(
+                (
+                    i % n_groups,
+                    bytearray(png_header + i.to_bytes(4, "big")),
+                    z,
+                    x,
+                    y,
+                )
+            )
+        schema = StructType(
+            [
+                StructField("g", IntegerType(), False),
+                StructField("tile", BinaryType(), True),
+                StructField("z", IntegerType(), False),
+                StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False),
+            ]
+        )
+        df = spark.createDataFrame(rows_data, schema=schema).cache()
+        n = int(df.count())
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    def _job():
+        import pyspark.sql.functions as _F2
+
+        return (
+            df.groupBy("g")
+            .agg(
+                agg_fn(_F2.col("tile"), _F2.col("z"), _F2.col("x"), _F2.col("y")).alias(
+                    "arc"
+                )
+            )
+            .count()
+        )
+
+    try:
+        # Guard against a tier that "succeeds" (groups counted) but emits all-NULL or
+        # all-empty archives. Counting groups alone masks that, so validate (once,
+        # untimed) that every group produced a non-empty PMTiles blob; an empty result
+        # becomes a status="error" row (via the except below), not a misleading "ok".
+        import pyspark.sql.functions as _F3
+
+        _validation = (
+            df.groupBy("g")
+            .agg(
+                agg_fn(_F3.col("tile"), _F3.col("z"), _F3.col("x"), _F3.col("y")).alias(
+                    "arc"
+                )
+            )
+            .collect()
+        )
+        _nonempty = sum(
+            1 for _r in _validation if _r["arc"] and len(bytes(_r["arc"])) > 0
+        )
+        if _nonempty == 0:
+            raise RuntimeError(
+                f"pmtiles_agg {api} produced {len(_validation)} group(s) but every "
+                "archive blob is NULL/empty."
+            )
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+            per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"pmtiles_agg {api} {n} tiles -> {len(_validation)} archive(s)",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _tin_result_row(
     *,
     run_id: str,

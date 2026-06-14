@@ -265,6 +265,10 @@ def main() -> int:
     # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
     benchmark_mvt = "--benchmark-mvt" in sys.argv
     mvt_only = "--mvt-only" in sys.argv
+    # --benchmark-pmtiles-agg: also run the pmtiles_agg grouped-agg benchmark (light vs heavy).
+    # --pmtiles-agg-only: ONLY run the pmtiles_agg benchmark, skip all fn benchmarks.
+    benchmark_pmtiles_agg = "--benchmark-pmtiles-agg" in sys.argv
+    pmtiles_agg_only = "--pmtiles-agg-only" in sys.argv
     # --benchmark-vector-tin: also run the TIN + legacy benchmark (light pyvx vs heavy vectorx).
     # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
     benchmark_vector_tin = "--benchmark-vector-tin" in sys.argv
@@ -329,6 +333,8 @@ def main() -> int:
             run_id = f"{run_id}-vector"
         elif mvt_only:
             run_id = f"{run_id}-mvt"
+        elif pmtiles_agg_only:
+            run_id = f"{run_id}-pmtiles-agg"
         elif vector_tin_only:
             run_id = f"{run_id}-vector-tin"
         elif grid_quadbin_only:
@@ -477,6 +483,10 @@ def main() -> int:
         benchmark_mvt=benchmark_mvt,
         #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
         mvt_only=mvt_only,
+        #  --benchmark-pmtiles-agg: also run pmtiles_agg grouped-agg benchmark (light vs heavy).
+        benchmark_pmtiles_agg=benchmark_pmtiles_agg,
+        #  --pmtiles-agg-only: ONLY run the pmtiles_agg benchmark, skip fn benchmarks.
+        pmtiles_agg_only=pmtiles_agg_only,
         #  --benchmark-vector-tin: also run TIN + legacy benchmark (light pyvx vs heavy vectorx).
         benchmark_vector_tin=benchmark_vector_tin,
         #  --vector-tin-only: ONLY run the TIN + legacy benchmark, skip fn benchmarks.
@@ -503,6 +513,9 @@ def main() -> int:
         cfg["modes"] = "spark-path"
     if mvt_only:
         # MVT agg benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if pmtiles_agg_only:
+        # PMTiles agg benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
     if vector_tin_only:
         # TIN + legacy benchmark is spark-path only; skip pure-core sections.
@@ -581,6 +594,7 @@ def main() -> int:
         or cfg.get("pmtiles_only")
         or cfg.get("vector_only")
         or cfg.get("mvt_only")
+        or cfg.get("pmtiles_agg_only")
         or cfg.get("vector_tin_only")
         or cfg.get("grid_quadbin_only")
         or cfg.get("fanout_only")
