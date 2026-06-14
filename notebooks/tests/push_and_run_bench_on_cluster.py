@@ -265,6 +265,10 @@ def main() -> int:
     # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
     benchmark_mvt = "--benchmark-mvt" in sys.argv
     mvt_only = "--mvt-only" in sys.argv
+    # --benchmark-vector-tin: also run the TIN + legacy benchmark (light pyvx vs heavy vectorx).
+    # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
+    benchmark_vector_tin = "--benchmark-vector-tin" in sys.argv
+    vector_tin_only = "--vector-tin-only" in sys.argv
     # --benchmark-fanout: also run the fan-out UDTF benchmark (rst_polygonize +
     #   rst_h3_rastertogridcount), light pyrx LATERAL vs heavy rasterx explode.
     # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
@@ -321,6 +325,8 @@ def main() -> int:
             run_id = f"{run_id}-vector"
         elif mvt_only:
             run_id = f"{run_id}-mvt"
+        elif vector_tin_only:
+            run_id = f"{run_id}-vector-tin"
         elif fanout_only:
             run_id = f"{run_id}-fanout"
     functions = _arg("--functions", "")
@@ -465,6 +471,10 @@ def main() -> int:
         benchmark_mvt=benchmark_mvt,
         #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
         mvt_only=mvt_only,
+        #  --benchmark-vector-tin: also run TIN + legacy benchmark (light pyvx vs heavy vectorx).
+        benchmark_vector_tin=benchmark_vector_tin,
+        #  --vector-tin-only: ONLY run the TIN + legacy benchmark, skip fn benchmarks.
+        vector_tin_only=vector_tin_only,
         #  --benchmark-fanout: also run fan-out UDTF benchmark (all 8 streaming UDTFs).
         benchmark_fanout=benchmark_fanout,
         #  --fanout-only: ONLY run the fanout benchmark, skip fn benchmarks.
@@ -483,6 +493,9 @@ def main() -> int:
         cfg["modes"] = "spark-path"
     if mvt_only:
         # MVT agg benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if vector_tin_only:
+        # TIN + legacy benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
     if fanout_only:
         # Fan-out UDTF benchmark is spark-path only; skip pure-core sections.
@@ -555,6 +568,7 @@ def main() -> int:
         or cfg.get("pmtiles_only")
         or cfg.get("vector_only")
         or cfg.get("mvt_only")
+        or cfg.get("vector_tin_only")
         or cfg.get("fanout_only")
     )
     if (

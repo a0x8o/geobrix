@@ -163,6 +163,154 @@ def replicate_vector_seed(seed_path: str, n_copies: int, copies_dir: str) -> Lis
     return paths
 
 
+# ---------------------------------------------------------------------------------------------
+# TIN + legacy corpus builders (light pyvx vs heavy vectorx bench).  Plain-Python, deterministic.
+# Each returns (rows, schema) where ``rows`` is a list of tuples and ``schema`` is a DDL string
+# suitable for ``spark.createDataFrame(rows, schema)``.  The TIN builders share a base point/
+# breakline layout and add the per-function grid columns so all three TIN functions can be timed
+# from one corpus shape.
+# ---------------------------------------------------------------------------------------------
+
+# A 7-point set in general position (no four cocircular) so the Delaunay triangulation is ~unique.
+# Mirrors test_parity_tin._GENERAL_PTS.  Tiled + offset per row to scale the corpus.
+_GENERAL_PTS = [
+    (0.0, 0.0, 0.0),
+    (10.0, 0.0, 5.0),
+    (10.0, 10.0, 12.0),
+    (0.0, 10.0, 7.0),
+    (3.0, 4.0, 3.0),
+    (7.0, 2.0, 6.0),
+    (4.0, 8.0, 9.0),
+]
+
+
+def _tin_row_points(row_idx: int, n_points: int):
+    """Deterministic Z-valued points for one row, in general position.
+
+    Starts from the 7-point general-position set and, if ``n_points`` > 7, adds
+    further pseudo-random-but-deterministic interior points (kept inside the
+    [0,10] x [0,10] square so they all fall in the hull).  A per-row Z offset
+    keeps each row's surface distinct without changing the planar layout (so the
+    Delaunay partition -- and thus light-vs-heavy parity -- is stable)."""
+    z_off = float(row_idx)
+    pts = [(x, y, z + z_off) for (x, y, z) in _GENERAL_PTS]
+    extra = max(0, n_points - len(_GENERAL_PTS))
+    for k in range(extra):
+        # Deterministic interior coordinates avoiding cocircular degeneracy: irrational
+        # multipliers spread points without lining up on a circle.
+        t = row_idx * 31 + k * 17 + 1
+        x = 0.5 + (t * 0.6180339887 % 1.0) * 9.0
+        y = 0.5 + (t * 0.7548776662 % 1.0) * 9.0
+        z = ((t * 0.4142135623) % 1.0) * 10.0 + z_off
+        pts.append((x, y, z))
+    return pts
+
+
+def generate_tin_points(n_rows: int, n_points: int = 25, with_breaklines: bool = False):
+    """Build the shared TIN corpus covering all three TIN functions.
+
+    Returns ``(rows, schema)`` where each row carries, in order:
+
+      * ``pts``    ARRAY<BINARY>  -- WKB Z-valued points (general position)
+      * ``bl``     ARRAY<BINARY>  -- WKB LineString breaklines ([] unless requested)
+      * ``mt``     DOUBLE         -- merge tolerance (0.0)
+      * ``st``     DOUBLE         -- snap tolerance (0.0)
+      * ``spf``    STRING         -- split-point finder ("NONENCROACHING")
+      * ``xmin,ymin,xmax,ymax`` DOUBLE -- bbox grid extent (for interp bbox)
+      * ``w,h``    INT            -- bbox grid columns/rows (for interp bbox)
+      * ``srid``   INT            -- output SRID (for interp bbox)
+      * ``origin`` BINARY         -- WKB POINT grid origin (for interp geom)
+      * ``cols,rows_n`` INT       -- origin-grid columns/rows (for interp geom)
+      * ``cell_x,cell_y`` DOUBLE  -- origin-grid per-cell size (for interp geom)
+
+    Deterministic: row ``i`` always produces the same bytes for a given
+    ``(n_points, with_breaklines)``.  Points sit in [0,10] x [0,10]; the grids
+    cover that square so cells fall inside the TIN hull.
+    """
+    from shapely import to_wkb
+    from shapely.geometry import LineString, Point
+
+    rows = []
+    for i in range(n_rows):
+        coords = _tin_row_points(i, n_points)
+        pts = [bytearray(to_wkb(Point(*c))) for c in coords]
+        if with_breaklines:
+            bl = [bytearray(to_wkb(LineString([(0.0, 0.0), (10.0, 10.0)])))]
+        else:
+            bl = []
+        origin = bytearray(to_wkb(Point(0.0, 10.0)))
+        rows.append(
+            (
+                pts,
+                bl,
+                0.0,  # mt
+                0.0,  # st
+                "NONENCROACHING",  # spf
+                0.0,  # xmin
+                0.0,  # ymin
+                10.0,  # xmax
+                10.0,  # ymax
+                7,  # w
+                7,  # h
+                0,  # srid
+                origin,  # grid origin (interp geom)
+                5,  # cols
+                5,  # rows_n
+                2.0,  # cell_x
+                -2.0,  # cell_y  (origin is top-left; step down)
+            )
+        )
+    schema = (
+        "pts array<binary>, bl array<binary>, mt double, st double, spf string, "
+        "xmin double, ymin double, xmax double, ymax double, w int, h int, srid int, "
+        "origin binary, cols int, rows_n int, cell_x double, cell_y double"
+    )
+    return rows, schema
+
+
+def generate_legacy_structs(n_rows: int):
+    """Build ``n_rows`` legacy-geometry structs (polygon-with-hole-and-Z, deterministic).
+
+    Returns ``(rows, schema)``.  Each row is a single-field tuple holding the
+    legacy Mosaic geometry struct (typeId 5 = polygon).  Mirrors the polygon-
+    with-hole-and-Z shape from test_parity_legacy, offset per row so each is
+    distinct while staying a valid polygon with one interior ring."""
+    schema = (
+        "g struct<typeId:int,srid:int,"
+        "boundaries:array<array<array<double>>>,"
+        "holes:array<array<array<array<double>>>>>"
+    )
+    rows = []
+    for i in range(n_rows):
+        o = float(i) * 0.5  # per-row planar offset
+        z = 1.0 + float(i)
+        outer = [
+            [o + 0.0, o + 0.0, z],
+            [o + 10.0, o + 0.0, z],
+            [o + 10.0, o + 10.0, z],
+            [o + 0.0, o + 10.0, z],
+            [o + 0.0, o + 0.0, z],
+        ]
+        hole = [
+            [o + 2.0, o + 2.0, z],
+            [o + 4.0, o + 2.0, z],
+            [o + 4.0, o + 4.0, z],
+            [o + 2.0, o + 4.0, z],
+            [o + 2.0, o + 2.0, z],
+        ]
+        rows.append(
+            (
+                {
+                    "typeId": 5,
+                    "srid": 0,
+                    "boundaries": [outer],
+                    "holes": [[hole]],
+                },
+            )
+        )
+    return rows, schema
+
+
 def build_vector_corpus(
     spark, rows: int, copies: int, formats: List[str], out_base: str, srid: str = "4326"
 ) -> dict:

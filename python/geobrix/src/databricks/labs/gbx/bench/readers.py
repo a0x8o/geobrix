@@ -1123,6 +1123,554 @@ def run_mvt_agg(
         )
 
 
+def _tin_result_row(
+    *,
+    run_id: str,
+    api: str,
+    fn: str,
+    category: str,
+    env: dict,
+    rows: int,
+    status: str,
+    note: str,
+    stats: Optional[dict] = None,
+    warmup: int = 0,
+) -> "ResultRow":
+    """Compact ResultRow builder for the TIN/legacy spark-path legs.
+
+    When ``stats`` is None (error path) the timing fields are zeroed and
+    ``measured_iters`` is 0; otherwise they are filled from ``time_iters``
+    output and per-row metrics are amortized over ``rows`` (output rows --
+    triangles / interpolated points / decoded geometries)."""
+    if stats is None:
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=category,
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=rows,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status=status,
+            note=note[-500:],
+            output_fingerprint="",
+            **env,
+        )
+    ms = stats["iter_median_ms"]
+    return ResultRow(
+        run_id=run_id,
+        api=api,
+        fn=fn,
+        category=category,
+        mode="spark-path",
+        tile_px=0,
+        bands=0,
+        dtype="",
+        srid=0,
+        rows=rows,
+        nodata_frac=0.0,
+        warmup_iters=stats["warmup_iters"],
+        measured_iters=stats["measured_iters"],
+        iter_median_s=ms / 1000.0,
+        iter_min_s=stats["iter_min_ms"] / 1000.0,
+        iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+        iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+        avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+        per_tile_avg_s=(ms / rows / 1000.0) if (ms and rows) else 0.0,
+        per_tile_avg_ms=(ms / rows) if (ms and rows) else 0.0,
+        throughput_mpix_s=0.0,
+        throughput_rows_s=(rows / (ms / 1000.0)) if (ms and rows) else 0.0,
+        peak_rss_mb=peak_rss_mb(),
+        status=status,
+        note=note[-500:],
+        output_fingerprint="",
+        **env,
+    )
+
+
+def run_legacy_aswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_legacyaswkb decode over ``n_rows`` synthetic legacy structs.
+
+    Light (``api="lightweight"``) registers ``databricks.labs.gbx.pyvx`` and
+    times ``SELECT gbx_st_legacyaswkb(g) FROM v``. Heavy (``api="heavyweight"``)
+    registers ``databricks.labs.gbx.vectorx.jts.legacy`` -- the SAME SQL name --
+    and times the same query. (The shared name means a light+heavy parity cell
+    must collect light BEFORE registering heavy; that ordering lives in the
+    cluster cell, not here -- each call registers exactly one tier.)
+    Returns a single ResultRow (mode="spark-path", category="legacy").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_legacy_structs
+
+    env = capture_env(where)
+    fn = "st_legacyaswkb"
+    cat = "legacy"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx.jts.legacy import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_legacy_structs(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_legacy_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_st_legacyaswkb(g) AS w FROM _legacy_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the decode produces non-null WKB.
+        _val = spark.sql("SELECT gbx_st_legacyaswkb(g) AS w FROM _legacy_bench_v").head(
+            1
+        )
+        if not _val or _val[0]["w"] is None or len(bytes(_val[0]["w"])) == 0:
+            raise RuntimeError("st_legacyaswkb produced null/empty WKB")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"st_legacyaswkb {api} decoded {n} geometries",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_triangulate(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_triangulate over ``n_rows`` synthetic point arrays.
+
+    Light registers pyvx UDTFs and times the SQL ``LATERAL`` TVF; heavy
+    registers vectorx and times the JVM generator-Column form (the surfaces
+    occupy different catalog paths and coexist). Records ``rows`` = number of
+    output triangles. Returns one ResultRow (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_triangulate"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.triangle FROM _tin_bench_v, LATERAL "
+                "gbx_st_triangulate(pts, bl, mt, st, spf, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_triangulate",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.lit("constrained"),
+                ).alias("triangle")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_triangulate produced no triangles")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_triangulate {api} -> {n_out} triangles",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_interp_bbox(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_interpolateelevationbbox over ``n_rows`` synthetic point arrays.
+
+    Light = SQL ``LATERAL`` UDTF; heavy = JVM generator-Column. Records
+    ``rows`` = number of interpolated grid points. Returns one ResultRow
+    (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_interpolateelevationbbox"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.elevation_point AS p FROM _tin_bench_v, LATERAL "
+                "gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, "
+                "xmin, ymin, xmax, ymax, w, h, srid, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_interpolateelevationbbox",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.col("xmin"),
+                    _f.col("ymin"),
+                    _f.col("xmax"),
+                    _f.col("ymax"),
+                    _f.col("w"),
+                    _f.col("h"),
+                    _f.col("srid"),
+                    _f.lit("constrained"),
+                ).alias("p")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_interpolateelevationbbox produced no points")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_interpolateelevationbbox {api} -> {n_out} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_interp_geom(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 5,
+    n_points: int = 25,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_st_interpolateelevationgeom over ``n_rows`` synthetic point arrays.
+
+    Light = SQL ``LATERAL`` UDTF (arg order: pts, bl, mt, st, spf, origin, cols,
+    rows, cell_x, cell_y, mode); heavy = JVM generator-Column (same arg order).
+    Records ``rows`` = number of interpolated grid points. Returns one ResultRow
+    (mode="spark-path", category="tin").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_tin_points
+
+    env = capture_env(where)
+    fn = "st_interpolateelevationgeom"
+    cat = "tin"
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pyvx import functions as vx
+
+            vx.register(spark)
+        else:
+            from databricks.labs.gbx.vectorx import functions as hx
+
+            hx.register(spark)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_tin_points(n_rows, n_points=n_points)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        df.count()
+        df.createOrReplaceTempView("_tin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    if api == "lightweight":
+
+        def _job():
+            return spark.sql(
+                "SELECT t.elevation_point AS p FROM _tin_bench_v, LATERAL "
+                "gbx_st_interpolateelevationgeom(pts, bl, mt, st, spf, "
+                "origin, cols, rows_n, cell_x, cell_y, 'constrained') t"
+            ).count()
+
+    else:
+        import pyspark.sql.functions as _f
+
+        def _job():
+            return df.select(
+                _f.call_function(
+                    "gbx_st_interpolateelevationgeom",
+                    _f.col("pts"),
+                    _f.col("bl"),
+                    _f.col("mt"),
+                    _f.col("st"),
+                    _f.col("spf"),
+                    _f.col("origin"),
+                    _f.col("cols"),
+                    _f.col("rows_n"),
+                    _f.col("cell_x"),
+                    _f.col("cell_y"),
+                    _f.lit("constrained"),
+                ).alias("p")
+            ).count()
+
+    try:
+        n_out = int(_job())
+        if n_out <= 0:
+            raise RuntimeError("st_interpolateelevationgeom produced no points")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n_out,
+            status="ok",
+            note=f"st_interpolateelevationgeom {api} -> {n_out} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
 def _make_synthetic_geotiff(
     n_regions: int = 4,
     size: int = 64,

@@ -186,6 +186,10 @@ VECTOR_ONLY = {vector_only!r}
 # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
 BENCHMARK_MVT = {benchmark_mvt!r}
 MVT_ONLY = {mvt_only!r}
+# --benchmark-vector-tin: also run the TIN + legacy benchmark (light pyvx vs heavy vectorx).
+# --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
+BENCHMARK_VECTOR_TIN = {benchmark_vector_tin!r}
+VECTOR_TIN_ONLY = {vector_tin_only!r}
 # --benchmark-fanout: also run the fan-out UDTF benchmark (all 8 streaming UDTFs).
 # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
 BENCHMARK_FANOUT = {benchmark_fanout!r}
@@ -893,6 +897,162 @@ if _mvt_rows:
     _show_md(f"mvt benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_VECTOR_TIN = """# TIN + legacy benchmark: light pyvx vs heavy vectorx, decoded-output parity.
+# 4 functions: st_legacyaswkb (legacy migration) + st_triangulate /
+# st_interpolateelevationbbox / st_interpolateelevationgeom (constrained-Delaunay TIN).
+from databricks.labs.gbx.bench import readers as _rd
+from databricks.labs.gbx.bench import corpus_vector as _cv
+from shapely import wkb as _shp_wkb
+import pyspark.sql.functions as _F_tin
+_tin_rows = []
+_TIN_N_ROWS = 5
+_TIN_N_POINTS = 25
+_LEG_N_ROWS = 1000
+if LIGHTWEIGHT:
+    for _fn_run in (_rd.run_legacy_aswkb, _rd.run_triangulate,
+                    _rd.run_interp_bbox, _rd.run_interp_geom):
+        _kw = dict(api="lightweight", where="cluster")
+        if _fn_run is _rd.run_legacy_aswkb:
+            _kw["n_rows"] = _LEG_N_ROWS
+        else:
+            _kw["n_rows"] = _TIN_N_ROWS; _kw["n_points"] = _TIN_N_POINTS
+        _r = _fn_run(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, **_kw)
+        _sink([_r]); lw.append(_r); _tin_rows.append(_r)
+if HEAVYWEIGHT:
+    for _fn_run in (_rd.run_legacy_aswkb, _rd.run_triangulate,
+                    _rd.run_interp_bbox, _rd.run_interp_geom):
+        _kw = dict(api="heavyweight", where="cluster")
+        if _fn_run is _rd.run_legacy_aswkb:
+            _kw["n_rows"] = _LEG_N_ROWS
+        else:
+            _kw["n_rows"] = _TIN_N_ROWS; _kw["n_points"] = _TIN_N_POINTS
+        _r = _fn_run(spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, **_kw)
+        _sink([_r]); hw.append(_r); _tin_rows.append(_r)
+# Decoded-output parity (hard gate) -- rebuild the SAME deterministic corpus the run_*
+# legs timed, then collect each tier through its native surface and compare decoded output.
+if LIGHTWEIGHT and HEAVYWEIGHT:
+    _verdicts = []
+    # --- legacy: decoded-geometry equality (light collected BEFORE heavy registers the
+    #     same SQL name; the later registration overwrites it). ---
+    try:
+        _ldata, _lschema = _cv.generate_legacy_structs(_LEG_N_ROWS)
+        _ldf = spark.createDataFrame(_ldata, schema=_lschema)
+        _ldf.createOrReplaceTempView("_leg_parity_v")
+        from databricks.labs.gbx.pyvx import functions as _vx_leg
+        _vx_leg.register(spark)
+        _light_w = [bytes(r["w"]) for r in spark.sql(
+            "SELECT gbx_st_legacyaswkb(g) AS w FROM _leg_parity_v").collect()]
+        from databricks.labs.gbx.vectorx.jts.legacy import functions as _hx_leg
+        _hx_leg.register(spark)
+        _heavy_w = [bytes(r["w"]) for r in spark.sql(
+            "SELECT gbx_st_legacyaswkb(g) AS w FROM _leg_parity_v").collect()]
+        _leg_ok = len(_light_w) == len(_heavy_w) and len(_light_w) > 0
+        if _leg_ok:
+            for _lw, _hw in zip(_light_w, _heavy_w):
+                _lg = _shp_wkb.loads(_lw); _hg = _shp_wkb.loads(_hw)
+                if not (_lg.equals(_hg) and _lg.has_z and _hg.has_z):
+                    _leg_ok = False; break
+        _v = ("LEGACY PARITY: PASS (%d geometries, decoded equality + Z)" % len(_light_w)
+              if _leg_ok else "LEGACY PARITY: FAIL -- decoded geometry mismatch")
+    except Exception as _pe:
+        _v = "LEGACY PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("LEGACY PARITY: PASS"), _v
+    # --- TIN: register both tiers (different catalog paths -> coexist). ---
+    from databricks.labs.gbx.pyvx import functions as _vx_tin
+    from databricks.labs.gbx.vectorx import functions as _hx_tin
+    _vx_tin.register(spark); _hx_tin.register(spark)
+    _tdata, _tschema = _cv.generate_tin_points(_TIN_N_ROWS, n_points=_TIN_N_POINTS)
+    _tdf = spark.createDataFrame(_tdata, schema=_tschema)
+    _tdf.createOrReplaceTempView("_tin_parity_v")
+    def _centroid(_blob):
+        _g = _shp_wkb.loads(bytes(_blob)); _c = _g.centroid
+        return (round(_c.x, 6), round(_c.y, 6))
+    def _unmatched(_a, _b):
+        for _cx, _cy in _a:
+            if not any(abs(_cx-_bx) < 1e-6 and abs(_cy-_by) < 1e-6 for _bx, _by in _b):
+                return (_cx, _cy)
+        return None
+    # triangulate: count + centroid-set match within 1e-6.
+    try:
+        _lt = spark.sql("SELECT t.triangle FROM _tin_parity_v, LATERAL "
+                        "gbx_st_triangulate(pts, bl, mt, st, spf, 'constrained') t").collect()
+        _ht = _tdf.select(_F_tin.call_function(
+            "gbx_st_triangulate", _F_tin.col("pts"), _F_tin.col("bl"), _F_tin.col("mt"),
+            _F_tin.col("st"), _F_tin.col("spf"), _F_tin.lit("constrained")
+        ).alias("triangle")).collect()
+        _lc = sorted(_centroid(r["triangle"]) for r in _lt)
+        _hc = sorted(_centroid(r["triangle"]) for r in _ht)
+        _tri_ok = (len(_lt) == len(_ht) > 0 and _unmatched(_lc, _hc) is None
+                   and _unmatched(_hc, _lc) is None)
+        _v = ("TIN TRIANGULATE PARITY: PASS (light=heavy=%d triangles, centroids match)" % len(_lt)
+              if _tri_ok else "TIN TRIANGULATE PARITY: FAIL -- light=%d heavy=%d (centroid/count mismatch)"
+              % (len(_lt), len(_ht)))
+    except Exception as _pe:
+        _v = "TIN TRIANGULATE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("TIN TRIANGULATE PARITY: PASS"), _v
+    # interp bbox + geom: same in-hull cell keyset + per-cell |dz| < 1e-6.
+    def _grid_dict(_rows, _col):
+        _out = {}
+        for _r in _rows:
+            _g = _shp_wkb.loads(bytes(_r[_col]))
+            _out[(round(_g.x, 6), round(_g.y, 6))] = _g.z
+        return _out
+    # bbox
+    try:
+        _lb = _grid_dict(spark.sql(
+            "SELECT t.elevation_point AS p FROM _tin_parity_v, LATERAL "
+            "gbx_st_interpolateelevationbbox(pts, bl, mt, st, spf, xmin, ymin, xmax, ymax, "
+            "w, h, srid, 'constrained') t").collect(), "p")
+        _hb = _grid_dict(_tdf.select(_F_tin.call_function(
+            "gbx_st_interpolateelevationbbox", _F_tin.col("pts"), _F_tin.col("bl"),
+            _F_tin.col("mt"), _F_tin.col("st"), _F_tin.col("spf"), _F_tin.col("xmin"),
+            _F_tin.col("ymin"), _F_tin.col("xmax"), _F_tin.col("ymax"), _F_tin.col("w"),
+            _F_tin.col("h"), _F_tin.col("srid"), _F_tin.lit("constrained")
+        ).alias("p")).collect(), "p")
+        _bb_ok = (_lb.keys() == _hb.keys() and len(_lb) > 0
+                  and all(abs(_lb[_k] - _hb[_k]) < 1e-6 for _k in _lb))
+        _v = ("TIN INTERP BBOX PARITY: PASS (%d cells, |dz|<1e-6)" % len(_lb)
+              if _bb_ok else "TIN INTERP BBOX PARITY: FAIL -- cell/Z mismatch (light=%d heavy=%d)"
+              % (len(_lb), len(_hb)))
+    except Exception as _pe:
+        _v = "TIN INTERP BBOX PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("TIN INTERP BBOX PARITY: PASS"), _v
+    # geom
+    try:
+        _lg2 = _grid_dict(spark.sql(
+            "SELECT t.elevation_point AS p FROM _tin_parity_v, LATERAL "
+            "gbx_st_interpolateelevationgeom(pts, bl, mt, st, spf, origin, cols, rows_n, "
+            "cell_x, cell_y, 'constrained') t").collect(), "p")
+        _hg2 = _grid_dict(_tdf.select(_F_tin.call_function(
+            "gbx_st_interpolateelevationgeom", _F_tin.col("pts"), _F_tin.col("bl"),
+            _F_tin.col("mt"), _F_tin.col("st"), _F_tin.col("spf"), _F_tin.col("origin"),
+            _F_tin.col("cols"), _F_tin.col("rows_n"), _F_tin.col("cell_x"),
+            _F_tin.col("cell_y"), _F_tin.lit("constrained")
+        ).alias("p")).collect(), "p")
+        _gg_ok = (_lg2.keys() == _hg2.keys() and len(_lg2) > 0
+                  and all(abs(_lg2[_k] - _hg2[_k]) < 1e-6 for _k in _lg2))
+        _v = ("TIN INTERP GEOM PARITY: PASS (%d cells, |dz|<1e-6)" % len(_lg2)
+              if _gg_ok else "TIN INTERP GEOM PARITY: FAIL -- cell/Z mismatch (light=%d heavy=%d)"
+              % (len(_lg2), len(_hg2)))
+    except Exception as _pe:
+        _v = "TIN INTERP GEOM PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("TIN INTERP GEOM PARITY: PASS"), _v
+if _tin_rows:
+    _df_tin = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category IN ('tin','legacy')"
+    )
+    try:
+        display(_df_tin)
+    except Exception:
+        _df_tin.show(100, truncate=False)
+    _md = results.summarize(_tin_rows)
+    _show_md(f"TIN + legacy benchmark -- {RUN_ID}", _md)
+"""
+
 _CELL_FANOUT = """# Fan-out UDTF benchmark: light pyrx (streaming UDTF) vs heavy rasterx (generator/array),
 # flatten-BOTH parity -- each tier's output is flattened to comparable flat rows, then the
 # flat row counts are compared per function (hard gate).
@@ -1179,6 +1339,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         vector_formats=str(cfg.get("vector_formats", "") or ""),
         benchmark_mvt=bool(cfg.get("benchmark_mvt")),
         mvt_only=bool(cfg.get("mvt_only")),
+        benchmark_vector_tin=bool(cfg.get("benchmark_vector_tin")),
+        vector_tin_only=bool(cfg.get("vector_tin_only")),
         benchmark_fanout=bool(cfg.get("benchmark_fanout")),
         fanout_only=bool(cfg.get("fanout_only")),
         fanout_scale=float(cfg.get("fanout_scale", 1.0)),
@@ -1204,6 +1366,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     vector_only = bool(cfg.get("vector_only"))
     benchmark_mvt = bool(cfg.get("benchmark_mvt"))
     mvt_only = bool(cfg.get("mvt_only"))
+    benchmark_vector_tin = bool(cfg.get("benchmark_vector_tin"))
+    vector_tin_only = bool(cfg.get("vector_tin_only"))
     benchmark_fanout = bool(cfg.get("benchmark_fanout"))
     fanout_only = bool(cfg.get("fanout_only"))
 
@@ -1235,6 +1399,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         and not pmtiles_only
         and not vector_only
         and not mvt_only
+        and not vector_tin_only
         and not fanout_only
     ):
         if light and do_pure:
@@ -1253,6 +1418,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_VECTOR))
     if benchmark_mvt or mvt_only:
         cells.append(_cell(_CELL_MVT))
+    if benchmark_vector_tin or vector_tin_only:
+        cells.append(_cell(_CELL_VECTOR_TIN))
     if benchmark_fanout or fanout_only:
         cells.append(_cell(_CELL_FANOUT))
     cells.append(_cell(_EPILOGUE))

@@ -576,8 +576,19 @@ runs **at parity with the heavyweight JVM/OGR aggregator** (~6% apart). Both enc
 decoded tiles are **feature-equivalent** — a hard parity gate; the benchmark fails if the tiers
 diverge. Tiles compose with `gbx_pmtiles_agg` for end-to-end publishing.
 
-> TIN / elevation surface-modeling benchmarks (`gbx_st_triangulate`, `gbx_st_interpolateelevation*`)
-> come in a later phase.
+### TIN & legacy migration (`st_triangulate`, `st_interpolateelevation*`, `st_legacyaswkb`)
+
+The constrained-Delaunay TIN generators (`gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`,
+`gbx_st_interpolateelevationgeom`) and the legacy-geometry migration function (`gbx_st_legacyaswkb`)
+are benchmarked light (pyvx) vs heavy (vectorx) with decoded-output parity. Light invokes the TIN
+generators as PySpark UDTFs (SQL `LATERAL`); heavy invokes the JVM generator expressions. Parity is
+asserted on decoded output, per the established posture: **triangle count + centroid match within
+1e-6** for triangulation (not triangle identity — no-Steiner constrained recovery may pick different
+non-constraint diagonals), **per-cell surface closeness within 1e-6** for elevation interpolation, and
+**decoded-geometry equality** for legacy migration. Run it with `gbx:bench:cluster --vector-tin-only`.
+
+> **Numbers pending cluster run.** Light-vs-heavy timing results will be filled in after the
+> benchmark cluster run completes.
 
 </TabItem>
 
