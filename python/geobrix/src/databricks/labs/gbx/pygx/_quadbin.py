@@ -7,6 +7,7 @@ Geometry outputs are EWKB (SRID 4326), matching heavy's JTS.toEWKB.
 
 import math
 
+import numpy as np
 import quadbin
 from shapely import set_srid, to_wkb, union_all
 from shapely.geometry import Point, box
@@ -19,6 +20,21 @@ _MAX_POLYFILL_RES = 20
 # Web-mercator latitude clamp (matches Quadbin.scala LAT_MIN/LAT_MAX).
 _LAT_MIN = -85.05112878
 _LAT_MAX = 85.05112878
+
+# Quadbin bit-packing constants (mirror the `quadbin.main` HEADER/FOOTER/B/S used
+# by tile_to_cell). Kept as uint64 so the vectorized Morton spread below is
+# bit-identical to the scalar quadbin.tile_to_cell path.
+_HEADER_U64 = np.uint64(0x4000000000000000)
+_FOOTER_U64 = np.uint64(0xFFFFFFFFFFFFF)
+_B_U64 = [
+    np.uint64(0x5555555555555555),
+    np.uint64(0x3333333333333333),
+    np.uint64(0x0F0F0F0F0F0F0F0F),
+    np.uint64(0x00FF00FF00FF00FF),
+    np.uint64(0x0000FFFF0000FFFF),
+    np.uint64(0x00000000FFFFFFFF),
+]
+_S_U64 = [np.uint64(1), np.uint64(2), np.uint64(4), np.uint64(8), np.uint64(16)]
 
 
 def point_as_cell(lon: float, lat: float, resolution: int) -> int:
@@ -97,6 +113,72 @@ def _lonlat_to_tile(lon: float, lat: float, z: int):
     x = max(0, min(n - 1, x))
     y = max(0, min(n - 1, y))
     return x, y
+
+
+# --- vectorized cell-id kernels (numpy) ---------------------------------------
+# These are bit-identical to the scalar functions above but operate on numpy
+# arrays, so the pandas_udf registrations can amortize the JVM<->Python boundary.
+# They reuse the exact same web-mercator clamp + Morton bit-packing as the scalar
+# path (verified bit-for-bit against point_as_cell / resolution over a dense
+# lon/lat grid incl. the +-180 antimeridian and +-85 pole edges).
+
+
+def _lonlat_to_tile_vec(lons: np.ndarray, lats: np.ndarray, z: int):
+    """Vectorized port of _lonlat_to_tile -> (xTile, yTile) uint64 arrays."""
+    lat = np.clip(lats.astype(np.float64), _LAT_MIN, _LAT_MAX)
+    lon = np.clip(lons.astype(np.float64), -180.0, 180.0)
+    n = 1 if z == 0 else (1 << z)
+    lat_rad = lat * math.pi / 180.0
+    x = np.floor((lon + 180.0) / 360.0 * n)
+    y = np.floor(
+        (1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / math.pi) / 2.0 * n
+    )
+    x = np.clip(x, 0, n - 1).astype(np.uint64)
+    y = np.clip(y, 0, n - 1).astype(np.uint64)
+    return x, y
+
+
+def _tile_to_cell_vec(x: np.ndarray, y: np.ndarray, z: int) -> np.ndarray:
+    """Vectorized port of quadbin.tile_to_cell. x,y are uint64 tile coords.
+
+    Returns a uint64 array of packed quadbin cells (Morton-interleaved x/y).
+    """
+    zz = np.uint64(z)
+    sh = np.uint64(32 - z)
+    x = x << sh
+    y = y << sh
+    for i in (4, 3, 2, 1, 0):
+        x = (x | (x << _S_U64[i])) & _B_U64[i]
+        y = (y | (y << _S_U64[i])) & _B_U64[i]
+    return (
+        _HEADER_U64
+        | (np.uint64(1) << np.uint64(59))
+        | (zz << np.uint64(52))
+        | ((x | (y << np.uint64(1))) >> np.uint64(12))
+        | (_FOOTER_U64 >> np.uint64(z * 2))
+    )
+
+
+def point_as_cell_vec(
+    lons: np.ndarray, lats: np.ndarray, resolution: int
+) -> np.ndarray:
+    """Vectorized point_as_cell: int64 array of quadbin cells for a fixed `z`.
+
+    Bit-identical to point_as_cell(lon, lat, z) for every element. `resolution`
+    is a single scalar (the SQL signature passes a literal/column broadcast to a
+    constant per batch is handled by the caller).
+    """
+    z = int(resolution)
+    if z < 0 or z > _MAX_RES:
+        raise ValueError(f"quadbin resolution must be in [0,{_MAX_RES}]; got {z}")
+    x, y = _lonlat_to_tile_vec(lons, lats, z)
+    return _tile_to_cell_vec(x, y, z).view(np.int64)
+
+
+def resolution_vec(cells: np.ndarray) -> np.ndarray:
+    """Vectorized resolution: int array of ((cell >> 52) & 0x1F)."""
+    c = cells.astype(np.uint64)
+    return ((c >> np.uint64(52)) & np.uint64(0x1F)).astype(np.int64)
 
 
 def polyfill(geom, resolution: int) -> list:
