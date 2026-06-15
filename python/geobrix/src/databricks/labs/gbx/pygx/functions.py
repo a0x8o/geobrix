@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
-from pyspark.sql.functions import pandas_udf, udtf
+from pyspark.sql.functions import pandas_udf, udf, udtf
 from pyspark.sql.types import (
     ArrayType,
     BinaryType,
@@ -26,9 +26,9 @@ from pyspark.sql.types import (
     StringType,
 )
 
-from . import _bng, _env, _quadbin
+from . import _bng, _custom, _env, _quadbin
 from ._geom import parse_geom
-from ._serde import BNG_CHIP_SCHEMA, QUADBIN_CELL_SCHEMA
+from ._serde import BNG_CHIP_SCHEMA, CUSTOM_GRID_SCHEMA, QUADBIN_CELL_SCHEMA
 
 ColLike = Union[Column, str, bool, int, float, bytes]
 
@@ -466,6 +466,158 @@ def _norm_res(res):
     return res
 
 
+# ============================================================================
+# Custom gridding (gbx_custom_*) — pure-Python port of CustomGridSystem.scala +
+# GridConf.scala. Cell ids are BIGINT; geometry outputs are plain WKB (NO SRID —
+# heavy uses JTS.toWKB, the grid srid is metadata only).
+#
+# Same impl-by-shape rule as quadbin/BNG: scalar/bounded geometry ops ->
+# pandas_udf (batched Arrow transfer is the win); ARRAY-returning ops (polyfill/
+# kring) -> plain @udf (row-by-row, OOM-safe at scale). The grid SPEC builder is
+# a validating @udf (Resolved decision 1) returning CUSTOM_GRID_SCHEMA so build-
+# time bad-bounds errors match heavy Custom_Grid.eval's require(...).
+# ============================================================================
+
+
+# --- custom-grid spec builder -> validating @udf returning CUSTOM_GRID_SCHEMA ---
+# Resolved decision 1 (spec 2026-06-14): eager validation matches heavy
+# Custom_Grid.eval's require(...) (error-at-build-time parity). The 7-arg form
+# defaults srid to -1 (no CRS), as in Custom_Grid.builder; the Column wrapper
+# always supplies all 8.
+@udf(returnType=CUSTOM_GRID_SCHEMA)
+def _custom_grid_udf(x_min, x_max, y_min, y_max, splits, root_x, root_y, srid=-1):
+    x_min, x_max = int(x_min), int(x_max)
+    y_min, y_max = int(y_min), int(y_max)
+    splits, root_x, root_y = int(splits), int(root_x), int(root_y)
+    srid = -1 if srid is None else int(srid)
+    if not x_max > x_min:
+        raise ValueError(
+            f"gbx_custom_grid: bound_x_max ({x_max}) must be greater than "
+            f"bound_x_min ({x_min})"
+        )
+    if not y_max > y_min:
+        raise ValueError(
+            f"gbx_custom_grid: bound_y_max ({y_max}) must be greater than "
+            f"bound_y_min ({y_min})"
+        )
+    if splits < 2:
+        raise ValueError(f"gbx_custom_grid: cell_splits must be >= 2; got {splits}")
+    if root_x <= 0:
+        raise ValueError(f"gbx_custom_grid: root_cell_size_x must be > 0; got {root_x}")
+    if root_y <= 0:
+        raise ValueError(f"gbx_custom_grid: root_cell_size_y must be > 0; got {root_y}")
+    return (x_min, x_max, y_min, y_max, splits, root_x, root_y, srid)
+
+
+def _custom_first_coord(pg):
+    """First coordinate (x, y) of a geometry — heavy uses geom.getCoordinate.
+
+    Not the centroid (unlike BNG); for a POINT it's its xy, for any other geom
+    it's the first vertex. shapely.get_coordinates returns vertices in ring/seq
+    order, so [0] is the geometry's first coordinate.
+    """
+    from shapely import get_coordinates as _get_coordinates
+
+    coords = _get_coordinates(pg)
+    first = coords[0]
+    return float(first[0]), float(first[1])
+
+
+# --- consuming scalar UDFs -> pandas_udf (bounded scalar) -------------------
+
+
+@pandas_udf(LongType())
+def _custom_pointascell_udf(
+    point: pd.Series, grid: pd.Series, res: pd.Series
+) -> pd.Series:
+    out = []
+    for g, spec, r in zip(point, _custom_grid_records(grid), res):
+        if g is None or spec is None or r is None:
+            out.append(None)
+            continue
+        pg = parse_geom(g)
+        if pg is None or pg.is_empty:
+            out.append(None)
+            continue
+        conf = _custom.conf_from_row(spec)
+        x, y = _custom_first_coord(pg)
+        out.append(_custom.point_to_cell_id(conf, x, y, int(r)))
+    return pd.Series(out)
+
+
+@pandas_udf(BinaryType())
+def _custom_cellaswkb_udf(cell: pd.Series, grid: pd.Series) -> pd.Series:
+    return pd.Series(
+        [
+            (
+                _custom.cell_aswkb(_custom.conf_from_row(s), int(c))
+                if c is not None and s is not None
+                else None
+            )
+            for c, s in zip(cell, _custom_grid_records(grid))
+        ]
+    )
+
+
+@pandas_udf(StringType())
+def _custom_cellaswkt_udf(cell: pd.Series, grid: pd.Series) -> pd.Series:
+    return pd.Series(
+        [
+            (
+                _custom.cell_aswkt(_custom.conf_from_row(s), int(c))
+                if c is not None and s is not None
+                else None
+            )
+            for c, s in zip(cell, _custom_grid_records(grid))
+        ]
+    )
+
+
+@pandas_udf(BinaryType())
+def _custom_centroid_udf(cell: pd.Series, grid: pd.Series) -> pd.Series:
+    return pd.Series(
+        [
+            (
+                _custom.cell_centroid(_custom.conf_from_row(s), int(c))
+                if c is not None and s is not None
+                else None
+            )
+            for c, s in zip(cell, _custom_grid_records(grid))
+        ]
+    )
+
+
+def _custom_grid_records(grid):
+    """Iterate per-row grid-spec records from a struct column.
+
+    A StructType column arrives at a scalar pandas_udf as a pandas DataFrame
+    (one column per struct field); _custom.conf_from_row accepts a Row/dict, so
+    map each DataFrame row to a dict keyed by the struct field names. A null
+    struct surfaces as an all-null row -> None.
+    """
+    if isinstance(grid, pd.DataFrame):
+        recs = []
+        for rec in grid.to_dict(orient="records"):
+            recs.append(None if all(v is None for v in rec.values()) else rec)
+        return recs
+    return list(grid)
+
+
+# --- array-output -> plain @udf (row-by-row, scale-safe) --------------------
+
+
+def _custom_polyfill(geom, grid, res):
+    if geom is None or grid is None or res is None:
+        return None
+    return _custom.polyfill(_custom.conf_from_row(grid), parse_geom(geom), int(res))
+
+
+def _custom_kring(cell, grid, k):
+    if cell is None or grid is None or k is None:
+        return None
+    return _custom.k_ring(_custom.conf_from_row(grid), int(cell), int(k))
+
+
 def register(spark: SparkSession = None) -> None:
     """Register the pygx quadbin SQL functions (Serverless-safe: udf only)."""
     _env.assert_quadbin_available()
@@ -518,6 +670,19 @@ def register(spark: SparkSession = None) -> None:
     # grouped aggregate
     spark.udf.register("gbx_bng_cellunion_agg", _bng_cellunion_agg_udf)
     spark.udf.register("gbx_bng_cellintersection_agg", _bng_cellintersection_agg_udf)
+
+    # --- custom gridding (gridx.custom) — all 7 gbx_custom_* names ----------
+    _env.assert_custom_available()
+    # validating grid-spec builder -> @udf returning CUSTOM_GRID_SCHEMA
+    spark.udf.register("gbx_custom_grid", _custom_grid_udf)
+    # scalar / bounded-output -> pandas_udf
+    spark.udf.register("gbx_custom_pointascell", _custom_pointascell_udf)
+    spark.udf.register("gbx_custom_cellaswkb", _custom_cellaswkb_udf)
+    spark.udf.register("gbx_custom_cellaswkt", _custom_cellaswkt_udf)
+    spark.udf.register("gbx_custom_centroid", _custom_centroid_udf)
+    # array-output -> plain @udf (row-by-row, scale-safe)
+    spark.udf.register("gbx_custom_polyfill", _custom_polyfill, ArrayType(LongType()))
+    spark.udf.register("gbx_custom_kring", _custom_kring, ArrayType(LongType()))
 
 
 # --- Column wrappers (mirror heavy gridx.grid.functions) ------------------------------------
@@ -721,3 +886,62 @@ def bng_tessellateexplode(*args, **kwargs) -> Column:
             name="bng_tessellateexplode", udtf="gbx_bng_tessellateexplode"
         )
     )
+
+
+# --- Custom-grid Column wrappers (mirror heavy gridx.custom.functions) ------------------------
+# Cell ids are BIGINT; geometry outputs are plain WKB (NO SRID). custom_grid ALWAYS
+# supplies all 8 args (defaulting srid=-1) so the validating @udf sees a fixed arity.
+
+
+def custom_grid(
+    x_min: ColLike,
+    x_max: ColLike,
+    y_min: ColLike,
+    y_max: ColLike,
+    cell_splits: ColLike,
+    root_x: ColLike,
+    root_y: ColLike,
+    srid: ColLike = -1,
+) -> Column:
+    """Build a custom-grid spec STRUCT (validated eagerly). srid=-1 means no CRS."""
+    return f.call_function(
+        "gbx_custom_grid",
+        _col(x_min),
+        _col(x_max),
+        _col(y_min),
+        _col(y_max),
+        _col(cell_splits),
+        _col(root_x),
+        _col(root_y),
+        _col(srid),
+    )
+
+
+def custom_pointascell(point: ColLike, grid: ColLike, res: ColLike) -> Column:
+    """Custom-grid cell ID (BIGINT) for the first coordinate of a geometry at `res`."""
+    return f.call_function("gbx_custom_pointascell", _col(point), _col(grid), _col(res))
+
+
+def custom_cellaswkb(cell: ColLike, grid: ColLike) -> Column:
+    """Cell footprint polygon as plain WKB (no SRID) BINARY."""
+    return f.call_function("gbx_custom_cellaswkb", _col(cell), _col(grid))
+
+
+def custom_cellaswkt(cell: ColLike, grid: ColLike) -> Column:
+    """Cell footprint polygon as WKT (STRING)."""
+    return f.call_function("gbx_custom_cellaswkt", _col(cell), _col(grid))
+
+
+def custom_centroid(cell: ColLike, grid: ColLike) -> Column:
+    """Cell centroid point as plain WKB (no SRID) BINARY."""
+    return f.call_function("gbx_custom_centroid", _col(cell), _col(grid))
+
+
+def custom_polyfill(geom: ColLike, grid: ColLike, res: ColLike) -> Column:
+    """ARRAY<BIGINT> of cells whose center is contained by the geometry."""
+    return f.call_function("gbx_custom_polyfill", _col(geom), _col(grid), _col(res))
+
+
+def custom_kring(cell: ColLike, grid: ColLike, k: ColLike) -> Column:
+    """ARRAY<BIGINT> of cells within Chebyshev ring distance `k` (includes center)."""
+    return f.call_function("gbx_custom_kring", _col(cell), _col(grid), _col(k))

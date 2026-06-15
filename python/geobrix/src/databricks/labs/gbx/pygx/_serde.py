@@ -1,6 +1,7 @@
 from pyspark.sql.types import (
     BinaryType,
     BooleanType,
+    IntegerType,
     LongType,
     StringType,
     StructField,
@@ -23,5 +24,21 @@ BNG_CHIP_SCHEMA = StructType(
         StructField("cellid", StringType(), True),
         StructField("core", BooleanType(), True),
         StructField("chip", BinaryType(), True),
+    ]
+)
+
+# Grid-spec struct produced by gbx_custom_grid, consumed by all gbx_custom_* ops.
+# Field names/types match heavy Custom_GridSpec.gridStructType exactly so the SAME
+# struct flows into both light and heavy consumers. srid == -1 means no CRS.
+CUSTOM_GRID_SCHEMA = StructType(
+    [
+        StructField("bound_x_min", LongType(), False),
+        StructField("bound_x_max", LongType(), False),
+        StructField("bound_y_min", LongType(), False),
+        StructField("bound_y_max", LongType(), False),
+        StructField("cell_splits", IntegerType(), False),
+        StructField("root_cell_size_x", IntegerType(), False),
+        StructField("root_cell_size_y", IntegerType(), False),
+        StructField("srid", IntegerType(), False),
     ]
 )
