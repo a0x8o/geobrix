@@ -76,3 +76,34 @@ def test_conf_from_row_int_long_tolerant():
     }
     c = _custom.conf_from_row(row)
     assert c.srid == 27700 and c.cell_splits == 2 and c.bound_x_max == 1_000_000
+
+
+def test_point_to_cell_id_known_fixture():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    # res 0: 1000m root cells. Point (530000, 180000) -> posX=530, posY=180.
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)
+    assert _custom.get_cell_resolution(cid) == 0
+    pos = _custom.get_cell_position(cid)
+    assert _custom.get_cell_position_x(c, pos, 0) == 530
+    assert _custom.get_cell_position_y(c, pos, 0) == 180
+
+
+def test_point_to_cell_id_rejects_nan_x_and_y():
+    c = _conf()
+    with pytest.raises(ValueError):
+        _custom.point_to_cell_id(c, float("nan"), 180000.0, 0)
+    # Resolved decision 3: a NaN Y must ALSO raise (heavy typo left Y unguarded).
+    with pytest.raises(ValueError):
+        _custom.point_to_cell_id(c, 530000.0, float("nan"), 0)
+
+
+def test_point_to_cell_id_rejects_out_of_bounds_and_over_max_res():
+    c = _conf(splits=2)  # max_resolution == 20
+    with pytest.raises(ValueError):
+        _custom.point_to_cell_id(c, -1.0, 180000.0, 0)  # x < bound_x_min
+    with pytest.raises(ValueError):
+        _custom.point_to_cell_id(
+            c, 1_000_000.0, 180000.0, 0
+        )  # x == bound_x_max (exclusive)
+    with pytest.raises(ValueError):
+        _custom.point_to_cell_id(c, 530000.0, 180000.0, 21)  # res > max_resolution

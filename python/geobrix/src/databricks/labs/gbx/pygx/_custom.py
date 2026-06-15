@@ -188,3 +188,37 @@ def get_cell_center_y(
     # CustomGridSystem.scala:303-308
     h = cell_height(conf, resolution)
     return cell_position_y * h + (h / 2) + conf.bound_y_min
+
+
+def point_to_cell_id(conf: CustomGridConf, x: float, y: float, resolution: int) -> int:
+    """Cell ID containing (x, y) at `resolution` (CustomGridSystem.pointToCellID).
+
+    Port of CustomGridSystem.scala:249-266; the four guards fire in the same
+    order as the heavy ``require``s: NaN, max-resolution, x-bounds, y-bounds.
+    Heavy uses the geometry's FIRST coordinate (getCoordinate), not the centroid.
+
+    Resolved decision 3: guard BOTH x and y for NaN. The heavy Scala
+    (CustomGridSystem.scala:250) has a ``require(!x.isNaN && !x.isNaN, ...)``
+    typo — the second clause repeats ``x``, leaving a NaN Y unguarded. This
+    port (and the heavy fix, CG-T8) guards both; cellPosX/Y truncate toward
+    zero (Scala ``Double.toLong``), via ``_trunc_long`` (not ``math.floor``).
+    """
+    if math.isnan(x) or math.isnan(y):
+        raise ValueError("gbx_custom: NaN coordinates are not supported.")
+    if resolution > conf.max_resolution:
+        raise ValueError(
+            f"gbx_custom: resolution ({resolution}) exceeds maximum "
+            f"resolution of {conf.max_resolution}."
+        )
+    if not (conf.bound_x_min <= x < conf.bound_x_max):
+        raise ValueError(
+            f"gbx_custom: X coordinate ({x}) out of bounds "
+            f"{conf.bound_x_min}-{conf.bound_x_max}"
+        )
+    if not (conf.bound_y_min <= y < conf.bound_y_max):
+        raise ValueError(
+            f"gbx_custom: Y coordinate ({y}) out of bounds "
+            f"{conf.bound_y_min}-{conf.bound_y_max}"
+        )
+    _, _, cell_pos = get_cell_position_from_coordinates(conf, x, y, resolution)
+    return get_cell_id(cell_pos, resolution)
