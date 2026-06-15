@@ -7,6 +7,19 @@
 [![python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE)
 
+<!--
+  Function counts — keep verbatim with docs/tests-function-info/registered_functions.txt
+  (the canonical source; total is guarded by `gbx:test:bindings`).
+  Update these badges and the sentence below if functions are added or removed.
+-->
+![Functions](https://img.shields.io/badge/functions-154-2e7d32)
+![RasterX](https://img.shields.io/badge/RasterX-107-1565c0)
+![GridX](https://img.shields.io/badge/GridX-40-1565c0)
+![VectorX](https://img.shields.io/badge/VectorX-6-1565c0)
+![PMTiles](https://img.shields.io/badge/PMTiles-1-1565c0)
+
+**154 spatial functions** across RasterX (107), GridX (40), VectorX (6), and PMTiles (1).
+
 **GeoBrix** is a high-performance spatial library for Databricks that delivers the next generation of *product-augmenting* capabilities — raster, discrete global grids, and vector format I/O — and is built to drive you *deeper* into Databricks-native [`GEOMETRY`/`GEOGRAPHY` and ST/H3 functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial), not replace them. It is the modern successor to [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (now in maintenance).
 
 > **Full docs:** **https://databrickslabs.github.io/geobrix/** — this README is the 2-minute tour.

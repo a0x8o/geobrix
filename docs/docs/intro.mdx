@@ -8,6 +8,54 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 
 GeoBrix is a high-performance spatial processing library for Databricks. It ships two **interchangeable execution tiers** — a **lightweight** pure-Python/PySpark tier (no JAR, no init script, no native GDAL; runs on Serverless, standard/shared, Lakeflow, and ARM compute) and a **heavyweight** Scala/GDAL tier (GDAL on Apache Spark, for distributed processing on classic x86 clusters). Both register the **same function names**, so moving between them is a one-line import swap — and GeoBrix is progressively bringing the lightweight tier to full parity with the heavyweight one. Today the lightweight tier covers all of **RasterX** and **VectorX** (MVT, TIN surfaces, legacy-geometry migration) plus the **GridX** CARTO quadbin and British National Grid (BNG) functions; only GridX's custom grids remain heavyweight-only for now. See [Choosing an Execution Tier](./api/execution-tiers).
 
+{/*
+  Function counts — keep verbatim with docs/tests-function-info/registered_functions.txt
+  (the canonical source; total is guarded by `gbx:test:bindings`).
+  Update these numbers if functions are added or removed.
+*/}
+<div style={{
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '1rem',
+  margin: '2rem 0',
+}}>
+  {[
+    {n: '154', label: 'Functions', accent: '#2e7d32'},
+    {n: '107', label: 'RasterX', accent: '#1565c0'},
+    {n: '40', label: 'GridX', accent: '#1565c0'},
+    {n: '6', label: 'VectorX', accent: '#1565c0'},
+    {n: '1', label: 'PMTiles', accent: '#1565c0'},
+  ].map((s) => (
+    <div key={s.label} style={{
+      flex: '1 1 120px',
+      minWidth: '120px',
+      textAlign: 'center',
+      padding: '1.25rem 1rem',
+      borderRadius: '12px',
+      border: '1px solid var(--ifm-color-emphasis-300)',
+      borderTop: `4px solid ${s.accent}`,
+      background: 'var(--ifm-card-background-color, var(--ifm-background-surface-color))',
+    }}>
+      <div style={{
+        fontSize: '2.75rem',
+        fontWeight: 800,
+        lineHeight: 1,
+        color: s.accent,
+      }}>{s.n}</div>
+      <div style={{
+        marginTop: '0.5rem',
+        fontSize: '0.85rem',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        color: 'var(--ifm-color-emphasis-700)',
+      }}>{s.label}</div>
+    </div>
+  ))}
+</div>
+
+GridX's 40 functions break down as **BNG (23)**, **Quadbin (10)**, and **custom grids (7)**.
+
 ![GeoBrix Logo](../../resources/images/GeoBriX.png)
 
 ## Background
