@@ -17,9 +17,11 @@ from databricks.labs.gbx.pygx import _bng  # noqa: E402
 
 def test_tessellate_box_has_core_and_border():
     # Box whose top/right edges cut cells in half (4.5km span on the 1km grid)
-    # -> interior full cells become core, the half/quarter edge cells stay
-    # clipped border chips. A fully grid-aligned box would (correctly) promote
-    # every cell to core, so the edges must straddle a grid line.
+    # -> interior cells (whose carved-polyfill centroid is inside the shrunk
+    # geometry) become core, the half/quarter edge cells stay clipped border
+    # chips. Grid-aligned border cells are NOT promoted (heavy JTS equalsExact is
+    # vertex-order sensitive), so a mix of core and border requires interior
+    # cells away from the boundary -- which this 4.5km box provides.
     geom = to_wkb(box(530000.0, 180000.0, 534500.0, 184500.0))
     chips = _bng.tessellate_str(geom, _bng.get_resolution("1km"))
     assert len(chips) > 0
@@ -60,22 +62,31 @@ def test_tessellate_grid_aligned_no_degenerate_chips():
             ), f"degenerate chip {g.geom_type} for {cell} (mosaic#423)"
 
 
-def test_tessellate_fully_covered_cell_promoted_to_core():
-    # A small grid-aligned polygon that fully covers one 1km cell. Because the
-    # box width equals the cell edge, carved = buffer(-radius) is EMPTY, so the
-    # fully-covered cell goes through the BORDER path. Heavy promotes a chip that
-    # equals the whole cell (within 0.1m) to core=True / chip=None. shapely's
-    # intersection renormalizes the ring start vertex, so the old equals_exact
-    # check never fired and the cell came back core=False with a full-cell chip.
+def test_tessellate_grid_aligned_full_cell_stays_border():
+    # A grid-aligned box that fully covers one 1km cell. Because the box width
+    # equals the cell edge, carved = buffer(-radius) is EMPTY, so the cell goes
+    # through the BORDER path. Heavy's promotion test is JTS
+    # ``adjusted.equalsExact(cellGeom, 0.1)`` (BNG.scala ~L803), which is
+    # vertex-ORDER sensitive: the polygon-vs-cell intersection renormalizes the
+    # clipped ring's start vertex, so equalsExact returns False and heavy KEEPS
+    # the cell as core=False with a full-cell chip. (Verified against the heavy
+    # JAR: getChips of this box -> (TQ3080, core=False, full-cell chip).) Light
+    # mirrors heavy with shapely ``equals_exact`` -- it must NOT promote this
+    # grid-aligned cell, or geomkring/geomkloop diverge (the bench regression).
     res = _bng.get_resolution("1km")
     cell_box = box(530000.0, 180000.0, 531000.0, 181000.0)
     assert cell_box.buffer(-_bng.get_buffer_radius(res)).is_empty  # border path
     chips = _bng.tessellate_str(to_wkb(cell_box), res)
-    # The fully-covered cell must be promoted to core (chip None), not a chip.
+    # No core promotion: heavy keeps the grid-aligned full cell as a border chip.
     cores = [c for c in chips if c[1]]
-    assert cores, "fully-covered cell should be promoted to core=True"
-    for cell, core, chip in cores:
-        assert chip is None, f"promoted core cell {cell} must have chip=None"
+    assert not cores, "grid-aligned full cell must stay border (matches heavy JTS equalsExact)"
+    # The single surviving chip is the whole cell as a Polygon (areal, not None).
+    assert len(chips) == 1, f"expected one border chip, got {chips}"
+    cell, core, chip = chips[0]
+    assert core is False and chip is not None
+    g = from_wkb(chip)
+    assert g.geom_type == "Polygon"
+    assert g.normalize().equals_exact(box(530000.0, 180000.0, 531000.0, 181000.0).normalize(), 1e-6)
 
 
 def test_tessellate_empty_geom_is_empty():

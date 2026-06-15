@@ -22,6 +22,7 @@ Mosaic-lineage bug status (validated against this port):
 import math
 from typing import Any
 
+from shapely import equals_exact as _equals_exact
 from shapely import to_wkb as _to_wkb
 from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
@@ -483,7 +484,10 @@ def polyfill_str(geom, resolution) -> list:
 #   * border = polyfill(borderGeometry) minus core, where borderGeometry is a
 #     1%-grown, simplified buffer of either the geometry (if carved is empty) or
 #     its boundary; each border cell's chip is cell_geom.intersection(geometry).
-#     A near-full intersection (equals_exact(cell_geom, 0.1)) is PROMOTED to core.
+#     A border chip is PROMOTED to core only when it matches the whole cell via
+#     vertex-order-sensitive equals_exact(cell_geom, 0.1) -- mirroring heavy JTS
+#     equalsExact, which (like shapely) rejects a renormalized grid-aligned ring,
+#     so grid-aligned full cells STAY border.
 #   * mosaic#423 fix: the final result keeps only chips whose geometry type
 #     matches the INPUT geometry type (drops degenerate POINT/LINESTRING chips
 #     produced by grid-aligned edges/vertices touching a Polygon input).
@@ -542,15 +546,19 @@ def tessellate(geometry, resolution: int, keep_core_geom: bool = False) -> list:
             adjusted = intersect.difference(cell_geom.boundary)
         else:
             adjusted = intersect
-        # shapely.intersection renormalizes the ring start vertex, so equals_exact
-        # (vertex-order sensitive) can't detect a full-cell chip the way JTS
-        # equalsExact does. Use start-point-insensitive mutual near-containment
-        # within the same 0.1 m tolerance, matching heavy BNG.tessellate's
-        # equalsExact(cellGeom, 0.1) (BNG.scala ~L803): chip ~= whole cell within
-        # 0.1 m -> it's a core cell. (BNG coords are integer metres.)
-        is_core = cell_geom.buffer(_FULL_CELL_TOL).contains(
-            adjusted
-        ) and adjusted.buffer(_FULL_CELL_TOL).contains(cell_geom)
+        # Heavy promotes a border cell to core iff the clipped chip is the whole
+        # cell per JTS ``adjusted.equalsExact(cellGeom, 0.1)`` (BNG.scala ~L803).
+        # JTS ``equalsExact`` is vertex-ORDER sensitive: when the polygon-vs-cell
+        # intersection renormalizes the clipped ring's start vertex / winding
+        # (which it does for grid-aligned cells whose edges sit ON the cell
+        # boundary), equalsExact returns False and heavy KEEPS the cell as border.
+        # shapely's ``equals_exact`` shares that vertex-order sensitivity, so it is
+        # the faithful mirror. An earlier order-INSENSITIVE near-containment check
+        # over-promoted those grid-aligned full cells to core, shrinking the border
+        # set and so under-expanding the geometry k-ring/k-loop (heavy expands the
+        # kept-border cells) -- a light-vs-heavy parity break on grid-aligned
+        # polygons. Match heavy exactly. (BNG coords are integer metres.)
+        is_core = _equals_exact(adjusted, cell_geom, _FULL_CELL_TOL)
         if is_core:
             chips.append((cell, True, cell_geom if keep_core_geom else None))
         else:

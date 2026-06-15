@@ -128,6 +128,15 @@ _BOX = _box(530500.0, 180500.0, 531500.0, 181500.0)  # 4 border cells, 0 core
 # partway into neighbour cells -> border chips along grid lines (the degenerate
 # POINT/LINESTRING risk) with NO core cell.
 _ALIGNED_BOX = _box(530000.0, 180000.0, 531200.0, 180400.0)
+# A 2.5km axis-aligned box whose four edges all sit EXACTLY on 1km grid lines
+# (530000/532500 E, 180000/182500 N). At res 3 (1km) this covers a 3x3 block of
+# cells, but only the centre cell is a true interior (core) cell; every edge cell
+# is grid-aligned so its polygon-vs-cell intersection renormalizes its ring start
+# vertex, making heavy's JTS ``equalsExact(cellGeom, 0.1)`` reject promotion -->
+# those full-but-grid-aligned cells stay BORDER. geomkring/geomkloop expand the
+# border cells, so a wrong core/border split silently drops the SW corner cells.
+# This is the bench fixture that surfaced the light-vs-heavy geomkring break.
+_GRID_ALIGNED_BIG_BOX = _box(530000.0, 180000.0, 532500.0, 182500.0)
 # Quadrant points for the four 100km NE/NW/SE/SW cells (#434). The 100km cell's
 # 2-letter prefix is letter-pair-derived; these points land in distinct 100km
 # squares whose ids must report resolution 1 (area 10000 km^2), not a quadrant.
@@ -507,6 +516,56 @@ def test_bng_mosaic_423_no_degenerate_chips(spark_with_jar):
         f"  light={sorted(light_tess)}\n  heavy={sorted(heavy_tess)}\n"
         f"  light_only={set(light_tess) - set(heavy_tess)} "
         f"heavy_only={set(heavy_tess) - set(light_tess)}"
+    )
+
+
+# --- grid-aligned geomkring / geomkloop lock-in -----------------------------------------------
+
+
+@pytest.mark.parametrize("k", [1, 2])
+def test_bng_geomkring_geomkloop_grid_aligned(spark_with_jar, k):
+    """Light == heavy EXACT cell sets for geomkring/geomkloop on a grid-aligned box.
+
+    Regression for the bench failure ``BNG GEOMKRING PARITY: FAIL -- ring set
+    mismatch``. The 2.5km box's four edges sit on exact 1km grid lines, so every
+    edge cell is fully covered yet grid-aligned. Heavy's JTS ``equalsExact`` keeps
+    those cells BORDER (the clipped ring's start vertex is renormalized), so its
+    geomkring/geomkloop expand them. Light formerly used an order-insensitive
+    near-containment promotion that mislabeled them CORE, shrinking the border set
+    and dropping the SW corner cells (e.g. TQ2979/TQ2980/TQ3079 at k=1). Light now
+    mirrors heavy's vertex-order-sensitive ``equals_exact`` so the sets match.
+    """
+    from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.gridx.bng import functions as hx
+    from databricks.labs.gbx.pygx import functions as gx
+
+    spark = spark_with_jar
+
+    df = spark.createDataFrame(
+        [(_wkb(_GRID_ALIGNED_BIG_BOX), _RES, k)], "geom binary, res int, k int"
+    )
+
+    def sets(mod):
+        mod.register(spark)
+        row = df.select(
+            mod.bng_geomkring(f.col("geom"), f.col("res"), f.col("k")).alias("ring"),
+            mod.bng_geomkloop(f.col("geom"), f.col("res"), f.col("k")).alias("loop"),
+        ).collect()[0]
+        return sorted(row["ring"]), sorted(row["loop"])
+
+    light_ring, light_loop = sets(gx)
+    heavy_ring, heavy_loop = sets(hx)
+
+    assert light_ring == heavy_ring, (
+        f"grid-aligned geomkring(k={k}) set mismatch:\n"
+        f"  light_only={sorted(set(light_ring) - set(heavy_ring))}\n"
+        f"  heavy_only={sorted(set(heavy_ring) - set(light_ring))}"
+    )
+    assert light_loop == heavy_loop, (
+        f"grid-aligned geomkloop(k={k}) set mismatch:\n"
+        f"  light_only={sorted(set(light_loop) - set(heavy_loop))}\n"
+        f"  heavy_only={sorted(set(heavy_loop) - set(light_loop))}"
     )
 
 
