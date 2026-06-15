@@ -1,0 +1,190 @@
+"""Pure-Python custom-grid core for the pygx light tier.
+
+A faithful, BIT-EXACT port of the heavy
+``com.databricks.labs.gbx.gridx.grid.CustomGridSystem`` + ``GridConf`` Scala
+objects (gridx/grid/CustomGridSystem.scala, GridConf.scala). No PyPI library
+exists; this module reproduces the cell-ID bit-packing, coordinate<->cell
+mapping, polyfill (centroid-containment), and k-ring (Chebyshev clamp) EXACTLY
+so light and heavy share bit-identical cell ids and cell sets.
+
+A custom grid is a user-defined regular rectangular grid: extent, root cell
+size, and a recursive ``cell_splits`` factor (each resolution level subdivides
+into ``cell_splits x cell_splits`` sub-cells). Cell ids are BIGINT (the top 8
+bits hold the resolution, the low 56 hold the row-major cell position).
+
+Geometry is emitted as plain WKB (NO SRID) / WKT, matching heavy ``JTS.toWKB``
+(line 159, the 2D no-SRID variant). The grid ``srid`` is metadata only and is
+NOT stamped into output geometry.
+
+Resolved decision 3 (spec 2026-06-14): heavy ``pointToCellID`` had a
+``require(!x.isNaN && !x.isNaN, ...)`` typo that left a NaN Y unguarded;
+``point_to_cell_id`` here (and the heavy fix) guards BOTH x and y.
+"""
+
+import math
+from dataclasses import dataclass
+from typing import Any
+
+import shapely  # noqa: F401  (geometry surfaces in later tasks; load-time dep guard)
+
+ID_BITS = 56  # GridConf.idBits — low 56 bits hold the cell position
+RES_BITS = 8  # GridConf.resBits — top 8 bits hold the resolution
+_POSITION_MASK = 0x00FFFFFFFFFFFFFF
+
+
+def _as_int(v: Any) -> int:
+    if isinstance(v, bool):  # bool is an int subclass; reject explicitly
+        raise ValueError(f"gbx_custom: expected INT/LONG, got bool {v!r}")
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    raise ValueError(f"gbx_custom: expected INT/LONG, got {v!r}")
+
+
+@dataclass(frozen=True)
+class CustomGridConf:
+    bound_x_min: int
+    bound_x_max: int
+    bound_y_min: int
+    bound_y_max: int
+    cell_splits: int
+    root_cell_size_x: int
+    root_cell_size_y: int
+    srid: int = -1  # -1 == no CRS
+
+    @property
+    def sub_cells_count(self) -> int:
+        return self.cell_splits * self.cell_splits
+
+    @property
+    def bits_per_resolution(self) -> int:
+        # GridConf.scala:25 — ceil(log10(subCellsCount) / log10(2))
+        return math.ceil(math.log10(self.sub_cells_count) / math.log10(2))
+
+    @property
+    def max_resolution(self) -> int:
+        # GridConf.scala:28 — min(20, floor(56 / bitsPerResolution))
+        return min(20, math.floor(ID_BITS / self.bits_per_resolution))
+
+    @property
+    def root_cell_count_x(self) -> int:
+        # GridConf.scala:30 — ceil(spanX / rootCellSizeX)
+        span = self.bound_x_max - self.bound_x_min
+        return math.ceil(span / self.root_cell_size_x)
+
+    @property
+    def root_cell_count_y(self) -> int:
+        # GridConf.scala:31 — ceil(spanY / rootCellSizeY)
+        span = self.bound_y_max - self.bound_y_min
+        return math.ceil(span / self.root_cell_size_y)
+
+
+def conf_from_row(row: Any) -> CustomGridConf:
+    """Reconstruct a CustomGridConf from a grid-spec struct (Row/dict).
+
+    Mirrors Custom_GridSpec.systemFromRow; Int/Long tolerant (PySpark sends Long
+    for INT literals).
+    """
+    if row is None:
+        raise ValueError("gbx_custom: grid spec must not be null")
+    g = row.asDict() if hasattr(row, "asDict") else dict(row)
+    return CustomGridConf(
+        bound_x_min=_as_int(g["bound_x_min"]),
+        bound_x_max=_as_int(g["bound_x_max"]),
+        bound_y_min=_as_int(g["bound_y_min"]),
+        bound_y_max=_as_int(g["bound_y_max"]),
+        cell_splits=_as_int(g["cell_splits"]),
+        root_cell_size_x=_as_int(g["root_cell_size_x"]),
+        root_cell_size_y=_as_int(g["root_cell_size_y"]),
+        srid=_as_int(g["srid"]),
+    )
+
+
+# --- cell-ID codec + grid math (CustomGridSystem) -----------------------------
+
+
+def total_cells_x(conf: CustomGridConf, resolution: int) -> int:
+    # CustomGridSystem.scala:274 — rootCellCountX * pow(cellSplits, res).toLong
+    return conf.root_cell_count_x * int(math.pow(conf.cell_splits, resolution))
+
+
+def total_cells_y(conf: CustomGridConf, resolution: int) -> int:
+    # CustomGridSystem.scala:278 — rootCellCountY * pow(cellSplits, res).toLong
+    return conf.root_cell_count_y * int(math.pow(conf.cell_splits, resolution))
+
+
+def cell_width(conf: CustomGridConf, resolution: int) -> float:
+    # CustomGridSystem.scala:196 — rootCellSizeX / pow(cellSplits, res)
+    return conf.root_cell_size_x / math.pow(conf.cell_splits, resolution)
+
+
+def cell_height(conf: CustomGridConf, resolution: int) -> float:
+    # CustomGridSystem.scala:200 — rootCellSizeY / pow(cellSplits, res)
+    return conf.root_cell_size_y / math.pow(conf.cell_splits, resolution)
+
+
+def get_cell_id(cell_position: int, resolution: int) -> int:
+    # CustomGridSystem.scala:310 — cellPosition | (resolution.toLong << idBits)
+    return cell_position | (resolution << ID_BITS)
+
+
+def get_cell_resolution(cell_id: int) -> int:
+    # CustomGridSystem.scala:180 — (cellId >> idBits).toInt
+    return cell_id >> ID_BITS
+
+
+def get_cell_position(cell_id: int) -> int:
+    # CustomGridSystem.scala:184 — cellId & 0x00ffffffffffffffL
+    return cell_id & _POSITION_MASK
+
+
+def get_cell_position_x(conf: CustomGridConf, id_number: int, resolution: int) -> int:
+    # CustomGridSystem.scala:188 — idNumber % totalCellsX(res)
+    return id_number % total_cells_x(conf, resolution)
+
+
+def get_cell_position_y(conf: CustomGridConf, id_number: int, resolution: int) -> int:
+    # CustomGridSystem.scala:192 — floor(idNumber / totalCellsX(res)).toLong
+    return int(math.floor(id_number / total_cells_x(conf, resolution)))
+
+
+def get_cell_position_from_positions(
+    conf: CustomGridConf, cell_pos_x: int, cell_pos_y: int, resolution: int
+) -> int:
+    # CustomGridSystem.scala:317 — cellPosY * totalCellsX(res) + cellPosX
+    return cell_pos_y * total_cells_x(conf, resolution) + cell_pos_x
+
+
+def _trunc_long(v: float) -> int:
+    # Scala Double->Long truncates toward zero (NOT math.floor).
+    return int(v)
+
+
+def get_cell_position_from_coordinates(
+    conf: CustomGridConf, x: float, y: float, resolution: int
+):
+    # CustomGridSystem.scala:268-272
+    cell_pos_x = _trunc_long((x - conf.bound_x_min) / cell_width(conf, resolution))
+    cell_pos_y = _trunc_long((y - conf.bound_y_min) / cell_height(conf, resolution))
+    return (
+        cell_pos_x,
+        cell_pos_y,
+        get_cell_position_from_positions(conf, cell_pos_x, cell_pos_y, resolution),
+    )
+
+
+def get_cell_center_x(
+    conf: CustomGridConf, cell_position_x: int, resolution: int
+) -> float:
+    # CustomGridSystem.scala:296-301
+    w = cell_width(conf, resolution)
+    return cell_position_x * w + (w / 2) + conf.bound_x_min
+
+
+def get_cell_center_y(
+    conf: CustomGridConf, cell_position_y: int, resolution: int
+) -> float:
+    # CustomGridSystem.scala:303-308
+    h = cell_height(conf, resolution)
+    return cell_position_y * h + (h / 2) + conf.bound_y_min
