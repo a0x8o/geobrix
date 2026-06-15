@@ -23,10 +23,11 @@ Resolved decision 3 (spec 2026-06-14): heavy ``pointToCellID`` had a
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, List
 
 import shapely  # noqa: F401  (geometry surfaces in later tasks; load-time dep guard)
 from shapely import to_wkb as _to_wkb
+from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
 
 ID_BITS = 56  # GridConf.idBits — low 56 bits hold the cell position
@@ -263,3 +264,42 @@ def cell_aswkt(conf: CustomGridConf, cell_id: int) -> str:
 
 def cell_centroid(conf: CustomGridConf, cell_id: int) -> bytes:
     return _to_wkb(cell_id_to_centroid(conf, cell_id))
+
+
+# --- polyfill (CustomGridSystem.polyfill) -------------------------------------
+
+
+def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
+    """Cell IDs whose CENTER is contained by the geometry (CustomGridSystem.polyfill).
+
+    Port of CustomGridSystem.scala:145-178. Mirrors heavy EXACTLY incl. the
+    intentional ``first..last + 1`` bbox over-scan (Resolved decision 3: the
+    over-scan is by design, not a bug — the centroid-containment filter discards
+    the extra ring of cells). The cell envelope corners (minX,minY)/(maxX,maxY)
+    map to the first/last cell positions; the over-scan iterates one extra cell
+    past ``last`` in each axis (Scala ``a to b`` is INCLUSIVE → Python
+    ``range(first, last + 2)``). Each candidate cell's CENTER is tested with
+    ``geometry.contains`` (not bbox overlap), so a cell whose bbox overlaps the
+    geometry but whose center lies outside is excluded.
+
+    Heavy uses JTS ``geometry.isEmpty``; here we also treat a null geometry as
+    empty (the UDF may receive a null column value). Both return ``[]``.
+    """
+    if geometry is None or geometry.is_empty:
+        return []
+    min_x, min_y, max_x, max_y = geometry.bounds
+    first_x, first_y, _ = get_cell_position_from_coordinates(
+        conf, min_x, min_y, resolution
+    )
+    last_x, last_y, _ = get_cell_position_from_coordinates(
+        conf, max_x, max_y, resolution
+    )
+    out: List[int] = []
+    # Scala `first to last + 1` is INCLUSIVE -> Python range(first, (last + 1) + 1)
+    for x in range(first_x, last_x + 2):
+        for y in range(first_y, last_y + 2):
+            cx = get_cell_center_x(conf, x, resolution)
+            cy = get_cell_center_y(conf, y, resolution)
+            if geometry.contains(_Point(cx, cy)):
+                out.append(point_to_cell_id(conf, cx, cy, resolution))
+    return out

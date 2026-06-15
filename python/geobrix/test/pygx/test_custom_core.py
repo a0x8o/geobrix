@@ -133,3 +133,31 @@ def test_cell_centroid_is_point_no_srid():
     g = from_wkb(_custom.cell_centroid(c, cid))
     assert g.geom_type == "Point" and get_srid(g) == 0
     assert (g.x, g.y) == (530500.0, 180500.0)  # cell center
+
+
+from shapely import to_wkb as _towkb  # noqa: E402
+from shapely.geometry import box as _box2  # noqa: E402
+
+
+def test_polyfill_small_box_res0():
+    c = _conf(splits=2, rootx=1000, rooty=1000)  # 1000m root cells
+    # A 3000m x 3000m box aligned to the grid -> 9 cell centers fall inside.
+    geom = _box2(530000.0, 180000.0, 533000.0, 183000.0)
+    cells = _custom.polyfill(c, geom, 0)
+    assert len(cells) == 9
+    assert all(_custom.get_cell_resolution(cid) == 0 for cid in cells)
+
+
+def test_polyfill_empty_geom_is_empty():
+    c = _conf()
+    assert _custom.polyfill(c, None, 0) == []
+    from shapely.geometry import Polygon
+
+    assert _custom.polyfill(c, Polygon(), 0) == []
+
+
+def test_polyfill_centroid_containment_only():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    # A box smaller than one cell, off-center, contains NO cell center -> empty.
+    geom = _box2(530100.0, 180100.0, 530400.0, 180400.0)
+    assert _custom.polyfill(c, geom, 0) == []
