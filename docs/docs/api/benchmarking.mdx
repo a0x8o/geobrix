@@ -668,6 +668,22 @@ batch never buffers many large variable-length outputs (a memory-safety choice f
 geometries/zoom levels). The lightweight `pygx` tier's decisive advantage here is **Serverless/ARM
 reach and no-JVM/JAR install**, with timing competitive with the heavyweight tier.
 
+### BNG (`bng_eastnorthasbng`, `bng_polyfill`, `bng_tessellate`, `bng_kring`, `bng_cellunion_agg`) — benchmarks pending
+
+The British National Grid functions are also available in both tiers — light (pygx, a pure-Python
+codec port of `BNG.scala`) vs heavy (gridx.bng) — with the same exact-output parity contract as
+quadbin: **exact cell-set equality** for `eastnorthasbng`/`pointascell`/`polyfill`/`kring`,
+**exact cells with chip-geometry match** for `tessellate`, and **decoded chip-geometry equality**
+per group for the aggregates (asserted by the `test_parity_bng` cross-tier suite). The execution
+shape mirrors quadbin (numpy-vectorized scalar `pandas_udf`s for cell-id math, plain UDFs for
+array-returning ops, UDTFs for the explodes, grouped aggregates for the chip aggregators), so the
+timing expectation is the same: sub-millisecond STRING cell-id math dominated by the per-row
+JVM↔Python boundary, with WKB-geometry ops additionally carrying the geometry-bytes serialization
+cost. Run the BNG legs with `gbx:bench:cluster --grid-bng-only`.
+
+> **Cluster spark-path BNG timings are pending** and will be published here once collected. Parity is
+> already test-enforced across the tiers.
+
 </TabItem>
 
 </Tabs>

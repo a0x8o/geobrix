@@ -12,7 +12,7 @@ import { Impl } from '@site/src/components/Tier';
 
 # GridX Function Reference
 
-GridX is **partially lightweight** as of v0.4.0: the **quadbin** functions (`gbx_quadbin_*`) run in both tiers <Tier both/>, while the **BNG** (`gbx_bng_*`) and **custom-grid** (`gbx_custom_*`) functions are heavyweight-only <Tier heavy/>. Each section below is marked with its tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
+GridX is **partially lightweight** as of v0.4.0: the **quadbin** (`gbx_quadbin_*`) and **BNG** (`gbx_bng_*`) functions run in both tiers <Tier both/>, while the **custom-grid** (`gbx_custom_*`) functions remain heavyweight-only <Tier heavy/>. Each section below is marked with its tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
 
 ![GridX](../../../resources/images/GridX.png)
 
@@ -317,7 +317,7 @@ Powered by the **quadbin** package. Chebyshev distance on tile coordinates; mirr
 
 ## British National Grid (BNG)
 
-<Tier heavy/> BNG functions (`gbx_bng_*`) are heavyweight-only.
+<Tier both/> BNG runs in both tiers. The lightweight tier is the `pygx` BNG package — powered by a **pure-Python port of `BNG.scala`** + **shapely** for geometry; identical `gbx_bng_*` SQL names, so it is a drop-in swap. Cell IDs are `STRING` references; geometry outputs are plain WKB in **EPSG:27700** coordinates with **no SRID** (unlike quadbin's EWKB SRID 4326). Cell-id math (`bng_eastnorthasbng`, `bng_pointascell`, `bng_distance`, `bng_kring`, `bng_polyfill`, …) is exact-parity with the heavyweight tier; exact cell-set parity is enforced by the cross-tier parity suite.
 
 The British National Grid is the national coordinate system for Great Britain, based on the Ordnance Survey National Grid (OSGB36). It divides Great Britain into grid squares identified by letter-based prefixes and numeric coordinates.
 
@@ -363,9 +363,13 @@ Functions to convert BNG cell IDs to standard geometry formats.
 
 ### bng_aswkb
 
-<Tier heavy/>
+<Tier both/>
 
 Convert a BNG cell ID to Well-Known Binary (WKB) format.
+
+:::note Lightweight tier (pygx)
+Powered by a **pure-Python port of `BNG.scala`** + **shapely**. The cell footprint polygon as plain WKB in EPSG:27700 (no SRID).
+:::
 
 **Signature:** `bng_aswkb(cellId: Column): Column`
 
@@ -383,9 +387,13 @@ Convert a BNG cell ID to Well-Known Binary (WKB) format.
 
 ### bng_aswkt
 
-<Tier heavy/>
+<Tier both/>
 
 Convert a BNG cell ID to Well-Known Text (WKT) format.
+
+:::note Lightweight tier (pygx)
+Powered by a **pure-Python port of `BNG.scala`** + **shapely**. The cell footprint as WKT in EPSG:27700 coordinates.
+:::
 
 **Signature:** `bng_aswkt(cellId: Column): Column`
 
@@ -407,9 +415,13 @@ Fundamental operations on BNG cells.
 
 ### bng_cellarea
 
-<Tier heavy/>
+<Tier both/>
 
 Calculate the area of a BNG grid cell.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`**. Returns the cell area in **square kilometres**, matching the heavyweight tier.
+:::
 
 **Signature:** `bng_cellarea(cellId: Column): Column`
 
@@ -427,9 +439,13 @@ Calculate the area of a BNG grid cell.
 
 ### bng_centroid
 
-<Tier heavy/>
+<Tier both/>
 
 Get the centroid (center point) of a BNG cell.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Cell-center POINT as WKB in EPSG:27700 (no SRID).
+:::
 
 **Signature:** `bng_centroid(cellId: Column): Column`
 
@@ -447,9 +463,13 @@ Get the centroid (center point) of a BNG cell.
 
 ### bng_distance
 
-<Tier heavy/>
+<Tier both/>
 
 Calculate distance between two BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** — grid-step distance between two cells, exact-parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_distance(cell1: Column, cell2: Column): Column`
 
@@ -468,9 +488,13 @@ Calculate distance between two BNG cells.
 
 ### bng_euclideandistance
 
-<Tier heavy/>
+<Tier both/>
 
 Calculate Euclidean distance between two BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** — straight-line distance between two cell centroids, exact-parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_euclideandistance(cell1: Column, cell2: Column): Column`
 
@@ -493,9 +517,13 @@ Operations combining multiple cells.
 
 ### bng_cellintersection
 
-<Tier heavy/>
+<Tier both/>
 
 Get the intersection of two BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Intersects two cell chips, returning the dissolved chip.
+:::
 
 **Signature:** `bng_cellintersection(cell1: Column, cell2: Column): Column`
 
@@ -514,9 +542,13 @@ Get the intersection of two BNG cells.
 
 ### bng_cellunion
 
-<Tier heavy/>
+<Tier both/>
 
 Get the union of two BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Unions two cell chips, returning the dissolved chip.
+:::
 
 **Signature:** `bng_cellunion(cell1: Column, cell2: Column): Column`
 
@@ -539,9 +571,13 @@ Convert coordinates or geometries to BNG cells.
 
 ### bng_eastnorthasbng
 
-<Tier heavy/>
+<Tier both/>
 
 Convert easting/northing coordinates to a BNG cell reference.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** (numpy-vectorized encoder). Eastings/northings must be **EPSG:27700** (e.g. `530000, 180000` for London). Bit-identical cell IDs to the heavyweight tier.
+:::
 
 **Signature:** `bng_eastnorthasbng(easting: Column, northing: Column, resolution: Column): Column`
 
@@ -561,9 +597,13 @@ Convert easting/northing coordinates to a BNG cell reference.
 
 ### bng_pointascell
 
-<Tier heavy/>
+<Tier both/>
 
 Convert a point geometry to a BNG grid cell. The point must be supplied as **WKT or WKB** (GeoBrix does not accept native Databricks geometry types).
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. The point coordinates must be **EPSG:27700** eastings/northings (e.g. `POINT(530000 180000)` for London), **not** WGS84 lon/lat. Exact-parity cell IDs with the heavyweight tier.
+:::
 
 **Signature:** `bng_pointascell(point: Column, resolution: Column): Column`
 
@@ -592,9 +632,13 @@ Generate neighboring cells using k-ring patterns.
 
 ### bng_kring
 
-<Tier heavy/>
+<Tier both/>
 
 Generate a k-ring of cells around a center cell (filled disk).
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`**. All cells within ring distance `k` (inclusive of the center). Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_kring(cellId: Column, k: Column): Column`
 
@@ -613,9 +657,13 @@ Generate a k-ring of cells around a center cell (filled disk).
 
 ### bng_kloop
 
-<Tier heavy/>
+<Tier both/>
 
 Generate a k-loop of cells around a center cell (hollow ring).
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`**. The cells at exactly ring distance `k`. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_kloop(cellId: Column, k: Column): Column`
 
@@ -634,9 +682,13 @@ Generate a k-loop of cells around a center cell (hollow ring).
 
 ### bng_geomkring
 
-<Tier heavy/>
+<Tier both/>
 
 Generate a k-ring of cells around a geometry at specified resolution.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the geometry then expands by ring distance `k`. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_geomkring(geom: Column, resolution: Column, k: Column): Column`
 
@@ -656,9 +708,13 @@ Generate a k-ring of cells around a geometry at specified resolution.
 
 ### bng_geomkloop
 
-<Tier heavy/>
+<Tier both/>
 
 Generate a k-loop of cells around a geometry at specified resolution.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the geometry then returns only the cells at exactly ring distance `k`. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_geomkloop(geom: Column, resolution: Column, k: Column): Column`
 
@@ -682,9 +738,13 @@ Fill geometries with grid cells.
 
 ### bng_polyfill
 
-<Tier heavy/>
+<Tier both/>
 
 Fill a geometry with BNG cells at specified resolution.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Enumerates the cells covering the geometry, mirroring the heavyweight seed-and-flood-fill. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_polyfill(geometry: Column, resolution: Column): Column`
 
@@ -703,9 +763,13 @@ Fill a geometry with BNG cells at specified resolution.
 
 ### bng_tessellate
 
-<Tier heavy/>
+<Tier both/>
 
 Tessellate a geometry into BNG cells with their geometries.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfill plus a per-cell core/border split, returning one `STRUCT<cellid, core, chip>` per cell (chip geometry as WKB in EPSG:27700, no SRID). Border chips are filtered to the input geometry type, matching the heavyweight tier.
+:::
 
 **Signature:** `bng_tessellate(geometry: Column, resolution: Column): Column`
 
@@ -728,9 +792,26 @@ Aggregate multiple cells into a single result.
 
 ### bng_cellintersection_agg
 
-<Tier heavy/>
+<Tier both/> <Impl groupedAgg/>
 
 Aggregate intersection of multiple BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. A grouped aggregate — `groupBy(cellid).agg(gx.bng_cellintersection_agg("chip"))` intersects a group's chips (all belonging to one cell) into the dissolved chip geometry.
+:::
+
+:::warning Lightweight and heavyweight return different types
+Heavyweight `gbx_bng_cellintersection_agg` returns a chip **`STRUCT<cellid, core, chip>`**; the lightweight function returns **`BINARY`** (the dissolved chip geometry, WKB in EPSG:27700) in **both Python and SQL**. A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight aggregate emits the chip geometry — the one meaningful payload of a dissolved aggregate. The aggregate only ever combines chips from a single cell, so the heavyweight struct's `cellid` is exactly the group key you `GROUP BY`, and `core` is recoverable from whether the chip equals the full cell — neither carries information beyond the BINARY chip. To reconstruct the heavyweight `STRUCT` shape in SQL, project the group key as `cellid`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, chip) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_bng_cellintersection_agg(chip) AS chip
+FROM cells
+GROUP BY group_key
+```
+:::
 
 **Signature:** `bng_cellintersection_agg(cellId: Column): Column`
 
@@ -748,9 +829,26 @@ Aggregate intersection of multiple BNG cells.
 
 ### bng_cellunion_agg
 
-<Tier heavy/>
+<Tier both/> <Impl groupedAgg/>
 
 Aggregate union of multiple BNG cells.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely**. A grouped aggregate — `groupBy(cellid).agg(gx.bng_cellunion_agg("chip"))` dissolves a group's chips (all belonging to one cell) into the unioned chip geometry.
+:::
+
+:::warning Lightweight and heavyweight return different types
+Heavyweight `gbx_bng_cellunion_agg` returns a chip **`STRUCT<cellid, core, chip>`**; the lightweight function returns **`BINARY`** (the dissolved chip geometry, WKB in EPSG:27700) in **both Python and SQL**. A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight aggregate emits the chip geometry — the one meaningful payload of a dissolved aggregate. The aggregate only ever combines chips from a single cell, so the heavyweight struct's `cellid` is exactly the group key you `GROUP BY`, and `core` is recoverable from whether the chip equals the full cell — neither carries information beyond the BINARY chip. To reconstruct the heavyweight `STRUCT` shape in SQL, project the group key as `cellid`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, chip) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_bng_cellunion_agg(chip) AS chip
+FROM cells
+GROUP BY group_key
+```
+:::
 
 **Signature:** `bng_cellunion_agg(cellId: Column): Column`
 
@@ -772,9 +870,13 @@ Explode array results into individual rows.
 
 ### bng_kringexplode
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Explode k-ring cells into separate rows.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** as a streaming UDTF — one output row per k-ring cell. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_kringexplode(cellId: Column, k: Column): Column`
 
@@ -793,9 +895,13 @@ Explode k-ring cells into separate rows.
 
 ### bng_kloopexplode
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Explode k-loop cells into separate rows.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** as a streaming UDTF — one output row per k-loop cell. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_kloopexplode(cellId: Column, k: Column): Column`
 
@@ -814,9 +920,13 @@ Explode k-loop cells into separate rows.
 
 ### bng_geomkringexplode
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Explode geometry k-ring cells into separate rows.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming UDTF — one output row per geometry k-ring cell. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_geomkringexplode(geom: Column, resolution: Column, k: Column): Column`
 
@@ -836,9 +946,13 @@ Explode geometry k-ring cells into separate rows.
 
 ### bng_geomkloopexplode
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Explode geometry k-loop cells into separate rows.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming UDTF — one output row per geometry k-loop cell. Exact cell-set parity with the heavyweight tier.
+:::
 
 **Signature:** `bng_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column`
 
@@ -858,9 +972,13 @@ Explode geometry k-loop cells into separate rows.
 
 ### bng_tessellateexplode
 
-<Tier heavy/>
+<Tier both/> <Impl udtf/>
 
 Explode tessellated cells into separate rows.
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming UDTF — one output row per tessellated cell, each carrying the cell ID and chip geometry (WKB in EPSG:27700, no SRID).
+:::
 
 **Signature:** `bng_tessellateexplode(geometry: Column, resolution: Column): Column`
 
