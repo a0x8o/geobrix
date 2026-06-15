@@ -103,8 +103,8 @@ export default function Home() {
                   a single wheel, no JAR and no init script, and it works everywhere — serverless,
                   standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
                   likewise available lightweight (pyvx), as is all of GridX — BNG, quadbin, and
-                  custom grids (pygx). The heavyweight Scala/GDAL tier is there when you need the
-                  GDAL/OGR readers.
+                  custom grids (pygx). The heavyweight Scala/GDAL tier is there when you need full
+                  GDAL/OGR.
                 </p>
                 <Link
                   className="button button--primary button--md"
