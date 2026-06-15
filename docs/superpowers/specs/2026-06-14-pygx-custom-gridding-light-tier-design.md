@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-14
 **Branch:** `pygx-light`
-**Status:** **APPROVED 2026-06-14** — the four open questions were resolved by the user (see **Resolved decisions** at the bottom). Ready for `writing-plans` → subagent-driven implementation.
+**Status:** **IMPLEMENTED 2026-06-15** (was APPROVED 2026-06-14). The lightweight `pygx` custom-grid tier shipped on `pygx-light`: all 7 `gbx_custom_*` functions registered in both tiers, cross-tier exact parity green (cell-id/set, no-SRID geometry, all-4-encodings, Y-NaN guard locked in both tiers), heavy `pointToCellID` NaN-Y typo fixed. This supersedes the "custom gridding is heavyweight-only" caveat across the docs — **GridX is now fully 1:1 light↔heavy**. The four open questions were resolved by the user (see **Resolved decisions** at the bottom); the cluster benchmark leg is staged and pending a coordinated run.
 
 ## Goal / context
 

@@ -30,7 +30,7 @@ rx.register(spark)   # installs the gbx_rst_* SQL names, pyspark-backed
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight">
 
-JVM-native (Scala + GDAL/OGR), installed via the JAR + init script. Covers everything the lightweight tier does **plus** the heavy-only deltas: the full **GridX** grid set (BNG and custom grids), and the GDAL/OGR readers (`gtiff_gdal`, `gdal`, `shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, `file_gdb_ogr`). Choose this tier when your environment is already JVM/GDAL-based or when you need one of those deltas.
+JVM-native (Scala + GDAL/OGR), installed via the JAR + init script. Covers everything the lightweight tier does **plus** the heavy-only deltas: the GDAL/OGR readers (`gtiff_gdal`, `gdal`, `shapefile_ogr`, `geojson_ogr`, `gpkg_ogr`, `file_gdb_ogr`). Choose this tier when your environment is already JVM/GDAL-based or when you need one of those deltas.
 
 ```python
 from databricks.labs.gbx.rasterx import functions as rx
@@ -228,7 +228,7 @@ Identical on both tiers — only the import/register differs (see the tier toggl
 
 ### GridX
 
-The **quadbin** grid is available on **both** tiers (`gx.quadbin_*` / `gbx_quadbin_*`). **BNG** and custom grids are heavyweight-only.
+All GridX grids — **quadbin** (`gx.quadbin_*` / `gbx_quadbin_*`), **BNG** (`gbx_bng_*`), and **custom grids** (`gbx_custom_*`) — are available on **both** tiers.
 
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight">

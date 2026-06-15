@@ -12,7 +12,7 @@ import { Impl } from '@site/src/components/Tier';
 
 # GridX Function Reference
 
-GridX is **partially lightweight** as of v0.4.0: the **quadbin** (`gbx_quadbin_*`) and **BNG** (`gbx_bng_*`) functions run in both tiers <Tier both/>, while the **custom-grid** (`gbx_custom_*`) functions remain heavyweight-only <Tier heavy/>. Each section below is marked with its tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
+GridX is **fully lightweight** as of v0.4.0: the **quadbin** (`gbx_quadbin_*`), **BNG** (`gbx_bng_*`), and **custom-grid** (`gbx_custom_*`) functions all run in both tiers <Tier both/>. Each section below is marked with its tier. See [Choosing an Execution Tier](./execution-tiers) for the lightweight vs heavyweight comparison.
 
 ![GridX](../../../resources/images/GridX.png)
 
@@ -1024,13 +1024,13 @@ Major 100km grid squares in Great Britain:
 
 ## Custom Grid Functions
 
-<Tier heavy/> Custom-grid functions (`gbx_custom_*`) are heavyweight-only.
+<Tier both/> Custom-grid functions run in both tiers. The lightweight tier is the `pygx` custom-grid package — powered by a **pure-Python port of the custom-grid system** + **shapely** for geometry; identical `gbx_custom_*` SQL names, so it is a drop-in swap (no external grid library, unlike quadbin's `quadbin` package). Cell IDs are `BIGINT` values; geometry outputs are plain WKB with **no SRID** — the grid's `srid` is metadata only. Geometry inputs accept **WKB, EWKB, WKT, or EWKT** in both tiers. Cell-id math and cell sets are exact-parity with the heavyweight tier, enforced by the cross-tier parity suite. `gbx_custom_grid` returns the **same** descriptor struct in both tiers.
 
 A custom grid is a user-defined regular rectangular grid specified by its spatial extent, root cell size, and a recursive split factor. Cell IDs are `BIGINT` values; hierarchy is controlled by `cell_splits` (each level subdivides root cells into `cell_splits x cell_splits` sub-cells). Use custom grids when neither BNG nor quadbin matches your coordinate reference system or cell-size requirements — for example, a national grid in EPSG:27700 with non-standard tile sizes.
 
 ### custom_grid
 
-<Tier heavy/>
+<Tier both/>
 
 Define a user-specified regular grid from an origin, extent, cell size, split factor, and SRID.
 
@@ -1057,7 +1057,7 @@ Define a user-specified regular grid from an origin, extent, cell size, split fa
 
 ### custom_pointascell
 
-<Tier heavy/>
+<Tier both/>
 
 Index a point geometry into a custom grid cell ID at the specified resolution level.
 
@@ -1079,7 +1079,7 @@ Index a point geometry into a custom grid cell ID at the specified resolution le
 
 ### custom_cellaswkb
 
-<Tier heavy/>
+<Tier both/>
 
 Return the WKB footprint polygon of a custom grid cell.
 
@@ -1100,7 +1100,7 @@ Return the WKB footprint polygon of a custom grid cell.
 
 ### custom_cellaswkt
 
-<Tier heavy/>
+<Tier both/>
 
 Return the WKT footprint polygon of a custom grid cell.
 
@@ -1121,7 +1121,7 @@ Return the WKT footprint polygon of a custom grid cell.
 
 ### custom_centroid
 
-<Tier heavy/>
+<Tier both/>
 
 Return the centroid of a custom grid cell as a WKB point.
 
@@ -1142,7 +1142,7 @@ Return the centroid of a custom grid cell as a WKB point.
 
 ### custom_polyfill
 
-<Tier heavy/>
+<Tier both/>
 
 Fill a geometry with all custom grid cell IDs at the specified resolution.
 
@@ -1164,7 +1164,7 @@ Fill a geometry with all custom grid cell IDs at the specified resolution.
 
 ### custom_kring
 
-<Tier heavy/>
+<Tier both/>
 
 Return all custom grid cells within `k` steps of a center cell (filled neighborhood, Chebyshev distance).
 

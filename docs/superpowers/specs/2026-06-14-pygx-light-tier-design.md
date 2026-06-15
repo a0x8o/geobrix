@@ -140,6 +140,6 @@ Voice: no internal/planning vocabulary; justify by user utility, not Mosaic pari
 
 ## Out of scope
 
-- **Custom gridding (`gbx_custom_*`) — stays heavyweight-only, explicitly NOT ported to pygx.** The 7 custom user-defined grid functions — `gbx_custom_grid`, `gbx_custom_pointascell`, `gbx_custom_cellaswkb`, `gbx_custom_cellaswkt`, `gbx_custom_centroid`, `gbx_custom_polyfill`, `gbx_custom_kring` — remain a heavyweight-only capability. See the [Custom Grid Functions](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions#custom-grid-functions) section (`docs/docs/api/gridx-functions.mdx#custom-grid-functions`). pygx covers **quadbin + BNG only**; custom grids stay heavy, and the docs/execution-tiers updates must keep listing `gbx_custom_*` as heavyweight-only.
+- **Custom gridding (`gbx_custom_*`) — originally out of scope, SUPERSEDED.** This spec scoped pygx to quadbin + BNG only and declared the 7 custom user-defined grid functions heavyweight-only. The user reversed that on 2026-06-14, and custom gridding was subsequently ported to pygx (see `2026-06-14-pygx-custom-gridding-light-tier-design.md`, IMPLEMENTED 2026-06-15). All 7 `gbx_custom_*` now run in both tiers with exact parity, so **GridX is fully 1:1 light↔heavy**; this out-of-scope note is retained only for historical context.
 - The `h3` GridX subpackage (Databricks-native H3 already covers hex; GeoBrix raster H3 is RasterX, already in pyrx).
 - Any heavy-tier behavior change (GridX heavy is the parity reference; light conforms to it).
