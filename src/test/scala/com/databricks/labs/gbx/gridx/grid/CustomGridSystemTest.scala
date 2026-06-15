@@ -79,4 +79,18 @@ class CustomGridSystemTest extends AnyFunSuite with Matchers {
         ring should contain(center)
     }
 
+    test("pointToCellID rejects a NaN X coordinate via the NaN guard") {
+        val ex = the[IllegalStateException] thrownBy g.pointToCellID(Double.NaN, 5.0, 0)
+        ex.getMessage should include("NaN coordinates are not supported")
+    }
+
+    test("pointToCellID rejects a NaN Y coordinate via the NaN guard") {
+        // Resolved decision 3: the guard formerly read `!x.isNaN && !x.isNaN`, so a NaN Y
+        // was never caught by the NaN guard. Pre-fix a NaN Y is only (incidentally) rejected
+        // by the later Y-bounds `require` (NaN comparisons are false), surfacing the wrong
+        // message. The fix makes the NaN guard itself catch a NaN Y -> assert that message.
+        val ex = the[IllegalStateException] thrownBy g.pointToCellID(5.0, Double.NaN, 0)
+        ex.getMessage should include("NaN coordinates are not supported")
+    }
+
 }
