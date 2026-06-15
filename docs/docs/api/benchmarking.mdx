@@ -317,6 +317,12 @@ far higher:
 
 <TabItem value="raster" label="Raster">
 
+:::note Mode coverage (of the 107 RasterX functions)
+Not every function appears in both timing models — the gaps are deliberate measurement choices, not functional gaps (the lightweight tier implements all 107):
+- **Pure-core: 100 / 107.** The 7 absent are the grouped aggregators (`rst_*_agg`) — a UDAF has no single-tile, single-row form to time in isolation, so they appear only in spark-path.
+- **Spark-path: 83 / 107.** The 24 absent are pure-core-only because their call shape doesn't fit the spark-path tile-DataFrame model: geometry-input constructors (`rst_rasterize`, `rst_gridfrompoints`, `rst_dtmfromgeoms` — the tile DataFrame carries no geometry column), the path reader (`rst_fromfile`), functions needing an in-extent coordinate/geometry literal valid across the multi-CRS corpus (`rst_clip`, `rst_sample`, `rst_viewshed`, `rst_worldtorastercoord*`, `rst_resample_to_res`), render-engine-divergent tiles (`rst_tilexyz`, `rst_xyzpyramid`, `rst_color_relief`), and metadata/scalar accessors (`rst_metadata`, `rst_type`, `rst_summary`, …) whose spark-path cell would be an uncomparable timing-only result.
+:::
+
 ### Pure-core (local, 1024²)
 
 The pure-core table is the **algorithm in isolation**: open one tile, call the function, measure — no Spark, no serialization. It is the fairest view of the raw implementation. It is one snapshot — absolute timings are environment-dependent — but the **relative** picture and the consistency outcome are stable. Per-tile timing is shown in **milliseconds**; cells whose output cannot be fingerprinted for a direct comparison (readers, metadata accessors) are timed and labelled `timing-only`.

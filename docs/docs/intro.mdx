@@ -3,6 +3,7 @@ sidebar_position: 1
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import GeoBrixLogo from '../../resources/images/GeoBriX.png';
 
 # Introduction to GeoBrix
 
@@ -16,9 +17,20 @@ GeoBrix is a high-performance spatial processing library for Databricks. It ship
 <div style={{
   display: 'flex',
   flexWrap: 'wrap',
+  alignItems: 'stretch',
   gap: '1rem',
   margin: '2rem 0',
 }}>
+  <div style={{
+    flex: '1 1 120px',
+    minWidth: '120px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '1rem',
+  }}>
+    <img src={GeoBrixLogo} alt="GeoBrix" style={{maxWidth: '100%', maxHeight: '96px', objectFit: 'contain'}} />
+  </div>
   {[
     {n: '154', label: 'Functions', accent: '#2e7d32'},
     {n: '107', label: 'RasterX', accent: '#1565c0'},
@@ -55,8 +67,6 @@ GeoBrix is a high-performance spatial processing library for Databricks. It ship
 </div>
 
 GridX's 40 functions break down as **BNG (23)**, **Quadbin (10)**, and **custom grids (7)**.
-
-![GeoBrix Logo](../../resources/images/GeoBriX.png)
 
 ## Background
 
