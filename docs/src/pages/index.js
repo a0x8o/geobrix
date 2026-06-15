@@ -52,12 +52,12 @@ function HomepageFeatures() {
           />
           <Feature
             title="GridX"
-            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. All three — BNG, quadbin, and custom grids — are available in the lightweight tier (pygx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier."
+            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. All three — BNG, quadbin, and custom grids — are available in the lightweight tier (pygx)."
             link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types. Available in the lightweight tier (pyvx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier."
+            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types. Available in the lightweight tier (pyvx)."
             link="/docs/api/vectorx-functions"
           />
         </div>
