@@ -524,9 +524,12 @@ def generate_bng_chip_groups(n_rows: int, res="1km"):
     row, streamed into the aggregator).  Both tiers' cellunion_agg consume the
     same chip struct shape; the chip geometry is the full cell polygon (a core
     chip materialized to WKB) for the cell at a deterministic easting/northing.
-    Rows are distributed across a small number of groups so the grouped aggregate
-    produces several dissolved unions; cells within a group are spatially
-    adjacent (a small e/n walk) so each group's union is contiguous coverage."""
+    Rows are distributed across a small number of groups. `cellunion_agg` is a
+    SAME-CELL union (heavy enforces one cell id per aggregate), so every chip in
+    a group is the SAME cell — the group key maps 1:1 to a distinct cell, and the
+    group's union is that cell's polygon. (A multi-cell group is outside the
+    function's contract and the two tiers legitimately diverge there, so we don't
+    benchmark it.)"""
     from shapely import to_wkb as _to_wkb
 
     from databricks.labs.gbx.pygx import _bng
@@ -535,11 +538,10 @@ def generate_bng_chip_groups(n_rows: int, res="1km"):
     rows = []
     for i in range(n_rows):
         g = i % n_groups
-        base_e = _BNG_ANCHOR_E + (g * 7000.0)
-        base_n = _BNG_ANCHOR_N + (g * 5000.0)
-        step = (i // n_groups) + 1
-        e = base_e + (step % 5) * 1000.0
-        n = base_n + ((step // 5) % 5) * 1000.0
+        # One distinct cell per group; ALL chips in a group share that cell, so
+        # the grouped aggregate performs a same-cell union (its contract).
+        e = _BNG_ANCHOR_E + (g * 7000.0)
+        n = _BNG_ANCHOR_N + (g * 5000.0)
         cellid = _bng.point_as_cell(float(e), float(n), res)
         chip = _to_wkb(_bng.cell_id_to_geometry(_bng.parse(cellid)))
         rows.append((int(g), (str(cellid), False, chip)))
