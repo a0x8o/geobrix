@@ -1028,7 +1028,7 @@ Major 100km grid squares in Great Britain:
 
 A custom grid is a user-defined regular rectangular grid specified by its spatial extent, root cell size, and a recursive split factor. Cell IDs are `BIGINT` values; hierarchy is controlled by `cell_splits` (each level subdivides root cells into `cell_splits x cell_splits` sub-cells). Use custom grids when neither BNG nor quadbin matches your coordinate reference system or cell-size requirements — for example, a national grid in EPSG:27700 with non-standard tile sizes.
 
-### gbx_custom_grid
+### custom_grid
 
 <Tier heavy/>
 
@@ -1055,7 +1055,7 @@ Define a user-specified regular grid from an origin, extent, cell size, split fa
 
 ---
 
-### gbx_custom_pointascell
+### custom_pointascell
 
 <Tier heavy/>
 
@@ -1077,7 +1077,7 @@ Index a point geometry into a custom grid cell ID at the specified resolution le
 
 ---
 
-### gbx_custom_cellaswkb
+### custom_cellaswkb
 
 <Tier heavy/>
 
@@ -1098,7 +1098,7 @@ Return the WKB footprint polygon of a custom grid cell.
 
 ---
 
-### gbx_custom_cellaswkt
+### custom_cellaswkt
 
 <Tier heavy/>
 
@@ -1119,7 +1119,7 @@ Return the WKT footprint polygon of a custom grid cell.
 
 ---
 
-### gbx_custom_centroid
+### custom_centroid
 
 <Tier heavy/>
 
@@ -1140,7 +1140,7 @@ Return the centroid of a custom grid cell as a WKB point.
 
 ---
 
-### gbx_custom_polyfill
+### custom_polyfill
 
 <Tier heavy/>
 
@@ -1162,7 +1162,7 @@ Fill a geometry with all custom grid cell IDs at the specified resolution.
 
 ---
 
-### gbx_custom_kring
+### custom_kring
 
 <Tier heavy/>
 

@@ -347,7 +347,7 @@ The lightweight tier raises `NotImplementedError` on `mode='conforming'` — it 
 In the **lightweight** tier these TIN generators are PySpark UDTFs with **no Python DataFrame Column form** — invoke them via SQL `LATERAL` (e.g. `... , LATERAL gbx_st_triangulate(...) t`), the same pattern as `gbx_st_asmvt_pyramid`. In the **heavyweight** tier they are exposed as generator Columns (usable in `select(...)`) and via SQL `LATERAL VIEW`. SQL `LATERAL` works for **both** tiers; the Python DataFrame Column form is heavyweight-only for these generators.
 :::
 
-### gbx_st_triangulate
+### st_triangulate
 
 <Tier both/> <Impl udtf/>
 
@@ -386,7 +386,7 @@ In the lightweight tier, call the registered UDTF via SQL `LATERAL` (shown above
 
 ---
 
-### gbx_st_interpolateelevationbbox
+### st_interpolateelevationbbox
 
 <Tier both/> <Impl udtf/>
 
@@ -413,7 +413,7 @@ Builds a TIN from mass points and breaklines, then samples elevation on a regula
 
 ---
 
-### gbx_st_interpolateelevationgeom
+### st_interpolateelevationgeom
 
 <Tier both/> <Impl udtf/>
 
