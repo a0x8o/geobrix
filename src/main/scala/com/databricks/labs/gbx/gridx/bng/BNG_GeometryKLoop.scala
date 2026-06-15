@@ -41,6 +41,10 @@ object BNG_GeometryKLoop extends WithExpressionInfo {
         ArrayData.toArrayData(result.map(UTF8String.fromString).toArray)
     }
 
+    def eval(geom: UTF8String, res: UTF8String, k: Int): ArrayData = eval(geom, BNG.getResolution(res), k)
+
+    def eval(geom: Array[Byte], res: UTF8String, k: Int): ArrayData = eval(geom, BNG.getResolution(res), k)
+
     def execute(geom: Geometry, res: Int, k: Int): Set[String] = {
         val kLoop = BNG.geometryKLoop(geom, res, k)
         kLoop.map(BNG.format)
