@@ -303,3 +303,42 @@ def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
             if geometry.contains(_Point(cx, cy)):
                 out.append(point_to_cell_id(conf, cx, cy, resolution))
     return out
+
+
+# --- k_ring (CustomGridSystem.kRing) ------------------------------------------
+
+
+def k_ring(conf: CustomGridConf, cell_id: int, k: int) -> List[int]:
+    """Chebyshev (square) k-ring of cell IDs around ``cell_id``.
+
+    Port of CustomGridSystem.scala:38-60. The neighborhood is the Chebyshev
+    (square / Moore) block of cells within ``k`` steps of the center cell in
+    both axes, INCLUDING the center cell itself (heavy iterates the full
+    ``[posX-k, posX+k] x [posY-k, posY+k]`` square with no center exclusion).
+
+    The block is CLAMPED to the grid bounds rather than wrapped: the lower
+    bound is ``max(pos-k, 0)`` so positions never go negative, and the upper
+    bound is ``min(pos+k, totalCellsX/Y(res))`` so off-edge cells are dropped.
+    A center cell at a grid corner therefore yields fewer cells than an interior
+    cell. The upper clamp uses ``totalCells`` ITSELF (not ``totalCells - 1``) and
+    iterates INCLUSIVELY (Scala ``a to b``) — ported verbatim so the cell set is
+    bit-identical to heavy; the parity test locks heavy's set.
+    """
+    if k < 0:
+        raise ValueError("gbx_custom: k must be at least 0")
+    res = get_cell_resolution(cell_id)
+    cell_position = get_cell_position(cell_id)
+    pos_x = get_cell_position_x(conf, cell_position, res)
+    pos_y = get_cell_position_y(conf, cell_position, res)
+
+    from_x = max(pos_x - k, 0)
+    to_x = min(pos_x + k, total_cells_x(conf, res))
+    from_y = max(pos_y - k, 0)
+    to_y = min(pos_y + k, total_cells_y(conf, res))
+
+    out: List[int] = []
+    for x in range(from_x, to_x + 1):  # Scala `a to b` is INCLUSIVE
+        for y in range(from_y, to_y + 1):
+            pos = get_cell_position_from_positions(conf, x, y, res)
+            out.append(get_cell_id(pos, res))
+    return out

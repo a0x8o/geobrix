@@ -161,3 +161,49 @@ def test_polyfill_centroid_containment_only():
     # A box smaller than one cell, off-center, contains NO cell center -> empty.
     geom = _box2(530100.0, 180100.0, 530400.0, 180400.0)
     assert _custom.polyfill(c, geom, 0) == []
+
+
+# --- k_ring (CustomGridSystem.kRing, Chebyshev square clamped to totalCells) --
+
+
+def test_kring_interior_k1_is_nine_cells():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)  # interior cell
+    ring = _custom.k_ring(c, cid, 1)
+    # Chebyshev (square) neighborhood includes the center cell.
+    assert cid in ring
+    assert len(set(ring)) == 9  # 3x3 block, far from edges
+
+
+def test_kring_k0_is_self_only():
+    c = _conf()
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)
+    assert _custom.k_ring(c, cid, 0) == [cid]
+
+
+def test_kring_clamps_at_origin_corner():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    cid = _custom.point_to_cell_id(c, 100.0, 100.0, 0)  # posX=posY=0 (origin corner)
+    ring = _custom.k_ring(c, cid, 1)
+    # fromX/fromY clamp to 0; no cell extends to a negative position.
+    assert cid in ring
+    assert all(_custom.get_cell_position(rc) >= 0 for rc in ring)
+    # Corner: the [-1,1]^2 square is clamped to x in [0,1], y in [0,1] -> 2x2 = 4
+    # cells (fewer than the interior 9). The upper bound uses totalCells itself,
+    # but posX/posY=0 with k=1 only reaches x,y in {0,1}, well within bounds.
+    assert len(set(ring)) == 4
+
+
+def test_kring_k2_interior_is_twenty_five_cells():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)  # interior cell
+    ring = _custom.k_ring(c, cid, 2)
+    assert cid in ring
+    assert len(set(ring)) == 25  # 5x5 block, far from edges
+
+
+def test_kring_rejects_negative_k():
+    c = _conf()
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)
+    with pytest.raises(ValueError):
+        _custom.k_ring(c, cid, -1)
