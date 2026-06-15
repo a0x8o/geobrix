@@ -21,22 +21,30 @@ GeoBrix is a high-performance spatial processing library for Databricks. It ship
   gap: '1rem',
   margin: '2rem 0',
 }}>
+  {/* Total — wider box that encloses the logo above the count */}
   <div style={{
-    flex: '1 1 120px',
-    minWidth: '120px',
+    flex: '2 1 240px',
+    minWidth: '200px',
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '1rem',
+    textAlign: 'center',
+    padding: '1.25rem 1rem',
+    borderRadius: '12px',
+    border: '1px solid var(--ifm-color-emphasis-300)',
+    borderTop: '4px solid #2e7d32',
+    background: 'var(--ifm-card-background-color, var(--ifm-background-surface-color))',
   }}>
-    <img src={GeoBrixLogo} alt="GeoBrix" style={{maxWidth: '100%', maxHeight: '96px', objectFit: 'contain'}} />
+    <img src={GeoBrixLogo} alt="GeoBrix" style={{maxWidth: '100%', maxHeight: '64px', objectFit: 'contain', marginBottom: '0.75rem'}} />
+    <div style={{fontSize: '2.75rem', fontWeight: 800, lineHeight: 1, color: '#2e7d32'}}>154</div>
+    <div style={{marginTop: '0.5rem', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ifm-color-emphasis-700)'}}>Functions</div>
   </div>
   {[
-    {n: '154', label: 'Functions', accent: '#2e7d32'},
-    {n: '107', label: 'RasterX', accent: '#1565c0'},
-    {n: '40', label: 'GridX', accent: '#1565c0'},
-    {n: '6', label: 'VectorX', accent: '#1565c0'},
-    {n: '1', label: 'PMTiles', accent: '#1565c0'},
+    {n: '107', label: 'RasterX'},
+    {n: '40', label: 'GridX'},
+    {n: '6', label: 'VectorX'},
+    {n: '1', label: 'PMTiles'},
   ].map((s) => (
     <div key={s.label} style={{
       flex: '1 1 120px',
@@ -45,14 +53,18 @@ GeoBrix is a high-performance spatial processing library for Databricks. It ship
       padding: '1.25rem 1rem',
       borderRadius: '12px',
       border: '1px solid var(--ifm-color-emphasis-300)',
-      borderTop: `4px solid ${s.accent}`,
+      borderTop: '4px solid #1565c0',
       background: 'var(--ifm-card-background-color, var(--ifm-background-surface-color))',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
     }}>
       <div style={{
         fontSize: '2.75rem',
         fontWeight: 800,
         lineHeight: 1,
-        color: s.accent,
+        color: '#1565c0',
       }}>{s.n}</div>
       <div style={{
         marginTop: '0.5rem',
