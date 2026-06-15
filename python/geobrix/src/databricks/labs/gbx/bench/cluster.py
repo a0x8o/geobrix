@@ -2057,21 +2057,19 @@ if _bng_rows:
 """
 
 _CELL_GRID_CUSTOM = """# Custom grid benchmark: light pygx vs heavy gridx.custom, exact-output parity.
-# Representative spread of the 7 gbx_custom_* functions: pointascell (geom first-coord
-# -> BIGINT cell) / polyfill (geom -> ARRAY<BIGINT>) / kring (scalar BIGINT cell-in ->
-# ARRAY<BIGINT>) / cellaswkb (cell -> WKB polygon, the UDF-boundary leg). Both tiers
-# expose the SAME gbx_custom_* SQL names, so light is collected BEFORE heavy
-# re-registers (the later registration overwrites the UDF) -- the same ordering trick as
-# the quadbin/BNG parity cells. Every leg builds the SAME grid struct via gbx_custom_grid
+# All 7 gbx_custom_* functions: grid (8 scalar args -> validated STRUCT) / pointascell
+# (geom first-coord -> BIGINT cell) / polyfill (geom -> ARRAY<BIGINT>) / kring (scalar
+# BIGINT cell-in -> ARRAY<BIGINT>) / cellaswkb (cell -> WKB polygon) / cellaswkt (cell ->
+# WKT polygon string) / centroid (cell -> WKB point). Both tiers expose the SAME
+# gbx_custom_* SQL names, so light is collected BEFORE heavy re-registers (the later
+# registration overwrites the UDF) -- the same ordering trick as the quadbin/BNG parity
+# cells. Every leg builds the SAME grid struct via gbx_custom_grid
 # (corpus_vector.CUSTOM_GRID_SQL = 0,1000000,0,1000000,2,1000,1000,27700) so both tiers
-# consume an identical STRUCT. Cell ids are BIGINT; geometry outputs are plain WKB, no
+# consume an identical STRUCT. Cell ids are BIGINT; geometry outputs are plain WKB/WKT, no
 # SRID (the grid's srid is metadata only). pointascell uses the geometry's FIRST
-# coordinate (heavy geom.getCoordinate), NOT the centroid (unlike BNG).
-#
-# WHY only these 4 legs (not all 7): cellaswkt/centroid share cellaswkb's cell->geometry
-# shape and UDF boundary -- cellaswkb is the representative WKB-bytes leg; gbx_custom_grid
-# is the validating STRUCT constructor (a per-run constant, not a per-row geo op), so it
-# is never benchmarked on its own -- it is exercised on EVERY leg as the inline grid build.
+# coordinate (heavy geom.getCoordinate), NOT the centroid (unlike BNG). gbx_custom_grid is
+# the validating STRUCT constructor consumed by every other op -- benched here as a scalar
+# construction leg, and parity-compared on its struct field tuple.
 from databricks.labs.gbx.bench import readers as _rd
 from databricks.labs.gbx.bench import corpus_vector as _cv
 from shapely import wkb as _shp_wkb
@@ -2080,10 +2078,13 @@ _CUSTOM_N_ROWS = 1000
 _CUSTOM_RES = 0        # pointascell / polyfill / cell resolution (res 0 -> 1000m cells)
 _CUSTOM_KRING_K = 1    # kring radius
 _CUSTOM_GRID_SQL = _cv.CUSTOM_GRID_SQL
-_CUSTOM_N_LEGS = 4     # legs per tier (keep in sync with the appends below)
+_CUSTOM_N_LEGS = 7     # legs per tier (keep in sync with the appends below)
 def _custom_legs(_api):
-    # Run all 4 custom legs for one tier, in a fixed order, returning the rows.
+    # Run all 7 custom legs for one tier, in a fixed order, returning the rows.
     _out = []
+    _out.append(_rd.run_custom_grid(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, where="cluster"))
     _out.append(_rd.run_custom_pointascell(
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
         n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
@@ -2094,6 +2095,12 @@ def _custom_legs(_api):
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
         n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, k=_CUSTOM_KRING_K, where="cluster"))
     _out.append(_rd.run_custom_cellaswkb(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
+    _out.append(_rd.run_custom_cellaswkt(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
+    _out.append(_rd.run_custom_centroid(
         spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
         n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
     return _out
@@ -2202,6 +2209,77 @@ if LIGHTWEIGHT and HEAVYWEIGHT:
         _v = "CUSTOM CELLASWKB PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
     print(_v); _verdicts.append(_v)
     assert _v.startswith("CUSTOM CELLASWKB PARITY: PASS"), _v
+    # --- cellaswkt: decoded polygon (via WKT) sym-diff area < 1e-6 (shared cell corpus). ---
+    try:
+        from shapely import wkt as _shp_wkt
+        from databricks.labs.gbx.pygx import functions as _gx_wt
+        _gx_wt.register(spark)
+        _light_wt = [r["g"] for r in spark.sql(
+            "SELECT gbx_custom_cellaswkt(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_wt
+        _hx_wt.register(spark)
+        _heavy_wt = [r["g"] for r in spark.sql(
+            "SELECT gbx_custom_cellaswkt(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        _wt_ok = len(_light_wt) == len(_heavy_wt) > 0
+        if _wt_ok:
+            for _lt, _ht in zip(_light_wt, _heavy_wt):
+                if _shp_wkt.loads(_lt).symmetric_difference(
+                        _shp_wkt.loads(_ht)).area >= 1e-6:
+                    _wt_ok = False; break
+        _v = ("CUSTOM CELLASWKT PARITY: PASS (%d cells, decoded geom < 1e-6)" % len(_light_wt)
+              if _wt_ok else "CUSTOM CELLASWKT PARITY: FAIL -- geometry mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM CELLASWKT PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM CELLASWKT PARITY: PASS"), _v
+    # --- centroid: decoded point distance < 1e-6 (shared cell corpus). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ct
+        _gx_ct.register(spark)
+        _light_ct = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_custom_centroid(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_ct
+        _hx_ct.register(spark)
+        _heavy_ct = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_custom_centroid(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        _ct_ok = len(_light_ct) == len(_heavy_ct) > 0
+        if _ct_ok:
+            for _lb, _hb in zip(_light_ct, _heavy_ct):
+                if _shp_wkb.loads(_lb).distance(_shp_wkb.loads(_hb)) >= 1e-6:
+                    _ct_ok = False; break
+        _v = ("CUSTOM CENTROID PARITY: PASS (%d cells, point < 1e-6)" % len(_light_ct)
+              if _ct_ok else "CUSTOM CENTROID PARITY: FAIL -- point mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM CENTROID PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM CENTROID PARITY: PASS"), _v
+    # --- grid: exact struct field-tuple equality. gbx_custom_grid builds the SAME
+    # validated grid STRUCT in both tiers, so the 8 named fields must match exactly. ---
+    try:
+        _GRID_FIELDS = ["bound_x_min", "bound_x_max", "bound_y_min", "bound_y_max",
+                        "cell_splits", "root_cell_size_x", "root_cell_size_y", "srid"]
+        def _grid_tuple(_g):
+            return tuple(_g[_f] for _f in _GRID_FIELDS)
+        from databricks.labs.gbx.pygx import functions as _gx_gr
+        _gx_gr.register(spark)
+        _light_gr = _grid_tuple(spark.sql(
+            "SELECT %s AS grid" % _CUSTOM_GRID_SQL).head(1)[0]["grid"])
+        from databricks.labs.gbx.gridx.custom import functions as _hx_gr
+        _hx_gr.register(spark)
+        _heavy_gr = _grid_tuple(spark.sql(
+            "SELECT %s AS grid" % _CUSTOM_GRID_SQL).head(1)[0]["grid"])
+        _gr_ok = _light_gr == _heavy_gr
+        _v = ("CUSTOM GRID PARITY: PASS (struct field tuple exact: %s)" % (_light_gr,)
+              if _gr_ok else "CUSTOM GRID PARITY: FAIL -- struct mismatch %s vs %s"
+              % (_light_gr, _heavy_gr))
+    except Exception as _pe:
+        _v = "CUSTOM GRID PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM GRID PARITY: PASS"), _v
     _show_md("Custom grid parity -- " + RUN_ID, "\\n".join("- " + _x for _x in _verdicts))
 if _custom_rows:
     _df_custom = spark.sql(
