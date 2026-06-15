@@ -549,6 +549,81 @@ def generate_bng_chip_groups(n_rows: int, res="1km"):
     return rows, schema
 
 
+def generate_bng_cell_pairs(n_rows: int, res="1km"):
+    """``n_rows`` deterministic (cell_a, cell_b) STRING pairs for the two-arg legs.
+
+    Returns ``(rows, schema)`` where each row is ``(cell_a, cell_b)`` -- two BNG
+    cell ids at the SAME ``res`` (a precondition of bng_distance /
+    bng_euclideandistance).  ``cell_a`` is the deterministic sweep cell (same as
+    ``generate_bng_cells``); ``cell_b`` is a second cell a small, deterministic
+    easting/northing step away (so the two are at the same resolution but
+    generally a non-zero grid distance apart).  Cells are computed by pure-Python
+    ``_bng.point_as_cell`` over EPSG:27700 eastings/northings around the London
+    anchor so both tiers see identical inputs and stay on valid BNG land."""
+    from databricks.labs.gbx.pygx import _bng
+
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        # Second cell a deterministic small step away (+[100, 500]m east, +[100,
+        # 300]m north), kept on valid BNG land near the London anchor.
+        e_b = e + ((i % 5) + 1) * 100.0
+        n_b = n + ((i % 3) + 1) * 100.0
+        cell_a = _bng.point_as_cell(float(e), float(n), res)
+        cell_b = _bng.point_as_cell(float(e_b), float(n_b), res)
+        rows.append((str(cell_a), str(cell_b)))
+    return rows, "cell_a string, cell_b string"
+
+
+def generate_bng_eastnorth(n_rows: int):
+    """``n_rows`` deterministic (e, n) DOUBLE pairs for bng_eastnorthasbng.
+
+    Returns ``(rows, schema)`` where each row is ``(e, n)`` -- two EPSG:27700
+    eastings/northings (DOUBLE, BNG, NOT WGS84).  Mirrors ``generate_bng_points``
+    but emits two doubles instead of a WKT string, sweeping deterministically over
+    a ~50km x 50km patch around the London anchor so every row stays on valid BNG
+    land and yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        rows.append((float(e), float(n)))
+    return rows, "e double, n double"
+
+
+def generate_bng_chip_pairs(n_rows: int, res="1km"):
+    """``n_rows`` (lid, lcore, lchip, rid, rcore, rchip) rows for the chip-struct legs.
+
+    Returns ``(rows, schema)`` for bng_cellintersection / bng_cellunion, which
+    take TWO chip ``STRUCT<cellid, core, chip>`` args.  Each row holds two chip
+    structs over the SAME cell id (a core chip and a full-cell chip), so union /
+    intersection both produce the whole cell.  The chip geometry is the full cell
+    polygon materialized to WKB (``_to_wkb(_bng.cell_id_to_geometry(parse(cellid)))``)
+    for a deterministic cell swept around the London anchor at ``res`` (a string
+    resolution key), so light and heavy consume identical inputs.  Mirrors the
+    ``chip_row`` fixture in the BNG parity test: ``(seed, True, chip, seed, False,
+    chip)``."""
+    from shapely import to_wkb as _to_wkb
+
+    from databricks.labs.gbx.pygx import _bng
+
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        cellid = _bng.point_as_cell(float(e), float(n), res)
+        chip = _to_wkb(_bng.cell_id_to_geometry(_bng.parse(cellid)))
+        # Same cellid both sides: a core chip + a full-cell chip -> union /
+        # intersection over the same cell yield the whole cell polygon.
+        rows.append((str(cellid), True, chip, str(cellid), False, chip))
+    schema = (
+        "lid string, lcore boolean, lchip binary, "
+        "rid string, rcore boolean, rchip binary"
+    )
+    return rows, schema
+
+
 def build_vector_corpus(
     spark, rows: int, copies: int, formats: List[str], out_base: str, srid: str = "4326"
 ) -> dict:

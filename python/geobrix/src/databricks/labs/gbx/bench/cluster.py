@@ -1463,46 +1463,97 @@ from shapely import wkb as _shp_wkb
 _bng_rows = []
 _BNG_N_ROWS = 1000
 _BNG_GEOM_RES = "1km"   # pointascell / polyfill / tessellate resolution
-_BNG_CELL_RES = "1km"   # kring cell resolution
 _BNG_AGG_RES = "1km"    # cellunion_agg chip cell resolution
-_BNG_KRING_K = 1        # kring radius
-_BNG_N_LEGS = 5         # legs per tier (keep in sync with the appends below)
+_BNG_CELL_RES = "1km"   # scalar cell / pair / eastnorth resolution
+_BNG_KRING_K = 1        # kring / kloop radius
+_BNG_KLOOP_K = 1        # kloop radius
+_BNG_GEOMK_K = 1        # geomkring / geomkloop radius
+_BNG_N_LEGS = 23        # legs per tier (keep in sync with the appends below)
+# Order: 5 originals (pointascell, polyfill, tessellate, kring, cellunion_agg)
+# then the 18 new legs: scalars, arrays, chip-struct, intersection_agg, explodes.
+def _bng_legs(_api):
+    # Run all 23 BNG legs for one tier, in a fixed order, returning the rows.
+    _out = []
+    _out.append(_rd.run_bng_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _out.append(_rd.run_bng_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _out.append(_rd.run_bng_tessellate(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    _out.append(_rd.run_bng_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
+    _out.append(_rd.run_bng_cellunion_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
+    # --- scalars (cell-in / pair / eastnorth) ---
+    _out.append(_rd.run_bng_aswkb(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_aswkt(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_centroid(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_cellarea(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_distance(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_euclideandistance(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_eastnorthasbng(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    # --- array-returning (kloop, geomk*) ---
+    _out.append(_rd.run_bng_kloop(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KLOOP_K, where="cluster"))
+    _out.append(_rd.run_bng_geomkring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, k=_BNG_GEOMK_K, where="cluster"))
+    _out.append(_rd.run_bng_geomkloop(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, k=_BNG_GEOMK_K, where="cluster"))
+    # --- chip-struct scalars ---
+    _out.append(_rd.run_bng_cellintersection(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    _out.append(_rd.run_bng_cellunion(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, where="cluster"))
+    # --- grouped intersection aggregate ---
+    _out.append(_rd.run_bng_cellintersection_agg(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
+    # --- explode UDTFs (LATERAL SQL, tier-agnostic job) ---
+    _out.append(_rd.run_bng_kringexplode(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
+    _out.append(_rd.run_bng_kloopexplode(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KLOOP_K, where="cluster"))
+    _out.append(_rd.run_bng_geomkringexplode(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, k=_BNG_GEOMK_K, where="cluster"))
+    _out.append(_rd.run_bng_geomkloopexplode(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, k=_BNG_GEOMK_K, where="cluster"))
+    _out.append(_rd.run_bng_tessellateexplode(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
+    return _out
 if LIGHTWEIGHT:
-    _bng_rows.append(_rd.run_bng_pointascell(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _bng_rows.append(_rd.run_bng_polyfill(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _bng_rows.append(_rd.run_bng_tessellate(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _bng_rows.append(_rd.run_bng_kring(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
-    _bng_rows.append(_rd.run_bng_cellunion_agg(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="lightweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
-    for _r in _bng_rows[-_BNG_N_LEGS:]:
-        _sink([_r]); lw.append(_r)
+    for _r in _bng_legs("lightweight"):
+        _sink([_r]); lw.append(_r); _bng_rows.append(_r)
 if HEAVYWEIGHT:
-    _hw_bng = []
-    _hw_bng.append(_rd.run_bng_pointascell(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _hw_bng.append(_rd.run_bng_polyfill(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _hw_bng.append(_rd.run_bng_tessellate(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_GEOM_RES, where="cluster"))
-    _hw_bng.append(_rd.run_bng_kring(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_CELL_RES, k=_BNG_KRING_K, where="cluster"))
-    _hw_bng.append(_rd.run_bng_cellunion_agg(
-        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api="heavyweight",
-        n_rows=_BNG_N_ROWS, res=_BNG_AGG_RES, where="cluster"))
-    for _r in _hw_bng:
+    for _r in _bng_legs("heavyweight"):
         _sink([_r]); hw.append(_r); _bng_rows.append(_r)
 # Exact-output parity (hard gate): rebuild the SAME deterministic corpora, collect each tier
 # through its native SQL surface, and compare. Cell ids: exact equality. Decoded geometry: 1e-6.
@@ -1637,6 +1688,358 @@ if LIGHTWEIGHT and HEAVYWEIGHT:
         _v = "BNG CELLUNION_AGG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
     print(_v); _verdicts.append(_v)
     assert _v.startswith("BNG CELLUNION_AGG PARITY: PASS"), _v
+    # --- aswkb: decoded polygon sym-diff area < 1e-6 (shared single-cell corpus). ---
+    try:
+        _cdata, _cschema = _cv.generate_bng_cells(_BNG_N_ROWS, res=_BNG_CELL_RES)
+        spark.createDataFrame(_cdata, schema=_cschema).createOrReplaceTempView(
+            "_bng_cell_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_wb
+        _gx_wb.register(spark)
+        _light_wb = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_bng_aswkb(cell) AS g FROM _bng_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_wb
+        _hx_wb.register(spark)
+        _heavy_wb = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_bng_aswkb(cell) AS g FROM _bng_cell_parity_v").collect()]
+        _wb_ok = len(_light_wb) == len(_heavy_wb) > 0
+        if _wb_ok:
+            for _lb, _hb in zip(_light_wb, _heavy_wb):
+                if _shp_wkb.loads(_lb).symmetric_difference(
+                        _shp_wkb.loads(_hb)).area >= 1e-6:
+                    _wb_ok = False; break
+        _v = ("BNG ASWKB PARITY: PASS (%d cells, decoded geom < 1e-6)" % len(_light_wb)
+              if _wb_ok else "BNG ASWKB PARITY: FAIL -- geometry mismatch")
+    except Exception as _pe:
+        _v = "BNG ASWKB PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG ASWKB PARITY: PASS"), _v
+    # --- aswkt: decoded polygon (via WKT) sym-diff area < 1e-6. ---
+    try:
+        from shapely import wkt as _shp_wkt
+        from databricks.labs.gbx.pygx import functions as _gx_wt
+        _gx_wt.register(spark)
+        _light_wt = [r["g"] for r in spark.sql(
+            "SELECT gbx_bng_aswkt(cell) AS g FROM _bng_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_wt
+        _hx_wt.register(spark)
+        _heavy_wt = [r["g"] for r in spark.sql(
+            "SELECT gbx_bng_aswkt(cell) AS g FROM _bng_cell_parity_v").collect()]
+        _wt_ok = len(_light_wt) == len(_heavy_wt) > 0
+        if _wt_ok:
+            for _lt, _ht in zip(_light_wt, _heavy_wt):
+                if _shp_wkt.loads(_lt).symmetric_difference(
+                        _shp_wkt.loads(_ht)).area >= 1e-6:
+                    _wt_ok = False; break
+        _v = ("BNG ASWKT PARITY: PASS (%d cells, decoded geom < 1e-6)" % len(_light_wt)
+              if _wt_ok else "BNG ASWKT PARITY: FAIL -- geometry mismatch")
+    except Exception as _pe:
+        _v = "BNG ASWKT PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG ASWKT PARITY: PASS"), _v
+    # --- centroid: decoded point distance < 1e-6. ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ct
+        _gx_ct.register(spark)
+        _light_ct = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_bng_centroid(cell) AS g FROM _bng_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ct
+        _hx_ct.register(spark)
+        _heavy_ct = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_bng_centroid(cell) AS g FROM _bng_cell_parity_v").collect()]
+        _ct_ok = len(_light_ct) == len(_heavy_ct) > 0
+        if _ct_ok:
+            for _lb, _hb in zip(_light_ct, _heavy_ct):
+                if _shp_wkb.loads(_lb).distance(_shp_wkb.loads(_hb)) >= 1e-6:
+                    _ct_ok = False; break
+        _v = ("BNG CENTROID PARITY: PASS (%d cells, point < 1e-6)" % len(_light_ct)
+              if _ct_ok else "BNG CENTROID PARITY: FAIL -- point mismatch")
+    except Exception as _pe:
+        _v = "BNG CENTROID PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CENTROID PARITY: PASS"), _v
+    # --- cellarea: exact scalar equality. ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ca
+        _gx_ca.register(spark)
+        _light_ca = [r["a"] for r in spark.sql(
+            "SELECT gbx_bng_cellarea(cell) AS a FROM _bng_cell_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ca
+        _hx_ca.register(spark)
+        _heavy_ca = [r["a"] for r in spark.sql(
+            "SELECT gbx_bng_cellarea(cell) AS a FROM _bng_cell_parity_v").collect()]
+        _ca_ok = (len(_light_ca) == len(_heavy_ca) > 0 and _light_ca == _heavy_ca)
+        _v = ("BNG CELLAREA PARITY: PASS (%d cells, exact equality)" % len(_light_ca)
+              if _ca_ok else "BNG CELLAREA PARITY: FAIL -- area mismatch")
+    except Exception as _pe:
+        _v = "BNG CELLAREA PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CELLAREA PARITY: PASS"), _v
+    # --- distance / euclideandistance: exact scalar equality (shared pair corpus). ---
+    try:
+        _pdata, _pschema = _cv.generate_bng_cell_pairs(_BNG_N_ROWS, res=_BNG_CELL_RES)
+        spark.createDataFrame(_pdata, schema=_pschema).createOrReplaceTempView(
+            "_bng_pair_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_di
+        _gx_di.register(spark)
+        _light_di = [r["d"] for r in spark.sql(
+            "SELECT gbx_bng_distance(cell_a, cell_b) AS d "
+            "FROM _bng_pair_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_di
+        _hx_di.register(spark)
+        _heavy_di = [r["d"] for r in spark.sql(
+            "SELECT gbx_bng_distance(cell_a, cell_b) AS d "
+            "FROM _bng_pair_parity_v").collect()]
+        _di_ok = (len(_light_di) == len(_heavy_di) > 0 and _light_di == _heavy_di)
+        _v = ("BNG DISTANCE PARITY: PASS (%d pairs, exact equality)" % len(_light_di)
+              if _di_ok else "BNG DISTANCE PARITY: FAIL -- distance mismatch")
+    except Exception as _pe:
+        _v = "BNG DISTANCE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG DISTANCE PARITY: PASS"), _v
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_ed
+        _gx_ed.register(spark)
+        _light_ed = [r["d"] for r in spark.sql(
+            "SELECT gbx_bng_euclideandistance(cell_a, cell_b) AS d "
+            "FROM _bng_pair_parity_v").collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ed
+        _hx_ed.register(spark)
+        _heavy_ed = [r["d"] for r in spark.sql(
+            "SELECT gbx_bng_euclideandistance(cell_a, cell_b) AS d "
+            "FROM _bng_pair_parity_v").collect()]
+        _ed_ok = (len(_light_ed) == len(_heavy_ed) > 0 and _light_ed == _heavy_ed)
+        _v = ("BNG EUCLIDEANDISTANCE PARITY: PASS (%d pairs, exact equality)"
+              % len(_light_ed)
+              if _ed_ok else "BNG EUCLIDEANDISTANCE PARITY: FAIL -- distance mismatch")
+    except Exception as _pe:
+        _v = "BNG EUCLIDEANDISTANCE PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG EUCLIDEANDISTANCE PARITY: PASS"), _v
+    # --- eastnorthasbng: exact STRING cell-id equality. ---
+    try:
+        _edata, _eschema = _cv.generate_bng_eastnorth(_BNG_N_ROWS)
+        spark.createDataFrame(_edata, schema=_eschema).createOrReplaceTempView(
+            "_bng_eastnorth_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_en
+        _gx_en.register(spark)
+        _light_en = [r["cell"] for r in spark.sql(
+            "SELECT gbx_bng_eastnorthasbng(e, n, '%s') AS cell "
+            "FROM _bng_eastnorth_parity_v" % _BNG_CELL_RES).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_en
+        _hx_en.register(spark)
+        _heavy_en = [r["cell"] for r in spark.sql(
+            "SELECT gbx_bng_eastnorthasbng(e, n, '%s') AS cell "
+            "FROM _bng_eastnorth_parity_v" % _BNG_CELL_RES).collect()]
+        _en_ok = (len(_light_en) == len(_heavy_en) > 0 and _light_en == _heavy_en)
+        _v = ("BNG EASTNORTHASBNG PARITY: PASS (%d points, exact id equality)"
+              % len(_light_en)
+              if _en_ok else "BNG EASTNORTHASBNG PARITY: FAIL -- cell id mismatch")
+    except Exception as _pe:
+        _v = "BNG EASTNORTHASBNG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG EASTNORTHASBNG PARITY: PASS"), _v
+    # --- kloop: exact sorted cell-set per row (shared single-cell corpus). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_kl
+        _gx_kl.register(spark)
+        _light_kl = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_kloop(cell, %d) AS ring FROM _bng_cell_parity_v"
+            % _BNG_KLOOP_K).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_kl
+        _hx_kl.register(spark)
+        _heavy_kl = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_kloop(cell, %d) AS ring FROM _bng_cell_parity_v"
+            % _BNG_KLOOP_K).collect()]
+        _kl_ok = (len(_light_kl) == len(_heavy_kl) > 0 and _light_kl == _heavy_kl)
+        _v = ("BNG KLOOP PARITY: PASS (%d rows, exact set equality, k=%d)"
+              % (len(_light_kl), _BNG_KLOOP_K)
+              if _kl_ok else "BNG KLOOP PARITY: FAIL -- loop set mismatch")
+    except Exception as _pe:
+        _v = "BNG KLOOP PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG KLOOP PARITY: PASS"), _v
+    # --- geomkring / geomkloop: exact sorted cell-set per row (shared geom corpus). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_gkr
+        _gx_gkr.register(spark)
+        _light_gkr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_geomkring(geom, '%s', %d) AS ring FROM _bng_geom_parity_v"
+            % (_BNG_GEOM_RES, _BNG_GEOMK_K)).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_gkr
+        _hx_gkr.register(spark)
+        _heavy_gkr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_geomkring(geom, '%s', %d) AS ring FROM _bng_geom_parity_v"
+            % (_BNG_GEOM_RES, _BNG_GEOMK_K)).collect()]
+        _gkr_ok = (len(_light_gkr) == len(_heavy_gkr) > 0 and _light_gkr == _heavy_gkr)
+        _v = ("BNG GEOMKRING PARITY: PASS (%d rows, exact set equality, k=%d)"
+              % (len(_light_gkr), _BNG_GEOMK_K)
+              if _gkr_ok else "BNG GEOMKRING PARITY: FAIL -- ring set mismatch")
+    except Exception as _pe:
+        _v = "BNG GEOMKRING PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG GEOMKRING PARITY: PASS"), _v
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_gkl
+        _gx_gkl.register(spark)
+        _light_gkl = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_geomkloop(geom, '%s', %d) AS ring FROM _bng_geom_parity_v"
+            % (_BNG_GEOM_RES, _BNG_GEOMK_K)).collect()]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_gkl
+        _hx_gkl.register(spark)
+        _heavy_gkl = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_bng_geomkloop(geom, '%s', %d) AS ring FROM _bng_geom_parity_v"
+            % (_BNG_GEOM_RES, _BNG_GEOMK_K)).collect()]
+        _gkl_ok = (len(_light_gkl) == len(_heavy_gkl) > 0 and _light_gkl == _heavy_gkl)
+        _v = ("BNG GEOMKLOOP PARITY: PASS (%d rows, exact set equality, k=%d)"
+              % (len(_light_gkl), _BNG_GEOMK_K)
+              if _gkl_ok else "BNG GEOMKLOOP PARITY: FAIL -- loop set mismatch")
+    except Exception as _pe:
+        _v = "BNG GEOMKLOOP PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG GEOMKLOOP PARITY: PASS"), _v
+    # --- cellintersection / cellunion: decoded .chip geom sym-diff area < 1e-6
+    # (same-cell chip pairs -> the whole cell either way). ---
+    try:
+        _cpdata, _cpschema = _cv.generate_bng_chip_pairs(_BNG_N_ROWS, res=_BNG_CELL_RES)
+        spark.createDataFrame(_cpdata, schema=_cpschema).createOrReplaceTempView(
+            "_bng_chippair_parity_v")
+        _ci_sql = ("SELECT gbx_bng_cellintersection("
+                   "struct(lid, lcore, lchip), struct(rid, rcore, rchip)).chip AS c "
+                   "FROM _bng_chippair_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_ci
+        _gx_ci.register(spark)
+        _light_ci = [bytes(r["c"]) for r in spark.sql(_ci_sql).collect()
+                     if r["c"] is not None]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ci
+        _hx_ci.register(spark)
+        _heavy_ci = [bytes(r["c"]) for r in spark.sql(_ci_sql).collect()
+                     if r["c"] is not None]
+        _ci_ok = len(_light_ci) == len(_heavy_ci) > 0
+        if _ci_ok:
+            for _lb, _hb in zip(_light_ci, _heavy_ci):
+                if _shp_wkb.loads(_lb).symmetric_difference(
+                        _shp_wkb.loads(_hb)).area >= 1e-6:
+                    _ci_ok = False; break
+        _v = ("BNG CELLINTERSECTION PARITY: PASS (%d pairs, chip geom < 1e-6)"
+              % len(_light_ci)
+              if _ci_ok else "BNG CELLINTERSECTION PARITY: FAIL -- chip geom mismatch")
+    except Exception as _pe:
+        _v = "BNG CELLINTERSECTION PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CELLINTERSECTION PARITY: PASS"), _v
+    try:
+        _cu_sql = ("SELECT gbx_bng_cellunion("
+                   "struct(lid, lcore, lchip), struct(rid, rcore, rchip)).chip AS c "
+                   "FROM _bng_chippair_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_cu
+        _gx_cu.register(spark)
+        _light_cu = [bytes(r["c"]) for r in spark.sql(_cu_sql).collect()
+                     if r["c"] is not None]
+        from databricks.labs.gbx.gridx.bng import functions as _hx_cu
+        _hx_cu.register(spark)
+        _heavy_cu = [bytes(r["c"]) for r in spark.sql(_cu_sql).collect()
+                     if r["c"] is not None]
+        _cu_ok = len(_light_cu) == len(_heavy_cu) > 0
+        if _cu_ok:
+            for _lb, _hb in zip(_light_cu, _heavy_cu):
+                if _shp_wkb.loads(_lb).symmetric_difference(
+                        _shp_wkb.loads(_hb)).area >= 1e-6:
+                    _cu_ok = False; break
+        _v = ("BNG CELLUNION PARITY: PASS (%d pairs, chip geom < 1e-6)"
+              % len(_light_cu)
+              if _cu_ok else "BNG CELLUNION PARITY: FAIL -- chip geom mismatch")
+    except Exception as _pe:
+        _v = "BNG CELLUNION PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CELLUNION PARITY: PASS"), _v
+    # --- cellintersection_agg: per-group decoded chip-GEOMETRY equality (sym-diff
+    # area < 1e-6), identical to the cellunion_agg gate over the SAME-CELL groups. ---
+    try:
+        _aidata, _aischema = _cv.generate_bng_chip_groups(_BNG_N_ROWS, res=_BNG_AGG_RES)
+        spark.createDataFrame(_aidata, schema=_aischema).createOrReplaceTempView(
+            "_bng_agg_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_ai
+        _gx_ai.register(spark)
+        _light_ai = {r["group"]: bytes(r["u"]) for r in spark.sql(
+            "SELECT group, gbx_bng_cellintersection_agg(chip) AS u "
+            "FROM _bng_agg_parity_v GROUP BY group").collect() if r["u"] is not None}
+        from databricks.labs.gbx.gridx.bng import functions as _hx_ai
+        _hx_ai.register(spark)
+        _heavy_ai = {r["group"]: bytes(r["u"]["chip"]) for r in spark.sql(
+            "SELECT group, gbx_bng_cellintersection_agg(chip) AS u "
+            "FROM _bng_agg_parity_v GROUP BY group").collect()
+            if r["u"] is not None and r["u"]["chip"] is not None}
+        _ai_ok = (_light_ai.keys() == _heavy_ai.keys() and len(_light_ai) > 0)
+        if _ai_ok:
+            for _k in _light_ai:
+                _lg = _shp_wkb.loads(_light_ai[_k]); _hg = _shp_wkb.loads(_heavy_ai[_k])
+                if _lg.symmetric_difference(_hg).area >= 1e-6:
+                    _ai_ok = False; break
+        _v = ("BNG CELLINTERSECTION_AGG PARITY: PASS (%d groups, decoded chip-geom equality)"
+              % len(_light_ai)
+              if _ai_ok else "BNG CELLINTERSECTION_AGG PARITY: FAIL -- chip geometry mismatch")
+    except Exception as _pe:
+        _v = "BNG CELLINTERSECTION_AGG PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("BNG CELLINTERSECTION_AGG PARITY: PASS"), _v
+    # --- *explode UDTFs: array-equivalence pairing. Light explodes via LATERAL
+    # (flatten ALL rows -> sorted global cellid set); heavy explodes the equivalent
+    # ARRAY function (kringexplode<->kring, kloopexplode<->kloop, geomk*explode<->
+    # geomk*, tessellateexplode<->tessellate chip cellids). Compare sorted global sets.
+    def _bng_explode_gate(_name, _light_lateral, _heavy_array_sql):
+        try:
+            from databricks.labs.gbx.pygx import functions as _gx_ex
+            _gx_ex.register(spark)
+            _lset = sorted(r["cellid"] for r in spark.sql(_light_lateral).collect())
+            from databricks.labs.gbx.gridx.bng import functions as _hx_ex
+            _hx_ex.register(spark)
+            _hset = sorted(r["cellid"] for r in spark.sql(_heavy_array_sql).collect())
+            _ok = (len(_lset) == len(_hset) > 0 and _lset == _hset)
+            _vv = ("BNG %s PARITY: PASS (%d flat cells, global set equality)"
+                   % (_name, len(_lset))
+                   if _ok else "BNG %s PARITY: FAIL -- exploded set mismatch" % _name)
+        except Exception as _pe:
+            _vv = "BNG %s PARITY: FAIL -- %s: %s" % (_name, type(_pe).__name__, _pe)
+        print(_vv); _verdicts.append(_vv)
+        assert _vv.startswith("BNG %s PARITY: PASS" % _name), _vv
+    # kringexplode <-> kring (single-cell corpus)
+    _bng_explode_gate(
+        "KRINGEXPLODE",
+        "SELECT t.cellid FROM _bng_cell_parity_v, "
+        "LATERAL gbx_bng_kringexplode(cell, %d) t" % _BNG_KRING_K,
+        "SELECT explode(gbx_bng_kring(cell, %d)) AS cellid FROM _bng_cell_parity_v"
+        % _BNG_KRING_K)
+    # kloopexplode <-> kloop
+    _bng_explode_gate(
+        "KLOOPEXPLODE",
+        "SELECT t.cellid FROM _bng_cell_parity_v, "
+        "LATERAL gbx_bng_kloopexplode(cell, %d) t" % _BNG_KLOOP_K,
+        "SELECT explode(gbx_bng_kloop(cell, %d)) AS cellid FROM _bng_cell_parity_v"
+        % _BNG_KLOOP_K)
+    # geomkringexplode <-> geomkring (geom corpus)
+    _bng_explode_gate(
+        "GEOMKRINGEXPLODE",
+        "SELECT t.cellid FROM _bng_geom_parity_v, "
+        "LATERAL gbx_bng_geomkringexplode(geom, '%s', %d) t"
+        % (_BNG_GEOM_RES, _BNG_GEOMK_K),
+        "SELECT explode(gbx_bng_geomkring(geom, '%s', %d)) AS cellid "
+        "FROM _bng_geom_parity_v" % (_BNG_GEOM_RES, _BNG_GEOMK_K))
+    # geomkloopexplode <-> geomkloop
+    _bng_explode_gate(
+        "GEOMKLOOPEXPLODE",
+        "SELECT t.cellid FROM _bng_geom_parity_v, "
+        "LATERAL gbx_bng_geomkloopexplode(geom, '%s', %d) t"
+        % (_BNG_GEOM_RES, _BNG_GEOMK_K),
+        "SELECT explode(gbx_bng_geomkloop(geom, '%s', %d)) AS cellid "
+        "FROM _bng_geom_parity_v" % (_BNG_GEOM_RES, _BNG_GEOMK_K))
+    # tessellateexplode <-> tessellate (chip cellids)
+    _bng_explode_gate(
+        "TESSELLATEEXPLODE",
+        "SELECT t.cellid FROM _bng_geom_parity_v, "
+        "LATERAL gbx_bng_tessellateexplode(geom, '%s') t" % _BNG_GEOM_RES,
+        "SELECT col.cellid AS cellid FROM (SELECT explode("
+        "gbx_bng_tessellate(geom, '%s')) AS col FROM _bng_geom_parity_v)"
+        % _BNG_GEOM_RES)
 if _bng_rows:
     _df_bng = spark.sql(
         f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'grid'"
