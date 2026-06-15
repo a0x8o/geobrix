@@ -4196,15 +4196,21 @@ def run_bng_geomkring(
             warmup=warmup,
         )
 
+    # Heavy BNG_GeometryKRing.eval only accepts Int resolution (no String
+    # overload); function-info canonical is int too. Pass the int index.
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
     def _job():
         return spark.sql(
-            f"SELECT gbx_bng_geomkring(geom, '{res}', {k}) AS ring FROM _bng_bench_v"
+            f"SELECT gbx_bng_geomkring(geom, {res_i}, {k}) AS ring FROM _bng_bench_v"
         ).count()
 
     try:
         # Untimed validation: confirm a non-empty ring comes back.
         _val = spark.sql(
-            f"SELECT gbx_bng_geomkring(geom, '{res}', {k}) AS ring "
+            f"SELECT gbx_bng_geomkring(geom, {res_i}, {k}) AS ring "
             "FROM _bng_bench_v LIMIT 1"
         ).head(1)
         if not _val or not _val[0]["ring"]:
@@ -4292,15 +4298,21 @@ def run_bng_geomkloop(
             warmup=warmup,
         )
 
+    # Heavy BNG_GeometryKLoop.eval only accepts Int resolution (no String
+    # overload); function-info canonical is int too. Pass the int index.
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
     def _job():
         return spark.sql(
-            f"SELECT gbx_bng_geomkloop(geom, '{res}', {k}) AS ring FROM _bng_bench_v"
+            f"SELECT gbx_bng_geomkloop(geom, {res_i}, {k}) AS ring FROM _bng_bench_v"
         ).count()
 
     try:
         # Untimed validation: confirm a non-empty ring comes back.
         _val = spark.sql(
-            f"SELECT gbx_bng_geomkloop(geom, '{res}', {k}) AS ring "
+            f"SELECT gbx_bng_geomkloop(geom, {res_i}, {k}) AS ring "
             "FROM _bng_bench_v LIMIT 1"
         ).head(1)
         if not _val or not _val[0]["ring"]:
@@ -4885,17 +4897,23 @@ def run_bng_geomkringexplode(
             warmup=warmup,
         )
 
+    # Align resolution to the int index for parity with the canonical
+    # function-info form (heavy accepts Int or String here).
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
     def _job():
         return spark.sql(
             f"SELECT t.cellid FROM _bng_bench_v, "
-            f"LATERAL gbx_bng_geomkringexplode(geom, '{res}', {k}) t"
+            f"LATERAL gbx_bng_geomkringexplode(geom, {res_i}, {k}) t"
         ).count()
 
     try:
         # Untimed validation: confirm the LATERAL generator yields a row.
         _val = spark.sql(
             f"SELECT t.cellid FROM _bng_bench_v, "
-            f"LATERAL gbx_bng_geomkringexplode(geom, '{res}', {k}) t LIMIT 1"
+            f"LATERAL gbx_bng_geomkringexplode(geom, {res_i}, {k}) t LIMIT 1"
         ).head(1)
         if not _val:
             raise RuntimeError("bng_geomkringexplode produced no rows")
@@ -4982,17 +5000,23 @@ def run_bng_geomkloopexplode(
             warmup=warmup,
         )
 
+    # Align resolution to the int index for parity with the canonical
+    # function-info form (heavy accepts Int or String here).
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
     def _job():
         return spark.sql(
             f"SELECT t.cellid FROM _bng_bench_v, "
-            f"LATERAL gbx_bng_geomkloopexplode(geom, '{res}', {k}) t"
+            f"LATERAL gbx_bng_geomkloopexplode(geom, {res_i}, {k}) t"
         ).count()
 
     try:
         # Untimed validation: confirm the LATERAL generator yields a row.
         _val = spark.sql(
             f"SELECT t.cellid FROM _bng_bench_v, "
-            f"LATERAL gbx_bng_geomkloopexplode(geom, '{res}', {k}) t LIMIT 1"
+            f"LATERAL gbx_bng_geomkloopexplode(geom, {res_i}, {k}) t LIMIT 1"
         ).head(1)
         if not _val:
             raise RuntimeError("bng_geomkloopexplode produced no rows")
