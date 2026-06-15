@@ -538,7 +538,13 @@ REGISTRY: Dict[str, FnSpec] = {
     ),
     # --- scalar accessors (no args; accessors.py) -------------------------------
     # All core=False. Most produce a cross-engine-identical scalar/array
-    # fingerprint, so they run both modes. Two exceptions run pure-core-only:
+    # fingerprint, so they run both modes. Two exceptions run pure-core-only.
+    # WHY pure-core-only (no spark-path): both are fingerprint-suppressed
+    # (fingerprint=False), so a spark-path cell would be timing-only and never
+    # cross-engine-compared (spark-path is a noop-write timing pass that emits no
+    # fingerprint). Pure-core captures their timing without spending the
+    # spark-path/cluster budget on an uncomparable `na` cell; the heavy column()
+    # dispatch keeps an exhaustive form for them only so its match is total.
     #   - rst_memsize: heavy returns the on-disk file size while the lightweight
     #     side opens a vsimem MemoryFile (no file size), so the values cannot be
     #     made identical; its fingerprint is suppressed in the scorecard.
@@ -831,6 +837,13 @@ REGISTRY: Dict[str, FnSpec] = {
     # gdalinfo-style JSON (summary). None can be made byte- or value-identical
     # cross-engine, so they are TIMED but not compared: fingerprint=False emits an
     # empty fingerprint on both engines and the comparator marks the cell `na`.
+    # WHY pure-core-only (no spark-path): a spark-path cell is a noop-write timing
+    # pass that emits no fingerprint, so for a fingerprint-suppressed function it
+    # would be an uncomparable `na` cell with no parity value. Scoping these to
+    # pure-core captures the per-op timing without spending the spark-path/cluster
+    # budget on a cell that can never be compared. (Each has a working tile-input
+    # col_fn and a heavy column() form, so the restriction is a deliberate
+    # coverage choice, not a missing adapter.)
     "rst_metadata": FnSpec(
         "rst_metadata",
         "gbx_rst_metadata",
@@ -1408,6 +1421,10 @@ REGISTRY: Dict[str, FnSpec] = {
     # comparable output: rst_subdatasets returns an empty map; rst_getsubdataset
     # finds no match. Both are TIMED (real work: metadata scan / open attempt)
     # but fingerprint-suppressed (fingerprint=False -> empty on both engines).
+    # WHY pure-core-only (no spark-path): same as the map/struct accessors above —
+    # a fingerprint-suppressed function's spark-path cell would be an uncomparable
+    # timing-only `na`, so it is scoped to pure-core to capture timing without
+    # spending the spark-path budget on a cell that can never be compared.
     "rst_subdatasets": FnSpec(
         "rst_subdatasets",
         "gbx_rst_subdatasets",
