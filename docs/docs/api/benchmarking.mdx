@@ -728,6 +728,44 @@ speedup = heavy ÷ light, ≥1.0 → light faster):
 | `gbx_bng_distance` | 0.13 | 0.16 | 0.86× |
 | `gbx_bng_cellintersection` | 0.14 | 0.17 | 0.82× |
 
+### Custom grid (all 7 `gbx_custom_*` functions)
+
+The custom equal-area grid functions are available in both tiers — light (pygx) vs heavy
+(gridx.custom) — with the same exact-output parity contract as quadbin and BNG: **exact cell-id /
+cell-set equality** for `pointascell`/`polyfill`/`kring` and the `grid` struct, **decoded geometry
+match within 1e-6** for `centroid`/`cellaswkb`/`cellaswkt`, and an **identical grid struct** for
+`grid` (asserted by the JAR-gated cross-tier parity suite and the in-cell hard-assert gates on the
+cluster run). The execution shape mirrors the other grids (vectorized scalar `pandas_udf`s for the
+cell-id math, plain UDFs for the geometry/array-returning ops), so the timing expectation is the
+same: sub-millisecond cell math dominated by the per-row JVM↔Python boundary, with WKB/WKT-geometry
+ops additionally carrying the geometry-bytes serialization cost. Run the custom legs with
+`gbx:bench:cluster --grid-custom-only`.
+
+**All 7 `gbx_custom_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path,
+1,000 tiles/iteration, both tiers). **Exact cell-id/cell-set parity holds for all 7** — light output
+equals heavy output (cell ids/sets exact; geometry within 1e-6; grid struct identical), enforced by
+the JAR-gated cross-tier parity suite and the in-cell hard-assert gates on the cluster run.
+
+On *timing*, the pure-Python `pygx` custom-grid tier is **competitive on the cheapest op**
+(`custom_centroid` ~1.06×) and **~0.5–0.8× on the rest**. Absolute times are all sub-second at 1,000
+tiles (~0.0002–0.0007 s/tile), so the gap is the Python UDF-boundary / Arrow serialization fixed cost
+dominating very cheap per-row grid math (the heavyweight Scala tier has near-zero per-row cost) — not
+an algorithmic deficiency. As with the byte-heavy raster ops, the per-row boundary tax, not the
+compute, sets the at-scale cost for these sub-millisecond operations.
+
+Cluster spark-path results (median wall-clock of one full distributed iteration over 1,000 tiles;
+speedup = heavy ÷ light, ≥1.0 → light faster):
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `gbx_custom_centroid` | 0.24 | 0.23 | 1.06× |
+| `gbx_custom_polyfill` | 0.27 | 0.34 | 0.79× |
+| `gbx_custom_cellaswkb` | 0.26 | 0.34 | 0.77× |
+| `gbx_custom_kring` | 0.23 | 0.39 | 0.60× |
+| `gbx_custom_cellaswkt` | 0.26 | 0.48 | 0.55× |
+| `gbx_custom_pointascell` | 0.35 | 0.64 | 0.55× |
+| `gbx_custom_grid` | 0.37 | 0.71 | 0.53× |
+
 </TabItem>
 
 </Tabs>
