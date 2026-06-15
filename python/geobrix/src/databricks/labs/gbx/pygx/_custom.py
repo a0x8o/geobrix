@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import shapely  # noqa: F401  (geometry surfaces in later tasks; load-time dep guard)
+from shapely import to_wkb as _to_wkb
+from shapely.geometry import box as _box
 
 ID_BITS = 56  # GridConf.idBits — low 56 bits hold the cell position
 RES_BITS = 8  # GridConf.resBits — top 8 bits hold the resolution
@@ -222,3 +224,42 @@ def point_to_cell_id(conf: CustomGridConf, x: float, y: float, resolution: int) 
         )
     _, _, cell_pos = get_cell_position_from_coordinates(conf, x, y, resolution)
     return get_cell_id(cell_pos, resolution)
+
+
+# --- cell -> geometry (CustomGridSystem.cellIdToGeometry / cellIdToCenter) ----
+
+
+def cell_id_to_polygon(conf: CustomGridConf, cell_id: int):
+    """Closed custom-grid cell polygon (shapely), NO SRID.
+
+    Port of CustomGridSystem.scala:213-235 — the closed ring
+    ``(x,y),(x+w,y),(x+w,y+h),(x,y+h),(x,y)``. shapely ``box`` produces the same
+    axis-aligned rectangle.
+    """
+    resolution = get_cell_resolution(cell_id)
+    cell_number = get_cell_position(cell_id)
+    cell_x = get_cell_position_x(conf, cell_number, resolution)
+    cell_y = get_cell_position_y(conf, cell_number, resolution)
+    w = cell_width(conf, resolution)
+    h = cell_height(conf, resolution)
+    x = cell_x * w + conf.bound_x_min
+    y = cell_y * h + conf.bound_y_min
+    return _box(x, y, x + w, y + h)
+
+
+def cell_id_to_centroid(conf: CustomGridConf, cell_id: int):
+    # CustomGridSystem.scala:332-338 — polygon centroid.
+    return cell_id_to_polygon(conf, cell_id).centroid
+
+
+def cell_aswkb(conf: CustomGridConf, cell_id: int) -> bytes:
+    # Heavy JTS.toWKB — plain 2D WKB, NO SRID (include_srid defaults False).
+    return _to_wkb(cell_id_to_polygon(conf, cell_id))
+
+
+def cell_aswkt(conf: CustomGridConf, cell_id: int) -> str:
+    return cell_id_to_polygon(conf, cell_id).wkt
+
+
+def cell_centroid(conf: CustomGridConf, cell_id: int) -> bytes:
+    return _to_wkb(cell_id_to_centroid(conf, cell_id))

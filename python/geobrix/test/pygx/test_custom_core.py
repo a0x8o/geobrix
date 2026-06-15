@@ -1,6 +1,8 @@
 import pytest
 
 shapely = pytest.importorskip("shapely")  # _custom imports shapely at module load
+from shapely import from_wkb, from_wkt, get_srid  # noqa: E402
+
 from databricks.labs.gbx.pygx import _custom  # noqa: E402  (after importorskip guard)
 
 
@@ -107,3 +109,27 @@ def test_point_to_cell_id_rejects_out_of_bounds_and_over_max_res():
         )  # x == bound_x_max (exclusive)
     with pytest.raises(ValueError):
         _custom.point_to_cell_id(c, 530000.0, 180000.0, 21)  # res > max_resolution
+
+
+def test_cell_aswkb_is_polygon_no_srid():
+    c = _conf(splits=2, rootx=1000, rooty=1000)
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)  # res 0 -> 1000m cell
+    g = from_wkb(_custom.cell_aswkb(c, cid))
+    assert g.geom_type == "Polygon"
+    assert get_srid(g) == 0  # custom WKB carries NO SRID
+    assert g.bounds == (530000.0, 180000.0, 531000.0, 181000.0)
+
+
+def test_cell_aswkt_is_polygon_text():
+    c = _conf()
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)
+    g = from_wkt(_custom.cell_aswkt(c, cid))
+    assert g.geom_type == "Polygon"
+
+
+def test_cell_centroid_is_point_no_srid():
+    c = _conf()
+    cid = _custom.point_to_cell_id(c, 530000.0, 180000.0, 0)
+    g = from_wkb(_custom.cell_centroid(c, cid))
+    assert g.geom_type == "Point" and get_srid(g) == 0
+    assert (g.x, g.y) == (530500.0, 180500.0)  # cell center
