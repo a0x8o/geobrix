@@ -48,7 +48,6 @@ Run in geobrix-dev Docker:
 """
 
 import logging
-import math
 from pathlib import Path
 
 import pytest

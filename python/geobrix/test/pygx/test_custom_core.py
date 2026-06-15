@@ -135,7 +135,6 @@ def test_cell_centroid_is_point_no_srid():
     assert (g.x, g.y) == (530500.0, 180500.0)  # cell center
 
 
-from shapely import to_wkb as _towkb  # noqa: E402
 from shapely.geometry import box as _box2  # noqa: E402
 
 
