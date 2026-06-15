@@ -668,9 +668,9 @@ batch never buffers many large variable-length outputs (a memory-safety choice f
 geometries/zoom levels). The lightweight `pygx` tier's decisive advantage here is **Serverless/ARM
 reach and no-JVM/JAR install**, with timing competitive with the heavyweight tier.
 
-### BNG (`bng_eastnorthasbng`, `bng_polyfill`, `bng_tessellate`, `bng_kring`, `bng_cellunion_agg`) — benchmarks pending
+### BNG (all 23 `gbx_bng_*` functions)
 
-The British National Grid functions are also available in both tiers — light (pygx, a pure-Python
+The British National Grid functions are available in both tiers — light (pygx, a pure-Python
 codec port of `BNG.scala`) vs heavy (gridx.bng) — with the same exact-output parity contract as
 quadbin: **exact cell-set equality** for `eastnorthasbng`/`pointascell`/`polyfill`/`kring`,
 **exact cells with chip-geometry match** for `tessellate`, and **decoded chip-geometry equality**
@@ -681,8 +681,46 @@ timing expectation is the same: sub-millisecond STRING cell-id math dominated by
 JVM↔Python boundary, with WKB-geometry ops additionally carrying the geometry-bytes serialization
 cost. Run the BNG legs with `gbx:bench:cluster --grid-bng-only`.
 
-> **Cluster spark-path BNG timings are pending** and will be published here once collected. Parity is
-> already test-enforced across the tiers.
+**All 23 `gbx_bng_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, spark-path, 1,000
+tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set / decoded-geometry parity
+holds for all 23** — light output equals heavy output, enforced by the in-cell parity gate and the
+`test_parity_bng` cross-tier suite (all 23 parity gates passed; 0 errors).
+
+On *timing*, the pure-Python `pygx` BNG tier runs at **near-parity** with the heavyweight JVM tier:
+across all 23 functions the lightweight tier is within **~±20% of heavy (0.82×–1.18×)**, all
+sub-millisecond per tile at 1,000 tiles/iteration. 7/23 are light-faster (best `bng_kring` 1.18×);
+16/23 are marginally heavy-faster (most `bng_cellintersection` 0.82×). These deltas sit within the
+run-to-run noise band for sub-second distributed jobs at this scale — effectively at parity. (Note
+BNG WKB carries no SRID for EPSG:27700, unlike quadbin's EWKB.)
+
+Cluster spark-path results (median wall-clock of one full distributed iteration over 1,000 tiles;
+speedup = heavy ÷ light, ≥1.0 → light faster):
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `gbx_bng_kring` | 0.20 | 0.17 | 1.18× |
+| `gbx_bng_geomkring` | 0.15 | 0.13 | 1.11× |
+| `gbx_bng_geomkringexplode` | 0.48 | 0.44 | 1.08× |
+| `gbx_bng_cellunion_agg` | 0.29 | 0.27 | 1.07× |
+| `gbx_bng_aswkt` | 0.18 | 0.17 | 1.06× |
+| `gbx_bng_centroid` | 0.14 | 0.14 | 1.06× |
+| `gbx_bng_kloop` | 0.13 | 0.13 | 1.01× |
+| `gbx_bng_cellunion` | 0.14 | 0.15 | 0.97× |
+| `gbx_bng_aswkb` | 0.14 | 0.14 | 0.96× |
+| `gbx_bng_kloopexplode` | 0.26 | 0.27 | 0.96× |
+| `gbx_bng_kringexplode` | 0.26 | 0.27 | 0.96× |
+| `gbx_bng_cellarea` | 0.15 | 0.16 | 0.94× |
+| `gbx_bng_geomkloopexplode` | 0.43 | 0.47 | 0.93× |
+| `gbx_bng_euclideandistance` | 0.14 | 0.15 | 0.91× |
+| `gbx_bng_geomkloop` | 0.15 | 0.16 | 0.90× |
+| `gbx_bng_polyfill` | 0.14 | 0.16 | 0.89× |
+| `gbx_bng_tessellateexplode` | 0.42 | 0.47 | 0.89× |
+| `gbx_bng_cellintersection_agg` | 0.25 | 0.28 | 0.89× |
+| `gbx_bng_eastnorthasbng` | 0.14 | 0.16 | 0.88× |
+| `gbx_bng_tessellate` | 0.14 | 0.17 | 0.86× |
+| `gbx_bng_pointascell` | 0.15 | 0.17 | 0.86× |
+| `gbx_bng_distance` | 0.13 | 0.16 | 0.86× |
+| `gbx_bng_cellintersection` | 0.14 | 0.17 | 0.82× |
 
 </TabItem>
 
