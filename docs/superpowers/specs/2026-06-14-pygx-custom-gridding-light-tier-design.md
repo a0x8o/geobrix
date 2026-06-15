@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-14
 **Branch:** `pygx-light`
-**Status:** **DRAFT — pending user review.** This is a design *proposal* drafted while the user was away; the brainstorming approval gate is **not** yet satisfied. Do **not** start an implementation plan or write any custom-gridding code until the user reviews and approves. Open questions at the bottom must be resolved first.
+**Status:** **APPROVED 2026-06-14** — the four open questions were resolved by the user (see **Resolved decisions** at the bottom). Ready for `writing-plans` → subagent-driven implementation.
 
 ## Goal / context
 
@@ -101,7 +101,7 @@ quadbin and BNG have no config struct; custom does. `gbx_custom_grid` is a **pur
 - **(A) Pure Column expression** — `custom_grid(...)` returns `f.struct(f.lit(...).alias("bound_x_min"), ...)` with the validation pushed into the consuming UDFs (they already decode the struct). Pro: no UDF, foldable, cheap, Serverless-trivial. Con: validation surfaces at consume time, not build time (heavy validates at build/eval time).
 - **(B) Thin `@udf`** returning `CUSTOM_GRID_SCHEMA` that validates eagerly and raises on bad bounds/splits/sizes, matching heavy's eager `require(...)`. Pro: error parity (fails at `grid(...)` time). Con: a UDF call where a Column expression would do.
 
-**Leaning (B)** for behavioral parity with heavy's eager validation, but the struct field names/types/nullability **must** match `CUSTOM_GRID_SCHEMA` either way so the same struct flows into both light and heavy consumers. (Open question Q1.)
+**DECIDED (Q1): option B** — `gbx_custom_grid` is a thin validating `@udf` that eagerly validates (matching heavy's `require(xMax>xMin, ...)` error-at-build-time parity). The struct field names/types/nullability **must** match `CUSTOM_GRID_SCHEMA` so the same struct flows into both light and heavy consumers.
 
 The consuming light UDFs (`pointascell`, `cellaswkb`, `cellaswkt`, `centroid`, `polyfill`, `kring`) receive the grid spec as a **struct column** → arrives in the UDF as a Row / dict; reconstruct a `CustomGridConf` from its 8 fields (mirroring `Custom_GridSpec.systemFromRow`, Int/Long tolerant since PySpark may send Long for INT literals).
 
@@ -156,16 +156,16 @@ Voice: no internal/planning vocabulary; justify by user utility, not Mosaic pari
 
 Add a `--grid-custom-only` launcher leg mirroring `--grid-bng-only` / `--grid-quadbin-only` (`bench/cluster.py` ~line 198): generate a custom grid spec + a points corpus + geometries within the grid extent, run the 7 light-vs-heavy legs (timing + exact parity), and fill the `benchmarking.mdx` Grid tab. Pure cell-math (`pointascell`, `polyfill`, `kring`) should be competitive-to-faster (no JVM/JTS); the geometry-returning functions cross the WKB UDF boundary (the same ser/de tax measured for the rest of pygx) — quantify and note honestly. Terminate any cluster started for the run after capture; if reusing the standing bench cluster, suggest (don't auto) termination.
 
-## Open questions for the user
+## Resolved decisions (user, 2026-06-14)
 
-1. **`gbx_custom_grid` build vs consume validation (option A vs B).** Heavy validates eagerly at `grid(...)` eval time (`require(xMax>xMin, ...)` etc.). A pure Column-expression struct builder (A) is cheaper/Serverless-trivial but defers validation to the consuming UDFs; a thin validating `@udf` (B) preserves error-at-build-time parity. I lean **B** for parity — confirm, or accept (A) and treat build-time vs consume-time error timing as an allowed divergence.
-2. **SRID convention confirmation.** Heavy `cellaswkb`/`centroid` use `JTS.toWKB` (2D, **no SRID**) and the grid's `srid` is *not* stamped into output geometries (it's metadata only). Light will match (plain `to_wkb()`, no SRID). Confirm that's the intended contract — i.e. we do **not** want light to start stamping `srid` as EWKB (which would be a heavy-behavior change, out of scope unless you say so).
-3. **Heavy bugs to validate?** quadbin/BNG had known upstream issues to validate-and-maybe-fix-in-both-tiers. Custom gridding is geobrix-original (no Mosaic lineage), so there's no external issue list — but during the port I'll watch for: (a) the `polyfill` `firstCellPos..lastCellPos + 1` off-by-one bbox padding (intentional over-scan, then centroid-filtered — port as-is); (b) `pointToCellID`'s `require(!x.isNaN && !x.isNaN, ...)` (duplicate `x` check — Y NaN is *not* guarded; likely a typo, harmless since callers pass finite coords — port the *behavior*, flag it). Want me to fix (b) in both tiers, or port the heavy behavior verbatim for strict parity?
-4. **Resolution domain.** Custom resolution is `0..maxResolution` where `maxResolution = min(20, floor(56 / bitsPerResolution))` and depends on `cell_splits`. Confirm light should compute `maxResolution` identically and reject `res > maxResolution` (rather than e.g. a fixed cap).
+1. **`gbx_custom_grid` validation → option B (validating `@udf`).** Eager validation matching heavy's `require(...)` (error-at-build-time parity). Struct must match `CUSTOM_GRID_SCHEMA`.
+2. **Geometry I/O → support `[E]WKB` + `[E]WKT` in BOTH tiers (like the other geometry functions).** The geom-accepting custom functions (`pointascell`, `polyfill`) accept all four input encodings: light via the shared `pygx/_geom.py` `parse_geom`; heavy via `JTS.fromWKB` (auto-detects/strips EWKB SRID) + `JTS.fromWKT` (strips `SRID=…;` EWKT) — **verify the heavy custom expressions use those decoders (per `dataType match { BinaryType => fromWKB; StringType => fromWKT }`); if any hardcodes a single format, extend it to all four** so both tiers match. **Output** geometry stays plain WKB **no-SRID** (`to_wkb()` / `JTS.toWKB`), matching heavy and the other coordinate grids (BNG) — the `srid` field remains metadata only; we do NOT stamp EWKB on output.
+3. **Fix the heavy bug in BOTH tiers (0.4.0 is net-new).** `pointToCellID`'s `require(!x.isNaN && !x.isNaN, ...)` duplicate-`x` typo (Y NaN unguarded) is corrected to guard both X and Y in heavy **and** light, referenced in the commit/release notes. The `polyfill` `firstCellPos..lastCellPos + 1` over-scan is **intentional** (centroid-filtered) — ported as-is, not a fix.
+4. **Resolution domain → exact parity.** Light computes `maxResolution = min(20, floor(56 / bitsPerResolution))` (cell_splits-dependent) identically to heavy and rejects `res > maxResolution` (no fixed cap).
 
 ## Out of scope
 
 - The **`h3` GridX subpackage** (Databricks-native H3 covers hex; GeoBrix raster H3 is RasterX, already in pyrx).
 - Any **heavy-tier behavior change** — heavy custom gridding is the parity reference and stays fixed, except a bug fix explicitly approved under open question Q3.
 - **No new aggregators or explode UDTFs** — the heavy custom family has none; light adds none.
-- **No EWKB/SRID stamping** for custom geometry outputs unless Q2 reverses the no-SRID contract.
+- **No EWKB/SRID stamping** on custom geometry OUTPUTS (no-SRID confirmed, decision 2). Note: this is output-only — INPUTS *do* accept `[E]WKB`/`[E]WKT` in both tiers (decision 2), which is input-encoding flexibility, not output stamping.
