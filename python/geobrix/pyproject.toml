@@ -84,6 +84,17 @@ light = [
     # bundles its own libgdal; pyproj (pulled by pyogrio) maps CRS->srid/proj4.
     "pyogrio>=0.12,<1",
     "pyproj>=3.6",
+    # mapbox-vector-tile 2.x (the pyvx MVT encoder, for native-typed attributes)
+    # hard-requires protobuf>=6.31.1. On a DBR cluster, %pip-installing geobrix
+    # therefore upgrades protobuf to 6.x, which pip flags as conflicting with the
+    # base image's google-api-core / grpcio-status (they pin protobuf<6). This is
+    # BENIGN: %pip is notebook-session-scoped (it does not mutate the cluster base
+    # env), and geobrix never imports google-api-core/grpcio at runtime — the
+    # lightweight functions and benches run correctly on protobuf 6.x. There is no
+    # single protobuf version that satisfies both mapbox-vector-tile 2.x (>=6.31.1)
+    # and google/grpc (<6); removing the advisory would mean downgrading to
+    # mapbox-vector-tile 1.x (which lacks the native-typed-attribute API pyvx
+    # relies on). So the advisory is expected and accepted, not a defect.
     "mapbox-vector-tile>=2.0,<3",
     "scikit-image>=0.22,<1",
     "xarray-spatial>=0.4,<1",
