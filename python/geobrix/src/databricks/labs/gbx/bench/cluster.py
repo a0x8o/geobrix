@@ -202,6 +202,10 @@ GRID_QUADBIN_ONLY = {grid_quadbin_only!r}
 # --grid-bng-only: ONLY run the BNG grid benchmark, skip all fn benchmarks.
 BENCHMARK_GRID_BNG = {benchmark_grid_bng!r}
 GRID_BNG_ONLY = {grid_bng_only!r}
+# --benchmark-grid-custom: also run the custom grid benchmark (light pygx vs heavy gridx.custom).
+# --grid-custom-only: ONLY run the custom grid benchmark, skip all fn benchmarks.
+BENCHMARK_GRID_CUSTOM = {benchmark_grid_custom!r}
+GRID_CUSTOM_ONLY = {grid_custom_only!r}
 # --benchmark-fanout: also run the fan-out UDTF benchmark (all 8 streaming UDTFs).
 # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
 BENCHMARK_FANOUT = {benchmark_fanout!r}
@@ -2052,6 +2056,165 @@ if _bng_rows:
     _show_md(f"BNG grid benchmark -- {RUN_ID}", _md)
 """
 
+_CELL_GRID_CUSTOM = """# Custom grid benchmark: light pygx vs heavy gridx.custom, exact-output parity.
+# Representative spread of the 7 gbx_custom_* functions: pointascell (geom first-coord
+# -> BIGINT cell) / polyfill (geom -> ARRAY<BIGINT>) / kring (scalar BIGINT cell-in ->
+# ARRAY<BIGINT>) / cellaswkb (cell -> WKB polygon, the UDF-boundary leg). Both tiers
+# expose the SAME gbx_custom_* SQL names, so light is collected BEFORE heavy
+# re-registers (the later registration overwrites the UDF) -- the same ordering trick as
+# the quadbin/BNG parity cells. Every leg builds the SAME grid struct via gbx_custom_grid
+# (corpus_vector.CUSTOM_GRID_SQL = 0,1000000,0,1000000,2,1000,1000,27700) so both tiers
+# consume an identical STRUCT. Cell ids are BIGINT; geometry outputs are plain WKB, no
+# SRID (the grid's srid is metadata only). pointascell uses the geometry's FIRST
+# coordinate (heavy geom.getCoordinate), NOT the centroid (unlike BNG).
+#
+# WHY only these 4 legs (not all 7): cellaswkt/centroid share cellaswkb's cell->geometry
+# shape and UDF boundary -- cellaswkb is the representative WKB-bytes leg; gbx_custom_grid
+# is the validating STRUCT constructor (a per-run constant, not a per-row geo op), so it
+# is never benchmarked on its own -- it is exercised on EVERY leg as the inline grid build.
+from databricks.labs.gbx.bench import readers as _rd
+from databricks.labs.gbx.bench import corpus_vector as _cv
+from shapely import wkb as _shp_wkb
+_custom_rows = []
+_CUSTOM_N_ROWS = 1000
+_CUSTOM_RES = 0        # pointascell / polyfill / cell resolution (res 0 -> 1000m cells)
+_CUSTOM_KRING_K = 1    # kring radius
+_CUSTOM_GRID_SQL = _cv.CUSTOM_GRID_SQL
+_CUSTOM_N_LEGS = 4     # legs per tier (keep in sync with the appends below)
+def _custom_legs(_api):
+    # Run all 4 custom legs for one tier, in a fixed order, returning the rows.
+    _out = []
+    _out.append(_rd.run_custom_pointascell(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
+    _out.append(_rd.run_custom_polyfill(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
+    _out.append(_rd.run_custom_kring(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, k=_CUSTOM_KRING_K, where="cluster"))
+    _out.append(_rd.run_custom_cellaswkb(
+        spark, RUN_ID, SPARK_WARMUP, SPARK_MEASURED, api=_api,
+        n_rows=_CUSTOM_N_ROWS, res=_CUSTOM_RES, where="cluster"))
+    return _out
+if LIGHTWEIGHT:
+    for _r in _custom_legs("lightweight"):
+        _sink([_r]); lw.append(_r); _custom_rows.append(_r)
+if HEAVYWEIGHT:
+    for _r in _custom_legs("heavyweight"):
+        _sink([_r]); hw.append(_r); _custom_rows.append(_r)
+# Exact-output parity (hard gate): rebuild the SAME deterministic corpora, collect each tier
+# through its native SQL surface, and compare. Cell ids/sets: exact equality. Decoded geometry: 1e-6.
+if LIGHTWEIGHT and HEAVYWEIGHT:
+    _verdicts = []
+    # --- pointascell: exact BIGINT cell-id equality (light BEFORE heavy: shared SQL name). ---
+    try:
+        _pdata, _pschema = _cv.generate_custom_points(_CUSTOM_N_ROWS)
+        _pdf = spark.createDataFrame(_pdata, schema=_pschema)
+        _pdf.createOrReplaceTempView("_custom_pac_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pac
+        _gx_pac.register(spark)
+        _light_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_custom_pointascell(geom, %s, %d) AS cell FROM _custom_pac_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_RES)).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_pac
+        _hx_pac.register(spark)
+        _heavy_cells = [r["cell"] for r in spark.sql(
+            "SELECT gbx_custom_pointascell(geom, %s, %d) AS cell FROM _custom_pac_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_RES)).collect()]
+        _pac_ok = (len(_light_cells) == len(_heavy_cells) > 0
+                   and _light_cells == _heavy_cells)
+        _v = ("CUSTOM POINTASCELL PARITY: PASS (%d cells, exact id equality)" % len(_light_cells)
+              if _pac_ok else "CUSTOM POINTASCELL PARITY: FAIL -- cell id mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM POINTASCELL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM POINTASCELL PARITY: PASS"), _v
+    # --- polyfill: exact per-row cell-SET equality. ---
+    try:
+        _gdata, _gschema = _cv.generate_custom_polygons(_CUSTOM_N_ROWS)
+        _gdf = spark.createDataFrame(_gdata, schema=_gschema)
+        _gdf.createOrReplaceTempView("_custom_geom_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_pf
+        _gx_pf.register(spark)
+        _light_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_custom_polyfill(geom, %s, %d) AS cells FROM _custom_geom_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_RES)).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_pf
+        _hx_pf.register(spark)
+        _heavy_pf = [sorted(r["cells"]) for r in spark.sql(
+            "SELECT gbx_custom_polyfill(geom, %s, %d) AS cells FROM _custom_geom_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_RES)).collect()]
+        _pf_ok = (len(_light_pf) == len(_heavy_pf) > 0 and _light_pf == _heavy_pf)
+        _ncells = sum(len(c) for c in _light_pf)
+        _v = ("CUSTOM POLYFILL PARITY: PASS (%d rows, %d cells, exact set equality)"
+              % (len(_light_pf), _ncells)
+              if _pf_ok else "CUSTOM POLYFILL PARITY: FAIL -- cell set mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM POLYFILL PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM POLYFILL PARITY: PASS"), _v
+    # --- kring: exact sorted cell-set per row (fixed k), shared single-cell corpus. ---
+    try:
+        _cdata, _cschema = _cv.generate_custom_cells(_CUSTOM_N_ROWS, res=_CUSTOM_RES)
+        _cdf = spark.createDataFrame(_cdata, schema=_cschema)
+        _cdf.createOrReplaceTempView("_custom_cell_parity_v")
+        from databricks.labs.gbx.pygx import functions as _gx_kr
+        _gx_kr.register(spark)
+        _light_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_custom_kring(cell, %s, %d) AS ring FROM _custom_cell_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_KRING_K)).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_kr
+        _hx_kr.register(spark)
+        _heavy_kr = [sorted(r["ring"]) for r in spark.sql(
+            "SELECT gbx_custom_kring(cell, %s, %d) AS ring FROM _custom_cell_parity_v"
+            % (_CUSTOM_GRID_SQL, _CUSTOM_KRING_K)).collect()]
+        _kr_ok = (len(_light_kr) == len(_heavy_kr) > 0 and _light_kr == _heavy_kr)
+        _nk = sum(len(c) for c in _light_kr)
+        _v = ("CUSTOM KRING PARITY: PASS (%d rows, %d cells, exact set equality, k=%d)"
+              % (len(_light_kr), _nk, _CUSTOM_KRING_K)
+              if _kr_ok else "CUSTOM KRING PARITY: FAIL -- ring set mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM KRING PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM KRING PARITY: PASS"), _v
+    # --- cellaswkb: decoded polygon sym-diff area < 1e-6 (shared single-cell corpus). ---
+    try:
+        from databricks.labs.gbx.pygx import functions as _gx_wb
+        _gx_wb.register(spark)
+        _light_wb = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_custom_cellaswkb(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        from databricks.labs.gbx.gridx.custom import functions as _hx_wb
+        _hx_wb.register(spark)
+        _heavy_wb = [bytes(r["g"]) for r in spark.sql(
+            "SELECT gbx_custom_cellaswkb(cell, %s) AS g FROM _custom_cell_parity_v"
+            % _CUSTOM_GRID_SQL).collect()]
+        _wb_ok = len(_light_wb) == len(_heavy_wb) > 0
+        if _wb_ok:
+            for _lb, _hb in zip(_light_wb, _heavy_wb):
+                if _shp_wkb.loads(_lb).symmetric_difference(
+                        _shp_wkb.loads(_hb)).area >= 1e-6:
+                    _wb_ok = False; break
+        _v = ("CUSTOM CELLASWKB PARITY: PASS (%d cells, decoded geom < 1e-6)" % len(_light_wb)
+              if _wb_ok else "CUSTOM CELLASWKB PARITY: FAIL -- geometry mismatch")
+    except Exception as _pe:
+        _v = "CUSTOM CELLASWKB PARITY: FAIL -- %s: %s" % (type(_pe).__name__, _pe)
+    print(_v); _verdicts.append(_v)
+    assert _v.startswith("CUSTOM CELLASWKB PARITY: PASS"), _v
+    _show_md("Custom grid parity -- " + RUN_ID, "\\n".join("- " + _x for _x in _verdicts))
+if _custom_rows:
+    _df_custom = spark.sql(
+        f"SELECT * FROM {TABLE} WHERE run_id = '{RUN_ID}' AND category = 'grid'"
+    )
+    try:
+        display(_df_custom)
+    except Exception:
+        _df_custom.show(100, truncate=False)
+    _md = results.summarize(_custom_rows)
+    _show_md(f"Custom grid benchmark -- {RUN_ID}", _md)
+"""
+
 _CELL_FANOUT = """# Fan-out UDTF benchmark: light pyrx (streaming UDTF) vs heavy rasterx (generator/array),
 # flatten-BOTH parity -- each tier's output is flattened to comparable flat rows, then the
 # flat row counts are compared per function (hard gate).
@@ -2346,6 +2509,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         grid_quadbin_only=bool(cfg.get("grid_quadbin_only")),
         benchmark_grid_bng=bool(cfg.get("benchmark_grid_bng")),
         grid_bng_only=bool(cfg.get("grid_bng_only")),
+        benchmark_grid_custom=bool(cfg.get("benchmark_grid_custom")),
+        grid_custom_only=bool(cfg.get("grid_custom_only")),
         benchmark_fanout=bool(cfg.get("benchmark_fanout")),
         fanout_only=bool(cfg.get("fanout_only")),
         fanout_scale=float(cfg.get("fanout_scale", 1.0)),
@@ -2379,6 +2544,8 @@ def build_bench_notebook(cfg: dict) -> dict:
     grid_quadbin_only = bool(cfg.get("grid_quadbin_only"))
     benchmark_grid_bng = bool(cfg.get("benchmark_grid_bng"))
     grid_bng_only = bool(cfg.get("grid_bng_only"))
+    benchmark_grid_custom = bool(cfg.get("benchmark_grid_custom"))
+    grid_custom_only = bool(cfg.get("grid_custom_only"))
     benchmark_fanout = bool(cfg.get("benchmark_fanout"))
     fanout_only = bool(cfg.get("fanout_only"))
 
@@ -2414,6 +2581,7 @@ def build_bench_notebook(cfg: dict) -> dict:
         and not vector_tin_only
         and not grid_quadbin_only
         and not grid_bng_only
+        and not grid_custom_only
         and not fanout_only
     ):
         if light and do_pure:
@@ -2440,6 +2608,8 @@ def build_bench_notebook(cfg: dict) -> dict:
         cells.append(_cell(_CELL_GRID_QUADBIN))
     if benchmark_grid_bng or grid_bng_only:
         cells.append(_cell(_CELL_GRID_BNG))
+    if benchmark_grid_custom or grid_custom_only:
+        cells.append(_cell(_CELL_GRID_CUSTOM))
     if benchmark_fanout or fanout_only:
         cells.append(_cell(_CELL_FANOUT))
     cells.append(_cell(_EPILOGUE))

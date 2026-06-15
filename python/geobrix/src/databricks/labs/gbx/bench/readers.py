@@ -5379,6 +5379,439 @@ def _fanout_spec(fn: str, scale: float):
     raise ValueError(f"unknown fanout fn: {fn}")
 
 
+# =============================================================================
+# Custom-grid bench legs (gbx_custom_* light pygx vs heavy gridx.custom).
+#
+# All legs build the SAME fixed grid struct via gbx_custom_grid(...) (see
+# corpus_vector.CUSTOM_GRID_SQL) so both tiers consume an identical STRUCT.  Cell
+# ids are BIGINT; geometry outputs are plain WKB, no SRID (the grid's srid is
+# metadata only).  pointascell uses the geometry's FIRST coordinate (heavy
+# geom.getCoordinate), NOT the centroid -- unlike BNG.  Representative spread
+# (per the plan): pointascell (geom->BIGINT, scalar encode), polyfill
+# (geom->ARRAY<BIGINT>), kring (cell-in->ARRAY<BIGINT>), cellaswkb (cell->WKB,
+# the UDF-boundary leg).  Parity (cluster cell): exact cell-id/set; decoded geom.
+# =============================================================================
+
+
+def _register_custom(spark, api: str) -> None:
+    """Register exactly one custom-grid tier.
+
+    light  -> ``databricks.labs.gbx.pygx`` (gx.register: spark.udf only).
+    heavy  -> ``databricks.labs.gbx.gridx.custom`` (JVM Scala expressions).
+
+    Both tiers expose the SAME ``gbx_custom_*`` SQL names, so registering one
+    overwrites the other in the session catalog.  Each ``run_custom_*`` call
+    therefore registers a single tier; the light-vs-heavy parity gate (which must
+    collect light BEFORE re-registering heavy) lives in the cluster cell.
+    """
+    if api == "lightweight":
+        from databricks.labs.gbx.pygx import functions as gx
+
+        gx.register(spark)
+    else:
+        from databricks.labs.gbx.gridx.custom import functions as hx
+
+        hx.register(spark)
+
+
+def run_custom_pointascell(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_pointascell (geom first-coord -> BIGINT cell) over ``n_rows`` points.
+
+    Light registers pygx (``gbx_custom_pointascell`` via spark.udf); heavy registers
+    gridx.custom (the SAME SQL name, JVM). The grid is built inline via
+    gbx_custom_grid(...).  Records ``rows`` = number of cells produced.  Returns one
+    ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_points,
+    )
+
+    env = capture_env(where)
+    fn = "custom_pointascell"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_pointascell(geom, {CUSTOM_GRID_SQL}, {res}) AS cell "
+            "FROM _custom_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm non-null cell ids are produced.
+        _val = spark.sql(
+            f"SELECT gbx_custom_pointascell(geom, {CUSTOM_GRID_SQL}, {res}) AS cell "
+            "FROM _custom_bench_v WHERE geom IS NOT NULL LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("custom_pointascell produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_pointascell {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_polyfill(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_polyfill (geom -> ARRAY<BIGINT cell>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.custom (same SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Records ``rows`` = number of input polygons
+    (each producing a cell array).  Returns one ResultRow (mode="spark-path",
+    category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_polygons,
+    )
+
+    env = capture_env(where)
+    fn = "custom_polyfill"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_polyfill(geom, {CUSTOM_GRID_SQL}, {res}) AS cells "
+            "FROM _custom_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty cell array.
+        _val = spark.sql(
+            f"SELECT gbx_custom_polyfill(geom, {CUSTOM_GRID_SQL}, {res}) AS cells "
+            "FROM _custom_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["cells"]:
+            raise RuntimeError("custom_polyfill produced empty cell array")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_polyfill {api} filled {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_kring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_kring (scalar BIGINT cell -> ARRAY<BIGINT>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Records ``rows`` = number of input cells.
+    Returns one ResultRow (mode="spark-path", category="grid").  Parity (cluster cell):
+    exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_kring"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_kring(cell, {CUSTOM_GRID_SQL}, {k}) AS ring "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_kring(cell, {CUSTOM_GRID_SQL}, {k}) AS ring "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("custom_kring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_kring {api} ringed {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_cellaswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_cellaswkb (scalar BIGINT cell -> WKB polygon, no SRID) over cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  This is the UDF-boundary leg (tile/geometry
+    bytes cross JVM<->Python).  Records ``rows`` = number of input cells.  Returns one
+    ResultRow (mode="spark-path", category="grid").  Parity (cluster cell): decoded
+    geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_cellaswkb"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_cellaswkb(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKB polygon comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_cellaswkb(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("custom_cellaswkb produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_cellaswkb {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
 def run_fanout_udtf(
     spark,
     run_id: str,

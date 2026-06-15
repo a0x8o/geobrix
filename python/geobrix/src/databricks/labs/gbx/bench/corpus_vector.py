@@ -624,6 +624,103 @@ def generate_bng_chip_pairs(n_rows: int, res="1km"):
     return rows, schema
 
 
+# ---------------------------------------------------------------------------------------------
+# Custom-grid corpus generators (gbx_custom_* light pygx vs heavy gridx.custom).
+#
+# All legs share ONE fixed grid spec -- the doc SQL example grid:
+#   gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)
+# i.e. a 0..1,000,000 extent, cell_splits=2, 1000m root cells (1000x1000 of them at
+# res 0). Coordinates are arbitrary planar units in the grid CRS (here labelled
+# EPSG:27700 via srid, but the srid is METADATA only -- output geometry is plain WKB,
+# no SRID). pointascell uses the geometry's FIRST coordinate (heavy geom.getCoordinate),
+# NOT the centroid (unlike BNG), so the points/polygons are placed so their first
+# vertex falls strictly inside [0, 1000000) at the chosen resolution.
+# ---------------------------------------------------------------------------------------------
+
+# The fixed custom grid both tiers build via gbx_custom_grid(...). Shared by every
+# run_custom_* leg and the parity gate so light and heavy consume the SAME struct.
+CUSTOM_GRID_ARGS = (0, 1_000_000, 0, 1_000_000, 2, 1000, 1000, 27700)
+CUSTOM_GRID_SQL = "gbx_custom_grid(%d, %d, %d, %d, %d, %d, %d, %d)" % CUSTOM_GRID_ARGS
+
+# Anchor well inside the extent (mirrors the parity test's _PX/_PY) so the swept
+# corpus stays in-bounds at res 0 (1000m cells).
+_CUSTOM_ANCHOR_X = 530000.0
+_CUSTOM_ANCHOR_Y = 180000.0
+
+
+def _custom_conf():
+    """The shared CustomGridConf (pure-Python) for cell-id corpus generation."""
+    from databricks.labs.gbx.pygx import _custom
+
+    x_min, x_max, y_min, y_max, splits, rx, ry, srid = CUSTOM_GRID_ARGS
+    return _custom.CustomGridConf(
+        bound_x_min=x_min,
+        bound_x_max=x_max,
+        bound_y_min=y_min,
+        bound_y_max=y_max,
+        cell_splits=splits,
+        root_cell_size_x=rx,
+        root_cell_size_y=ry,
+        srid=srid,
+    )
+
+
+def generate_custom_points(n_rows: int):
+    """``n_rows`` deterministic WKT points (in the custom grid CRS) for custom_pointascell.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(geom,)`` holding a
+    WKT ``POINT(x y)`` in the grid's planar units.  Points sweep a ~50km x 50km patch
+    around the anchor, all strictly inside ``[0, 1000000)`` so the FIRST coordinate maps
+    to a valid cell at res 0.  Row ``i`` always yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 500) * 100.0  # +[0, 50000)
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 500) * 100.0
+        rows.append((f"POINT({x} {y})",))
+    return rows, "geom string"
+
+
+def generate_custom_polygons(n_rows: int):
+    """``n_rows`` deterministic WKT polygons (custom grid CRS) for custom_polyfill.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple holding a WKT polygon.
+    Each polygon is a small axis-aligned ~3km box at a deterministic offset from the
+    anchor, sized so polyfill at res 0 (1000m cells) yields a handful of cells via the
+    centroid-containment filter -- enough to exercise the bbox over-scan + per-cell test
+    without ballooning.  All vertices stay inside ``[0, 1000000)``."""
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 400) * 100.0  # +[0, 40000), leaves room for +d
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 400) * 100.0
+        d = 3000.0  # ~3km box -> several 1000m cells by centroid containment
+        wkt = (
+            f"POLYGON(({x} {y}, {x + d} {y}, "
+            f"{x + d} {y + d}, {x} {y + d}, {x} {y}))"
+        )
+        rows.append((wkt,))
+    return rows, "geom string"
+
+
+def generate_custom_cells(n_rows: int, res: int = 0):
+    """``n_rows`` deterministic single custom-grid ``cell`` id BIGINTs for the scalar legs.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(cell,)`` holding a
+    BIGINT custom-grid cell id.  Cells are computed by the pure-Python
+    ``_custom.point_to_cell_id`` over a deterministic x/y sweep around the anchor at
+    ``res`` (an INT resolution, default 0), so light and heavy see the SAME input cells.
+    Feeds cellaswkb / cellaswkt / centroid / kring."""
+    from databricks.labs.gbx.pygx import _custom
+
+    conf = _custom_conf()
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 500) * 100.0
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 500) * 100.0
+        cell = _custom.point_to_cell_id(conf, float(x), float(y), res)
+        rows.append((int(cell),))
+    return rows, "cell long"
+
+
 def build_vector_corpus(
     spark, rows: int, copies: int, formats: List[str], out_base: str, srid: str = "4326"
 ) -> dict:
