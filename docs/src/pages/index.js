@@ -52,7 +52,7 @@ function HomepageFeatures() {
           />
           <Feature
             title="GridX"
-            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. BNG and CARTO quadbin are available in the lightweight tier (pygx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier; only custom grids are heavyweight."
+            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. All three — BNG, quadbin, and custom grids — are available in the lightweight tier (pygx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier."
             link="/docs/api/gridx-functions"
           />
           <Feature
@@ -63,8 +63,8 @@ function HomepageFeatures() {
         </div>
         <div className="row" style={{marginTop: '2rem'}}>
           <Feature
-            title="Powerful Readers"
-            description="Automatically registered Spark readers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, and more."
+            title="Powerful Readers & Writers"
+            description="Automatically registered Spark readers and writers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, PMTiles, and more."
             link="/docs/readers/overview"
           />
           <Feature
@@ -102,9 +102,9 @@ export default function Home() {
                   The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
                   a single wheel, no JAR and no init script, and it works everywhere — serverless,
                   standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
-                  likewise available lightweight (pyvx), as are GridX quadbin and BNG (pygx). The heavyweight
-                  Scala/GDAL tier is there when you need the GDAL/OGR readers or the heavyweight-only
-                  GridX custom grids.
+                  likewise available lightweight (pyvx), as is all of GridX — BNG, quadbin, and
+                  custom grids (pygx). The heavyweight Scala/GDAL tier is there when you need the
+                  GDAL/OGR readers.
                 </p>
                 <Link
                   className="button button--primary button--md"
