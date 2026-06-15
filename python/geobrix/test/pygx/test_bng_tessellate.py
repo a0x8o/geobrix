@@ -79,14 +79,18 @@ def test_tessellate_grid_aligned_full_cell_stays_border():
     chips = _bng.tessellate_str(to_wkb(cell_box), res)
     # No core promotion: heavy keeps the grid-aligned full cell as a border chip.
     cores = [c for c in chips if c[1]]
-    assert not cores, "grid-aligned full cell must stay border (matches heavy JTS equalsExact)"
+    assert (
+        not cores
+    ), "grid-aligned full cell must stay border (matches heavy JTS equalsExact)"
     # The single surviving chip is the whole cell as a Polygon (areal, not None).
     assert len(chips) == 1, f"expected one border chip, got {chips}"
     cell, core, chip = chips[0]
     assert core is False and chip is not None
     g = from_wkb(chip)
     assert g.geom_type == "Polygon"
-    assert g.normalize().equals_exact(box(530000.0, 180000.0, 531000.0, 181000.0).normalize(), 1e-6)
+    assert g.normalize().equals_exact(
+        box(530000.0, 180000.0, 531000.0, 181000.0).normalize(), 1e-6
+    )
 
 
 def test_tessellate_empty_geom_is_empty():
