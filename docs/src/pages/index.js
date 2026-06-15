@@ -47,17 +47,17 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Recommended lightweight tier (pyrx) — a single wheel, runs everywhere, full raster coverage — with a heavyweight Scala/GDAL tier for specialized cases."
+            description="Satellite imagery, elevation models, and gridded data — reprojection, terrain analysis, spectral indices, XYZ/PMTiles tiling, and H3/quadbin aggregation."
             link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
-            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation. All three — BNG, quadbin, and custom grids — are available in the lightweight tier (pygx)."
+            description="Discrete global grid indexing — British National Grid, CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
             link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types. Available in the lightweight tier (pyvx)."
+            description="Mapbox Vector Tile encoding, TIN elevation surfaces, and legacy Mosaic geometry migration to Databricks spatial types."
             link="/docs/api/vectorx-functions"
           />
         </div>
