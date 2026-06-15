@@ -8,7 +8,8 @@ final case class UnionAcc(
     var initialized: Boolean,
     var cellID: Long,
     var hasCore: Boolean,
-    var unionWkb: Array[Byte] // running union of boundaries; null = none seen yet
+    var unionWkb: Array[Byte], // running union of boundaries; null = none seen yet
+    var mixed: Boolean = false // a chip with a different cellID was seen -> union is empty (scalar parity)
 ) {
 
     @inline private def copyBytes(a: Array[Byte]) = java.util.Arrays.copyOf(a, a.length)
@@ -24,7 +25,8 @@ final case class UnionAcc(
 
     def update(id: Long, isCore: Boolean, wkb: Array[Byte]): UnionAcc = {
         if (!initialized) { initialized = true; cellID = id }
-        else require(cellID == id, "can only union chips from the same grid cell")
+        else if (cellID != id) { mixed = true; unionWkb = null }
+        if (mixed) return this
         if (hasCore) return this
         if (isCore) { hasCore = true; unionWkb = null; return this }
         unionWkb = if (unionWkb eq null) copyBytes(wkb) else unionBytes(unionWkb, wkb)
@@ -34,7 +36,8 @@ final case class UnionAcc(
     def merge(other: UnionAcc): UnionAcc = {
         if (!initialized) return other
         if (!other.initialized) return this
-        require(cellID == other.cellID, "can only union chips from the same grid cell")
+        if (cellID != other.cellID) { mixed = true; unionWkb = null; return this }
+        if (mixed || other.mixed) { mixed = true; unionWkb = null; return this }
         if (hasCore || other.hasCore) { hasCore = true; unionWkb = null; return this }
         unionWkb = (unionWkb, other.unionWkb) match {
             case (null, rb) => rb
@@ -44,14 +47,15 @@ final case class UnionAcc(
         this
     }
 
-    // serde: [init(1)][id(8)][hasCore(1)][hasUnion(1)][len(4)?][wkb?]
+    // serde: [init(1)][id(8)][hasCore(1)][mixed(1)][hasUnion(1)][len(4)?][wkb?]
     def serialize: Array[Byte] = {
         val hasU = unionWkb ne null
         val len = if (hasU) unionWkb.length else 0
-        val bb = ByteBuffer.allocate(1 + 8 + 1 + 1 + (if (hasU) 4 + len else 0))
+        val bb = ByteBuffer.allocate(1 + 8 + 1 + 1 + 1 + (if (hasU) 4 + len else 0))
         bb.put(if (initialized) 1.toByte else 0.toByte)
         bb.putLong(cellID)
         bb.put(if (hasCore) 1.toByte else 0.toByte)
+        bb.put(if (mixed) 1.toByte else 0.toByte)
         bb.put(if (hasU) 1.toByte else 0.toByte)
         if (hasU) { bb.putInt(len); bb.put(unionWkb) }
         bb.array()
@@ -67,11 +71,12 @@ object UnionAcc {
         val init = bb.get() != 0
         val id = bb.getLong
         val core = bb.get() != 0
+        val mixed = bb.get() != 0
         val hasU = bb.get() != 0
         val wkb =
             if (hasU) { val n = bb.getInt; val a = new Array[Byte](n); bb.get(a); a }
             else null
-        UnionAcc(init, id, core, wkb)
+        UnionAcc(init, id, core, wkb, mixed)
     }
 
 }

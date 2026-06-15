@@ -77,7 +77,18 @@ object BNG_Tessellate extends WithExpressionInfo {
 
     override def name: String = "gbx_bng_tessellate"
 
-    override def builder(): FunctionBuilder = (c: Seq[Expression]) => new BNG_Tessellate(c(0), c(1), c(2))
+    /** Accept the canonical 2-arg form gbx_bng_tessellate(geom, resolution) — defaulting
+      * keepCoreGeom to false (core chips carry a null geom, materialized downstream) — as
+      * well as the explicit 3-arg form. The 2-arg form is the registered signature and the
+      * one the light tier exposes; only requiring 3 args threw IndexOutOfBoundsException. */
+    override def builder(): FunctionBuilder = {
+        case Seq(g, r)    => new BNG_Tessellate(g, r, Literal(false))
+        case Seq(g, r, k) => new BNG_Tessellate(g, r, k)
+        case other        =>
+            throw new IllegalArgumentException(
+              s"$name expects 2 or 3 arguments (geom, resolution[, keepCoreGeom]); got ${other.length}"
+            )
+    }
 
 
 }

@@ -116,6 +116,59 @@ class BNG_AggregatorGeneratorTest extends PlanTest with SilentSparkSession {
         assert(union.getBoolean(1) == true)  // Should be core
     }
 
+    test("gbx_bng_tessellate SQL accepts the 2-arg form (geom, resolution)") {
+        // Regression: BNG_Tessellate.builder hardcoded 3 args, so the canonical 2-arg
+        // SQL signature gbx_bng_tessellate(geom, res) threw IndexOutOfBoundsException.
+        // Only the registered SQL path hits builder() with 2 args (the Column helper
+        // always appends keepCoreGeom), so exercise it via spark.sql.
+        spark.sparkContext.setLogLevel("ERROR")
+        bng.functions.register(spark)
+
+        val wkb = JTS.toWKB(JTS.fromWKT("POLYGON ((10000 10000, 20000 10000, 20000 20000, 10000 10000))"))
+        val df = spark.createDataFrame(Seq(Tuple1(wkb))).toDF("geom")
+        df.createOrReplaceTempView("bng_tess_2arg_v")
+
+        // 2-arg Int resolution
+        val chipsInt = spark.sql("SELECT gbx_bng_tessellate(geom, 3) AS chips FROM bng_tess_2arg_v").collect()
+        assert(chipsInt.length == 1)
+        assert(chipsInt(0).getSeq[Any](0).nonEmpty, "2-arg gbx_bng_tessellate must return chips")
+
+        // 2-arg String resolution
+        val chipsStr = spark.sql("SELECT gbx_bng_tessellate(geom, '1km') AS chips FROM bng_tess_2arg_v").collect()
+        assert(chipsStr.length == 1)
+        assert(chipsStr(0).getSeq[Any](0).nonEmpty, "2-arg gbx_bng_tessellate (string res) must return chips")
+    }
+
+    test("BNG_CellUnionAgg returns an empty-polygon chip for a group spanning multiple cells") {
+        // Regression: UnionAcc.update/merge used require(cellID == id) and threw an
+        // executor task failure when a group contained chips from different cells (the
+        // bench groups by an arbitrary key). Scalar BNG_CellUnion.execute* returns an
+        // empty polygon for mismatched cell ids; the aggregate must match (no throw).
+        spark.sparkContext.setLogLevel("ERROR")
+        import functions._
+        bng.functions.register(spark)
+
+        val cellA = "TQ388791"
+        val cellB = "TQ398791"
+        val geomA = BNG.cellIdToGeometry(BNG.parse(cellA))
+        val geomB = BNG.cellIdToGeometry(BNG.parse(cellB))
+
+        val df = spark.createDataFrame(Seq(
+            (cellA, false, JTS.toWKB(geomA.buffer(-10))),
+            (cellB, false, JTS.toWKB(geomB.buffer(-10)))
+        )).toDF("cellId", "isCore", "wkb")
+          .withColumn("chip", struct(col("cellId"), col("isCore"), col("wkb")))
+          .repartition(1)
+
+        // Must not throw; mixed-cell group dissolves to an empty polygon (not core).
+        val result = df.groupBy().agg(bng_cellunion_agg(col("chip")).as("union")).collect()
+        assert(result.length == 1)
+        val union = result(0).getStruct(0)
+        assert(!union.getBoolean(1), "mixed-cell union must not be core")
+        val unionGeom = JTS.fromWKB(union.getAs[Array[Byte]](2))
+        assert(unionGeom.isEmpty, "mixed-cell union geometry must be empty (scalar parity)")
+    }
+
     test("BNG_KLoopExplode should generate k-loop cells") {
         spark.sparkContext.setLogLevel("ERROR")
         import functions._
