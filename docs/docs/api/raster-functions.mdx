@@ -7,17 +7,16 @@ import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import Tier from '@site/src/components/Tier';
 import { Impl } from '@site/src/components/Tier';
+import RasterXIcon from '../../../resources/images/RasterX.png';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
 import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
 import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
 import rasterxScalaCode from '!!raw-loader!../../tests/scala/packages/RasterxPackageExamples.scala';
 
-# RasterX Function Reference
+# <img src={RasterXIcon} alt="RasterX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
 
 RasterX functions run in two execution tiers — **lightweight** (pure-Python `pyrx`) and **heavyweight** (`rasterx`). As of v0.4.0, **every RasterX function is available in both tiers** (badged `<Tier both/>` per function below); per-function notes call out where the lightweight implementation differs. See [Choosing an Execution Tier](./execution-tiers) for the comparison and the lightweight install.
-
-![RasterX](../../../resources/images/RasterX.png)
 
 Complete reference for all RasterX functions with detailed descriptions, parameters, return values, and examples.
 

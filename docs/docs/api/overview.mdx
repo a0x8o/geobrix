@@ -6,6 +6,9 @@ import CodeFromTest from '@site/src/components/CodeFromTest';
 import overviewExamples from '!!raw-loader!../../tests/python/api/overview.py';
 import scalaApiExamples from '!!raw-loader!../../tests/scala/api/ScalaApiExamples.scala';
 import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
+import RasterXIcon from '../../../resources/images/RasterX.png';
+import GridXIcon from '../../../resources/images/GridX.png';
+import VectorXIcon from '../../../resources/images/VectorX.png';
 
 # Functions Overview
 
@@ -15,9 +18,7 @@ GeoBrix provides four specialized packages for different spatial processing need
 
 ## Available Packages
 
-### RasterX
-
-![RasterX](../../../resources/images/RasterX.png)
+### <img src={RasterXIcon} alt="RasterX" style={{height: '88px', width: 'auto', verticalAlign: 'middle'}} /> {#rasterx}
 
 Full-spectrum raster processing for Databricks — successor to Mosaic raster, plus terrain analysis, spectral indices, tile publishing, and vector↔raster bridging.
 
@@ -36,9 +37,7 @@ Full-spectrum raster processing for Databricks — successor to Mosaic raster, p
 
 ---
 
-### GridX
-
-![GridX](../../../resources/images/GridX.png)
+### <img src={GridXIcon} alt="GridX" style={{height: '88px', width: 'auto', verticalAlign: 'middle'}} /> {#gridx}
 
 Spatial indexing across multiple discrete-global-grid systems: **BNG** (British National Grid) for Great Britain workloads and **CARTO quadbin v0** for web-mercator-aligned analytics.
 
@@ -50,9 +49,7 @@ Spatial indexing across multiple discrete-global-grid systems: **BNG** (British 
 
 ---
 
-### VectorX
-
-![VectorX](../../../resources/images/VectorX.png)
+### <img src={VectorXIcon} alt="VectorX" style={{height: '88px', width: 'auto', verticalAlign: 'middle'}} /> {#vectorx}
 
 Augments Databricks built-in `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-Mosaic migration helpers.
 
