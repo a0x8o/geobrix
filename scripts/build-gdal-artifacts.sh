@@ -8,7 +8,8 @@
 #   - A security advisory against one of the bundled libraries
 #
 # Run inside a fresh Ubuntu 24.04 container so the resolved .debs and
-# source-built wheel match the DBR 17.3 LTS (noble) cluster base image:
+# source-built wheel match the shared Ubuntu 24.04 (noble) cluster base
+# image used by both DBR 17.3 LTS and DBR 18 LTS:
 #
 #   docker run --rm -it -v "$PWD":/work -w /work ubuntu:24.04 bash -c '
 #       apt-get update && apt-get install -y sudo &&
@@ -182,7 +183,7 @@ $SUDO chmod 0644 "$UBUNTUGIS_KEYRING"
 
 CODENAME="$(lsb_release -sc)"
 if [ "$CODENAME" != "noble" ]; then
-    echo "WARNING: building on '${CODENAME}', not noble — artifacts may not match DBR 17.3 LTS." >&2
+    echo "WARNING: building on '${CODENAME}', not noble — artifacts may not match DBR 17.3 / 18 LTS (noble)." >&2
 fi
 
 echo "deb [signed-by=${UBUNTUGIS_KEYRING}] https://ppa.launchpadcontent.net/ubuntugis/ubuntugis-unstable/ubuntu ${CODENAME} main" \

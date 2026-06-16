@@ -16,7 +16,7 @@ function HomepageHeader() {
           <Link
             className="button button--secondary button--lg"
             to="/docs/intro">
-            Get Started →
+            Get Started
           </Link>
         </div>
       </div>
@@ -47,24 +47,24 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Process satellite imagery, elevation models, and gridded spatial data with GDAL-powered functions."
-            link="/docs/packages/rasterx"
+            description="Satellite imagery, elevation models, and gridded data — reprojection, terrain analysis, spectral indices, XYZ/PMTiles tiling, and H3/quadbin aggregation."
+            link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
-            description="Spatial indexing with British National Grid (BNG) support for efficient location-based analysis."
-            link="/docs/packages/gridx"
+            description="Discrete global grid indexing — British National Grid, CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
+            link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Migrate legacy Mosaic geometries and work seamlessly with Databricks spatial types."
-            link="/docs/packages/vectorx"
+            description="Mapbox Vector Tile encoding, TIN elevation surfaces, and legacy Mosaic geometry migration to Databricks spatial types."
+            link="/docs/api/vectorx-functions"
           />
         </div>
         <div className="row" style={{marginTop: '2rem'}}>
           <Feature
-            title="Powerful Readers"
-            description="Automatically registered Spark readers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, and more."
+            title="Powerful Readers & Writers"
+            description="Automatically registered Spark readers and writers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, PMTiles, and more."
             link="/docs/readers/overview"
           />
           <Feature
@@ -93,6 +93,29 @@ export default function Home() {
       <main>
         <HomepageFeatures />
         
+        <section className={styles.tierCallout}>
+          <div className="container">
+            <div className="row">
+              <div className="col col--8 col--offset-2 text--center">
+                <h2>Start lightweight — the recommended raster tier</h2>
+                <p>
+                  The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
+                  a single wheel, no JAR and no init script, and it works everywhere — serverless,
+                  standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
+                  likewise available lightweight (pyvx), as is all of GridX — BNG, quadbin, and
+                  custom grids (pygx). The heavyweight Scala/GDAL tier is there when you need full
+                  GDAL/OGR.
+                </p>
+                <Link
+                  className="button button--primary button--md"
+                  to="/docs/api/execution-tiers">
+                  Compare Execution Tiers →
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className={styles.quickStart}>
           <div className="container">
             <div className="row">
@@ -101,12 +124,16 @@ export default function Home() {
                 <p>Get up and running with GeoBrix in minutes:</p>
                 <pre>
                   <code>
-{`# Import and register functions
-from databricks.labs.gbx.rasterx import functions as rx
+{`# Install the lightweight wheel (single library, no JAR, no GDAL)
+%pip install geobrix
+
+# Import and register functions
+from databricks.labs.gbx.pyrx import functions as rx
 rx.register(spark)
 
 # Read and process geospatial data
-rasters = spark.read.format("gdal").load("/data/rasters")
+rasters = (spark.read.format("binaryFile").load("/data/rasters")
+           .select(rx.rst_fromcontent("content").alias("tile")))
 metadata = rasters.select(
     rx.rst_boundingbox("tile").alias("bbox"),
     rx.rst_metadata("tile").alias("metadata")

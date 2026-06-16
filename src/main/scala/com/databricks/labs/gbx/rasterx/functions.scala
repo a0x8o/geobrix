@@ -2,10 +2,17 @@ package com.databricks.labs.gbx.rasterx
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
-import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_MergeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_MergeAgg, RST_RasterizeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.analysis._
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
+import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
+import com.databricks.labs.gbx.rasterx.expressions.pixel._
+import com.databricks.labs.gbx.rasterx.expressions.resample._
+import com.databricks.labs.gbx.rasterx.expressions.spectral._
+import com.databricks.labs.gbx.rasterx.expressions.vector.{RST_Polygonize, RST_Rasterize}
+import com.databricks.labs.gbx.rasterx.expressions.web._
 import com.databricks.labs.gbx.rasterx.expressions._
 import com.databricks.labs.gbx.rasterx.gdal.CheckpointManager
 import com.databricks.labs.gbx.rasterx.util.CleanupListener
@@ -70,7 +77,10 @@ object functions extends Serializable {
         // Aggregators
         rd.register(RST_CombineAvgAgg)
         rd.register(RST_DerivedBandAgg)
+        rd.register(RST_DTMFromGeomsAgg)
+        rd.register(RST_FromBandsAgg)
         rd.register(RST_MergeAgg)
+        rd.register(RST_RasterizeAgg)
 
         // Constructors
         rd.register(RST_FromBands)
@@ -90,6 +100,11 @@ object functions extends Serializable {
         rd.register(RST_H3_RasterToGridMax)
         rd.register(RST_H3_RasterToGridMin)
         rd.register(RST_H3_RasterToGridMedian)
+        rd.register(RST_Quadbin_RasterToGridAvg)
+        rd.register(RST_Quadbin_RasterToGridCount)
+        rd.register(RST_Quadbin_RasterToGridMax)
+        rd.register(RST_Quadbin_RasterToGridMin)
+        rd.register(RST_Quadbin_RasterToGridMedian)
 
         // Operations
         rd.register(RST_AsFormat)
@@ -97,7 +112,7 @@ object functions extends Serializable {
         rd.register(RST_CombineAvg)
         rd.register(RST_Convolve)
         rd.register(RST_DerivedBand)
-//        rd.register(RST_DTMFromGeoms)
+        rd.register(RST_DTMFromGeoms)
         rd.register(RST_Filter)
         rd.register(RST_InitNoData)
         rd.register(RST_IsEmpty)
@@ -113,6 +128,53 @@ object functions extends Serializable {
         rd.register(RST_WorldToRasterCoord)
         rd.register(RST_WorldToRasterCoordX)
         rd.register(RST_WorldToRasterCoordY)
+
+        // Web-mercator tile output
+        rd.register(RST_ToWebMercator)
+        rd.register(RST_TileXYZ)
+        rd.register(RST_XYZPyramid)
+
+        // Vector<->raster bridge
+        rd.register(RST_Rasterize)
+        rd.register(RST_Polygonize)
+
+        // Terrain analysis (DEM processing)
+        rd.register(RST_Aspect)
+        rd.register(RST_ColorRelief)
+        rd.register(RST_Hillshade)
+        rd.register(RST_Roughness)
+        rd.register(RST_Slope)
+        rd.register(RST_TPI)
+        rd.register(RST_TRI)
+
+        // Spectral indices (multi-band satellite math over RST_MapAlgebra)
+        rd.register(RST_EVI)
+        rd.register(RST_Index)
+        rd.register(RST_NBR)
+        rd.register(RST_NDWI)
+        rd.register(RST_SAVI)
+
+        // Resample (gdal.Warp -tr/-ts wrappers) + IDW (gdal.Grid invdist)
+        rd.register(RST_Resample)
+        rd.register(RST_ResampleToSize)
+        rd.register(RST_ResampleToRes)
+        rd.register(RST_GridFromPoints)
+        rd.register(RST_GridFromPointsAgg)
+
+        // Pixel ops + extraction (thin GDAL wrappers)
+        rd.register(RST_Band)
+        rd.register(RST_BuildOverviews)
+        rd.register(RST_FillNodata)
+        rd.register(RST_Histogram)
+        rd.register(RST_Sample)
+        rd.register(RST_SetSrid)
+        rd.register(RST_Threshold)
+
+        // Analysis (COG / proximity / contour / viewshed — GDAL wrappers)
+        rd.register(RST_CogConvert)
+        rd.register(RST_Contour)
+        rd.register(RST_Proximity)
+        rd.register(RST_Viewshed)
 
         sc.getConf.set(flag, "true")
     }
@@ -161,6 +223,8 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
 
     // Generators
     def rst_h3_tessellate(tileExpr: Column, resolution: Column): Column = ColumnAdapter(RST_H3_Tessellate.name, Seq(tileExpr, resolution))
+    def rst_h3_tessellate(tileExpr: Column, resolution: Column, mode: String): Column =
+        ColumnAdapter(RST_H3_Tessellate.name, Seq(tileExpr, resolution, lit(mode)))
     def rst_maketiles(tileExpr: Column, tileWidth: Column, tileHeight: Column): Column =
         ColumnAdapter(RST_MakeTiles.name, Seq(tileExpr, tileWidth, tileHeight))
     def rst_retile(tileExpr: Column, tileWidth: Column, tileHeight: Column): Column =
@@ -180,6 +244,16 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_H3_RasterToGridMin.name, Seq(tileExpr, resolution))
     def rst_h3_rastertogridmedian(tileExpr: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridMedian.name, Seq(tileExpr, resolution))
+    def rst_quadbin_rastertogridavg(tileExpr: Column, resolution: Column): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridAvg.name, Seq(tileExpr, resolution))
+    def rst_quadbin_rastertogridcount(tileExpr: Column, resolution: Column): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridCount.name, Seq(tileExpr, resolution))
+    def rst_quadbin_rastertogridmax(tileExpr: Column, resolution: Column): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMax.name, Seq(tileExpr, resolution))
+    def rst_quadbin_rastertogridmin(tileExpr: Column, resolution: Column): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMin.name, Seq(tileExpr, resolution))
+    def rst_quadbin_rastertogridmedian(tileExpr: Column, resolution: Column): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMedian.name, Seq(tileExpr, resolution))
 
     // Operations
     def rst_asformat(tileExpr: Column, newFormat: Column): Column = ColumnAdapter(RST_AsFormat.name, Seq(tileExpr, newFormat))
@@ -223,6 +297,8 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
     def rst_fromfile(path: String, driver: String): Column = rst_fromfile(lit(path), lit(driver))
     def rst_fromfile(path: Column, driver: String): Column = rst_fromfile(path, lit(driver))
     def rst_h3_tessellate(tileExpr: Column, resolution: Int): Column = rst_h3_tessellate(tileExpr, lit(resolution))
+    def rst_h3_tessellate(tileExpr: Column, resolution: Int, mode: String): Column =
+        rst_h3_tessellate(tileExpr, lit(resolution), mode)
     def rst_maketiles(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =
         rst_maketiles(tileExpr, lit(tileWidth), lit(tileHeight))
     def rst_retile(tileExpr: Column, tileWidth: Int, tileHeight: Int): Column =
@@ -234,6 +310,11 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
     def rst_h3_rastertogridmax(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmax(tileExpr, lit(resolution))
     def rst_h3_rastertogridmin(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmin(tileExpr, lit(resolution))
     def rst_h3_rastertogridmedian(tileExpr: Column, resolution: Int): Column = rst_h3_rastertogridmedian(tileExpr, lit(resolution))
+    def rst_quadbin_rastertogridavg(tileExpr: Column, resolution: Int): Column = rst_quadbin_rastertogridavg(tileExpr, lit(resolution))
+    def rst_quadbin_rastertogridcount(tileExpr: Column, resolution: Int): Column = rst_quadbin_rastertogridcount(tileExpr, lit(resolution))
+    def rst_quadbin_rastertogridmax(tileExpr: Column, resolution: Int): Column = rst_quadbin_rastertogridmax(tileExpr, lit(resolution))
+    def rst_quadbin_rastertogridmin(tileExpr: Column, resolution: Int): Column = rst_quadbin_rastertogridmin(tileExpr, lit(resolution))
+    def rst_quadbin_rastertogridmedian(tileExpr: Column, resolution: Int): Column = rst_quadbin_rastertogridmedian(tileExpr, lit(resolution))
     def rst_asformat(tileExpr: Column, newFormat: String): Column = rst_asformat(tileExpr, lit(newFormat))
     def rst_clip(tileExpr: Column, clip: Column, cutlineAllTouched: Boolean): Column =
         rst_clip(tileExpr, clip, lit(cutlineAllTouched))
@@ -255,5 +336,332 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         rst_worldtorastercoordx(tileExpr, lit(worldX), lit(worldY))
     def rst_worldtorastercoordy(tileExpr: Column, worldX: Double, worldY: Double): Column =
         rst_worldtorastercoordy(tileExpr, lit(worldX), lit(worldY))
+
+    // Web-mercator tile output (Column form)
+    def rst_to_webmercator(tileExpr: Column): Column =
+        ColumnAdapter(RST_ToWebMercator.name, Seq(tileExpr, lit("bilinear")))
+    def rst_to_webmercator(tileExpr: Column, resampling: Column): Column =
+        ColumnAdapter(RST_ToWebMercator.name, Seq(tileExpr, resampling))
+    def rst_to_webmercator(tileExpr: Column, resampling: String): Column =
+        rst_to_webmercator(tileExpr, lit(resampling))
+
+    def rst_tilexyz(tileExpr: Column, z: Column, x: Column, y: Column): Column =
+        ColumnAdapter(RST_TileXYZ.name, Seq(tileExpr, z, x, y, lit("PNG"), lit(256), lit("bilinear")))
+    def rst_tilexyz(
+        tileExpr: Column, z: Column, x: Column, y: Column,
+        format: Column, size: Column, resampling: Column
+    ): Column =
+        ColumnAdapter(RST_TileXYZ.name, Seq(tileExpr, z, x, y, format, size, resampling))
+    def rst_tilexyz(tileExpr: Column, z: Int, x: Int, y: Int): Column =
+        rst_tilexyz(tileExpr, lit(z), lit(x), lit(y))
+    def rst_tilexyz(
+        tileExpr: Column, z: Int, x: Int, y: Int,
+        format: String, size: Int, resampling: String
+    ): Column =
+        rst_tilexyz(tileExpr, lit(z), lit(x), lit(y), lit(format), lit(size), lit(resampling))
+
+    def rst_xyzpyramid(tileExpr: Column, minZ: Column, maxZ: Column): Column =
+        ColumnAdapter(RST_XYZPyramid.name, Seq(tileExpr, minZ, maxZ, lit("PNG"), lit(256), lit("bilinear")))
+    def rst_xyzpyramid(
+        tileExpr: Column, minZ: Column, maxZ: Column,
+        format: Column, size: Column, resampling: Column
+    ): Column =
+        ColumnAdapter(RST_XYZPyramid.name, Seq(tileExpr, minZ, maxZ, format, size, resampling))
+    def rst_xyzpyramid(tileExpr: Column, minZ: Int, maxZ: Int): Column =
+        rst_xyzpyramid(tileExpr, lit(minZ), lit(maxZ))
+    def rst_xyzpyramid(
+        tileExpr: Column, minZ: Int, maxZ: Int,
+        format: String, size: Int, resampling: String
+    ): Column =
+        rst_xyzpyramid(tileExpr, lit(minZ), lit(maxZ), lit(format), lit(size), lit(resampling))
+
+    // Vector<->raster bridge (Column form)
+    def rst_rasterize(
+        geomWkb: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_Rasterize.name, Seq(geomWkb, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid))
+
+    def rst_polygonize(tileExpr: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, lit(1), lit(4)))
+    def rst_polygonize(tileExpr: Column, band: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, lit(4)))
+    def rst_polygonize(tileExpr: Column, band: Column, connectedness: Column): Column =
+        ColumnAdapter(RST_Polygonize.name, Seq(tileExpr, band, connectedness))
+
+    // Terrain analysis (DEM processing) - Column form
+    def rst_slope(tileExpr: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, lit("degrees"), lit(Double.NaN)))
+    def rst_slope(tileExpr: Column, unit: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, lit(Double.NaN)))
+    def rst_slope(tileExpr: Column, unit: Column, scale: Column): Column =
+        ColumnAdapter(RST_Slope.name, Seq(tileExpr, unit, scale))
+    def rst_slope(tileExpr: Column, unit: String): Column = rst_slope(tileExpr, lit(unit))
+    def rst_slope(tileExpr: Column, unit: String, scale: Double): Column =
+        rst_slope(tileExpr, lit(unit), lit(scale))
+
+    def rst_aspect(tileExpr: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, lit(false), lit(false)))
+    def rst_aspect(tileExpr: Column, trigonometric: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, trigonometric, lit(false)))
+    def rst_aspect(tileExpr: Column, trigonometric: Column, zeroForFlat: Column): Column =
+        ColumnAdapter(RST_Aspect.name, Seq(tileExpr, trigonometric, zeroForFlat))
+    def rst_aspect(tileExpr: Column, trigonometric: Boolean): Column =
+        rst_aspect(tileExpr, lit(trigonometric))
+    def rst_aspect(tileExpr: Column, trigonometric: Boolean, zeroForFlat: Boolean): Column =
+        rst_aspect(tileExpr, lit(trigonometric), lit(zeroForFlat))
+
+    def rst_hillshade(tileExpr: Column): Column =
+        ColumnAdapter(RST_Hillshade.name, Seq(tileExpr, lit(315.0), lit(45.0), lit(1.0)))
+    def rst_hillshade(tileExpr: Column, azimuth: Column, altitude: Column, zFactor: Column): Column =
+        ColumnAdapter(RST_Hillshade.name, Seq(tileExpr, azimuth, altitude, zFactor))
+    def rst_hillshade(tileExpr: Column, azimuth: Double, altitude: Double): Column =
+        rst_hillshade(tileExpr, lit(azimuth), lit(altitude), lit(1.0))
+    def rst_hillshade(tileExpr: Column, azimuth: Double, altitude: Double, zFactor: Double): Column =
+        rst_hillshade(tileExpr, lit(azimuth), lit(altitude), lit(zFactor))
+
+    def rst_tri(tileExpr: Column): Column = ColumnAdapter(RST_TRI.name, Seq(tileExpr))
+    def rst_tpi(tileExpr: Column): Column = ColumnAdapter(RST_TPI.name, Seq(tileExpr))
+    def rst_roughness(tileExpr: Column): Column = ColumnAdapter(RST_Roughness.name, Seq(tileExpr))
+
+    def rst_color_relief(tileExpr: Column, colorTablePath: Column): Column =
+        ColumnAdapter(RST_ColorRelief.name, Seq(tileExpr, colorTablePath))
+    def rst_color_relief(tileExpr: Column, colorTablePath: String): Column =
+        rst_color_relief(tileExpr, lit(colorTablePath))
+
+    // Spectral indices (Wave 8b) - all delegate to RST_MapAlgebra under the hood.
+    def rst_evi(
+        tileExpr: Column, redIdx: Column, nirIdx: Column, blueIdx: Column
+    ): Column =
+        ColumnAdapter(RST_EVI.name, Seq(tileExpr, redIdx, nirIdx, blueIdx,
+            lit(1.0), lit(6.0), lit(7.5), lit(2.5)))
+    def rst_evi(
+        tileExpr: Column, redIdx: Column, nirIdx: Column, blueIdx: Column,
+        l: Column, c1: Column, c2: Column, g: Column
+    ): Column =
+        ColumnAdapter(RST_EVI.name, Seq(tileExpr, redIdx, nirIdx, blueIdx, l, c1, c2, g))
+    def rst_evi(tileExpr: Column, redIdx: Int, nirIdx: Int, blueIdx: Int): Column =
+        rst_evi(tileExpr, lit(redIdx), lit(nirIdx), lit(blueIdx))
+    def rst_evi(
+        tileExpr: Column, redIdx: Int, nirIdx: Int, blueIdx: Int,
+        l: Double, c1: Double, c2: Double, g: Double
+    ): Column =
+        rst_evi(tileExpr, lit(redIdx), lit(nirIdx), lit(blueIdx), lit(l), lit(c1), lit(c2), lit(g))
+
+    def rst_savi(tileExpr: Column, redIdx: Column, nirIdx: Column): Column =
+        ColumnAdapter(RST_SAVI.name, Seq(tileExpr, redIdx, nirIdx, lit(0.5)))
+    def rst_savi(tileExpr: Column, redIdx: Column, nirIdx: Column, l: Column): Column =
+        ColumnAdapter(RST_SAVI.name, Seq(tileExpr, redIdx, nirIdx, l))
+    def rst_savi(tileExpr: Column, redIdx: Int, nirIdx: Int): Column =
+        rst_savi(tileExpr, lit(redIdx), lit(nirIdx))
+    def rst_savi(tileExpr: Column, redIdx: Int, nirIdx: Int, l: Double): Column =
+        rst_savi(tileExpr, lit(redIdx), lit(nirIdx), lit(l))
+
+    def rst_ndwi(tileExpr: Column, greenIdx: Column, nirIdx: Column): Column =
+        ColumnAdapter(RST_NDWI.name, Seq(tileExpr, greenIdx, nirIdx))
+    def rst_ndwi(tileExpr: Column, greenIdx: Int, nirIdx: Int): Column =
+        rst_ndwi(tileExpr, lit(greenIdx), lit(nirIdx))
+
+    def rst_nbr(tileExpr: Column, nirIdx: Column, swirIdx: Column): Column =
+        ColumnAdapter(RST_NBR.name, Seq(tileExpr, nirIdx, swirIdx))
+    def rst_nbr(tileExpr: Column, nirIdx: Int, swirIdx: Int): Column =
+        rst_nbr(tileExpr, lit(nirIdx), lit(swirIdx))
+
+    def rst_index(tileExpr: Column, formulaName: Column, bandMap: Column): Column =
+        ColumnAdapter(RST_Index.name, Seq(tileExpr, formulaName, bandMap))
+    def rst_index(tileExpr: Column, formulaName: String, bandMap: Column): Column =
+        rst_index(tileExpr, lit(formulaName), bandMap)
+
+    // Resample family - gdal.Warp -tr / -ts wrappers
+    def rst_resample(tileExpr: Column, factor: Column): Column =
+        ColumnAdapter(RST_Resample.name, Seq(tileExpr, factor, lit("bilinear")))
+    def rst_resample(tileExpr: Column, factor: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_Resample.name, Seq(tileExpr, factor, algorithm))
+    def rst_resample(tileExpr: Column, factor: Double): Column =
+        rst_resample(tileExpr, lit(factor))
+    def rst_resample(tileExpr: Column, factor: Double, algorithm: String): Column =
+        rst_resample(tileExpr, lit(factor), lit(algorithm))
+
+    def rst_resample_to_size(tileExpr: Column, widthPx: Column, heightPx: Column): Column =
+        ColumnAdapter(RST_ResampleToSize.name, Seq(tileExpr, widthPx, heightPx, lit("bilinear")))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Column, heightPx: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_ResampleToSize.name, Seq(tileExpr, widthPx, heightPx, algorithm))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Int, heightPx: Int): Column =
+        rst_resample_to_size(tileExpr, lit(widthPx), lit(heightPx))
+    def rst_resample_to_size(tileExpr: Column, widthPx: Int, heightPx: Int, algorithm: String): Column =
+        rst_resample_to_size(tileExpr, lit(widthPx), lit(heightPx), lit(algorithm))
+
+    def rst_resample_to_res(tileExpr: Column, xRes: Column, yRes: Column): Column =
+        ColumnAdapter(RST_ResampleToRes.name, Seq(tileExpr, xRes, yRes, lit("bilinear")))
+    def rst_resample_to_res(tileExpr: Column, xRes: Column, yRes: Column, algorithm: Column): Column =
+        ColumnAdapter(RST_ResampleToRes.name, Seq(tileExpr, xRes, yRes, algorithm))
+    def rst_resample_to_res(tileExpr: Column, xRes: Double, yRes: Double): Column =
+        rst_resample_to_res(tileExpr, lit(xRes), lit(yRes))
+    def rst_resample_to_res(tileExpr: Column, xRes: Double, yRes: Double, algorithm: String): Column =
+        rst_resample_to_res(tileExpr, lit(xRes), lit(yRes), lit(algorithm))
+
+    // IDW interpolation - non-aggregator (arrays in a single row)
+    def rst_gridfrompoints(
+        points: Column, values: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPoints.name, Seq(
+            points, values, xmin, ymin, xmax, ymax, widthPx, heightPx, srid,
+            lit(RST_GridFromPoints.DefaultPower),
+            lit(RST_GridFromPoints.DefaultMaxPoints)
+        ))
+    def rst_gridfrompoints(
+        points: Column, values: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column,
+        power: Column, maxPts: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPoints.name, Seq(
+            points, values, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, power, maxPts
+        ))
+
+    // IDW interpolation - aggregator (one point/value per row)
+    def rst_gridfrompoints_agg(
+        point: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPointsAgg.name, Seq(
+            point, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid,
+            lit(RST_GridFromPoints.DefaultPower),
+            lit(RST_GridFromPoints.DefaultMaxPoints)
+        ))
+    def rst_gridfrompoints_agg(
+        point: Column, value: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        widthPx: Column, heightPx: Column, srid: Column,
+        power: Column, maxPts: Column
+    ): Column =
+        ColumnAdapter(RST_GridFromPointsAgg.name, Seq(
+            point, value, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, power, maxPts
+        ))
+
+    // Pixel ops + extraction — Column form + scalar overloads
+    def rst_fillnodata(tileExpr: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, lit(100.0), lit(0)))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, maxSearchDist, lit(0)))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Column, smoothingIter: Column): Column =
+        ColumnAdapter(RST_FillNodata.name, Seq(tileExpr, maxSearchDist, smoothingIter))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Double): Column =
+        rst_fillnodata(tileExpr, lit(maxSearchDist))
+    def rst_fillnodata(tileExpr: Column, maxSearchDist: Double, smoothingIter: Int): Column =
+        rst_fillnodata(tileExpr, lit(maxSearchDist), lit(smoothingIter))
+
+    def rst_sample(tileExpr: Column, geom: Column): Column =
+        ColumnAdapter(RST_Sample.name, Seq(tileExpr, geom))
+
+    def rst_setsrid(tileExpr: Column, srid: Column): Column =
+        ColumnAdapter(RST_SetSrid.name, Seq(tileExpr, srid))
+    def rst_setsrid(tileExpr: Column, srid: Int): Column =
+        rst_setsrid(tileExpr, lit(srid))
+
+    def rst_histogram(tileExpr: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, lit(256), lit(null).cast("double"), lit(null).cast("double"), lit(false)
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, lit(null).cast("double"), lit(null).cast("double"), lit(false)
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Column, minVal: Column, maxVal: Column): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, minVal, maxVal, lit(false)
+        ))
+    def rst_histogram(
+        tileExpr: Column, nBuckets: Column, minVal: Column, maxVal: Column, includeNodata: Column
+    ): Column =
+        ColumnAdapter(RST_Histogram.name, Seq(
+            tileExpr, nBuckets, minVal, maxVal, includeNodata
+        ))
+    def rst_histogram(tileExpr: Column, nBuckets: Int): Column =
+        rst_histogram(tileExpr, lit(nBuckets))
+
+    def rst_threshold(tileExpr: Column, op: Column, value: Column): Column =
+        ColumnAdapter(RST_Threshold.name, Seq(tileExpr, op, value))
+    def rst_threshold(tileExpr: Column, op: String, value: Double): Column =
+        rst_threshold(tileExpr, lit(op), lit(value))
+
+    def rst_buildoverviews(tileExpr: Column, levels: Column): Column =
+        ColumnAdapter(RST_BuildOverviews.name, Seq(tileExpr, levels, lit("average")))
+    def rst_buildoverviews(tileExpr: Column, levels: Column, resampling: Column): Column =
+        ColumnAdapter(RST_BuildOverviews.name, Seq(tileExpr, levels, resampling))
+    def rst_buildoverviews(tileExpr: Column, levels: Array[Int]): Column =
+        rst_buildoverviews(tileExpr, lit(levels))
+    def rst_buildoverviews(tileExpr: Column, levels: Array[Int], resampling: String): Column =
+        rst_buildoverviews(tileExpr, lit(levels), lit(resampling))
+
+    def rst_band(tileExpr: Column, bandIndex: Column): Column =
+        ColumnAdapter(RST_Band.name, Seq(tileExpr, bandIndex))
+    def rst_band(tileExpr: Column, bandIndex: Int): Column =
+        rst_band(tileExpr, lit(bandIndex))
+
+    // Analysis (COG / proximity / contour / viewshed) — Column form + scalar overloads
+    def rst_cog_convert(tileExpr: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, lit("DEFLATE"), lit(512), lit("AVERAGE")))
+    def rst_cog_convert(tileExpr: Column, compression: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, lit(512), lit("AVERAGE")))
+    def rst_cog_convert(tileExpr: Column, compression: Column, blocksize: Column): Column =
+        ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, blocksize, lit("AVERAGE")))
+    def rst_cog_convert(
+        tileExpr: Column, compression: Column, blocksize: Column, overviewResampling: Column
+    ): Column = ColumnAdapter(RST_CogConvert.name, Seq(tileExpr, compression, blocksize, overviewResampling))
+    def rst_cog_convert(tileExpr: Column, compression: String): Column =
+        rst_cog_convert(tileExpr, lit(compression))
+    def rst_cog_convert(tileExpr: Column, compression: String, blocksize: Int): Column =
+        rst_cog_convert(tileExpr, lit(compression), lit(blocksize))
+    def rst_cog_convert(
+        tileExpr: Column, compression: String, blocksize: Int, overviewResampling: String
+    ): Column = rst_cog_convert(tileExpr, lit(compression), lit(blocksize), lit(overviewResampling))
+
+    def rst_proximity(tileExpr: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, lit(null).cast("string"), lit("GEO"), lit(null).cast("double")
+        ))
+    def rst_proximity(tileExpr: Column, targetValues: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, targetValues, lit("GEO"), lit(null).cast("double")
+        ))
+    def rst_proximity(tileExpr: Column, targetValues: Column, distUnits: Column): Column =
+        ColumnAdapter(RST_Proximity.name, Seq(
+            tileExpr, targetValues, distUnits, lit(null).cast("double")
+        ))
+    def rst_proximity(
+        tileExpr: Column, targetValues: Column, distUnits: Column, maxDistance: Column
+    ): Column = ColumnAdapter(RST_Proximity.name, Seq(tileExpr, targetValues, distUnits, maxDistance))
+
+    def rst_contour(tileExpr: Column, levels: Column): Column =
+        ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, lit(0.0), lit(0.0), lit("elev")))
+    def rst_contour(tileExpr: Column, levels: Column, interval: Column): Column =
+        ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, lit(0.0), lit("elev")))
+    def rst_contour(
+        tileExpr: Column, levels: Column, interval: Column, base: Column
+    ): Column = ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, base, lit("elev")))
+    def rst_contour(
+        tileExpr: Column, levels: Column, interval: Column, base: Column, attrField: Column
+    ): Column = ColumnAdapter(RST_Contour.name, Seq(tileExpr, levels, interval, base, attrField))
+
+    def rst_viewshed(tileExpr: Column, observerGeom: Column, observerHeight: Column): Column =
+        ColumnAdapter(RST_Viewshed.name, Seq(
+            tileExpr, observerGeom, observerHeight, lit(1.6), lit(null).cast("double")
+        ))
+    def rst_viewshed(
+        tileExpr: Column, observerGeom: Column, observerHeight: Column, targetHeight: Column
+    ): Column = ColumnAdapter(RST_Viewshed.name, Seq(
+        tileExpr, observerGeom, observerHeight, targetHeight, lit(null).cast("double")
+    ))
+    def rst_viewshed(
+        tileExpr: Column, observerGeom: Column, observerHeight: Column,
+        targetHeight: Column, maxDistance: Column
+    ): Column = ColumnAdapter(RST_Viewshed.name, Seq(
+        tileExpr, observerGeom, observerHeight, targetHeight, maxDistance
+    ))
 
 }

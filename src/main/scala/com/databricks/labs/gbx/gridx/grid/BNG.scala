@@ -34,7 +34,7 @@ object BNG extends Serializable {
           Array(
             StructField("cellid", idType, nullable = false),
             StructField("core", BooleanType, nullable = false),
-            StructField("chip", BinaryType, nullable = false)
+            StructField("chip", BinaryType, nullable = true)
           )
         )
 

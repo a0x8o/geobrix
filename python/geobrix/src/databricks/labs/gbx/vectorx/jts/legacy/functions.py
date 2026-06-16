@@ -27,17 +27,18 @@ def _col(x: ColLike) -> Union[Column, str]:
     return f.lit(x)
 
 
-def register(_spark: SparkSession) -> None:
+def register(spark: SparkSession = None) -> None:
     """Register VectorX JTS legacy functions with the Spark session.
 
     Call once so that gbx_st_legacyaswkb (and related) SQL functions are
-    available. Uses the active Spark session if needed.
+    available. Uses the active Spark session if not provided.
 
     Args:
-        _spark: Spark session (optional; uses active session if not provided).
+        spark: Spark session (optional; uses active session if not provided).
     """
-    _spark = SparkSession.builder.getOrCreate()
-    _spark.read.format("register_ds").option(
+    if spark is None:
+        spark = SparkSession.builder.getOrCreate()
+    spark.read.format("register_ds").option(
         "functions", "vectorx.jts.legacy"
     ).load().collect()
 

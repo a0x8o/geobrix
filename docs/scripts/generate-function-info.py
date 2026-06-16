@@ -34,9 +34,13 @@ RESOURCE_FILE = os.path.join(RESOURCE_DIR, "function-info.json")
 MODULES = [
     ("tests.python.api.rasterx_functions_sql", "rst_", "gbx_rst_"),
     ("tests.python.api.gridx_functions_sql", "bng_", "gbx_bng_"),
+    ("tests.python.api.gridx_functions_sql", "quadbin_", "gbx_quadbin_"),
+    ("tests.python.api.gridx_functions_sql", "custom_", "gbx_custom_"),
 ]
 # VectorX: optional module (st_*_sql_example -> gbx_st_*)
 VECTORX_MODULE = ("tests.python.api.vectorx_functions_sql", "st_", "gbx_st_")
+# PMTiles: optional module (pmtiles_*_sql_example -> gbx_pmtiles_*)
+PMTILES_MODULE = ("tests.python.api.pmtiles_functions_sql", "pmtiles_", "gbx_pmtiles_")
 REGISTERED_FUNCTIONS_TXT = os.path.join(
     REPO_ROOT, "docs", "tests-function-info", "registered_functions.txt"
 )
@@ -91,7 +95,22 @@ def _collect_from_module(
     fills entries for all matching registered names.
     When registered_for_package is None (legacy): one Python function maps to one
     derived spark name as before.
+
+    Pre-pass: determine which registered names have a *dedicated* example function
+    (Python `<name>_sql_example` whose derived spark name equals the registered name).
+    Substring fallback during the main pass NEVER overrides those — so e.g.
+    `gbx_st_asmvt` and `gbx_st_asmvt_pyramid` each bind to their own example.
     """
+    # Pre-pass: collect the set of exact spark targets each *_sql_example function aims at.
+    dedicated_targets = set()
+    for attr in dir(mod):
+        if not attr.endswith("_sql_example") or not attr.startswith(local_prefix):
+            continue
+        if not callable(getattr(mod, attr)):
+            continue
+        middle = attr[: -len("_sql_example")]
+        dedicated_targets.add(spark_prefix + middle[len(local_prefix):])
+
     result = {}
     for attr in dir(mod):
         if not attr.endswith("_sql_example"):
@@ -114,10 +133,21 @@ def _collect_from_module(
             stmt = first_statement_containing(sql, spark_prefix)
             if not stmt:
                 continue
-            # Assign this example to every registered function that appears in the statement
+            # Determine this example function's "exact target" spark name (e.g.
+            # st_asmvt_pyramid_sql_example -> gbx_st_asmvt_pyramid). Substring matches
+            # against OTHER registered names are tolerated as a fallback (e.g.
+            # gbx_bng_cellunion inherits the gbx_bng_cellunion_agg example because there
+            # is no dedicated cellunion_sql_example), but a name that DOES have its own
+            # dedicated example function never picks up another's example as substring.
+            middle = attr[: -len("_sql_example")]
+            exact_target = spark_prefix + middle[len(local_prefix):]
             for name in registered_for_package:
-                if name in stmt and name not in result:
-                    result[name] = {"examples": format_examples_block(stmt).strip()}
+                if name not in stmt or name in result:
+                    continue
+                if name != exact_target and name in dedicated_targets:
+                    # `name` has its own *_sql_example — skip this substring spillover.
+                    continue
+                result[name] = {"examples": format_examples_block(stmt).strip()}
         else:
             middle = attr[: -len("_sql_example")]
             spark_name = spark_prefix + middle[len(local_prefix) :]
@@ -137,6 +167,8 @@ def discover_and_collect(registered: Optional[List[str]] = None) -> dict:
     like upperleftx/upperlefty are picked up for both).
     """
     sys.path.insert(0, DOCS_ROOT)
+    # Examples in rasterx_functions_sql.py import `path_config` from docs/tests/python/
+    sys.path.insert(0, os.path.join(DOCS_ROOT, "tests", "python"))
     result = {}
     try:
         for module_path, local_prefix, spark_prefix in MODULES:
@@ -167,6 +199,22 @@ def discover_and_collect(registered: Optional[List[str]] = None) -> dict:
                     result[k] = v
         except ImportError:
             pass
+        # Optional PMTiles module
+        try:
+            mod = __import__(PMTILES_MODULE[0], fromlist=[""])
+            reg_for_pkg = (
+                [n for n in registered if n.startswith(PMTILES_MODULE[2])]
+                if registered
+                else None
+            )
+            collected = _collect_from_module(
+                mod, PMTILES_MODULE[1], PMTILES_MODULE[2], reg_for_pkg
+            )
+            for k, v in collected.items():
+                if k not in result:
+                    result[k] = v
+        except ImportError:
+            pass
         return result
     finally:
         if DOCS_ROOT in sys.path:
@@ -190,7 +238,9 @@ def load_registered_functions_txt() -> list:
 PACKAGE_PREFIXES = [
     ("rasterx", "gbx_rst_"),
     ("gridx", "gbx_bng_"),
+    ("gridx_custom", "gbx_custom_"),
     ("vectorx", "gbx_st_"),
+    ("pmtiles", "gbx_pmtiles_"),
 ]
 
 
@@ -268,10 +318,12 @@ def main():
             pkg = _package_for(name)
             if pkg == "rasterx":
                 path = "docs/tests/python/api/rasterx_functions_sql.py"
-            elif pkg == "gridx":
+            elif pkg in ("gridx", "gridx_custom"):
                 path = "docs/tests/python/api/gridx_functions_sql.py"
             elif pkg == "vectorx":
                 path = "docs/tests/python/api/vectorx_functions_sql.py"
+            elif pkg == "pmtiles":
+                path = "docs/tests/python/api/pmtiles_functions_sql.py"
             else:
                 path = "docs/tests/python/api/*_functions_sql.py"
             print(f"  {name}  -> {path}", file=sys.stderr)

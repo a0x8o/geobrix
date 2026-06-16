@@ -4,8 +4,14 @@
     "gbx_rst_asformat": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_asformat(tile, 'GTiff') as geotiff_tile FROM netcdf_rasters;"
     },
+    "gbx_rst_aspect": {
+      "examples": "Examples:\n      > SELECT gbx_rst_aspect(tile, false, false) AS aspect FROM rasters;"
+    },
     "gbx_rst_avg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_avg(tile) as band_averages, gbx_rst_avg(tile)[0] as band1_avg FROM rasters;"
+    },
+    "gbx_rst_band": {
+      "examples": "Examples:\n      > SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters;"
     },
     "gbx_rst_bandmetadata": {
       "examples": "Examples:\n      > SELECT gbx_rst_bandmetadata(tile, 1) as band1_metadata FROM rasters;"
@@ -13,23 +19,47 @@
     "gbx_rst_boundingbox": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_boundingbox(tile) as bbox FROM rasters;"
     },
+    "gbx_rst_buildoverviews": {
+      "examples": "Examples:\n      > SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr FROM rasters;"
+    },
     "gbx_rst_clip": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_clip( tile, 'POLYGON((-122 37, -122 38, -121 38, -121 37, -122 37))', true ) as clipped FROM rasters;"
     },
+    "gbx_rst_cog_convert": {
+      "examples": "Examples:\n      > SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE') AS cog FROM rasters;"
+    },
+    "gbx_rst_color_relief": {
+      "examples": "Examples:\n      > SELECT gbx_rst_color_relief(tile, '/Volumes/main/default/test-data/geobrix-examples/colortables/elevation.clr') AS rgba FROM rasters;"
+    },
     "gbx_rst_combineavg": {
-      "examples": "Examples:\n      > SELECT region, gbx_rst_combineavg_agg(tile) as regional_average FROM rasters GROUP BY region;"
+      "examples": "Examples:\n      > SELECT date_trunc('week', date) as week, gbx_rst_fromfile(path, 'GTiff') as tile FROM daily_rasters WHERE date >= '2024-01-01' ) SELECT week, gbx_rst_combineavg(collect_list(tile)) as weekly_composite FROM loaded_tiles GROUP BY week;"
     },
     "gbx_rst_combineavg_agg": {
       "examples": "Examples:\n      > SELECT region, gbx_rst_combineavg_agg(tile) as regional_average FROM rasters GROUP BY region;"
+    },
+    "gbx_rst_contour": {
+      "examples": "Examples:\n      > SELECT gbx_rst_contour(tile, array(), 10.0, 0.0, 'elev') AS contours FROM rasters;"
     },
     "gbx_rst_convolve": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_convolve(tile, kernel) as filtered FROM rasters_with_kernels;"
     },
     "gbx_rst_derivedband": {
-      "examples": "Examples:\n      > SELECT region, gbx_rst_derivedband_agg(tile, 'def f(a): return a', 'f') as result FROM rasters GROUP BY region;"
+      "examples": "Examples:\n      > SELECT path, gbx_rst_derivedband(tile, 'def my_func(arr): return arr * 2', 'my_func') as derived FROM rasters;"
     },
     "gbx_rst_derivedband_agg": {
       "examples": "Examples:\n      > SELECT region, gbx_rst_derivedband_agg(tile, 'def f(a): return a', 'f') as result FROM rasters GROUP BY region;"
+    },
+    "gbx_rst_dtmfromgeoms": {
+      "examples": "Examples:\n      > SELECT gbx_rst_dtmfromgeoms( points_wkb_array, breaklines_wkb_array, 0.0, 0.01, 0.0, 0.0, 1000.0, 1000.0, 100, 100, 32633 ) AS dtm FROM survey_points;"
+    },
+    "gbx_rst_dtmfromgeoms_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_dtmfromgeoms_agg( point_wkb, breaklines_wkb_array, 0.0, 0.01, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 100, 100, 32633 ) AS dtm FROM survey_points GROUP BY region_id;"
+    },
+    "gbx_rst_evi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;"
+    },
+    "gbx_rst_fillnodata": {
+      "examples": "Examples:\n      > SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters;"
     },
     "gbx_rst_filter": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_filter(tile, 3, 'median') as denoised FROM noisy_rasters;"
@@ -40,11 +70,14 @@
     "gbx_rst_frombands": {
       "examples": "Examples:\n      > SELECT gbx_rst_frombands(array(band1, band2, band3)) as multi_band FROM separated_bands;"
     },
+    "gbx_rst_frombands_agg": {
+      "examples": "Examples:\n      > SELECT scene_id, gbx_rst_frombands_agg(tile, band_index) AS multi_band FROM band_tiles GROUP BY scene_id;"
+    },
     "gbx_rst_fromcontent": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_fromcontent(content, 'GTiff') as tile FROM binary_raster_table;"
     },
     "gbx_rst_fromfile": {
-      "examples": "Examples:\n      > SELECT date_trunc('week', date) as week, gbx_rst_fromfile(path, 'GTiff') as tile FROM daily_rasters WHERE date >= '2024-01-01' ) SELECT week, gbx_rst_combineavg(collect_list(tile)) as weekly_composite FROM loaded_tiles GROUP BY week;"
+      "examples": "Examples:\n      > SELECT gbx_rst_fromfile('/data/raster.tif', 'GTiff') as tile;"
     },
     "gbx_rst_georeference": {
       "examples": "Examples:\n      > SELECT gbx_rst_georeference(tile) as georeference FROM rasters;"
@@ -54,6 +87,12 @@
     },
     "gbx_rst_getsubdataset": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_getsubdataset(tile, 'temperature') as temp_layer FROM netcdf_files;"
+    },
+    "gbx_rst_gridfrompoints": {
+      "examples": "Examples:\n      > SELECT gbx_rst_gridfrompoints( points_wkb_array, values_array, 0.0, 0.0, 1000.0, 1000.0, 256, 256, 32633 ) AS idw FROM point_clouds;"
+    },
+    "gbx_rst_gridfrompoints_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_gridfrompoints_agg( station_wkb, observation, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 256, 256, 32633 ) AS idw FROM observations GROUP BY region_id;"
     },
     "gbx_rst_h3_rastertogridavg": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_h3_rastertogridavg(tile, 6) as h3_grid FROM rasters;"
@@ -71,10 +110,19 @@
       "examples": "Examples:\n      > SELECT cell.cellID as h3_cell, cell.measure as min_value FROM rasters LATERAL VIEW explode(gbx_rst_h3_rastertogridmin(tile, 7)[0]) AS cell;"
     },
     "gbx_rst_h3_tessellate": {
-      "examples": "Examples:\n      > SELECT path, h3_tile.cellid as h3_cell, h3_tile as tile, gbx_rst_avg(h3_tile) as avg_value FROM rasters LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 7)) AS h3_tile;"
+      "examples": "Examples:\n      > SELECT t.* FROM rasters, LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;"
     },
     "gbx_rst_height": {
       "examples": "Examples:\n      > SELECT gbx_rst_height(tile) as height, gbx_rst_width(tile) as width FROM rasters;"
+    },
+    "gbx_rst_hillshade": {
+      "examples": "Examples:\n      > SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;"
+    },
+    "gbx_rst_histogram": {
+      "examples": "Examples:\n      > SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist FROM rasters;"
+    },
+    "gbx_rst_index": {
+      "examples": "Examples:\n      > SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2)) AS ndvi FROM rasters;"
     },
     "gbx_rst_initnodata": {
       "examples": "Examples:\n      > SELECT gbx_rst_initnodata(tile) as tile FROM rasters;"
@@ -89,7 +137,7 @@
       "examples": "Examples:\n      > SELECT gbx_rst_mapalgebra( tiles, '{\"calc\": \"A-B\", \"A_index\": 0, \"B_index\": 1}' ) as difference FROM raster_arrays;"
     },
     "gbx_rst_max": {
-      "examples": "Examples:\n      > SELECT date, MAX(gbx_rst_max(tile)[0]) as peak_temperature FROM daily_temps GROUP BY date ORDER BY date;"
+      "examples": "Examples:\n      > SELECT path, gbx_rst_max(tile) as max_per_band, gbx_rst_max(tile)[0] as band1_max FROM rasters;"
     },
     "gbx_rst_median": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_avg(tile)[0] as mean_value, gbx_rst_median(tile)[0] as median_value, ABS(gbx_rst_avg(tile)[0] - gbx_rst_median(tile)[0]) as skewness FROM rasters;"
@@ -98,7 +146,7 @@
       "examples": "Examples:\n      > SELECT path, gbx_rst_memsize(tile) as size_bytes FROM rasters;"
     },
     "gbx_rst_merge": {
-      "examples": "Examples:\n      > SELECT scene_id, gbx_rst_merge_agg(tile) as merged_scene FROM satellite_tiles GROUP BY scene_id;"
+      "examples": "Examples:\n      > SELECT id, gbx_rst_fromfile(path, 'GTiff') as tile FROM raster_paths ) SELECT gbx_rst_merge(collect_list(tile)) as merged_mosaic FROM loaded_tiles;"
     },
     "gbx_rst_merge_agg": {
       "examples": "Examples:\n      > SELECT scene_id, gbx_rst_merge_agg(tile) as merged_scene FROM satellite_tiles GROUP BY scene_id;"
@@ -107,10 +155,16 @@
       "examples": "Examples:\n      > SELECT gbx_rst_metadata(tile) as metadata FROM rasters;"
     },
     "gbx_rst_min": {
-      "examples": "Examples:\n      > SELECT path, gbx_rst_min(tile)[0] as min_value, gbx_rst_max(tile)[0] as max_value, gbx_rst_max(tile)[0] - gbx_rst_min(tile)[0] as value_range FROM elevation_rasters;"
+      "examples": "Examples:\n      > SELECT path, gbx_rst_min(tile) as min_per_band, gbx_rst_min(tile)[0] as band1_min FROM rasters;"
+    },
+    "gbx_rst_nbr": {
+      "examples": "Examples:\n      > SELECT gbx_rst_nbr(tile, 2, 3) AS nbr FROM rasters;"
     },
     "gbx_rst_ndvi": {
       "examples": "Examples:\n      > SELECT path, date, gbx_rst_ndvi(tile, 4, 8) as ndvi_tile, gbx_rst_avg(gbx_rst_ndvi(tile, 4, 8))[0] as mean_ndvi FROM sentinel2_images;"
+    },
+    "gbx_rst_ndwi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_ndwi(tile, 1, 2) AS ndwi FROM rasters;"
     },
     "gbx_rst_numbands": {
       "examples": "Examples:\n      > SELECT gbx_rst_numbands(tile) as bands FROM rasters;"
@@ -124,6 +178,33 @@
     "gbx_rst_pixelwidth": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_pixelwidth(tile) as pixel_width, gbx_rst_pixelheight(tile) as pixel_height, gbx_rst_width(tile) * gbx_rst_pixelwidth(tile) as total_width_m FROM rasters;"
     },
+    "gbx_rst_polygonize": {
+      "examples": "Examples:\n      > SELECT gbx_rst_polygonize( gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) ) AS features;"
+    },
+    "gbx_rst_proximity": {
+      "examples": "Examples:\n      > SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist FROM rasters;"
+    },
+    "gbx_rst_quadbin_rastertogridavg": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid FROM rasters;"
+    },
+    "gbx_rst_quadbin_rastertogridcount": {
+      "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridcount(tile, 5) as pixel_counts FROM rasters;"
+    },
+    "gbx_rst_quadbin_rastertogridmax": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as max_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmax(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_quadbin_rastertogridmedian": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as median_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmedian(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_quadbin_rastertogridmin": {
+      "examples": "Examples:\n      > SELECT cell.cellID as quadbin_cell, cell.measure as min_value FROM rasters LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmin(tile, 7)[0]) AS cell;"
+    },
+    "gbx_rst_rasterize": {
+      "examples": "Examples:\n      > SELECT gbx_rst_rasterize( unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'), 42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326 ) AS tile;"
+    },
+    "gbx_rst_rasterize_agg": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_rst_rasterize_agg( geom_wkb, burn_value, bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, 256, 256, 4326 ) AS tile FROM features GROUP BY region_id;"
+    },
     "gbx_rst_rastertoworldcoord": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rastertoworldcoord(tile, 100, 200) as coords, gbx_rst_rastertoworldcoord(tile, 100, 200).x as longitude, gbx_rst_rastertoworldcoord(tile, 100, 200).y as latitude FROM rasters;"
     },
@@ -133,11 +214,29 @@
     "gbx_rst_rastertoworldcoordy": {
       "examples": "Examples:\n      > SELECT gbx_rst_rastertoworldcoordy(tile, 100, 200) as northing FROM rasters;"
     },
+    "gbx_rst_resample": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample(tile, 2.0, 'bilinear') AS upsampled FROM rasters;"
+    },
+    "gbx_rst_resample_to_res": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample_to_res(tile, 100.0, 100.0, 'average') AS coarse FROM rasters;"
+    },
+    "gbx_rst_resample_to_size": {
+      "examples": "Examples:\n      > SELECT gbx_rst_resample_to_size(tile, 512, 512, 'near') AS sized FROM rasters;"
+    },
     "gbx_rst_retile": {
       "examples": "Examples:\n      > SELECT path, tile FROM rasters LATERAL VIEW explode(gbx_rst_retile(tile, 256, 256)) AS tile;"
     },
     "gbx_rst_rotation": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_rotation(tile) as rotation_rad FROM rasters;"
+    },
+    "gbx_rst_roughness": {
+      "examples": "Examples:\n      > SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;"
+    },
+    "gbx_rst_sample": {
+      "examples": "Examples:\n      > SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS values FROM rasters;"
+    },
+    "gbx_rst_savi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;"
     },
     "gbx_rst_scalex": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_scalex(tile) as scale_x, gbx_rst_scaley(tile) as scale_y FROM rasters;"
@@ -148,11 +247,17 @@
     "gbx_rst_separatebands": {
       "examples": "Examples:\n      > SELECT path, bands[0] as red_band, bands[1] as green_band, bands[2] as blue_band FROM ( SELECT path, gbx_rst_separatebands(tile) as bands FROM rgb_rasters );"
     },
+    "gbx_rst_setsrid": {
+      "examples": "Examples:\n      > SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters;"
+    },
     "gbx_rst_skewx": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_skewx(tile) as skew_x, gbx_rst_skewy(tile) as skew_y FROM rasters;"
     },
     "gbx_rst_skewy": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_skewx(tile) as skew_x, gbx_rst_skewy(tile) as skew_y FROM rasters;"
+    },
+    "gbx_rst_slope": {
+      "examples": "Examples:\n      > SELECT gbx_rst_slope(tile, 'degrees', 1.0) AS slope FROM rasters;"
     },
     "gbx_rst_srid": {
       "examples": "Examples:\n      > SELECT gbx_rst_srid(tile) as srid FROM rasters;"
@@ -163,11 +268,26 @@
     "gbx_rst_summary": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_summary(tile) as summary FROM rasters;"
     },
+    "gbx_rst_threshold": {
+      "examples": "Examples:\n      > SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;"
+    },
+    "gbx_rst_tilexyz": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png FROM rasters;"
+    },
+    "gbx_rst_to_webmercator": {
+      "examples": "Examples:\n      > SELECT path, gbx_rst_to_webmercator(tile) as web_tile, gbx_rst_srid(gbx_rst_to_webmercator(tile)) as new_srid FROM rasters;"
+    },
     "gbx_rst_tooverlappingtiles": {
       "examples": "Examples:\n      > SELECT path, tile FROM rasters LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, 256, 256, 10)) AS tile;"
     },
+    "gbx_rst_tpi": {
+      "examples": "Examples:\n      > SELECT gbx_rst_tpi(tile) AS tpi FROM rasters;"
+    },
     "gbx_rst_transform": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_transform(tile, 4326) as wgs84_tile, gbx_rst_srid(gbx_rst_transform(tile, 4326)) as new_srid FROM rasters;"
+    },
+    "gbx_rst_tri": {
+      "examples": "Examples:\n      > SELECT gbx_rst_tri(tile) AS tri FROM rasters;"
     },
     "gbx_rst_tryopen": {
       "examples": "Examples:\n      > SELECT * FROM rasters WHERE gbx_rst_tryopen(tile) = true;"
@@ -184,17 +304,23 @@
     "gbx_rst_upperlefty": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_upperleftx(tile) as upper_left_x, gbx_rst_upperlefty(tile) as upper_left_y FROM rasters;"
     },
+    "gbx_rst_viewshed": {
+      "examples": "Examples:\n      > SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs FROM rasters;"
+    },
     "gbx_rst_width": {
-      "examples": "Examples:\n      > SELECT gbx_rst_height(tile) as height, gbx_rst_width(tile) as width FROM rasters;"
+      "examples": "Examples:\n      > SELECT gbx_rst_width(tile) as width FROM rasters;"
     },
     "gbx_rst_worldtorastercoord": {
-      "examples": "Examples:\n      > SELECT -122.4194 as lon, 37.7749 as lat UNION ALL SELECT -122.4183, 37.7745 ) SELECT l.lat, l.lon, gbx_rst_worldtorastercoord(r.tile, l.lon, l.lat) as pixel FROM rasters r, locations l;"
+      "examples": "Examples:\n      > SELECT path, gbx_rst_worldtorastercoord(tile, -122.4194, 37.7749) as pixel, gbx_rst_worldtorastercoord(tile, -122.4194, 37.7749).x as col, gbx_rst_worldtorastercoord(tile, -122.4194, 37.7749).y as row FROM rasters;"
     },
     "gbx_rst_worldtorastercoordx": {
       "examples": "Examples:\n      > SELECT gbx_rst_worldtorastercoordx(tile, -122.4194, 37.7749) as pixel_col FROM rasters;"
     },
     "gbx_rst_worldtorastercoordy": {
       "examples": "Examples:\n      > SELECT gbx_rst_worldtorastercoordy(tile, -122.4194, 37.7749) as pixel_row FROM rasters;"
+    },
+    "gbx_rst_xyzpyramid": {
+      "examples": "Examples:\n      > SELECT path, t.tile.z as z, t.tile.x as x, t.tile.y as y, t.tile.bytes as png_bytes FROM rasters LATERAL VIEW gbx_rst_xyzpyramid(tile, 4, 6) AS t;"
     },
     "_package_gridx": "--- gridx ---",
     "gbx_bng_aswkb": {
@@ -266,9 +392,81 @@
     "gbx_bng_tessellateexplode": {
       "examples": "Examples:\n      > SELECT gbx_bng_tessellateexplode( st_geomfromtext('POLYGON((-0.1 51.5, -0.1 51.6, 0.0 51.6, 0.0 51.5, -0.1 51.5))'), 3 ) as cell_info;"
     },
+    "_package_gridx_custom": "--- gridx_custom ---",
+    "gbx_custom_cellaswkb": {
+      "examples": "Examples:\n      > SELECT gbx_custom_cellaswkb(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS geom FROM cells;"
+    },
+    "gbx_custom_cellaswkt": {
+      "examples": "Examples:\n      > SELECT gbx_custom_cellaswkt(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS wkt FROM cells;"
+    },
+    "gbx_custom_centroid": {
+      "examples": "Examples:\n      > SELECT gbx_custom_centroid(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS centroid FROM cells;"
+    },
+    "gbx_custom_grid": {
+      "examples": "Examples:\n      > SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;"
+    },
+    "gbx_custom_kring": {
+      "examples": "Examples:\n      > SELECT gbx_custom_kring(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS ring FROM cells;"
+    },
+    "gbx_custom_pointascell": {
+      "examples": "Examples:\n      > SELECT gbx_custom_pointascell(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cell FROM points;"
+    },
+    "gbx_custom_polyfill": {
+      "examples": "Examples:\n      > SELECT region_id, gbx_custom_polyfill(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cells FROM regions;"
+    },
     "_package_vectorx": "--- vectorx ---",
+    "gbx_st_asmvt": {
+      "examples": "Examples:\n      > SELECT unhex('01010000009A9999999999B93F9A9999999999B93F') AS geom_wkb, named_struct('name', 'a', 'id', 1L) AS attrs UNION ALL SELECT unhex('0101000000000000000000E03F000000000000E03F'), named_struct('name', 'b', 'id', 2L) ) SELECT length(gbx_st_asmvt(geom_wkb, attrs, 'layer1')) AS mvt_bytes_len FROM features;"
+    },
+    "gbx_st_asmvt_pyramid": {
+      "examples": "Examples:\n      > SELECT unhex('010300000001000000050000000000000000003EC000000000000024400000000000003E4000000000000024400000000000003E4000000000000034400000000000003EC000000000000034400000000000003EC00000000000002440') AS geom_wkb, named_struct('name', 'region-a', 'id', 1L) AS attrs ) SELECT t.tile.z AS z, length(t.tile.mvt_bytes) AS mvt_bytes_len FROM features LATERAL VIEW gbx_st_asmvt_pyramid(geom_wkb, attrs, 2, 2, 'regions') t AS tile;"
+    },
+    "gbx_st_interpolateelevationbbox": {
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationbbox(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', 530000, 180000, 531000, 181000, 100, 100, 27700, 'constrained') AS elev_point FROM survey;"
+    },
+    "gbx_st_interpolateelevationgeom": {
+      "examples": "Examples:\n      > SELECT gbx_st_interpolateelevationgeom(masspoints, breaklines, 0.0, 0.01, 'NONENCROACHING', ST_Point(530000, 181000), 100, 100, 10.0, -10.0, 'constrained') AS elev_point FROM survey;"
+    },
     "gbx_st_legacyaswkb": {
       "examples": "Examples:\n      > SELECT gbx_st_legacyaswkb(geom_legacy) AS wkb FROM legacy_table;"
+    },
+    "gbx_st_triangulate": {
+      "examples": "Examples:\n      > SELECT gbx_st_triangulate(masspoints, breaklines, 0.01, 0.01, 'NONENCROACHING', 'constrained') AS triangle FROM survey;"
+    },
+    "_package_pmtiles": "--- pmtiles ---",
+    "gbx_pmtiles_agg": {
+      "examples": "Examples:\n      > SELECT gbx_pmtiles_agg(bytes, z, x, y, '{\"name\":\"my_tileset\"}') AS pmt FROM tiles_z2;"
+    },
+    "_package_other": "--- other ---",
+    "gbx_quadbin_aswkb": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;"
+    },
+    "gbx_quadbin_cellunion": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_cellunion( gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1) ) as union_geom;"
+    },
+    "gbx_quadbin_cellunion_agg": {
+      "examples": "Examples:\n      > SELECT region, gbx_quadbin_cellunion_agg(cell) AS coverage FROM grid_cells GROUP BY region;"
+    },
+    "gbx_quadbin_centroid": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) as centroid;"
+    },
+    "gbx_quadbin_distance": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_distance( gbx_quadbin_pointascell(0.0, 0.0, 10), gbx_quadbin_pointascell(0.0001, 0.0, 10) ) as d;"
+    },
+    "gbx_quadbin_kring": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 10), 1) as ring;"
+    },
+    "gbx_quadbin_pointascell": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_pointascell(-122.4194, 37.7749, 10) as sf_cell;"
+    },
+    "gbx_quadbin_polyfill": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_polyfill( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as cells;"
+    },
+    "gbx_quadbin_resolution": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_resolution(gbx_quadbin_pointascell(0.0, 0.0, 12)) as z;"
+    },
+    "gbx_quadbin_tessellate": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_tessellate( st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5 ) as chips;"
     }
   }
 }

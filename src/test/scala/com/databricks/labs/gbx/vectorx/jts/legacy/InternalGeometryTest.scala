@@ -82,6 +82,28 @@ class InternalGeometryTest extends AnyFunSuite {
         jts shouldBe a[LineString]
     }
 
+    // ====== toJTS - LINEARRING (typeId 7) ======
+
+    test("toJTS should convert LINEARRING (typeId 7) to a JTS LineString") {
+        val boundaries = Array(Array(
+          InternalCoord(Seq(0.0, 0.0)),
+          InternalCoord(Seq(1.0, 0.0)),
+          InternalCoord(Seq(1.0, 1.0)),
+          InternalCoord(Seq(0.0, 0.0))
+        ))
+        val holes = Array(Array.empty[Array[InternalCoord]])
+        val geom = InternalGeometry(
+          typeId = GeometryTypeEnum.LINEARRING.id,
+          srid = 4326,
+          boundaries = boundaries,
+          holes = holes
+        )
+        val jts = geom.toJTS
+        jts should not be null
+        jts shouldBe a[LineString]
+        jts.getNumPoints shouldBe 4
+    }
+
     // ====== toJTS - MULTILINESTRING ======
 
     test("toJTS should convert MULTILINESTRING to JTS") {
@@ -152,6 +174,69 @@ class InternalGeometryTest extends AnyFunSuite {
         jts should not be null
         jts shouldBe a[MultiPolygon]
         jts.getNumGeometries shouldBe 2
+    }
+
+    test("toJTS should preserve POLYGON interior ring (hole)") {
+        val shell = Array(
+          InternalCoord(Seq(0.0, 0.0)),
+          InternalCoord(Seq(10.0, 0.0)),
+          InternalCoord(Seq(10.0, 10.0)),
+          InternalCoord(Seq(0.0, 10.0)),
+          InternalCoord(Seq(0.0, 0.0))
+        )
+        val hole = Array(
+          InternalCoord(Seq(2.0, 2.0)),
+          InternalCoord(Seq(4.0, 2.0)),
+          InternalCoord(Seq(4.0, 4.0)),
+          InternalCoord(Seq(2.0, 4.0)),
+          InternalCoord(Seq(2.0, 2.0))
+        )
+        val boundaries = Array(shell)
+        val holes = Array(Array(hole))
+        val geom = InternalGeometry(
+          typeId = GeometryTypeEnum.POLYGON.id,
+          srid = 4326,
+          boundaries = boundaries,
+          holes = holes
+        )
+        val jts = geom.toJTS
+        jts shouldBe a[Polygon]
+        jts.asInstanceOf[Polygon].getNumInteriorRing shouldBe 1
+    }
+
+    test("toJTS should preserve MULTIPOLYGON interior rings per polygon") {
+        val shell0 = Array(
+          InternalCoord(Seq(0.0, 0.0)),
+          InternalCoord(Seq(10.0, 0.0)),
+          InternalCoord(Seq(10.0, 10.0)),
+          InternalCoord(Seq(0.0, 0.0))
+        )
+        val shell1 = Array(
+          InternalCoord(Seq(20.0, 20.0)),
+          InternalCoord(Seq(30.0, 20.0)),
+          InternalCoord(Seq(30.0, 30.0)),
+          InternalCoord(Seq(20.0, 20.0))
+        )
+        val hole0 = Array(
+          InternalCoord(Seq(2.0, 2.0)),
+          InternalCoord(Seq(4.0, 2.0)),
+          InternalCoord(Seq(3.0, 4.0)),
+          InternalCoord(Seq(2.0, 2.0))
+        )
+        val boundaries = Array(shell0, shell1)
+        // first polygon has one hole, second has none
+        val holes = Array(Array(hole0), Array.empty[Array[InternalCoord]])
+        val geom = InternalGeometry(
+          typeId = GeometryTypeEnum.MULTIPOLYGON.id,
+          srid = 4326,
+          boundaries = boundaries,
+          holes = holes
+        )
+        val jts = geom.toJTS
+        jts shouldBe a[MultiPolygon]
+        jts.getNumGeometries shouldBe 2
+        jts.getGeometryN(0).asInstanceOf[Polygon].getNumInteriorRing shouldBe 1
+        jts.getGeometryN(1).asInstanceOf[Polygon].getNumInteriorRing shouldBe 0
     }
 
     // ====== toJTS - GEOMETRYCOLLECTION (unsupported) ======

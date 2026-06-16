@@ -3,12 +3,95 @@ sidebar_position: 1
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import GeoBrixLogo from '../../resources/images/GeoBriX.png';
 
 # Introduction to GeoBrix
 
-GeoBrix is a high-performance spatial processing library. Its heavy-weight readers and functions are powered by GDAL, implemented on Apache Spark, and built to run exclusively on the Databricks Runtime (DBR).
+GeoBrix is a high-performance spatial processing library for Databricks. It ships two **interchangeable execution tiers** — a **lightweight** pure-Python/PySpark tier (no JAR, no init script, no native GDAL; runs on Serverless, standard/shared, Lakeflow, and ARM compute) and a **heavyweight** Scala/GDAL tier (GDAL on Apache Spark, for distributed processing on classic x86 clusters). Both register the **same function names**, so moving between them is a one-line import swap — and GeoBrix is progressively bringing the lightweight tier to full parity with the heavyweight one. Today the lightweight tier covers all of **RasterX**, all of **VectorX** (MVT, TIN surfaces, legacy-geometry migration), and all of **GridX** (CARTO quadbin, British National Grid (BNG), and custom grids). See [Choosing an Execution Tier](./api/execution-tiers).
 
-![GeoBrix Logo](../../resources/images/GeoBriX.png)
+{/*
+  Function counts — keep verbatim with docs/tests-function-info/registered_functions.txt
+  (the canonical source; total is guarded by `gbx:test:bindings`).
+  Update these numbers if functions are added or removed.
+*/}
+<div style={{
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'stretch',
+  gap: '1rem',
+  margin: '2rem 0',
+}}>
+  {/* Total — wider box that encloses the logo above the count */}
+  <div style={{
+    flex: '2 1 240px',
+    minWidth: '200px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    padding: '1.25rem 1rem',
+    borderRadius: '12px',
+    border: '1px solid var(--ifm-color-emphasis-300)',
+    borderTop: '4px solid #2e7d32',
+    background: 'var(--ifm-card-background-color, var(--ifm-background-surface-color))',
+  }}>
+    <img src={GeoBrixLogo} alt="GeoBrix" style={{maxWidth: '100%', maxHeight: '64px', objectFit: 'contain', marginBottom: '0.75rem'}} />
+    <div style={{fontSize: '2.75rem', fontWeight: 800, lineHeight: 1, color: '#2e7d32'}}>154</div>
+    <div style={{marginTop: '0.5rem', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ifm-color-emphasis-700)'}}>Functions</div>
+  </div>
+  {[
+    {n: '107', label: 'RasterX'},
+    {n: '40', label: 'GridX'},
+    {n: '6', label: 'VectorX'},
+    {n: '1', label: 'PMTiles'},
+  ].map((s) => (
+    <div key={s.label} style={{
+      flex: '1 1 120px',
+      minWidth: '120px',
+      textAlign: 'center',
+      padding: '1.25rem 1rem',
+      borderRadius: '12px',
+      border: '1px solid var(--ifm-color-emphasis-300)',
+      borderTop: '4px solid #1565c0',
+      background: 'var(--ifm-card-background-color, var(--ifm-background-surface-color))',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}>
+      <div style={{
+        fontSize: '2.75rem',
+        fontWeight: 800,
+        lineHeight: 1,
+        color: '#1565c0',
+      }}>{s.n}</div>
+      <div style={{
+        marginTop: '0.5rem',
+        fontSize: '0.85rem',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        color: 'var(--ifm-color-emphasis-700)',
+      }}>{s.label}</div>
+    </div>
+  ))}
+</div>
+
+GridX's 40 functions break down as **BNG (23)**, **Quadbin (10)**, and **custom grids (7)**.
+
+## Supported Databricks Runtimes
+
+GeoBrix supports both current Databricks Runtime LTS releases — a **single wheel + single JAR** runs on both (Scala 2.13.16 matches both, the JAR is Java-17 bytecode that loads on both JVMs, and Spark is a `provided` dependency):
+
+| DBR LTS | Ubuntu | Spark | Python | Scala | Java | GeoBrix |
+|---|---|---|---|---|---|---|
+| **17.3 LTS** | 24.04 | 4.0.0 | 3.12.3 | 2.13.16 | 17 | ✅ Supported |
+| **18 LTS** | 24.04 | 4.1.0 | 3.12.3 | 2.13.16 | 21 | ✅ Supported |
+
+:::note DBR 19 LTS is coming soon
+**DBR 19 LTS is coming soon**, built on **Ubuntu 26.04**. The **lightweight** tier (pure-Python, rasterio's bundled GDAL) will be unaffected; the **heavyweight** tier's native GDAL/OGR libraries are compiled against the cluster OS, so they will need to be rebuilt for the new base image.
+:::
 
 ## Background
 
@@ -37,5 +120,5 @@ If this were not the case, we would have simply iterated on DBLabs Mosaic "in-pl
 
 - [Install GeoBrix](./installation) on your Databricks cluster
 - Follow the [Quick Start Guide](./quick-start) to get up and running
-- Explore the [Packages](./packages/overview) to understand what GeoBrix offers
+- Explore the [Functions](./api/overview) to understand what GeoBrix offers
 - Check out the [Readers](./readers/overview) for data ingestion options

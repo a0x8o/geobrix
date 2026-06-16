@@ -23,8 +23,11 @@ cython==3.0.12
 build==1.4.4
 
 # --- DBR-aligned runtime / numeric stack ---
+# numpy / pandas / pyarrow pinned to DBR 17.3 LTS installed versions:
+# https://docs.databricks.com/aws/en/release-notes/runtime/17.3lts#installed-python-libraries
 numpy==2.1.3
 pandas==2.2.3
+pyarrow==19.0.1
 pyspark==4.0.0
 py4j==0.10.9.9
 requests==2.32.3
@@ -37,6 +40,17 @@ planetary-computer==1.0.0
 rasterio==1.5.0
 rioxarray==0.22.0
 pdal==3.5.3
+rio-tiler==9.0.6
+rio-cogeo==7.0.2
+h3==4.4.2
+quadbin==0.2.2
+pmtiles==3.7.0
+pyogrio==0.12.1
+pyproj==3.7.2
+
+# --- contour (scikit-image) + viewshed (xarray-spatial) ---
+scikit-image==0.26.0
+xarray-spatial==0.9.9
 
 # --- lint tooling ---
 black==26.3.1

@@ -38,11 +38,14 @@ __pycache__/
 !scripts/gdal311/*.so
 /prompts/
 /sample-data/Volumes/main/default/geobrix_samples/
+/sample-data/Volumes/main/default/bench-corpus/
 /WORKFLOW-SETUP.md
 /.vscode/
 /.coverage
 /python/coverage-report/
 /python/geobrix/test/coverage-report/
-/CLAUDE.md
-/.claude/scheduled_tasks.lock
+/.claude/
+!/.claude/qc-judge/
 /input/
+.venv-pyrx/
+test-logs/bench/

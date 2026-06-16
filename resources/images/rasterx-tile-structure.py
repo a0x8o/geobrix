@@ -418,7 +418,7 @@ def render():
     )
 
     # Version pill
-    pill_text = "v0.3.0  ·  Beta"
+    pill_text = "v0.4.0  ·  Beta"
     pw = int(len(pill_text) * 6.8) + 24
     parts.append(
         f'<rect x="{CANVAS_W - PAD - pw}" y="{PAD + 8}" rx="13" ry="13" '
@@ -460,7 +460,7 @@ def render():
 
     # ---- Footer ----
     parts.append(text(PAD, canvas_h - 14,
-                      "databrickslabs/geobrix  ·  DBR 17.3 LTS  ·  Scala 2.13 / Spark 4.0 / Python 3.12",
+                      "databrickslabs/geobrix  ·  DBR 17.3 / 18 LTS  ·  Scala 2.13.16 / Spark 4.0–4.1 / Python 3.12",
                       size=11, fill=C_MUTED_3))
     parts.append(text(CANVAS_W - PAD, canvas_h - 14,
                       "docs/api/tile-structure",

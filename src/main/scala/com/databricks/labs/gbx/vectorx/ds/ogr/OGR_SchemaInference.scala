@@ -4,6 +4,7 @@ import org.apache.spark.sql.catalyst.analysis.TypeCoercion
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.ogr._
 
 import java.sql.Timestamp
@@ -19,11 +20,13 @@ object OGR_SchemaInference extends Serializable {
         ogr.CreateGeometryFromWkt("POINT EMPTY")
     }
 
-    /** Registers all OGR drivers if they haven't been registered yet. */
+    /** Registers all OGR drivers once per JVM via the process-wide guard (thread-safe). */
     final def enableOGRDrivers(force: Boolean = false): Unit = {
-        val drivers = ogr.GetDriverCount
-        if (drivers == 0 || force) {
+        if (force) {
+            // Explicit force re-registration (rare; e.g. tests). RegisterAll is additive/idempotent.
             ogr.RegisterAll()
+        } else {
+            GDALManager.initOgr()
         }
     }
 
@@ -239,7 +242,7 @@ object OGR_SchemaInference extends Serializable {
         path: String,
         options: Map[String, String]
     ): Option[StructType] = {
-        ogr.RegisterAll()
+        GDALManager.initOgr()
         val layerN = options.getOrElse("layerNumber", "0").toInt
         val layerName = options.getOrElse("layerName", "")
         val inferenceLimit = options.getOrElse("inferenceLimit", "100").toInt

@@ -66,7 +66,11 @@ final case class BNG_CellUnionAgg(
             case StringType => UTF8String.fromString(BNG.format(b.cellID))
             case LongType   => b.cellID
         }
-        if (b.hasCore) InternalRow(id, true, JTS.toWKB(BNG.cellIdToGeometry(b.cellID)))
+        // Scalar BNG_CellUnion.execute* returns an empty polygon when chip cell ids differ;
+        // the aggregate folds chips the same way, so a group spanning multiple cells (the
+        // bench groups by an arbitrary key) yields an empty-polygon chip rather than throwing.
+        if (b.mixed) InternalRow(id, false, JTS.toWKB(JTS.emptyPolygon))
+        else if (b.hasCore) InternalRow(id, true, JTS.toWKB(BNG.cellIdToGeometry(b.cellID)))
         else InternalRow(id, false, if (b.unionWkb eq null) JTS.toWKB(JTS.emptyPolygon) else b.unionWkb)
     }
 

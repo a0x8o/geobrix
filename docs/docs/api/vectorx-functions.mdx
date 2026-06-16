@@ -2,32 +2,471 @@
 sidebar_position: 7
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import vectorxFunctionsExamples from '!!raw-loader!../../tests/python/api/vectorx_functions.py';
+import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_functions_sql.py';
+import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.py';
+import Tier from '@site/src/components/Tier';
+import { Impl } from '@site/src/components/Tier';
+import VectorXIcon from '../../../resources/images/VectorX.png';
 
-# VectorX Function Reference
+# <img src={VectorXIcon} alt="VectorX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
 
-VectorX provides a single conversion function for legacy DBLabs Mosaic geometry format.
+VectorX augments the product's native `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-geometry migration helpers. As of v0.4.0 it covers:
+
+- **Vector tile encoding** — `gbx_st_asmvt` aggregator + `gbx_st_asmvt_pyramid` generator for publishing Mapbox Vector Tile (MVT) layers, available in **both** the lightweight (`pyvx`) and heavyweight (`vectorx`) tiers
+- **TIN surface modeling** — `gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`, and `gbx_st_interpolateelevationgeom` for Delaunay triangulation and grid elevation interpolation from Z-valued points, in **both** tiers (with a `constrained`/`conforming` mode selector)
+- **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB (heavyweight only)
+- **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating geometries written by DBLabs Mosaic, in **both** tiers
+
+:::note Import paths
+- Vector tile encoding lightweight: `databricks.labs.gbx.pyvx` (Python)
+- Vector tile encoding heavyweight: `databricks.labs.gbx.vectorx` (Python) / `com.databricks.labs.gbx.vectorx` (Scala)
+- Legacy Mosaic conversion: `databricks.labs.gbx.vectorx.jts.legacy` (Python) / `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala)
+:::
 
 :::note SQL examples
-Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For SQL, Python, and Scala usage patterns, see [Language Bindings](./language-bindings).
 :::
+
+:::note Geometry input encodings
+Every `gbx_st_*` geometry input accepts **WKB, EWKB, WKT, and EWKT** interchangeably. WKB/WKT carry no SRID; EWKB/EWKT carry one. Pass whichever encoding your upstream produces — no separate conversion step is required.
+:::
+
+## Tier availability
+
+| Function | Lightweight (pyvx) | Heavyweight (vectorx) |
+|---|---|---|
+| `st_asmvt` | Supported | Supported |
+| `st_asmvt_pyramid` | Supported | Supported |
+| `st_triangulate` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_interpolateelevationbbox` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_interpolateelevationgeom` | Supported (`constrained`) | Supported (`constrained` + `conforming`) |
+| `st_legacyaswkb` | Supported | Supported |
+
+---
+
+## Vector tile output {#vector-tile-output}
+
+Encode features into [Mapbox Vector Tile (MVT)](https://github.com/mapbox/vector-tile-spec) protobufs. Pair the per-tile MVT bytes with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a vector pyramid as a single `.pmtiles` archive targeting MapLibre, deck.gl, Mapbox GL JS, or Felt.
+
+Both tiers expose identical `st_asmvt` / `st_asmvt_pyramid` names and identical output schemas. `st_asmvt` is swap-compatible across both the SQL and Python DataFrame APIs. `st_asmvt_pyramid` is interchangeable at the **SQL** level (invoked via `LATERAL`); its Python DataFrame Column form is heavy-only, because the lightweight pyramid is a Python UDTF, which SQL `LATERAL` calls but the DataFrame API does not expose. The one-line swap:
+
+```python
+# Lightweight (pyvx) — Serverless-safe, no JAR
+from databricks.labs.gbx.pyvx    import functions as vx
+
+# Heavyweight (vectorx) — classic x86 cluster, JAR required
+from databricks.labs.gbx.vectorx import functions as vx
+
+# Everything below is identical in both tiers:
+vx.register(spark)
+```
+
+### Options
+
+`st_asmvt` takes a `layer_name` argument (plain string or `Column`). `st_asmvt_pyramid` additionally accepts:
+
+| Argument | Default | Description |
+|---|---|---|
+| `layer_name` | `"layer"` | MVT layer name embedded in the protobuf. |
+| `extent` | `4096` | MVT tile extent in pixels (MVT v2 standard). |
+
+### Compute compatibility
+
+| Aspect | Lightweight (pyvx) | Heavyweight (vectorx) |
+|---|---|---|
+| Install | `%pip install geobrix` (wheel) | Init script + JAR |
+| Serverless / shared / ARM | Supported | Not supported |
+| Lakeflow declarative pipelines | Supported | Not supported |
+| Execution model | Python UDTF / pandas UDF | JVM (Scala + Spark columnar) |
+| JVM access | None — `spark.udf.register` only | Required |
+
+### Native attribute typing
+
+Both tiers encode MVT feature attributes with native protobuf value types:
+
+- **Integer / Long → int64 value**
+- **Float / Double → double value**
+- **Boolean → bool value**
+- **String (and anything else) → string value**
+
+This means downstream clients (MapLibre GL JS, Mapbox GL JS, deck.gl) receive numbers as numbers and booleans as booleans — enabling numeric data-driven styles, filter expressions, and arithmetic without a client-side `parseFloat` call.
+
+---
+
+### st_asmvt
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyvx)">
+
+<Tier light/> <Impl groupedAgg/>
+
+Aggregator that encodes a group of features into a single MVT protobuf blob for one
+`(z, x, y)` tile. Each call to `groupBy(z, x, y).agg(vx.st_asmvt(...))` produces the
+MVT bytes for exactly one tile.
+
+**Signature:** `st_asmvt(geom_wkb, attrs, layer_name) → BINARY`
+
+**Parameters:**
+
+- `geom_wkb` (`BINARY`) — Feature geometry as WKB in **tile-local coordinates** (pixel
+  space, 0..extent). Clip and project each feature to the tile coordinate system upstream
+  before calling this aggregator.
+- `attrs` (`STRUCT<...>`) — Per-feature attribute struct. Integer, float, boolean, and
+  string fields are encoded with native MVT protobuf value types.
+- `layer_name` (`STRING` or `str`) — MVT layer name. Pass a plain Python string or a Column.
+
+**Returns:** `BINARY` — the MVT protobuf for one tile layer. Feed directly into
+`gbx_pmtiles_agg` or the [PMTiles Writer](../writers/pmtiles).
+
+**PySpark:**
+
+```python
+from databricks.labs.gbx.pyvx import functions as vx
+from pyspark.sql import functions as F
+
+vx.register(spark)
+
+# features_df: (z, x, y, geom_wkb BINARY in tile-local coords, name STRING, id LONG)
+tiles_df = (
+    features_df
+    .groupBy("z", "x", "y")
+    .agg(
+        vx.st_asmvt(
+            F.col("geom_wkb"),
+            F.struct(F.col("name"), F.col("id")),
+            "roads",          # layer name — plain string becomes a literal Column
+        ).alias("mvt_bytes")
+    )
+)
+# tiles_df: (z INT, x INT, y INT, mvt_bytes BINARY)
+```
+
+**SQL** (after `vx.register(spark)` in the same session):
+
+```sql
+SELECT
+    z, x, y,
+    gbx_st_asmvt(geom_wkb, struct(name, id), 'roads') AS mvt_bytes
+FROM features_with_tile_coords
+GROUP BY z, x, y
+```
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (vectorx)">
+
+<Tier heavy/>
+
+Aggregator that encodes a group of features into a single MVT protobuf blob for one `(z, x, y)` tile.
+
+**Signature:** `st_asmvt(geomWkb: Column, attrs: Column, layerName: Column): Column`
+
+**Parameters:**
+- `geomWkb` (`BINARY`) — Feature geometry in **tile-local coordinates** as WKB. Compose any `ST_Intersection` against the tile envelope and coordinate translation upstream.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. Integer, long, double, and boolean fields are encoded as native MVT value types; other types are encoded as strings.
+- `layerName` (`STRING`) — MVT layer name.
+
+**Returns:** `BINARY` — the MVT protobuf bytes for one layer of the tile.
+
+Typical use: `GROUP BY (z, x, y)` after composing tile-local coordinates upstream, so each group becomes one tile.
+
+**SQL:**
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
+
+**PySpark:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.groupBy("z", "x", "y").agg(
+    vx.st_asmvt(col("geom_wkb"), struct(col("name"), col("id")), "roads").alias("mvt")
+)
+```
+
+**Composability:** The `BINARY` output is the natural input to `gbx_pmtiles_agg` for packaging multiple `(z, x, y)` tiles into a single PMTiles file.
+
+**Limitations in 0.4.0:**
+- Caller composes any `ST_Simplify` upstream.
+- Caller composes tile-coordinate transform upstream.
+
+</TabItem>
+</Tabs>
+
+---
+
+### st_asmvt_pyramid
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pyvx)">
+
+<Tier light/> <Impl udtf/>
+
+Generator (Python UDTF) that explodes one input feature into one row per intersecting
+`(z, x, y)` tile across a zoom range, with MVT bytes already encoded in each row. The
+per-tile clip and coordinate transform happen inside the function — no upstream
+`ST_Intersection` is needed.
+
+The output schema `(z, x, y, mvt_bytes)` is identical to the heavyweight generator,
+so SQL pipelines built against either tier are interchangeable. In the lightweight
+tier this generator is invoked only via SQL `LATERAL`; it has no Python DataFrame
+Column form (that form is heavy-only).
+
+**Signature (SQL):** `gbx_st_asmvt_pyramid(geom_wkb, attrs, min_z, max_z, layer_name, extent)`
+
+**Parameters:**
+
+- `geom_wkb` (`BINARY`) — Feature geometry as WKB in **EPSG:4326 lon/lat**. The UDTF
+  clips each feature to every intersecting tile and transforms to tile-local coordinates
+  internally.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. Same native-typed encoding as `st_asmvt`.
+- `min_z`, `max_z` (`INT`) — Inclusive zoom range (`0..20`).
+- `layer_name` (`STRING`, optional) — MVT layer name; defaults to `"layer"`.
+- `extent` (`INT`, optional) — MVT tile extent in pixels; defaults to `4096`.
+
+**Returns:** One row per intersecting tile — schema `(z INT, x INT, y INT, mvt_bytes BINARY)`.
+
+**Caps:** `max_z ≤ 20`; total tile count across the zoom range capped at 10⁶.
+
+**SQL — LATERAL table function:**
+
+```sql
+-- After vx.register(spark):
+SELECT t.*
+FROM features,
+     LATERAL gbx_st_asmvt_pyramid(
+         geom_wkb, struct(name, id), 0, 12, 'roads', 4096
+     ) t
+```
+
+`LATERAL` materializes one `(z, x, y, mvt_bytes)` row per tile the feature intersects.
+Each executor processes its partition's features in parallel — tile fan-out is distributed
+across the cluster, not serialized on the driver.
+
+**Full pipeline — vector pyramid to PMTiles:**
+
+```python
+from databricks.labs.gbx.pyvx    import functions as vx
+from databricks.labs.gbx.pmtiles import functions as px
+from pyspark.sql import functions as F
+
+vx.register(spark)
+px.register(spark)
+
+# Step 1: explode features → per-tile MVT rows (distributed; LATERAL in SQL)
+tiles_df = spark.sql("""
+    SELECT t.*
+    FROM features,
+         LATERAL gbx_st_asmvt_pyramid(geom_wkb, struct(name, id), 0, 10, 'roads', 4096) t
+""")
+
+# Step 2: aggregate the per-tile MVT bytes → single PMTiles archive
+pmt_bytes = (
+    tiles_df.agg(
+        px.pmtiles_agg(
+            F.col("mvt_bytes"), F.col("z"), F.col("x"), F.col("y"),
+            '{"name":"roads","attribution":"© My Data"}',
+        ).alias("pmt")
+    )
+    .collect()[0]["pmt"]
+)
+
+with open("/tmp/roads.pmtiles", "wb") as fh:
+    fh.write(pmt_bytes)
+```
+
+For larger pyramids that exceed the Spark cell limit, use the [PMTiles Writer](../writers/pmtiles)
+(`pmtiles_gbx` for the lightweight tier) instead of `pmtiles_agg`.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (vectorx)">
+
+<Tier heavy/>
+
+Generator that explodes one feature into one row per intersecting `(z, x, y)` tile across a zoom range, with the MVT bytes already encoded per tile. Pairs with `gbx_rst_xyzpyramid` (the raster sibling) and feeds directly into `gbx_pmtiles_agg`.
+
+**Signature:** `st_asmvt_pyramid(geomWkb: Column, attrs: Column, minZoom: Column, maxZoom: Column, layerName: Column): Column`
+
+**Parameters:**
+- `geomWkb` (`BINARY`) — Feature geometry in **EPSG:4326 lon/lat** as WKB. The function performs the per-tile clip and tile-local coordinate transform; no upstream `ST_Intersection` required.
+- `attrs` (`STRUCT<...>`) — Per-feature attributes. Integer, long, double, and boolean fields are encoded as native MVT value types; other types are encoded as strings.
+- `minZoom`, `maxZoom` (`INT`) — Inclusive zoom-level range (`0..20`).
+- `layerName` (`STRING`) — MVT layer name (constant per call).
+- `extent` (`INT`, optional) — MVT tile extent in pixels; default `4096` (MVT v2 standard).
+
+**Returns:** One row per intersecting tile; each row's `tile` struct exposes `(z INT, x INT, y INT, mvt_bytes BINARY)`. Use `LATERAL VIEW` to materialize rows and pipe `mvt_bytes` into `gbx_pmtiles_agg`.
+
+**SQL:**
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_asmvt_pyramid_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" />
+
+**PySpark:**
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql.functions import col, struct
+
+df.select(
+    vx.st_asmvt_pyramid(
+        col("geom_wkb"), struct(col("name"), col("id")), 0, 8, "roads"
+    ).alias("t")
+).select("t.tile.z", "t.tile.x", "t.tile.y", "t.tile.mvt_bytes")
+```
+
+**Composability:** Output rows compose directly with `gbx_pmtiles_agg` — group by `(z, x, y)`, aggregate `mvt_bytes` to produce a PMTiles blob with `tile_type = mvt`. For multi-feature tiles, pre-explode tile assignments and then `groupBy(z, x, y).agg(st_asmvt(...))` using the aggregator.
+
+**Limitations in 0.4.0:**
+- Single-feature input per row. Multi-feature aggregation per tile requires the aggregator pattern above.
+- `max_z <= 20`; total tile count across the zoom range capped at 10^6 (mirrors `gbx_rst_xyzpyramid`).
+- Inputs must be in EPSG:4326; reproject upstream for other CRS.
+
+</TabItem>
+</Tabs>
+
+---
+
+## Triangulation and elevation
+
+These generators build a Delaunay triangulated irregular network (TIN) from Z-valued mass points and optional breaklines, then either expose the triangles directly or sample the surface on a regular grid to produce elevation points. Useful for surface modeling, DTM/DEM derivation, and elevation sampling from survey point clouds. All three are available in **both** tiers; breaklines are honored in both.
+
+### Triangulation modes: `constrained` vs `conforming`
+
+Each TIN function takes a trailing `mode` argument (default `'constrained'`):
+
+| Mode | Tiers | Behavior |
+|---|---|---|
+| `constrained` *(default)* | Lightweight **and** heavyweight | Constrained Delaunay triangulation. Breaklines are honored as forced edges with **no Steiner points** — the output vertex set is exactly your input mass points plus breakline vertices. Identical algorithm in both tiers, so the result is a seamless cross-tier swap. |
+| `conforming` | Heavyweight only | JTS conforming-Delaunay triangulation: the mesh may insert additional **Steiner points** along breakline segments to satisfy the Delaunay property near constraints. Produces a smoother mesh around dense breaklines at the cost of extra vertices. |
+
+The lightweight tier raises `NotImplementedError` on `mode='conforming'` — it has no Steiner-point refinement. This is a **documented, intentional divergence**, analogous to the [H3 covering note](./gridx-functions) elsewhere in these docs: the two tiers agree exactly in the default (`constrained`) mode, and the heavyweight tier offers `conforming` as a deliberate opt-in superset. If you need a result that is byte-identical across tiers, stay on `constrained` (the default).
+
+:::note Invocation surface
+In the **lightweight** tier these TIN generators are PySpark UDTFs with **no Python DataFrame Column form** — invoke them via SQL `LATERAL` (e.g. `... , LATERAL gbx_st_triangulate(...) t`), the same pattern as `gbx_st_asmvt_pyramid`. In the **heavyweight** tier they are exposed as generator Columns (usable in `select(...)`) and via SQL `LATERAL VIEW`. SQL `LATERAL` works for **both** tiers; the Python DataFrame Column form is heavyweight-only for these generators.
+:::
+
+### st_triangulate
+
+<Tier both/> <Impl udtf/>
+
+Builds a Delaunay TIN from mass-point geometries (with Z values) and optional breakline geometries, emitting one triangle polygon per row. Use this when you need the raw triangulation — e.g., to inspect mesh quality, clip triangles to an area of interest, or feed a custom sampler.
+
+**Signature:** `gbx_st_triangulate(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, mode)`
+
+**Parameters:**
+- `points` — Array column of point geometries with Z values (the mass points that define the surface). Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Array column of linestring geometries that the mesh must honor as edges (e.g., ridge lines, drainage channels). Pass an empty array if no breaklines are needed.
+- `mergeTolerance` (`DOUBLE`) — Distance below which coincident points are merged before triangulation.
+- `snapTolerance` (`DOUBLE`) — Distance within which points are snapped to breakline vertices.
+- `splitPointFinder` (`STRING`) — Conforming-mesh refinement strategy. Use `'NONENCROACHING'` for a mesh that avoids encroaching on breakline segments; `'MIDPOINT'` is also valid (heavyweight `conforming` mode).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only). See [Triangulation modes](#triangulation-modes-constrained-vs-conforming) above.
+
+**Generator:** Emits one row per output triangle. Use with SQL `LATERAL` to materialize the triangles; the output schema column is `triangle` (`BINARY` WKB polygon).
+
+**SQL** (works in both tiers after `vx.register(spark)`):
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_triangulate_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_triangulate_sql_example_output" />
+
+**PySpark** (heavyweight DataFrame Column form):
+
+```python
+from databricks.labs.gbx.vectorx import functions as vx
+from pyspark.sql import functions as F
+
+df.select(
+    vx.st_triangulate(
+        F.col("masspoints"), F.col("breaklines"), 0.01, 0.01, "NONENCROACHING"
+    ).alias("t")
+).select("t.triangle")
+```
+
+In the lightweight tier, call the registered UDTF via SQL `LATERAL` (shown above) — there is no `vx.st_triangulate(...)` Column form.
+
+---
+
+### st_interpolateelevationbbox
+
+<Tier both/> <Impl udtf/>
+
+Builds a TIN from mass points and breaklines, then samples elevation on a regular pixel grid covering an **explicit bounding box**. Use this when you already know the output extent in absolute coordinates — for example, when snapping to a fixed tile extent or aligning with a raster grid.
+
+**Signature:** `gbx_st_interpolateelevationbbox(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, xmin, ymin, xmax, ymax, widthPx, heightPx, srid, mode)`
+
+**Parameters:**
+- `points` — Mass-point geometries with Z values. Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Breakline geometries (or an empty array).
+- `mergeTolerance` (`DOUBLE`) — Merge distance for coincident points.
+- `snapTolerance` (`DOUBLE`) — Snap distance to breakline vertices.
+- `splitPointFinder` (`STRING`) — Conforming-mesh strategy (e.g. `'NONENCROACHING'`).
+- `xmin`, `ymin`, `xmax`, `ymax` (`DOUBLE`) — Bounding box corners in the coordinate reference system given by `srid`.
+- `widthPx`, `heightPx` (`INT`) — Number of grid columns and rows. Together with the bbox dimensions these determine the cell size.
+- `srid` (`INT`) — EPSG code of the bounding box coordinates (e.g. `27700` for British National Grid).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only).
+
+**Generator:** Emits one row per in-hull grid cell (cells whose centers fall outside the TIN convex hull are dropped). The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with SQL `LATERAL` to materialize the grid.
+
+**SQL** (works in both tiers):
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_interpolateelevationbbox_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_interpolateelevationbbox_sql_example_output" />
+
+---
+
+### st_interpolateelevationgeom
+
+<Tier both/> <Impl udtf/>
+
+Builds a TIN from mass points and breaklines, then samples elevation on a regular grid **anchored to a geometry origin** with explicit cell sizes. Use this when the grid must be defined relative to a known point — for example, when the grid origin comes from data (a survey control point) or when different rows need different grid placements.
+
+**Signature:** `gbx_st_interpolateelevationgeom(points, breaklines, mergeTolerance, snapTolerance, splitPointFinder, gridOrigin, gridCols, gridRows, cellSizeX, cellSizeY, mode)`
+
+**Parameters:**
+- `points` — Mass-point geometries with Z values. Accepts WKB/EWKB/WKT/EWKT.
+- `breaklines` — Breakline geometries (or an empty array).
+- `mergeTolerance` (`DOUBLE`) — Merge distance for coincident points.
+- `snapTolerance` (`DOUBLE`) — Snap distance to breakline vertices.
+- `splitPointFinder` (`STRING`) — Conforming-mesh strategy (e.g. `'NONENCROACHING'`).
+- `gridOrigin` — POINT geometry anchoring the top-left corner of the output grid. The output SRID is inherited from this geometry (encode as EWKB/EWKT to carry a non-zero SRID) — no separate `srid` argument.
+- `gridCols`, `gridRows` (`INT`) — Number of grid columns and rows.
+- `cellSizeX` (`DOUBLE`) — Horizontal cell size in the geometry's units (positive steps right).
+- `cellSizeY` (`DOUBLE`) — Vertical cell size in the geometry's units. Pass a **negative** value to step downward (standard raster convention, e.g. `-10.0` for 10-unit cells stepping south).
+- `mode` (`STRING`, optional) — `'constrained'` (default, both tiers) or `'conforming'` (heavyweight only).
+
+**Generator:** Emits one row per in-hull grid cell. The output schema column is `elevation_point` (`BINARY` WKB POINT Z). Use with SQL `LATERAL` to materialize the grid.
+
+**SQL** (works in both tiers):
+
+<CodeFromTest code={vectorxSqlCode} functionName="st_interpolateelevationgeom_sql_example" language="sql" source="docs/tests/python/api/vectorx_functions_sql.py" testFile="docs/tests/python/api/test_vectorx_functions_sql.py" outputConstant="st_interpolateelevationgeom_sql_example_output" />
+
+---
+
+## Legacy Mosaic conversion
+
+### st_legacyaswkb
+
+<Tier both/>
+
+Migrates a legacy DBLabs Mosaic geometry value to standard Well-Known Binary (WKB). Pass the raw legacy geometry column through `st_legacyaswkb` to obtain a WKB binary that all downstream `ST_*` functions accept — the practical first step when moving a Mosaic-era table onto the product's native `GEOMETRY`/`GEOGRAPHY` types.
+
+A scalar function in **both** tiers (same registered name, same output bytes), so the migration query is a one-line tier swap.
+
+**Parameters:** `legacyGeometry` — Column containing a legacy Mosaic geometry value (e.g. `{1, [[[x, y]]], [[]]}`).
+
+**Returns:** `BINARY` — standard WKB.
+
+**Migration notes:**
+- **Z values are preserved.** 3D legacy geometries round-trip through `st_legacyaswkb` with their Z coordinate intact.
+- **Polygon holes (interior rings) are preserved.**
+- **SRID is applied separately at ingestion.** The output is plain WKB and carries no SRID; assign the CRS when you read it back, e.g. `ST_GeomFromWKB(gbx_st_legacyaswkb(geom_legacy), 27700)`.
+- **M (measure) values are out of scope** for this conversion.
 
 ## Common setup
 
 Run this once before the examples below. It registers VectorX so you can use `st_legacyaswkb` in Python and `gbx_st_legacyaswkb` in SQL.
 
 <CodeFromTest code={vectorxFunctionsExamples} functionName="vectorx_setup_example" language="python" source="docs/tests/python/api/vectorx_functions.py" testFile="docs/tests/python/api/test_vectorx_functions.py" outputConstant="vectorx_setup_example_output" />
-
----
-
-## st_legacyaswkb
-
-Converts legacy Mosaic geometry to Well-Known Binary (WKB).
-
-**Parameters:** `legacyGeometry` — Column containing legacy geometry string (e.g. `{1, [[[x, y]]], [[]]}`).
-
-**Returns:** Binary WKB column.
 
 **Python:**
 
@@ -37,7 +476,23 @@ Converts legacy Mosaic geometry to Well-Known Binary (WKB).
 
 <CodeFromTest code={vectorxFunctionsExamples} functionName="ST_LEGACYASWKB_SQL_EXAMPLE" language="sql" source="docs/tests/python/api/vectorx_functions.py" testFile="docs/tests/python/api/test_vectorx_functions.py" outputConstant="ST_LEGACYASWKB_SQL_EXAMPLE_output" />
 
+**Quick Start example** (point geometry round-trip):
+
+<CodeFromTest
+  code={quickstartCode}
+  language="python"
+  functionName="USE_VECTORX"
+  testFile="docs/tests/python/quickstart/test_examples.py"
+  outputConstant="USE_VECTORX_output"
+/>
+
+---
+
 ## Next Steps
 
 - [Quick Start](../quick-start) — Register and use VectorX with the legacy example
+- [Choosing an Execution Tier](./execution-tiers) — lightweight vs heavyweight comparison
+- [PMTiles Function Reference](./pmtiles-functions) — Aggregate MVT tiles into a single `.pmtiles` archive
+- [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
+- [Benchmarking](./benchmarking) — light-vs-heavy timing methodology
 - [API Overview](./overview) — All GeoBrix APIs

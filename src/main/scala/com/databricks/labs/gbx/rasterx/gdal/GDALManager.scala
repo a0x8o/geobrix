@@ -28,6 +28,9 @@ object GDALManager extends Logging {
     var checkpointPath: String = _
     var useCheckpoint: Boolean = _
 
+    /** Tracks whether OGR drivers have been registered in this JVM. See [[initOgr]]. */
+    @volatile private var ogrEnabled = false
+
     private val pythonLock = new Object
     @volatile private var pythonDepth = 0
 
@@ -66,6 +69,44 @@ object GDALManager extends Logging {
                         throw exception
                 }
             }
+        }
+
+    /**
+      * Register OGR (vector) drivers once per JVM; idempotent after first success.
+      *
+      * The GDAL Java bindings expose `org.gdal.ogr.ogr.RegisterAll()` as a process-global
+      * mutation of the driver registry, and it is NOT thread-safe. Concurrent Spark tasks in
+      * one executor JVM that each call `RegisterAll()` ad-hoc race that registry — a racing
+      * `GetDriverByName(...)` can return null (NPE) or the native layer can sigabrt. Registering
+      * exactly once under the shared `lock` (mirroring [[init]]) closes that race: after the
+      * first call every task sees a fully-registered registry and never re-registers.
+      */
+    def initOgr(): Unit =
+        lock.synchronized {
+            if (!ogrEnabled) {
+                org.gdal.ogr.ogr.RegisterAll()
+                ogrEnabled = true
+            }
+        }
+
+    /**
+      * Returns the GTiff driver via a guarded lookup (REQUIRED for thread-safety).
+      *
+      * The GDAL Java bindings expose `gdal.GetDriverByName` against the process-global driver
+      * registry. A raw per-task lookup can race [[init]]'s `AllRegister()` and return null
+      * (NPE) or sigabrt the executor. This accessor takes the same `lock` [[init]]/[[initOgr]]
+      * use, so the driver registry is fully populated before the lookup returns. Callers must
+      * have already ensured [[init]] ran (raster expressions always do).
+      */
+    private[rasterx] def gtiffDriver(): org.gdal.gdal.Driver = driverByName("GTiff")
+
+    /** Returns the in-memory MEM driver via the same guarded lookup as [[gtiffDriver]]. */
+    private[rasterx] def memDriver(): org.gdal.gdal.Driver = driverByName("MEM")
+
+    /** Guarded `gdal.GetDriverByName` — see [[gtiffDriver]] for the thread-safety rationale. */
+    private def driverByName(shortName: String): org.gdal.gdal.Driver =
+        lock.synchronized {
+            gdal.GetDriverByName(shortName)
         }
 
     /** Apply ExpressionConfig to GDAL options and store checkpoint settings for this process. */

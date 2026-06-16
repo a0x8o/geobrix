@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
+import com.databricks.labs.gbx.rasterx.operations.CombineAVG
 import com.databricks.labs.gbx.rasterx.operator.{GDALBuildVRT, GDALTranslate}
 import org.gdal.gdal.{Dataset, gdal}
 import org.scalatest.BeforeAndAfterAll
@@ -197,6 +198,91 @@ def passthrough(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ys
         derivedDs.GetRasterYSize shouldBe ds1.GetRasterYSize
         
         RasterDriver.releaseDataset(derivedDs)
+    }
+
+    test("RST_DerivedBand collapses a multi-band input to a single derived band") {
+        // Regression: a single N-band input tile must still yield exactly ONE
+        // derived band (matching the documented/lightweight contract), not one
+        // output band per input band. multiBandDs has 3 bands.
+        multiBandDs.GetRasterCount shouldBe 3
+        val pyfunc = """
+import numpy as np
+def multiband_average(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+    stacked = np.array(in_ar)
+    out_ar[:] = np.mean(stacked, axis=0)
+"""
+        val (derivedDs, _) = RST_DerivedBand.execute(Seq(multiBandDs), Map.empty, pyfunc, "multiband_average")
+
+        derivedDs should not be null
+        derivedDs.GetRasterCount shouldBe 1
+        derivedDs.GetRasterXSize shouldBe multiBandDs.GetRasterXSize
+        derivedDs.GetRasterYSize shouldBe multiBandDs.GetRasterYSize
+
+        RasterDriver.releaseDataset(derivedDs)
+    }
+
+    // ====================================================================
+    // RST_CombineAvg band-count contract (2 tests)
+    // ====================================================================
+
+    test("RST_CombineAvg preserves band count (per-band mean of multi-band inputs)") {
+        // Contract: combineavg of K aligned N-band tiles yields an N-band tile where
+        // output band j = mean of band j across the K inputs. It must NOT collapse to
+        // a single band (that is the derivedband contract). Regression for the shared
+        // -separate/collapse in PixelCombineRasters that wrongly applied to combineavg.
+        multiBandDs.GetRasterCount shouldBe 3
+        val (avgDs, _) = CombineAVG.compute(Array(multiBandDs, multiBandDs), Map.empty)
+
+        avgDs should not be null
+        avgDs.GetRasterCount shouldBe 3
+        avgDs.GetRasterXSize shouldBe multiBandDs.GetRasterXSize
+        avgDs.GetRasterYSize shouldBe multiBandDs.GetRasterYSize
+
+        // Averaging a tile with itself is the identity per band on VALID pixels, so
+        // verify band j of the output equals band j of the input there (proving a
+        // per-band mean, not a cross-band collapse). MODIS fill is 32767; those
+        // all-NoData cells legitimately resolve to the fallback, so skip them.
+        val w = multiBandDs.GetRasterXSize
+        val h = multiBandDs.GetRasterYSize
+        val nodataFill = 32767.0
+        val inBands = (1 to 3).map { b =>
+            val buf = new Array[Float](w * h)
+            multiBandDs.GetRasterBand(b).ReadRaster(0, 0, w, h, buf)
+            buf
+        }
+        val outBands = (1 to 3).map { b =>
+            val buf = new Array[Float](w * h)
+            avgDs.GetRasterBand(b).ReadRaster(0, 0, w, h, buf)
+            buf
+        }
+        var checked = 0
+        (0 until 3).foreach { j =>
+            (0 until w * h).foreach { i =>
+                if (inBands(j)(i).toDouble != nodataFill) {
+                    outBands(j)(i).toDouble shouldBe inBands(j)(i).toDouble +- 1.0
+                    checked += 1
+                }
+            }
+        }
+        checked should be > 0 // ensure we actually validated valid pixels
+
+        // Bands must be distinct: a collapse would make all output bands identical.
+        (outBands(0) sameElements outBands(1)) shouldBe false
+
+        RasterDriver.releaseDataset(avgDs)
+    }
+
+    test("RST_CombineAvg of single-band inputs still yields one band") {
+        // The historic single-band case (N single-band tiles -> 1-band mean) must be
+        // unaffected by the per-band path.
+        val (avgDs, _) = CombineAVG.compute(Array(ds1, ds1), Map.empty)
+
+        avgDs should not be null
+        avgDs.GetRasterCount shouldBe 1
+        avgDs.GetRasterXSize shouldBe ds1.GetRasterXSize
+        avgDs.GetRasterYSize shouldBe ds1.GetRasterYSize
+
+        RasterDriver.releaseDataset(avgDs)
     }
 
     // ====================================================================

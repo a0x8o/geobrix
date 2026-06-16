@@ -440,6 +440,76 @@ def rst_merge_agg(tile: ColLike) -> Column:
     return f.call_function("gbx_rst_merge_agg", _col(tile))
 
 
+def rst_rasterize_agg(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Rasterize streaming (geom_wkb, value) rows into a single raster tile (use with groupBy).
+
+    Streams one geometry/value pair per row; the extent and pixel-size arguments
+    are per-group constants.  Overlap is last-wins (nondeterministic across the group).
+
+    Args:
+        geom_wkb: BINARY column of geometry WKB (Polygon, MultiPolygon, etc.).
+        value: DOUBLE burn value column.
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the geometry / output raster.
+
+    Returns:
+        Column of raster tile.
+    """
+    return f.call_function(
+        "gbx_rst_rasterize_agg",
+        _col(geom_wkb),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
+    """Stack single-band tiles into a multi-band tile by explicit band index (use with groupBy).
+
+    Streams one (tile, band_index) pair per row.  On evaluation the tiles are sorted
+    by ``band_index`` ascending and stacked via ``gbx_rst_frombands``.  Unlike the
+    non-aggregator :func:`rst_frombands` (which reads ARRAY position as band order),
+    this aggregator accepts an explicit integer ``band_index`` to guarantee ordering
+    independent of row arrival order.
+
+    ``band_index`` accepts both ``IntegerType`` and ``LongType`` columns; PySpark
+    infers Python ``int`` literals as ``LongType``, which is handled transparently.
+
+    Args:
+        tile: Single-band raster tile column.
+        band_index: Integer (or long) column (1-based) indicating the output band position.
+
+    Returns:
+        Column of multi-band raster tile.
+    """
+    return f.call_function(
+        "gbx_rst_frombands_agg",
+        _col(tile),
+        _col(band_index),
+    )
+
+
 # Constructors
 
 
@@ -484,17 +554,27 @@ def rst_frombands(bands: ColLike) -> Column:
 # Generators
 
 
-def rst_h3_tessellate(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_tessellate(
+    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+) -> Column:
     """Tessellate the raster into H3 cells at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        mode: ``"covering"`` (default) keeps every cell whose hexagon overlaps
+            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
+            each valid pixel to the one cell whose hexagon contains its centroid
+            (chips partition the valid pixels). String literals are auto-wrapped
+            in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (H3 index, tile) or similar.
     """
-    return f.call_function("gbx_rst_h3_tessellate", _col(tile), _col(resolution))
+    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    return f.call_function(
+        "gbx_rst_h3_tessellate", _col(tile), _col(resolution), mode_col
+    )
 
 
 def rst_maketiles(tile: ColLike, size_in_mb: ColLike) -> Column:
@@ -628,6 +708,81 @@ def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
     """
     return f.call_function(
         "gbx_rst_h3_rastertogridmedian", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute average pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridavg", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute pixel count per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure BIGINT)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridcount", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute maximum pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmax", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute minimum pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmin", _col(tile), _col(resolution)
+    )
+
+
+def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
+    """Compute median pixel value per CARTO quadbin v0 cell at the given resolution.
+
+    Args:
+        tile: Raster tile column.
+        resolution: Quadbin resolution / zoom (0–20).
+
+    Returns:
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
+    """
+    return f.call_function(
+        "gbx_rst_quadbin_rastertogridmedian", _col(tile), _col(resolution)
     )
 
 
@@ -922,4 +1077,1166 @@ def rst_worldtorastercoordy(
     """
     return f.call_function(
         "gbx_rst_worldtorastercoordy", _col(tile), _col(world_x), _col(world_y)
+    )
+
+
+def rst_to_webmercator(
+    tile: ColLike, resampling: Union[ColLike, None] = None
+) -> Column:
+    """Reproject the tile to EPSG:3857 (web mercator).
+
+    Most slippy-map workflows start here because rasters typically arrive
+    in EPSG:4326 or a UTM zone — neither renders directly in tile servers.
+
+    Args:
+        tile: Raster tile column.
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). Use
+            ``"near"`` for categorical rasters. String literals are auto
+            wrapped in ``f.lit``; pass a ``Column`` to defer.
+
+    Returns:
+        Tile column reprojected to EPSG:3857.
+    """
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function("gbx_rst_to_webmercator", _col(tile), resampling_col)
+
+
+def rst_tilexyz(
+    tile: ColLike,
+    z: ColLike,
+    x: ColLike,
+    y: ColLike,
+    format: Union[ColLike, None] = None,
+    size: ColLike = 256,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Render a single web-mercator XYZ tile to PNG / JPEG / WEBP bytes.
+
+    Returns ``BinaryType`` with the encoded tile bytes for ``(z, x, y)``.
+    Out-of-extent tiles return a transparent PNG (alpha=0) of the requested
+    size — NOT null. Slippy-map tile servers expect a 200-status non-zero
+    body even outside source coverage.
+
+    Args:
+        tile: Raster tile column.
+        z: Zoom level (0 ≤ z ≤ 20).
+        x: Tile X coordinate (0 ≤ x < 2^z).
+        y: Tile Y coordinate (0 ≤ y < 2^z, Y north-down).
+        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+            String literals are auto-wrapped in ``f.lit``.
+        size: Output edge length in pixels (default 256).
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
+            are auto-wrapped in ``f.lit``.
+
+    Returns:
+        Binary column with the encoded image bytes.
+    """
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
+    )
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function(
+        "gbx_rst_tilexyz",
+        _col(tile),
+        _col(z),
+        _col(x),
+        _col(y),
+        format_col,
+        _col(size),
+        resampling_col,
+    )
+
+
+def rst_xyzpyramid(
+    tile: ColLike,
+    min_z: ColLike,
+    max_z: ColLike,
+    format: Union[ColLike, None] = None,
+    size: ColLike = 256,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Generator: emit one row per intersecting (z, x, y) tile across [min_z, max_z].
+
+    Per-row output column is a struct ``tile: STRUCT<z INT, x INT, y INT, bytes BINARY>``.
+    Invoke directly in ``select(...)`` (top-level generator, do not wrap in ``F.explode``).
+    Cell-count is capped at 10^6 candidate tiles across the requested zoom range;
+    ``max_z`` is capped at 20.
+
+    Args:
+        tile: Raster tile column.
+        min_z: Inclusive minimum zoom level.
+        max_z: Inclusive maximum zoom level (≤ 20).
+        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+            String literals are auto-wrapped in ``f.lit``.
+        size: Output edge length in pixels (default 256).
+        resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
+            are auto-wrapped in ``f.lit``.
+
+    Returns:
+        Array column of structs (use ``F.explode`` to get one row per tile).
+    """
+    format_col = (
+        f.lit("PNG")
+        if format is None
+        else (f.lit(format) if isinstance(format, str) else _col(format))
+    )
+    resampling_col = (
+        f.lit("bilinear")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function(
+        "gbx_rst_xyzpyramid",
+        _col(tile),
+        _col(min_z),
+        _col(max_z),
+        format_col,
+        _col(size),
+        resampling_col,
+    )
+
+
+def rst_rasterize(
+    geom_wkb: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+) -> Column:
+    """Burn a vector geometry into a raster tile at the given extent and resolution.
+
+    Returns a GTiff-backed tile of shape ``width_px x height_px`` covering the
+    bounding box ``(xmin, ymin) -> (xmax, ymax)`` in the given SRID. Pixels
+    inside the geometry receive ``value``; pixels outside receive NoData
+    (-9999.0, Float64).
+
+    Args:
+        geom_wkb: Geometry as WKB ``bytes`` column.
+        value: Burn value (``float``).
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the extent / geometry.
+
+    Returns:
+        Raster tile column.
+    """
+    return f.call_function(
+        "gbx_rst_rasterize",
+        _col(geom_wkb),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+    )
+
+
+def rst_polygonize(
+    tile: ColLike,
+    band: ColLike = None,
+    connectedness: ColLike = None,
+) -> Column:
+    """Extract vector polygons from a raster tile's contiguous value regions.
+
+    Returns ``ARRAY<struct(geom_wkb BINARY, value DOUBLE)>``, one entry per
+    connected component of equal pixel values. NoData pixels are excluded.
+
+    Args:
+        tile: Raster tile column.
+        band: 1-based band index to polygonize (default 1).
+        connectedness: 4 or 8; passed as GDAL ``8CONNECTED`` option (default 4).
+
+    Returns:
+        Array column of structs (use ``F.explode`` to get one row per polygon).
+    """
+    band_col = f.lit(1) if band is None else _col(band)
+    conn_col = f.lit(4) if connectedness is None else _col(connectedness)
+    return f.call_function("gbx_rst_polygonize", _col(tile), band_col, conn_col)
+
+
+# ---------------------------------------------------------------------------
+# Terrain analysis (DEM processing) - Wave 8a
+#
+# Seven thin wrappers around gdal.DEMProcessing. All take a single source tile
+# and return a derived tile. Defaults match the GDAL conventions.
+# ---------------------------------------------------------------------------
+
+
+def rst_slope(
+    tile: ColLike,
+    unit: ColLike = None,
+    scale: ColLike = None,
+) -> Column:
+    """Compute slope from a DEM tile via ``gdal.DEMProcessing("slope")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        unit: ``"degrees"`` (default) or ``"percent"``.
+        scale: Horizontal scale (ratio of vertical units to horizontal units).
+            By default the scale is auto-derived from the raster CRS (GDAL 3.11
+            behavior), so projected CRS in metres and geographic CRS in degrees
+            both work without an explicit value. Pass an explicit ``scale``
+            (e.g. 111120 for degree grids) to override.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    unit_col = (
+        f.lit("degrees")
+        if unit is None
+        else (f.lit(unit) if isinstance(unit, str) else _col(unit))
+    )
+    scale_col = f.lit(float("nan")) if scale is None else _col(scale)
+    return f.call_function("gbx_rst_slope", _col(tile), unit_col, scale_col)
+
+
+def rst_aspect(
+    tile: ColLike,
+    trigonometric: ColLike = None,
+    zero_for_flat: ColLike = None,
+) -> Column:
+    """Compute aspect (slope direction) from a DEM tile via ``gdal.DEMProcessing("aspect")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        trigonometric: If true, output trigonometric angles measured
+            counterclockwise from east; if false (default), output compass
+            angles measured clockwise from north.
+        zero_for_flat: If true, flat areas get value 0; if false (default),
+            flat areas get -9999.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    trig_col = f.lit(False) if trigonometric is None else _col(trigonometric)
+    zff_col = f.lit(False) if zero_for_flat is None else _col(zero_for_flat)
+    return f.call_function("gbx_rst_aspect", _col(tile), trig_col, zff_col)
+
+
+def rst_hillshade(
+    tile: ColLike,
+    azimuth: ColLike = None,
+    altitude: ColLike = None,
+    z_factor: ColLike = None,
+) -> Column:
+    """Compute hillshade (shaded relief) from a DEM tile via ``gdal.DEMProcessing("hillshade")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        azimuth: Light-source azimuth in degrees (default 315.0;
+            0=N, 90=E, 180=S, 270=W).
+        altitude: Light-source altitude above horizon in degrees
+            (default 45.0).
+        z_factor: Vertical exaggeration (default 1.0).
+
+    Returns:
+        Single-band Byte GTiff tile column with values 0..255.
+    """
+    az_col = f.lit(315.0) if azimuth is None else _col(azimuth)
+    alt_col = f.lit(45.0) if altitude is None else _col(altitude)
+    z_col = f.lit(1.0) if z_factor is None else _col(z_factor)
+    return f.call_function("gbx_rst_hillshade", _col(tile), az_col, alt_col, z_col)
+
+
+def rst_tri(tile: ColLike) -> Column:
+    """Compute Terrain Ruggedness Index (TRI) via ``gdal.DEMProcessing("TRI")``.
+
+    TRI is the mean absolute difference between a pixel and its 8 neighbours;
+    used in landscape ecology and habitat analysis.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_tri", _col(tile))
+
+
+def rst_tpi(tile: ColLike) -> Column:
+    """Compute Topographic Position Index (TPI) via ``gdal.DEMProcessing("TPI")``.
+
+    TPI is the difference between a pixel's elevation and the mean of its 8
+    neighbours; positive values indicate ridges/peaks, negative values
+    valleys.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_tpi", _col(tile))
+
+
+def rst_roughness(tile: ColLike) -> Column:
+    """Compute Roughness via ``gdal.DEMProcessing("Roughness")``.
+
+    Roughness is the largest inter-cell difference of a central pixel and
+    its 8 neighbours.
+
+    Args:
+        tile: Single-band DEM tile column.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function("gbx_rst_roughness", _col(tile))
+
+
+def rst_color_relief(
+    tile: ColLike,
+    color_table_path: ColLike,
+) -> Column:
+    """Apply a color relief mapping to a DEM tile via ``gdal.DEMProcessing("color-relief")``.
+
+    Args:
+        tile: Single-band DEM tile column.
+        color_table_path: Path (FUSE-mounted Volume or local) to a gdaldem
+            color file. Each line is ``elevation R G B [A]``; special values
+            ``nv``, ``default``, ``0%``, ``100%`` are accepted.
+
+    Returns:
+        3- or 4-band Byte GTiff tile column (RGB or RGBA).
+    """
+    ctp_col = (
+        f.lit(color_table_path)
+        if isinstance(color_table_path, str)
+        else _col(color_table_path)
+    )
+    return f.call_function("gbx_rst_color_relief", _col(tile), ctp_col)
+
+
+# ---------------------------------------------------------------------------
+# Spectral indices (Wave 8b)
+#
+# Five thin wrappers that build a per-pixel formula string from user-supplied
+# band indices and delegate to ``gbx_rst_mapalgebra`` internally. All return a
+# single-band Float32 GTiff tile sized to the input raster's extent.
+# ---------------------------------------------------------------------------
+
+
+def rst_evi(
+    tile: ColLike,
+    red_idx: ColLike,
+    nir_idx: ColLike,
+    blue_idx: ColLike,
+    l: ColLike = None,
+    c1: ColLike = None,
+    c2: ColLike = None,
+    g: ColLike = None,
+) -> Column:
+    """Enhanced Vegetation Index (EVI).
+
+    Formula: ``G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L)``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        red_idx: 1-based red band index.
+        nir_idx: 1-based NIR band index.
+        blue_idx: 1-based blue band index.
+        l: Canopy background adjustment (default 1.0).
+        c1: Aerosol resistance coefficient for red (default 6.0).
+        c2: Aerosol resistance coefficient for blue (default 7.5).
+        g: Gain factor (default 2.5).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    l_col = f.lit(1.0) if l is None else _col(l)
+    c1_col = f.lit(6.0) if c1 is None else _col(c1)
+    c2_col = f.lit(7.5) if c2 is None else _col(c2)
+    g_col = f.lit(2.5) if g is None else _col(g)
+    return f.call_function(
+        "gbx_rst_evi",
+        _col(tile),
+        _col(red_idx),
+        _col(nir_idx),
+        _col(blue_idx),
+        l_col,
+        c1_col,
+        c2_col,
+        g_col,
+    )
+
+
+def rst_savi(
+    tile: ColLike,
+    red_idx: ColLike,
+    nir_idx: ColLike,
+    l: ColLike = None,
+) -> Column:
+    """Soil-Adjusted Vegetation Index (SAVI).
+
+    Formula: ``(NIR - Red) / (NIR + Red + L) * (1 + L)``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        red_idx: 1-based red band index.
+        nir_idx: 1-based NIR band index.
+        l: Soil-brightness correction factor (default 0.5; ``L=0`` reduces to
+            NDVI; ``L=1`` is appropriate for very low vegetation cover).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    l_col = f.lit(0.5) if l is None else _col(l)
+    return f.call_function(
+        "gbx_rst_savi",
+        _col(tile),
+        _col(red_idx),
+        _col(nir_idx),
+        l_col,
+    )
+
+
+def rst_ndwi(
+    tile: ColLike,
+    green_idx: ColLike,
+    nir_idx: ColLike,
+) -> Column:
+    """Normalized Difference Water Index (NDWI, McFeeters 1996).
+
+    Formula: ``(Green - NIR) / (Green + NIR)``. Positive values typically
+    indicate open water, negative values indicate land/vegetation.
+
+    Args:
+        tile: Multi-band raster tile column.
+        green_idx: 1-based green band index.
+        nir_idx: 1-based NIR band index.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function(
+        "gbx_rst_ndwi",
+        _col(tile),
+        _col(green_idx),
+        _col(nir_idx),
+    )
+
+
+def rst_nbr(
+    tile: ColLike,
+    nir_idx: ColLike,
+    swir_idx: ColLike,
+) -> Column:
+    """Normalized Burn Ratio (NBR).
+
+    Formula: ``(NIR - SWIR) / (NIR + SWIR)``. The difference between pre-fire
+    and post-fire NBR (``dNBR``) is the canonical burn-severity index.
+
+    Args:
+        tile: Multi-band raster tile column.
+        nir_idx: 1-based NIR band index.
+        swir_idx: 1-based SWIR band index.
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    return f.call_function(
+        "gbx_rst_nbr",
+        _col(tile),
+        _col(nir_idx),
+        _col(swir_idx),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resample family and IDW interpolation
+#
+# Three resample wrappers delegate to gdal.Warp with -tr / -ts; IDW pair
+# (`rst_gridfrompoints` non-aggregator + `rst_gridfrompoints_agg` aggregator)
+# delegates to gdal.Grid with the invdist algorithm.
+# ---------------------------------------------------------------------------
+
+
+def rst_resample(
+    tile: ColLike,
+    factor: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile by a multiplicative ``factor``.
+
+    ``factor > 1`` upsamples, ``0 < factor < 1`` downsamples. CRS and extent
+    are preserved; output dimensions are ``round(srcW * factor) x round(srcH * factor)``.
+
+    Args:
+        tile: Raster tile column.
+        factor: Multiplicative scale factor (``float``).
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``). One of
+            ``near``, ``bilinear``, ``cubic``, ``cubicspline``, ``lanczos``,
+            ``average``, ``mode``, ``max``, ``min``, ``med``, ``q1``, ``q3``.
+            String literals are auto-wrapped via ``f.lit``.
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function("gbx_rst_resample", _col(tile), _col(factor), alg_col)
+
+
+def rst_resample_to_size(
+    tile: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile to an explicit output size ``width_px x height_px``.
+
+    Args:
+        tile: Raster tile column.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``).
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function(
+        "gbx_rst_resample_to_size",
+        _col(tile),
+        _col(width_px),
+        _col(height_px),
+        alg_col,
+    )
+
+
+def rst_resample_to_res(
+    tile: ColLike,
+    x_res: ColLike,
+    y_res: ColLike,
+    algorithm: Union[ColLike, None] = None,
+) -> Column:
+    """Resample a raster tile to an explicit ground resolution.
+
+    ``x_res`` / ``y_res`` are in source CRS units (metres for UTM, degrees for
+    EPSG:4326). Output extent matches the source bounding box adjusted to the
+    new pixel size.
+
+    Args:
+        tile: Raster tile column.
+        x_res: Target X resolution (``float``, CRS units / pixel).
+        y_res: Target Y resolution (``float``).
+        algorithm: gdalwarp ``-r`` algorithm (default ``"bilinear"``).
+
+    Returns:
+        Resampled raster tile column.
+    """
+    alg_col = (
+        f.lit("bilinear")
+        if algorithm is None
+        else (f.lit(algorithm) if isinstance(algorithm, str) else _col(algorithm))
+    )
+    return f.call_function(
+        "gbx_rst_resample_to_res",
+        _col(tile),
+        _col(x_res),
+        _col(y_res),
+        alg_col,
+    )
+
+
+def rst_gridfrompoints(
+    points: ColLike,
+    values: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = None,
+    max_pts: ColLike = None,
+) -> Column:
+    """Inverse-Distance-Weighted (IDW) interpolation - non-aggregator form.
+
+    Points (``ARRAY<BINARY>`` WKB or ``ARRAY<STRING>`` WKT) and ``values``
+    (``ARRAY<DOUBLE>``) are passed in a single row. The output is a Float64
+    GTiff tile of shape ``width_px x height_px`` covering
+    ``(xmin, ymin) -> (xmax, ymax)`` in the given SRID.
+
+    Args:
+        points: Column of array of point geometries (WKB or WKT).
+        values: Column of array of double values (same length as ``points``).
+        xmin: Minimum X of the output raster extent.
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID of the extent / point geometries.
+        power: IDW exponent (default 2.0).
+        max_pts: Maximum neighbour points per cell (default 12).
+
+    Returns:
+        Raster tile column.
+    """
+    power_col = f.lit(2.0) if power is None else _col(power)
+    max_pts_col = f.lit(12) if max_pts is None else _col(max_pts)
+    return f.call_function(
+        "gbx_rst_gridfrompoints",
+        _col(points),
+        _col(values),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        power_col,
+        max_pts_col,
+    )
+
+
+def rst_gridfrompoints_agg(
+    point: ColLike,
+    value: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    power: ColLike = None,
+    max_pts: ColLike = None,
+) -> Column:
+    """IDW interpolation aggregator - one point/value per row.
+
+    Aggregator counterpart of :func:`rst_gridfrompoints`. Group rows by an
+    extent key and pass per-row ``point`` / ``value`` columns plus per-group
+    literal extent parameters.
+
+    Args:
+        point: Point geometry column (WKB binary or WKT string).
+        value: Double value column.
+        xmin: Minimum X of the output raster extent (per-group literal).
+        ymin: Minimum Y of the output raster extent.
+        xmax: Maximum X of the output raster extent.
+        ymax: Maximum Y of the output raster extent.
+        width_px: Output raster width in pixels.
+        height_px: Output raster height in pixels.
+        srid: EPSG SRID.
+        power: IDW exponent (default 2.0).
+        max_pts: Maximum neighbour points per cell (default 12).
+
+    Returns:
+        Raster tile column.
+    """
+    power_col = f.lit(2.0) if power is None else _col(power)
+    max_pts_col = f.lit(12) if max_pts is None else _col(max_pts)
+    return f.call_function(
+        "gbx_rst_gridfrompoints_agg",
+        _col(point),
+        _col(value),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        power_col,
+        max_pts_col,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Delaunay-TIN Digital Terrain Model (DTM) interpolation
+#
+# Two wrappers: `rst_dtmfromgeoms` (non-aggregator, Z-valued points as an
+# array column) + `rst_dtmfromgeoms_agg` (aggregator, one Z-valued point
+# per row). Both delegate to gbx_rst_dtmfromgeoms / gbx_rst_dtmfromgeoms_agg.
+# ---------------------------------------------------------------------------
+
+
+def rst_dtmfromgeoms(
+    points: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = None,
+) -> Column:
+    """DTM from Z-valued points + optional breaklines via Delaunay-TIN interpolation.
+
+    Output is a single-band Float64 GTiff of ``width_px x height_px`` over the bbox.
+    For N-unit cells set ``width_px = round((xmax-xmin)/N)``,
+    ``height_px = round((ymax-ymin)/N)`` (e.g. a 1000 m extent at 10 m cells -> 100 px).
+
+    Args:
+        points: Array column of Z-valued point geometries (WKB binary or WKT string).
+        breaklines: Array column of breakline LineString geometries; pass an empty array for none.
+        merge_tolerance: Delaunay segment-merge tolerance.
+        snap_tolerance: Vertex-to-breakline snap tolerance.
+        xmin, ymin, xmax, ymax: Output raster extent.
+        width_px, height_px: Output raster size in pixels.
+        srid: EPSG SRID.
+        no_data: No-data sentinel (default -9999.0).
+
+    Returns:
+        Raster tile column.
+    """
+    nd = f.lit(-9999.0) if no_data is None else _col(no_data)
+    return f.call_function(
+        "gbx_rst_dtmfromgeoms",
+        _col(points),
+        _col(breaklines),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        nd,
+    )
+
+
+def rst_dtmfromgeoms_agg(
+    point: ColLike,
+    breaklines: ColLike,
+    merge_tolerance: ColLike,
+    snap_tolerance: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width_px: ColLike,
+    height_px: ColLike,
+    srid: ColLike,
+    no_data: ColLike = None,
+) -> Column:
+    """DTM aggregator - one Z-valued ``point`` per row, grouped by extent key.
+
+    Aggregator counterpart of :func:`rst_dtmfromgeoms`. ``point`` is the only
+    aggregated (per-row) input; ``breaklines`` and all extent/tolerance args are
+    per-group constants. Produces the same DTM as the non-agg form over the same grid.
+
+    Returns:
+        Raster tile column.
+    """
+    nd = f.lit(-9999.0) if no_data is None else _col(no_data)
+    return f.call_function(
+        "gbx_rst_dtmfromgeoms_agg",
+        _col(point),
+        _col(breaklines),
+        _col(merge_tolerance),
+        _col(snap_tolerance),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width_px),
+        _col(height_px),
+        _col(srid),
+        nd,
+    )
+
+
+def rst_index(
+    tile: ColLike,
+    formula_name: ColLike,
+    band_map: ColLike,
+) -> Column:
+    """Generic dispatcher for named spectral indices.
+
+    Built-in formulae (case-insensitive ``formula_name``):
+
+    * ``ndvi``: ``(NIR-Red)/(NIR+Red)`` - bands ``red``, ``nir``.
+    * ``gndvi``: ``(NIR-Green)/(NIR+Green)`` - bands ``green``, ``nir``.
+    * ``msavi``: modified SAVI - bands ``red``, ``nir``.
+    * ``ndvi_re``: red-edge NDVI - bands ``red_edge``, ``nir``.
+    * ``ndmi``: ``(NIR-SWIR)/(NIR+SWIR)`` - bands ``nir``, ``swir``.
+    * ``ndsi``: snow-index ``(Green-SWIR)/(Green+SWIR)`` - bands ``green``, ``swir``.
+
+    For arbitrary user-supplied formulae, drop down to ``rst_mapalgebra``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        formula_name: Built-in formula name (e.g. ``"ndvi"``). Passed as a
+            string literal; wrap in ``f.lit(...)`` if you want a column
+            reference instead.
+        band_map: ``MAP<STRING, INT>`` column wiring the formula's band names
+            to 1-based band indices in ``tile`` (e.g.
+            ``F.create_map(F.lit("red"), F.lit(1), F.lit("nir"), F.lit(2))``).
+
+    Returns:
+        Single-band Float32 GTiff tile column.
+    """
+    formula_col = (
+        f.lit(formula_name) if isinstance(formula_name, str) else _col(formula_name)
+    )
+    return f.call_function(
+        "gbx_rst_index",
+        _col(tile),
+        formula_col,
+        _col(band_map),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pixel ops + extraction
+#
+# Seven thin wrappers over GDAL per-pixel / per-tile primitives that the
+# rest of the RasterX surface assumed were "always available" but weren't
+# actually exposed: FillNodata, ReadRaster-at-point sampling, SetProjection,
+# GetHistogram, threshold (via MapAlgebra), BuildOverviews, single-band
+# extraction.
+# ---------------------------------------------------------------------------
+
+
+def rst_fillnodata(
+    tile: ColLike,
+    max_search_dist: ColLike = None,
+    smoothing_iter: ColLike = None,
+) -> Column:
+    """Interpolate NoData pixels from valid neighbours via ``gdal.FillNodata``.
+
+    Args:
+        tile: Raster tile column.
+        max_search_dist: Maximum pixel distance to search for a valid value
+            to fill from (default 100.0).
+        smoothing_iter: Number of 3x3 smoothing iterations after fill
+            (default 0).
+
+    Returns:
+        Raster tile column with NoData holes filled.
+    """
+    msd_col = f.lit(100.0) if max_search_dist is None else _col(max_search_dist)
+    si_col = f.lit(0) if smoothing_iter is None else _col(smoothing_iter)
+    return f.call_function("gbx_rst_fillnodata", _col(tile), msd_col, si_col)
+
+
+def rst_sample(tile: ColLike, geom: ColLike) -> Column:
+    """Sample raster pixel values at a POINT geometry — returns one Double per band.
+
+    The point coordinates must be in the raster's CRS. Out-of-extent points
+    return ``null`` (not a partial array).
+
+    Args:
+        tile: Raster tile column.
+        geom: POINT geometry — WKB ``bytes`` or WKT ``string`` column.
+
+    Returns:
+        Column of ``ARRAY<DOUBLE>`` (one value per band) or ``null`` outside extent.
+    """
+    return f.call_function("gbx_rst_sample", _col(tile), _col(geom))
+
+
+def rst_setsrid(tile: ColLike, srid: ColLike) -> Column:
+    """Stamp an EPSG code on the raster's spatial-reference header (no warp).
+
+    Use when the source raster lost or has incorrect CRS metadata but the
+    actual pixel grid is already aligned with the target CRS. For real
+    reprojection (with pixel-grid warp) use :func:`rst_transform`.
+
+    Args:
+        tile: Raster tile column.
+        srid: EPSG code (positive integer).
+
+    Returns:
+        Raster tile column with rewritten SR header.
+    """
+    return f.call_function("gbx_rst_setsrid", _col(tile), _col(srid))
+
+
+def rst_histogram(
+    tile: ColLike,
+    n_buckets: ColLike = None,
+    min_val: ColLike = None,
+    max_val: ColLike = None,
+    include_nodata: ColLike = None,
+) -> Column:
+    """Per-band pixel histogram via ``band.GetHistogram``.
+
+    Returns ``MAP<STRING, ARRAY<LONG>>`` keyed by ``"band_<i>"`` (1-based) with
+    a length-``n_buckets`` array of bucket counts per band. Pixels outside
+    ``[min_val, max_val]`` are excluded.
+
+    Args:
+        tile: Raster tile column.
+        n_buckets: Number of equal-width buckets across ``[min_val, max_val]``
+            (default 256).
+        min_val: Histogram lower bound (default: derived from band statistics).
+        max_val: Histogram upper bound (default: derived from band statistics).
+        include_nodata: Reserved — GDAL excludes NoData regardless. Default False.
+
+    Returns:
+        Column of ``MAP<STRING, ARRAY<LONG>>``.
+    """
+    nb_col = f.lit(256) if n_buckets is None else _col(n_buckets)
+    min_col = f.lit(None).cast("double") if min_val is None else _col(min_val)
+    max_col = f.lit(None).cast("double") if max_val is None else _col(max_val)
+    inc_col = f.lit(False) if include_nodata is None else _col(include_nodata)
+    return f.call_function(
+        "gbx_rst_histogram", _col(tile), nb_col, min_col, max_col, inc_col
+    )
+
+
+def rst_threshold(
+    tile: ColLike,
+    op: Union[ColLike, None] = None,
+    value: ColLike = None,
+) -> Column:
+    """Binarise a raster: ``(pixel <op> value)`` -> 0/1.
+
+    Args:
+        tile: Raster tile column.
+        op: Comparison operator — one of ``">"``, ``">="``, ``"<"``, ``"<="``,
+            ``"=="``, ``"!="``. String literals auto-wrapped via ``f.lit``.
+        value: Threshold value (``float``).
+
+    Returns:
+        Single-band Float32 GTiff tile column with values 0 or 1.
+    """
+    op_col = (
+        f.lit(op)
+        if isinstance(op, str)
+        else _col(op) if op is not None else f.lit(None)
+    )
+    return f.call_function("gbx_rst_threshold", _col(tile), op_col, _col(value))
+
+
+def rst_buildoverviews(
+    tile: ColLike,
+    levels: ColLike,
+    resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Build internal overviews on a raster via ``Dataset.BuildOverviews``.
+
+    Args:
+        tile: Raster tile column.
+        levels: ``ARRAY<INT>`` of downsampling factors (e.g. ``[2, 4, 8, 16]``).
+            Each factor produces one overview level at ``1 / factor`` resolution.
+        resampling: Overview resampling algorithm — one of ``nearest``,
+            ``average``, ``rms``, ``gauss``, ``cubic``, ``cubicspline``,
+            ``lanczos``, ``bilinear``, ``mode``, ``none``. Defaults to
+            ``"average"``. String literals auto-wrapped via ``f.lit``.
+
+    Returns:
+        Raster tile column with embedded overview pyramid.
+    """
+    res_col = (
+        f.lit("average")
+        if resampling is None
+        else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
+    )
+    return f.call_function("gbx_rst_buildoverviews", _col(tile), _col(levels), res_col)
+
+
+def rst_band(tile: ColLike, band_index: ColLike) -> Column:
+    """Extract a single band as a new single-band tile via ``gdal.Translate -b <i>``.
+
+    Args:
+        tile: Multi-band raster tile column.
+        band_index: 1-based band index to extract.
+
+    Returns:
+        Single-band raster tile column.
+    """
+    return f.call_function("gbx_rst_band", _col(tile), _col(band_index))
+
+
+def rst_cog_convert(
+    tile: ColLike,
+    compression: Union[ColLike, None] = None,
+    blocksize: ColLike = None,
+    overview_resampling: Union[ColLike, None] = None,
+) -> Column:
+    """Convert a raster tile to Cloud Optimized GeoTIFF (COG) layout.
+
+    Wraps ``gdal.Translate -of COG`` with the requested compression, internal
+    block size, and overview resampling. The result is still a GTiff on disk
+    (downstream ``metadata.driver`` reads ``GTiff``) but laid out so HTTP range
+    reads can extract regions or overview levels cheaply.
+
+    Args:
+        tile: Raster tile column.
+        compression: Pixel compression — one of ``NONE``, ``DEFLATE``, ``LZW``,
+            ``ZSTD``, ``LERC``, ``JPEG``, ``WEBP``. Default ``"DEFLATE"``.
+            String literals auto-wrapped via ``f.lit``.
+        blocksize: Internal tile size in pixels (square). Default ``512``.
+        overview_resampling: Downsampling algorithm for the overview pyramid —
+            one of ``NEAREST``, ``AVERAGE``, ``GAUSS``, ``CUBIC``, ``CUBICSPLINE``,
+            ``LANCZOS``, ``BILINEAR``, ``MODE``. Default ``"AVERAGE"``.
+
+    Returns:
+        COG-laid-out raster tile column.
+    """
+    comp_col = (
+        f.lit("DEFLATE")
+        if compression is None
+        else (f.lit(compression) if isinstance(compression, str) else _col(compression))
+    )
+    bs_col = f.lit(512) if blocksize is None else _col(blocksize)
+    or_col = (
+        f.lit("AVERAGE")
+        if overview_resampling is None
+        else (
+            f.lit(overview_resampling)
+            if isinstance(overview_resampling, str)
+            else _col(overview_resampling)
+        )
+    )
+    return f.call_function("gbx_rst_cog_convert", _col(tile), comp_col, bs_col, or_col)
+
+
+def rst_proximity(
+    tile: ColLike,
+    target_values: Union[ColLike, None] = None,
+    distunits: Union[ColLike, None] = None,
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a proximity raster: each pixel = distance to nearest source pixel.
+
+    Wraps ``gdal.ComputeProximity``. The output preserves the source extent /
+    CRS / GeoTransform; pixel dtype is Float32. Pixels beyond ``max_distance``
+    or with no source in range get the output's NoData value (``-1.0``).
+
+    Args:
+        tile: Raster tile column.
+        target_values: Optional comma-separated list of source-pixel values to
+            measure distance to (e.g. ``"1,2,3"``). ``None`` = any non-NoData
+            pixel is a target.
+        distunits: ``"GEO"`` (CRS ground units, default) or ``"PIXEL"``.
+        max_distance: Optional cap on output distance (in the same units as
+            ``distunits``). ``None`` = unlimited.
+
+    Returns:
+        Float32 proximity raster tile column.
+    """
+    tv_col = (
+        f.lit(None).cast("string")
+        if target_values is None
+        else (
+            f.lit(target_values)
+            if isinstance(target_values, str)
+            else _col(target_values)
+        )
+    )
+    du_col = (
+        f.lit("GEO")
+        if distunits is None
+        else (f.lit(distunits) if isinstance(distunits, str) else _col(distunits))
+    )
+    md_col = f.lit(None).cast("double") if max_distance is None else _col(max_distance)
+    return f.call_function("gbx_rst_proximity", _col(tile), tv_col, du_col, md_col)
+
+
+def rst_contour(
+    tile: ColLike,
+    levels: ColLike,
+    interval: ColLike = None,
+    base: ColLike = None,
+    attr_field: Union[ColLike, None] = None,
+) -> Column:
+    """Generate contour LineStrings from a raster as ``ARRAY<struct(geom_wkb, value)>``.
+
+    Wraps ``gdal.ContourGenerateEx``. Supply EITHER a non-empty ``levels`` array
+    (explicit contour values) OR ``interval`` (equal-step contours at
+    ``base + n*interval``). Pass ``levels=array()`` to use interval mode.
+
+    Args:
+        tile: Raster tile column.
+        levels: ``ARRAY<DOUBLE>`` of explicit contour values; empty -> use
+            ``interval``.
+        interval: Step between contours; ignored if ``levels`` is non-empty.
+        base: Contour base value; only meaningful with ``interval``. Default 0.
+        attr_field: Internal OGR field name carrying the contour value
+            (default ``"elev"``). Read back via the ``value`` member of each
+            output struct.
+
+    Returns:
+        Column of ``ARRAY<struct(geom_wkb BINARY, value DOUBLE)>``.
+    """
+    int_col = f.lit(0.0) if interval is None else _col(interval)
+    base_col = f.lit(0.0) if base is None else _col(base)
+    af_col = (
+        f.lit("elev")
+        if attr_field is None
+        else (f.lit(attr_field) if isinstance(attr_field, str) else _col(attr_field))
+    )
+    return f.call_function(
+        "gbx_rst_contour", _col(tile), _col(levels), int_col, base_col, af_col
+    )
+
+
+def rst_viewshed(
+    tile: ColLike,
+    observer_geom: ColLike,
+    observer_height: ColLike,
+    target_height: ColLike = None,
+    max_distance: ColLike = None,
+) -> Column:
+    """Compute a binary viewshed raster from a DEM and an observer POINT.
+
+    Wraps ``gdal.ViewshedGenerate``. Output is a Byte raster matching the
+    source extent / CRS: visible pixels = ``255``, invisible / out-of-range
+    pixels = ``0``. Non-POINT ``observer_geom`` is rejected at runtime.
+
+    Args:
+        tile: Single-band DEM raster tile column.
+        observer_geom: Observer POINT — WKB ``bytes`` or WKT ``string`` column.
+            Coordinates must be in the raster's CRS.
+        observer_height: Observer height above DEM at the observer pixel
+            (e.g. eye height + tower height).
+        target_height: Target height above DEM at each tested pixel.
+            Default ``1.6`` (~average eye height).
+        max_distance: Optional clipping distance in CRS units; ``None`` =
+            unlimited (only bounded by raster extent).
+
+    Returns:
+        Byte raster tile column (0 / 255).
+    """
+    th_col = f.lit(1.6) if target_height is None else _col(target_height)
+    md_col = f.lit(None).cast("double") if max_distance is None else _col(max_distance)
+    return f.call_function(
+        "gbx_rst_viewshed",
+        _col(tile),
+        _col(observer_geom),
+        _col(observer_height),
+        th_col,
+        md_col,
     )

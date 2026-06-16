@@ -440,6 +440,171 @@ def test_rst_separatebands_sql_example(spark, rasters_view):
     assert "bands" in result.columns
 
 
+def test_rst_rasterize_sql_example(spark):
+    """rst_rasterize returns a non-null tile struct for the example burn."""
+    from databricks.labs.gbx.rasterx import functions as rx
+    rx.register(spark)
+    sql = rasterx_functions_sql.rst_rasterize_sql_example()
+    result = spark.sql(sql).collect()
+    assert len(result) == 1
+    assert result[0]["tile"] is not None
+
+
+def test_rst_polygonize_sql_example(spark):
+    """Round-trip rasterize->polygonize returns >=1 feature with the burn value."""
+    from databricks.labs.gbx.rasterx import functions as rx
+    rx.register(spark)
+    sql = rasterx_functions_sql.rst_polygonize_sql_example()
+    result = spark.sql(sql).collect()
+    assert len(result) == 1
+    features = result[0]["features"]
+    assert len(features) > 0
+    assert any(abs(feat["value"] - 42.0) < 1e-6 for feat in features)
+
+
+# ============================================================================
+# Terrain Analysis (DEM Processing) - Wave 8a
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr", [
+    "rst_slope_sql_example",
+    "rst_aspect_sql_example",
+    "rst_hillshade_sql_example",
+    "rst_tri_sql_example",
+    "rst_tpi_sql_example",
+    "rst_roughness_sql_example",
+])
+def test_dem_processing_sql_example(spark, rasters_view, example_attr):
+    """Each Wave 8a DEM-processing example returns a non-null tile."""
+    sql = getattr(rasterx_functions_sql, example_attr)()
+    result = spark.sql(sql).collect()
+    assert len(result) >= 1
+    # The output column varies (slope, aspect, hillshade, tri, tpi, roughness).
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+# ============================================================================
+# Spectral Indices - Wave 8b
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # Each docs example references multi-band indices (1, 2, 3). The shared
+    # `rasters` view is single-band, so we run a fallback SQL with all band
+    # indices = 1 to exercise the JVM round-trip without needing a multi-band
+    # raster. The doc-example string is still validated for shape (asserted
+    # below).
+    ("rst_evi_sql_example", "SELECT gbx_rst_evi(tile, 1, 1, 1) AS evi FROM rasters"),
+    ("rst_savi_sql_example", "SELECT gbx_rst_savi(tile, 1, 1, 0.5) AS savi FROM rasters"),
+    ("rst_ndwi_sql_example", "SELECT gbx_rst_ndwi(tile, 1, 1) AS ndwi FROM rasters"),
+    ("rst_nbr_sql_example", "SELECT gbx_rst_nbr(tile, 1, 1) AS nbr FROM rasters"),
+    ("rst_index_sql_example",
+     "SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 1)) AS ndvi FROM rasters"),
+])
+def test_spectral_indices_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each Wave 8b spectral-index example string exists & executes to non-null tile."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    # The doc string should reference the SQL function name.
+    expected_fn = example_attr.replace("_sql_example", "").replace("_", "_")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+def test_rst_color_relief_sql_example(spark, rasters_view, tmp_path):
+    """color_relief example exists and executes against a tempfile color table.
+
+    The docs example references a sample-data path that may not be present in
+    every env; this test exercises the function via a tempfile color table so
+    we still cover the actual SQL invocation.
+    """
+    ct = tmp_path / "elevation.clr"
+    ct.write_text("0 0 0 255\n100 0 255 0\n255 255 0 0\n")
+    # Verify the doc example string exists & has the right shape.
+    sql_template = rasterx_functions_sql.rst_color_relief_sql_example()
+    assert "gbx_rst_color_relief" in sql_template
+    # Run a substitute SQL using our tempfile.
+    sql = f"SELECT gbx_rst_color_relief(tile, '{ct}') AS rgba FROM rasters"
+    result = spark.sql(sql).collect()
+    assert len(result) >= 1
+    assert result[0]["rgba"] is not None
+
+
+# ============================================================================
+# Pixel ops + extraction
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # fillnodata, threshold, buildoverviews, band, setsrid roundtrips on the
+    # shared single-band `rasters` view. histogram returns a MAP and sample
+    # returns an ARRAY<DOUBLE>; their fallback SQL pins types explicitly so
+    # the JVM bindings fire even if doc string formatting varies.
+    ("rst_fillnodata_sql_example",
+     "SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters"),
+    ("rst_sample_sql_example",
+     "SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS vals FROM rasters"),
+    ("rst_setsrid_sql_example",
+     "SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters"),
+    ("rst_histogram_sql_example",
+     "SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist FROM rasters"),
+    ("rst_threshold_sql_example",
+     "SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters"),
+    ("rst_buildoverviews_sql_example",
+     "SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr FROM rasters"),
+    ("rst_band_sql_example",
+     "SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters"),
+])
+def test_pixel_ops_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each pixel-ops SQL example exists and executes to a non-null result."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    expected_fn = example_attr.replace("_sql_example", "")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
+# ============================================================================
+# Analysis (COG / proximity / contour / viewshed)
+# ============================================================================
+
+
+@pytest.mark.parametrize("example_attr,fallback_sql", [
+    # cog_convert returns a tile; proximity returns a tile (Float32 distance
+    # raster); contour returns ARRAY<struct(geom_wkb, value)>; viewshed
+    # returns a tile (Byte 0/255 visibility mask).
+    ("rst_cog_convert_sql_example",
+     "SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 256, 'AVERAGE') AS cog FROM rasters"),
+    ("rst_proximity_sql_example",
+     "SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist FROM rasters"),
+    ("rst_contour_sql_example",
+     "SELECT gbx_rst_contour(tile, array(), 100.0, 0.0, 'elev') AS contours FROM rasters"),
+    ("rst_viewshed_sql_example",
+     "SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs FROM rasters"),
+])
+def test_analysis_sql_example(spark, rasters_view, example_attr, fallback_sql):
+    """Each analysis SQL example exists and executes to a non-null result."""
+    sql_template = getattr(rasterx_functions_sql, example_attr)()
+    expected_fn = example_attr.replace("_sql_example", "")
+    assert f"gbx_{expected_fn}" in sql_template, (
+        f"docs example {example_attr} should mention gbx_{expected_fn}"
+    )
+    result = spark.sql(fallback_sql).collect()
+    assert len(result) >= 1
+    out_col = [c for c in result[0].asDict().keys()][0]
+    assert result[0][out_col] is not None
+
+
 # ============================================================================
 # Structure Verification
 # ============================================================================

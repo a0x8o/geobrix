@@ -46,22 +46,45 @@ class AtomicDistributedCopyTest extends AnyFunSuite with BeforeAndAfterEach {
         new String(buf, 0, n) shouldBe "hello"
     }
 
-    test("copyIfNeeded when destination already exists should not throw") {
+    /** Helper: read dst back as a String. */
+    private def readDst(): String = {
+        val in = localFs.open(dstPath)
+        val buf = Array.ofDim[Byte](32)
+        val n = in.read(buf)
+        in.close()
+        new String(buf, 0, n)
+    }
+
+    test("copyIfNeeded skips re-copy when destination exists with the same length") {
+        // Same length => treated as already-present (the cache key is the path; equal length is
+        // the cheap content-match signal). copyIfNeeded must NOT throw and must leave dst intact.
         val out1 = localFs.create(srcPath)
-        out1.write("src".getBytes)
+        out1.write("src".getBytes) // 3 bytes
         out1.close()
         val out2 = localFs.create(dstPath)
-        out2.write("existing".getBytes)
+        out2.write("dst".getBytes) // 3 bytes — same length as src
         out2.close()
 
         AtomicDistributedCopy.copyIfNeeded(localFs, localFs, srcPath, dstPath)
 
         localFs.exists(dstPath) shouldBe true
-        val in = localFs.open(dstPath)
-        val buf = Array.ofDim[Byte](32)
-        val n = in.read(buf)
-        in.close()
-        new String(buf, 0, n) shouldBe "existing"
+        readDst() shouldBe "dst" // unchanged: same length => no re-copy
+    }
+
+    test("copyIfNeeded re-copies when destination exists with a different length (stale cache)") {
+        // Different length => the local copy is stale (the remote changed under the same path);
+        // copyIfNeeded must overwrite it with the source content.
+        val out1 = localFs.create(srcPath)
+        out1.write("src".getBytes) // 3 bytes
+        out1.close()
+        val out2 = localFs.create(dstPath)
+        out2.write("existing".getBytes) // 8 bytes — different length
+        out2.close()
+
+        AtomicDistributedCopy.copyIfNeeded(localFs, localFs, srcPath, dstPath)
+
+        localFs.exists(dstPath) shouldBe true
+        readDst() shouldBe "src" // re-copied: length mismatch => overwrite stale dst
     }
 
     test("copyIfNeeded with same path (src == dst) should not throw when file exists") {

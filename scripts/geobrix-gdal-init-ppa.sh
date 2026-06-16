@@ -120,7 +120,8 @@ sudo apt-get -o DPkg::Lock::Timeout=-1 install -y \
   "gdal-bin=${GDAL_PPA_VERSION}" \
   "python3-gdal=${GDAL_PPA_VERSION}"
 
-# pip install GDAL (match deps to DBR 17.3 LTS — see release notes for the runtime).
+# pip install GDAL (match deps to the shared Ubuntu 24.04 noble base used by
+# DBR 17.3 LTS and 18 LTS — see release notes for the runtime).
 # Bootstrap pins must match .github/actions/{scala,python}_build/action.yml — keep these in sync.
 pip install --upgrade pip==25.0.1 setuptools==80.9.0 wheel==0.45.1 cython==3.0.12  # setuptools >= 77.0.0 required for GDAL 3.11+ sdist's PEP 639 SPDX license string
 pip install numpy==2.1.3

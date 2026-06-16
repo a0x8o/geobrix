@@ -120,4 +120,4 @@ fix that also keeps us workflow-faithful (real CI is amd64 too).
 ## See also
 
 - [act docs](https://nektosact.com/) — full `act` command reference
-- `.cursor/agents/docker.md` — "Local GHA dry-runs with `act`" section
+- `gbx:ci:act` / `bash scripts/ci-local/run-act.sh` — entry points for local GHA dry-runs

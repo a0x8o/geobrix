@@ -118,6 +118,16 @@ const config = {
             position: 'left'
           },
           {
+            to: '/docs/api/execution-tiers',
+            label: 'Lightweight vs Heavyweight',
+            position: 'left'
+          },
+          {
+            to: '/docs/readers/overview',
+            label: 'Readers & Writers',
+            position: 'left'
+          },
+          {
             href: 'https://github.com/databrickslabs/geobrix',
             label: 'GitHub',
             position: 'right',
@@ -145,19 +155,19 @@ const config = {
             ],
           },
           {
-            title: 'Packages',
+            title: 'Functions',
             items: [
               {
-                label: 'RasterX',
-                to: '/docs/packages/rasterx',
+                label: 'Raster Functions',
+                to: '/docs/api/raster-functions',
               },
               {
                 label: 'GridX',
-                to: '/docs/packages/gridx',
+                to: '/docs/api/gridx-functions',
               },
               {
                 label: 'VectorX',
-                to: '/docs/packages/vectorx',
+                to: '/docs/api/vectorx-functions',
               },
             ],
           },

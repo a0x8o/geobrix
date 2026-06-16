@@ -44,8 +44,48 @@ jobs:
           git diff --staged --quiet && echo "No changes to doc-snippet-inventory.json" && exit 0
           git commit -m "chore(docs): rebuild doc-snippet-inventory.json [skip ci]"
           git push origin HEAD:${{ github.head_ref }}
+  # Lightweight, JAR-free raster API (pyrx). Runs FIRST and gates the heavy
+  # build below (fail-fast): no Scala JAR, no apt/native GDAL — just rasterio's
+  # bundled GDAL + pyspark local. Minutes, not the 10–15 min heavyweight build.
+  pyrx:
+    name: Lightweight (pyrx) tests
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    # Checkout uses REPO_ACCESS_TOKEN (non-exempt secret); jfrog-auth uses OIDC.
+    environment: runtime
+    permissions:
+      contents: read
+      # Required by .github/actions/jfrog-{auth,pip-bootstrap}: OIDC token exchange for pip via JFrog.
+      id-token: write
+    strategy:
+      matrix:
+        python: [ 3.12.3 ]
+    steps:
+      - name: checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Create pip cache key file
+        run: echo "pyrx-${{ github.ref }}-${{ matrix.python }}" > .ci-pip-cache-key
+      - name: build + test pyrx (lightweight)
+        uses: ./.github/actions/pyrx_build
+        with:
+          python_version: ${{ matrix.python }}
+
   build:
     # Heavy: full Scala test + Python test+coverage + GDAL native install (mvn -T 1C, ~10–15 min). Standard runner is too small.
+    # Gated on the lightweight pyrx job so a pyrx failure fails the run fast,
+    # before spending ~10–15 min on the Scala/native build.
+    #
+    # TEMPORARY (pyrx-0.4.0 lightweight dev): skip this heavyweight build on
+    # direct pushes to the pyrx-0.4.0 branch so iterating on the lightweight API
+    # doesn't trigger the ~10–15 min Scala/native build every push. The
+    # lightweight 'pyrx' job above still runs. PRs (including the eventual PR to
+    # main) and every other branch are unaffected, so the merge gate is intact.
+    # Remove this `if:` before merging pyrx-0.4.0.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/pyrx-0.4.0') }}
+    needs: pyrx
     runs-on:
       group: larger-runners
       labels: larger

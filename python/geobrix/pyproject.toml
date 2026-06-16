@@ -46,6 +46,58 @@ test = [
     "shapely>=2.0.0",
     "rasterio>=1.3.0",
     "numpy>=1.24.0",
+    # pyvx (light VectorX / MVT) tests use mapbox-vector-tile as the
+    # decode oracle.  Pure-Python, no native deps.
+    "mapbox-vector-tile>=2.0,<3",
+]
+# Runtime deps for the lightweight pure-Python/PySpark APIs (no JAR) — the umbrella
+# extra covering all light tiers (raster today; vector/grid as they land). Install
+# with `pip install geobrix[light]`.
+# pandas + pyarrow are required by pyspark pandas_udf (Arrow batch serialization);
+# base pyspark does NOT pull them, so without these the rst_* wrappers fail to
+# import (_udf.py imports pandas) / at first invocation with a cryptic ImportError.
+light = [
+    "rasterio>=1.3.0",
+    "shapely>=2.0.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "pyarrow>=11.0.0",
+    "scipy>=1.11.0",
+    "numexpr>=2.8.0",
+    # rio-tiler 9 uses TypedDict(extra_items=...) (PEP 728), which needs a recent
+    # typing_extensions; DBR 17.3 ships an older one, so pin the floor explicitly
+    # or the [light] import fails on-cluster (rio_tiler/types.py TypeError).
+    "typing_extensions>=4.13",
+    "rio-tiler>=9.0,<10",
+    # rio-tiler -> httpx -> httpcore (which needs h11>=0.16). DBR ships an older
+    # httpcore 1.0.2 (pinned h11<0.15) that %pip leaves in place, so it conflicts
+    # with the h11>=0.16 the stack pulls. Force httpcore>=1.0.9 so the on-cluster
+    # install resolves cleanly (no h11 conflict warning).
+    "httpcore>=1.0.9",
+    "rio-cogeo>=7.0,<8",
+    "h3>=4.0,<5",
+    "quadbin>=0.2,<0.3",
+    # Protomaps PMTiles archive writer/reader (pure-Python) for the pmtiles_gbx
+    # tiled-output backend. Writer needs ascending tileid; Reader used in tests.
+    "pmtiles>=3.4,<4",
+    # OGR-free vector reading for the light *_gbx vector DataSources. pyogrio
+    # bundles its own libgdal; pyproj (pulled by pyogrio) maps CRS->srid/proj4.
+    "pyogrio>=0.12,<1",
+    "pyproj>=3.6",
+    # mapbox-vector-tile 2.x (the pyvx MVT encoder, for native-typed attributes)
+    # hard-requires protobuf>=6.31.1. On a DBR cluster, %pip-installing geobrix
+    # therefore upgrades protobuf to 6.x, which pip flags as conflicting with the
+    # base image's google-api-core / grpcio-status (they pin protobuf<6). This is
+    # BENIGN: %pip is notebook-session-scoped (it does not mutate the cluster base
+    # env), and geobrix never imports google-api-core/grpcio at runtime — the
+    # lightweight functions and benches run correctly on protobuf 6.x. There is no
+    # single protobuf version that satisfies both mapbox-vector-tile 2.x (>=6.31.1)
+    # and google/grpc (<6); removing the advisory would mean downgrading to
+    # mapbox-vector-tile 1.x (which lacks the native-typed-attribute API pyvx
+    # relies on). So the advisory is expected and accepted, not a defect.
+    "mapbox-vector-tile>=2.0,<3",
+    "scikit-image>=0.22,<1",
+    "xarray-spatial>=0.4,<1",
 ]
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
 databricks = [
@@ -82,8 +134,26 @@ requires = ["setuptools>=61.2", "wheel"]
 [tool.setuptools]
 include-package-data = false
 
+# databricks.labs.* must be PEP 420 namespace packages (no __init__.py at
+# databricks/ or databricks/labs/) so they coexist with databricks-sdk /
+# databricks-connect, which share the `databricks` namespace. find_namespace
+# discovery includes the gbx subpackages without those shadowing __init__ files.
+[tool.setuptools.packages.find]
+where = ["src"]
+# Only the gbx subtree is a real package; databricks/ and databricks/labs/ stay
+# pure PEP 420 namespace dirs (no __init__.py, not listed) so setuptools doesn't
+# synthesize empty __init__.py for them in the wheel (which would re-shadow
+# databricks-sdk). namespaces=true keeps PEP 420 discovery for the subtree.
+include = ["databricks.labs.gbx*"]
+namespaces = true
+
 [tool.setuptools.package-data]
 geobrix = ["lib/*.jar", "resources/*.png"]
+# Ship the canonical registered-function list inside the bench package so the heavy
+# vs light comparison (spec.registered_rst) works when installed without the repo
+# tree (e.g. the wheel on a cluster). Kept in sync with the canonical
+# docs/tests-function-info/registered_functions.txt by check-binding-parity.py.
+"databricks.labs.gbx.bench" = ["registered_functions.txt"]
 
 [tool.setuptools.dynamic]
 version = {attr = "databricks.labs.gbx.__version__"}
@@ -104,7 +174,9 @@ known_first_party = ["databricks"]
 default_section = "THIRDPARTY"
 
 [tool.flake8]
-ignore = ["E203", "E266", "E501", "W503"]
+# E203/E704/W503 are the standard black-compatibility exclusions (black emits
+# one-line `def f(): ...` stubs for Protocol methods, which trip E704).
+ignore = ["E203", "E266", "E501", "E704", "W503"]
 max-line-length = 88
 max-complexity = 20
 select = ["B", "C", "E", "F", "W", "T4"]

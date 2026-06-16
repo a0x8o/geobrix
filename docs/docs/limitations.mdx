@@ -31,20 +31,7 @@ Convert GeoBrix output to Databricks types:
 
 ## Function Availability
 
-A handful of functions from DBLabs Mosaic are not yet ported:
-
-### RasterX
-
-- `rst_dtmfromgeoms` - Digital Terrain Model from geometries
-
-### VectorX
-
-- `st_interpolateelevation` - Interpolate elevation values
-- `st_triangulate` - Triangulation operations
-
-### GridX
-
-- **Custom Gridding** - Not fully ported
+A small number of capabilities are not yet available:
 
 ### Spatial KNN
 
@@ -95,13 +82,13 @@ GeoBrix requires Databricks Classic Clusters:
 - **Non-ARM instance types only (Intel or AMD x86_64).** The GDAL bundle ships `amd64` `.deb`s from the UbuntuGIS PPA — `amd64` and `x86_64` are the same architecture, and Intel and AMD CPUs are interchangeable. ARM-based instance types — AWS Graviton, Ampere, Apple Silicon — are not supported. The init script fails fast on `aarch64`.
 
 Databricks Runtime:
-- **Minimum**: DBR 17.1 (recommend DBR 17.3 LTS or later)
+- **Minimum**: DBR 17.1 (recommended/tested: DBR 17.3 LTS or 18 LTS)
 - GeoBrix is designed to work with Databricks product spatial functions (available DBR 17.1+)
 
 ## Format Support
 
-- [OGR](./readers/ogr) - focus is on named vector readers in GDAL's OGR package.
-- [GDAL](./readers/gdal) - focus is on GeoTiff (named raster reader).
+- [OGR](./readers/vector) - focus is on named vector readers in GDAL's OGR package.
+- [GDAL](./readers/raster) - focus is on GeoTiff (named raster reader).
 - Advanced features of some formats may have limited support.
 
 ## Next Steps

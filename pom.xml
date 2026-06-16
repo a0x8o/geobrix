@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.databricks.labs</groupId>
     <artifactId>geobrix</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
     <name>GeoBrix</name>
     <description>High-performance spatial processing library for Databricks (GDAL, Spark). Raster, Grid, and Vector packages.</description>
     <url>https://databrickslabs.github.io/geobrix/</url>
@@ -42,7 +42,27 @@
           scala_build action's `suite_pattern` input.
         -->
         <suites></suites>
-        
+        <!--
+          ScalaTest tags excluded from the default / remote-CI test run. The
+          on-demand benchmark suite (HeavyBenchSuite) is tagged
+          `com.databricks.labs.gbx.bench.OnDemand` so it is NOT collected here
+          (it only does useful work when gbx.bench.* sysprops are set, and would
+          otherwise cancel itself and pollute CI output). The gbx:bench:* commands
+          run it on demand by overriding this property with a sentinel tag no
+          suite carries (`-DtagsToExclude=...NoOpExcludeSentinel`) — an EMPTY
+          override makes the scalatest plugin emit `-l ''`, which ScalaTest
+          rejects, so a non-empty no-op tag is used instead.
+        -->
+        <tagsToExclude>com.databricks.labs.gbx.bench.OnDemand</tagsToExclude>
+        <gbx.bench.corpus></gbx.bench.corpus>
+        <gbx.bench.out></gbx.bench.out>
+        <gbx.bench.functions></gbx.bench.functions>
+        <gbx.bench.modes>both</gbx.bench.modes>
+        <gbx.bench.warmup>2</gbx.bench.warmup>
+        <gbx.bench.measured>5</gbx.bench.measured>
+        <gbx.bench.rowCounts>10,100,1000,10000</gbx.bench.rowCounts>
+        <gbx.bench.runId>local</gbx.bench.runId>
+
         <!-- Debug Configuration -->
         <jdwp.agent>-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005</jdwp.agent>
         <agentLib />
@@ -198,6 +218,20 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>bench-test-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.8.0</version>
                 <configuration>
@@ -287,6 +321,14 @@
                     <forkMode>once</forkMode>
                     <logForkedProcessCommand>true</logForkedProcessCommand>
                     <reportsDirectory>${project.build.directory}/test-reports</reportsDirectory>
+                    <!--
+                      Exclude on-demand-only suites (HeavyBenchSuite, tagged
+                      com.databricks.labs.gbx.bench.OnDemand) from the default /
+                      remote-CI run. Overridable via -DtagsToExclude=<no-op tag>
+                      so the gbx:bench:* commands can run them on demand (a
+                      non-empty sentinel — empty makes ScalaTest reject `-l ''`).
+                    -->
+                    <tagsToExclude>${tagsToExclude}</tagsToExclude>
                     <!-- Quiet Spark/GDAL in tests; use log4j2-test.xml from test-classes -->
                     <argLine>
                         -Dlog4j.configurationFile=log4j2-test.xml
@@ -297,6 +339,14 @@
                         -XX:InitialCodeCacheSize=256m
                         -XX:MaxMetaspaceSize=1024m
                         -Dgbx.suites=${suites}
+                        -Dgbx.bench.corpus=${gbx.bench.corpus}
+                        -Dgbx.bench.out=${gbx.bench.out}
+                        -Dgbx.bench.functions=${gbx.bench.functions}
+                        -Dgbx.bench.modes=${gbx.bench.modes}
+                        -Dgbx.bench.warmup=${gbx.bench.warmup}
+                        -Dgbx.bench.measured=${gbx.bench.measured}
+                        -Dgbx.bench.rowCounts=${gbx.bench.rowCounts}
+                        -Dgbx.bench.runId=${gbx.bench.runId}
                         ${agentLib}
                     </argLine>
                     <!--
@@ -415,7 +465,7 @@
                 </property>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -450,12 +500,13 @@
                             <scalaVersion>${scala.version}</scalaVersion>
                             <!--
                                 Pin the scalac scoverage compiler plugin to a version that
-                                actually exists for scala_2.13.12. scoverage-maven-plugin
+                                actually exists for scala_2.13.16. scoverage-maven-plugin
                                 2.1.5's `scalacPluginVersion` defaults to "2.5.2", which is
-                                NOT published on Maven Central for scala 2.13.12 (only up
-                                through 2.3.0 exists for this scala minor). Without this
-                                pin, the build fails with "Could not find artifact
-                                org.scoverage:scalac-scoverage-plugin_2.13.12:jar:2.5.2".
+                                NOT published on Maven Central for scala 2.13.16 (the
+                                maven-metadata for scalac-scoverage-plugin_2.13.16 lists
+                                only 2.3.0 as latest/release for this scala minor). Without
+                                this pin, the build fails with "Could not find artifact
+                                org.scoverage:scalac-scoverage-plugin_2.13.16:jar:2.5.2".
                                 Bump alongside scoverage-maven-plugin upgrades; verify via
                                 maven-search.
                             -->
@@ -463,7 +514,7 @@
                             <!-- Exclude documentation test utilities from coverage -->
                             <excludedPackages>tests.docs.scala.*</excludedPackages>
                             <!-- Exclude not-yet-implemented / experimental (not registered, excluded from coverage) -->
-                            <excludedFiles>.*RST_DTMFromGeoms\.scala;.*InterpolateElevation\.scala</excludedFiles>
+                            <excludedFiles></excludedFiles>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -479,7 +530,7 @@
                 </property>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -505,7 +556,7 @@
                             <!-- See `large` profile above for why this pin is necessary. -->
                             <scalacPluginVersion>2.3.0</scalacPluginVersion>
                             <excludedPackages>tests.docs.scala.*</excludedPackages>
-                            <excludedFiles>.*RST_DTMFromGeoms\.scala;.*InterpolateElevation\.scala</excludedFiles>
+                            <excludedFiles></excludedFiles>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -518,7 +569,7 @@
                 <activeByDefault>true</activeByDefault>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -535,7 +586,7 @@
             -->
             <id>verify-pgp</id>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>

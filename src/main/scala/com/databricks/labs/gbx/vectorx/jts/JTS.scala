@@ -22,6 +22,7 @@ object JTS {
     private val geometryFactories = mutable.Map[Long, GeometryFactory]()
     private val wkbReaders = mutable.Map[Long, WKBReader]()
     private val wkbWriters = mutable.Map[Long, WKBWriter]()
+    private val wkb3Writers = mutable.Map[Long, WKBWriter]()
     private val ewkbWriters = mutable.Map[Long, WKBWriter]()
     private val wtkWriters = mutable.Map[Long, WKTWriter]()
     private val wtkReaders = mutable.Map[Long, WKTReader]()
@@ -74,6 +75,23 @@ object JTS {
         gf.createMultiPolygon(polys)
     }
 
+    /** Builds a Polygon from an exterior shell and interior rings (holes); preserves Z via Coordinate.
+      * Empty `holes` yields a polygon with no interior rings. Uses per-thread factory. */
+    def polygonWithHoles(shell: Seq[Coordinate], holes: Seq[Seq[Coordinate]]): Polygon = {
+        val tid = Thread.currentThread().getId
+        val gf = geometryFactories.getOrElseUpdate(tid, new GeometryFactory())
+        val exterior = gf.createLinearRing(shell.toArray)
+        val interiors = holes.iterator.map(ring => gf.createLinearRing(ring.toArray)).toArray
+        gf.createPolygon(exterior, interiors)
+    }
+
+    /** Builds a MultiPolygon from a sequence of Polygon geometries; uses per-thread factory. */
+    def multiPolygon(polygons: Seq[Polygon]): MultiPolygon = {
+        val tid = Thread.currentThread().getId
+        val gf = geometryFactories.getOrElseUpdate(tid, new GeometryFactory())
+        gf.createMultiPolygon(polygons.toArray)
+    }
+
     /** Creates a single JTS Coordinate(x, y). */
     def coordinatesFromXYs(getX: Double, getY: Double): Coordinate = {
         new Coordinate(getX, getY)
@@ -85,6 +103,16 @@ object JTS {
         val gf = geometryFactories.getOrElseUpdate(tid, new GeometryFactory())
         val coordinates = xys.map { case (x, y) => new Coordinate(x, y) }.toArray
         gf.createLineString(coordinates)
+    }
+
+    /** Builds a LineString from JTS Coordinates (preserves Z); uses per-thread factory.
+      *
+      * Unlike [[lineStringXYs]] (which takes 2D (x, y) pairs), this keeps the full Coordinate,
+      * so a Z value survives the round-trip when the source coordinates carry one. */
+    def lineStringCoords(coords: Seq[Coordinate]): LineString = {
+        val tid = Thread.currentThread().getId
+        val gf = geometryFactories.getOrElseUpdate(tid, new GeometryFactory())
+        gf.createLineString(coords.toArray)
     }
 
     /** Translates geometry by (xd, yd) via AffineTransformation. */
@@ -132,6 +160,13 @@ object JTS {
         val tid = Thread.currentThread().getId
         val writer = wkbWriters.getOrElseUpdate(tid, new WKBWriter())
         writer.write(intersection)
+    }
+
+    /** Encode a JTS Geometry to OGC WKB preserving Z (3 dimensions); per-thread WKBWriter(3). */
+    def toWKB3(geom: org.locationtech.jts.geom.Geometry): Array[Byte] = {
+        val tid = Thread.currentThread().getId
+        val writer = wkb3Writers.getOrElseUpdate(tid, new WKBWriter(3))
+        writer.write(geom)
     }
 
     /** Encodes a JTS Geometry to PostGIS EWKB bytes; embeds SRID when set. Per-thread writer.

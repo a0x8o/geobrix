@@ -33,7 +33,7 @@ They will be reviewed as time permits, but there are **no formal SLAs for suppor
 When filing an issue, please include:
 
 #### Environment Information
-- Databricks Runtime version (e.g., DBR 17.3 LTS)
+- Databricks Runtime version (e.g., DBR 17.3 LTS or 18 LTS)
 - Cluster configuration (node types, number of workers)
 - GeoBrix version
 - Python/Scala version
@@ -53,9 +53,9 @@ When filing an issue, please include:
 
 <CodeFromTest language="markdown" validationLevel="static" title="Issue Template Example">
 {`**Environment:**
-- DBR: 17.3 LTS
+- DBR: 17.3 LTS (or 18 LTS)
 - Cluster: 2 workers, Standard_DS3_v2
-- GeoBrix: 0.3.0
+- GeoBrix: 0.4.0
 - Python: 3.12
 
 **Issue:**
@@ -80,6 +80,8 @@ Should read file successfully.
 **Actual:**
 OOM error on executors.`}
 </CodeFromTest>
+
+(The `gdal` reader shown above is part of the heavyweight tier — see [Choosing an Execution Tier](./api/execution-tiers).)
 
 ## Community Resources
 

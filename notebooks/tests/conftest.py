@@ -2,7 +2,7 @@
 
 Notebook tests must run inside the geobrix-dev Docker container so that the
 Jupyter kernel, GeoBrix package, and paths are consistent. When invoked
-locally, use: bash .cursor/commands/gbx-test-notebooks.sh
+locally, use: bash scripts/commands/gbx-test-notebooks.sh
 """
 
 import os
@@ -29,7 +29,7 @@ def pytest_configure(config):
     # Running outside container (e.g. pytest notebooks/tests/ on host)
     raise pytest.UsageError(
         "Notebook tests must run inside the geobrix-dev Docker container. "
-        "Use: bash .cursor/commands/gbx-test-notebooks.sh"
+        "Use: bash scripts/commands/gbx-test-notebooks.sh"
     )
 
 

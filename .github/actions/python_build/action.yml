@@ -114,11 +114,16 @@ runs:
       run: |
         cd python/geobrix
         python -m build
+        # Heavyweight must not test lightweight: the pyrx (lightweight, JAR-free)
+        # tests live in test/pyrx and need rasterio/shapely/pandas/pyarrow, which
+        # are NOT in requirements-ci.txt. They run in their own 'pyrx' CI job
+        # against requirements-pyrx-ci.txt, so exclude them here (otherwise
+        # collection fails with ModuleNotFoundError: No module named 'rasterio').
         # pytest-cov is already locked in requirements-ci.txt; no extra install needed.
         if [ "${{ inputs.enable_coverage }}" = "true" ]; then
-          pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
+          pytest -m "not integration" --ignore=test/pyrx --ignore=test/pyvx --cov=src --cov-report=xml --cov-report=term --cov-config=pyproject.toml -q
         else
-          pytest -m "not integration"
+          pytest -m "not integration" --ignore=test/pyrx --ignore=test/pyvx
         fi
     - name: Copy python artifacts to GH Actions run
       shell: bash

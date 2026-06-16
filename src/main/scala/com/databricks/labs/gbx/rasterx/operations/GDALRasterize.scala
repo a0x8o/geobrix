@@ -1,6 +1,6 @@
 package com.databricks.labs.gbx.rasterx.operations
 
-import com.databricks.labs.gbx.rasterx.gdal.GDAL
+import com.databricks.labs.gbx.rasterx.gdal.{GDAL, GDALManager}
 import com.databricks.labs.gbx.rasterx.operator.OperatorOptions
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.{Dataset, gdal}
@@ -103,7 +103,7 @@ object GDALRasterize {
         format: String = "Memory",
         path: String = "mem"
     ): DataSource = {
-        ogr.RegisterAll()
+        GDALManager.initOgr()
 
         val vecDriver = GetDriverByName(format)
         val vecDataSource = vecDriver.CreateDataSource(path)

@@ -16,7 +16,7 @@ The single notebook moves from raw xView TGZ archives → `binaryFile`-loaded ra
 
 ## Prerequisites
 
-- **Databricks Runtime 17.3 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
+- **Databricks Runtime 17.3 LTS or 18 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
 - **GeoBrix** installed on the cluster (JAR + Python wheel). The notebook imports `databricks.labs.gbx.rasterx` directly; use version >= 0.3.0.
 - **Unity Catalog**: set `catalog_name` / `schema_name` at the top of the notebook. A Volume named `data` must already exist under `<catalog>/<schema>`; the notebook will create the schema but not the Volume.
 - **xView account**: you need a free account at [challenge.xviewdataset.org](https://challenge.xviewdataset.org/) to obtain session-based download links for `xView_train.tgz` (training imagery) and the labels archive. Paste those URLs into the `train_url` / `labels_url` cells before running the download step.

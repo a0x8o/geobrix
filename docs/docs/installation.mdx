@@ -3,19 +3,99 @@ sidebar_position: 2
 ---
 
 import CodeFromTest from '@site/src/components/CodeFromTest';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import initScript from '!!raw-loader!../../scripts/geobrix-gdal-init.sh';
 import verifyInstallation from '!!raw-loader!../tests/python/installation/verify_installation.py';
 
 # Installation
 
-GeoBrix currently offers heavy-weight, distributed APIs, primarily written in Scala for Spark with additional language bindings for PySpark and Spark SQL.
+GeoBrix offers two execution tiers with different installation paths. See [Choosing an Execution Tier](./api/execution-tiers) for the tradeoffs.
+
+## Supported Databricks Runtimes
+
+GeoBrix supports both current Databricks Runtime LTS releases:
+
+| DBR LTS | Ubuntu | Spark | Python | Scala | Java | GeoBrix |
+|---|---|---|---|---|---|---|
+| **17.3 LTS** | 24.04 | 4.0.0 | 3.12.3 | 2.13.16 | 17 | ✅ Supported |
+| **18 LTS** | 24.04 | 4.1.0 | 3.12.3 | 2.13.16 | 21 | ✅ Supported |
+
+A **single wheel + single JAR** runs on both: Scala 2.13.16 matches both runtimes, the JAR is compiled to Java-17 bytecode so it loads on both JVMs, and Spark is a `provided` dependency.
+
+:::note DBR 19 LTS is coming soon
+**DBR 19 LTS is coming soon**, built on **Ubuntu 26.04**. The **lightweight** tier (pure-Python, rasterio's bundled GDAL) will be unaffected; the **heavyweight** tier's native GDAL/OGR libraries are compiled against the cluster OS, so they will need to be rebuilt for the new base image.
+:::
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight (pure-Python)">
+
+The lightweight tier is a single Python wheel installed with the `light` extra — **no init script, no JAR, no native GDAL bundle** (rasterio's bundled GDAL does the work). It runs on serverless compute, standard (shared) clusters, Lakeflow declarative pipelines, and ARM. One wheel covers the whole lightweight tier: RasterX (the full `rst_*` set, via `databricks.labs.gbx.pyrx`), VectorX (via `databricks.labs.gbx.pyvx`), and GridX quadbin (via `databricks.labs.gbx.pygx`).
+
+The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **not** published to PyPI. Install it from a Unity Catalog Volume so the same path works on both Serverless and Classic compute:
+
+1. **Download** `geobrix-<version>-py3-none-any.whl` from the [GeoBrix releases](https://github.com/databrickslabs/geobrix/releases) (0.4.0 or later).
+2. **Stage** it in a Unity Catalog Volume your compute can read, e.g. `/Volumes/<catalog>/<schema>/<volume>/geobrix/`.
+3. **Install** it — either notebook-scoped with the `%pip` magic (installs across the whole cluster for the notebook session; plain `pip` installs only on the driver), or as a [cluster-scoped library](https://docs.databricks.com/aws/en/libraries/notebooks-python-libraries#manage-libraries-with-pip-commands) pointing at the same Volume path (works on Serverless and Classic):
+
+```python
+%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[light]'
+```
+
+Then import the package(s) you need and (optionally) register their SQL functions. Each light package exposes the same `functions` / `register(spark)` pattern:
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx  # RasterX (rst_*)
+# from databricks.labs.gbx.pyvx import functions as vx  # VectorX (st_*)
+# from databricks.labs.gbx.pygx import functions as gx  # GridX quadbin (quadbin_*)
+
+# optional — only needed to call the SQL functions:
+rx.register(spark)
+
+# Light DataSource readers (raster_gbx, gtiff_gbx, etc.) are Python DataSource
+# V2 and aren't auto-discovered — register them explicitly when you need them:
+# from databricks.labs.gbx.ds import register
+# register.register(spark)
+```
+
+## Verify the lightweight tier
+
+Confirm the wheel imports, rasterio's bundled GDAL is present, and a function runs end to end (no JAR, no init script). The check below exercises RasterX (`rst_*`); VectorX (`pyvx`, `st_*`) and GridX quadbin (`pygx`, `quadbin_*`) ship in the same wheel and register and run the same way:
+
+```python
+import rasterio
+from databricks.labs.gbx.pyrx import functions as rx
+
+print("rasterio", rasterio.__version__, "| bundled GDAL", rasterio.__gdal_version__)
+
+# Functional check: load a GeoTIFF and read its properties through pyrx.
+tiles = (
+    spark.read.format("binaryFile")
+    .load("/Volumes/<catalog>/<schema>/<volume>/path/to/*.tif")
+    .select(rx.rst_fromcontent("content", "GTiff").alias("tile"))
+)
+tiles.select(
+    rx.rst_width("tile").alias("width"),
+    rx.rst_height("tile").alias("height"),
+    rx.rst_srid("tile").alias("srid"),
+).show()
+```
+
+If the import succeeds and the query returns raster dimensions, the lightweight tier is ready. The rest of this page covers the heavyweight tier.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (Scala + GDAL)">
+
+The heavyweight tier needs the Scala JAR + a cluster init script that installs native GDAL. A single JAR plus the init script provide all three heavyweight packages — RasterX (`gbx_rst_*`), GridX (`gbx_bng_*`), and VectorX (`gbx_st_*`) — together with the GDAL/OGR readers. Follow the steps below.
 
 ## Prerequisites
 
-- **Databricks Runtime 17.3 LTS.** The init script's pinned GDAL package
-  targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS; other
-  runtimes use different bases and will either fail to install or silently
-  fall back to an unpinned GDAL.
+The following prerequisites apply to the **heavyweight** tier.
+
+- **Databricks Runtime 17.3 LTS or 18 LTS.** The init script's pinned GDAL
+  package targets the Ubuntu 24.04 (`noble`) base shared by both DBR 17.3 LTS
+  and DBR 18 LTS, so one init script covers both; other runtimes use different
+  bases and will either fail to install or silently fall back to an unpinned GDAL.
 - Classic Databricks cluster (not Serverless).
 - **Non-ARM instance type (Intel or AMD x86_64).** The GDAL bundle ships
   `amd64` `.deb` packages from the UbuntuGIS PPA — `amd64` and `x86_64`
@@ -202,7 +282,7 @@ The init script installs GDAL from a CI-built bundle staged in your Unity Catalo
 1. **Tarball sha256 mismatch** — the script exits with a `sha256sum: WARNING: 1 computed checksum did NOT match` error. The tarball in `VOL_DIR` doesn't match the sidecar staged alongside it: either an upload was truncated, the wrong tarball was uploaded, or the sidecar is stale. Re-download both the tarball and the `.sha256` sidecar from the GeoBrix [release page](https://github.com/databrickslabs/geobrix/releases) and re-upload as a pair.
 2. **No `*.tar.gz.sha256` sidecar found** — the operator uploaded the tarball but not its sidecar (or vice versa). Both must be present in `VOL_DIR`. If multiple sidecars are present, the script refuses to install — keep only the active version.
 3. **Unsupported architecture** — the script exits with `Unsupported architecture: arm64` or similar. The bundle ships `amd64` / `x86_64` `.deb`s only (Intel or AMD CPUs). Choose a non-ARM instance type for the cluster.
-4. **DBR base image mismatch** — the script targets the Ubuntu 24.04 (`noble`) base used by DBR 17.3 LTS.
+4. **DBR base image mismatch** — the script targets the Ubuntu 24.04 (`noble`) base shared by both DBR 17.3 LTS and DBR 18 LTS.
 5. **General checks** — confirm the init script ran successfully (driver logs) and that `libgdalalljni.so` is in `/usr/lib` on the driver and executors. The script's tail-of-log section prints the installed `libgdal*` / `libproj*` / `libgeos*` versions — compare against `PACKAGES.txt` inside the tarball to confirm the cluster is on the expected versions.
 
 #### Reading init logs when the cluster fails to launch
@@ -254,4 +334,7 @@ If you encounter permission errors:
 ## Next Steps
 
 - Follow the [Quick Start Guide](./quick-start) to begin using GeoBrix
-- Explore the [Packages](./packages/overview) documentation
+- Explore the [Functions](./api/overview) documentation
+
+</TabItem>
+</Tabs>

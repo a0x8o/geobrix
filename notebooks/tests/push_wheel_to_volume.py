@@ -70,7 +70,23 @@ def main() -> int:
             shutil.rmtree(dist)
         dist.mkdir(parents=True)
         print("Building wheel (python3 -m build)...")
-        rc = subprocess.run([sys.executable, "-m", "build", str(pkg_dir)], cwd=project_root, capture_output=False)
+        # The build's pip index comes from the AMBIENT environment (PIP_INDEX_URL /
+        # pip.conf). If your network firewalls public PyPI, set PIP_INDEX_URL to your
+        # mirror before running -- we do not hardcode one here.
+        build_env = dict(os.environ)
+        # Prefer the project venv (.venv-pyrx, Python 3.12) for the build: it has a coherent
+        # build backend, so `--no-isolation` builds without any PyPI fetch (the ambient
+        # `python` may be an unrelated interpreter with a mismatched setuptools/packaging that
+        # breaks even isolated builds). Fall back to sys.executable + isolation + the proxy
+        # (the CI path, where the runner's env is clean and just needs the mirror).
+        venv_py = Path(project_root) / ".venv-pyrx" / "bin" / "python"
+        if venv_py.exists():
+            build_cmd = [str(venv_py), "-m", "build", "--no-isolation", str(pkg_dir)]
+        else:
+            build_cmd = [sys.executable, "-m", "build", str(pkg_dir)]
+        rc = subprocess.run(
+            build_cmd, cwd=project_root, capture_output=False, env=build_env
+        )
         if rc.returncode != 0:
             print("Build failed", file=sys.stderr)
             return 1

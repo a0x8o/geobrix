@@ -1,0 +1,399 @@
+---
+sidebar_position: 1
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Lightweight Tier: Implementation Techniques
+
+The **lightweight (pyrx / pyvx) tier** is a pure-Python/PySpark implementation that installs as a wheel with no JAR, no init script, and no GDAL system install. It runs wherever Spark runs — Serverless, shared/standard clusters, ARM, and Lakeflow declarative pipelines — and covers the full raster and VectorX function set (vector-tile encoding, TIN surface modeling, and legacy-geometry migration).
+
+The lightweight tier is seeing **increasing investment** precisely because of that reach. Functions that run on Serverless and ARM expand the audience that can use GeoBrix without infrastructure friction; that is the direction the product is moving, and the lightweight tier is how GeoBrix gets there now.
+
+This page explains *how* the lightweight tier reaches functional and performance parity with the heavyweight JVM tier. The key is choosing the right Spark execution shape per function: fan-out generators use streaming UDTFs, aggregators use grouped-aggregate Arrow UDFs, and per-tile transforms use Arrow scalar UDFs. Underneath each shape, vectorized Python libraries (NumPy, SciPy, rasterio, rio-tiler, xarray-spatial, shapely, mapbox-vector-tile) do the compute.
+
+For measured timing and output-consistency numbers, see **[Benchmarking](./benchmarking)**.
+
+---
+
+## Execution shapes
+
+### Streaming UDTFs
+
+A **Python UDTF (User-Defined Table Function)** is a class with an `eval` method that `yield`s rows. Spark calls it as a `LATERAL` table function: one input row fans out to any number of output rows without buffering the whole result set first.
+
+This is the right shape for **fan-out / generator operations** — functions where one input tile produces a variable or large number of output rows. Buffering all output rows in a list before returning them would hold the whole result in worker memory; streaming with `yield` releases each row as soon as it is produced.
+
+The lightweight UDTFs mirror the heavyweight `CollectionGenerator` call site: both register under the same SQL name and are invoked identically via `LATERAL VIEW` or the `LATERAL` table-function syntax.
+
+### Grouped-aggregate UDFs
+
+A **grouped-aggregate `pandas_udf`** operates on one group at a time: Spark shuffles all rows for a key to one worker, then calls the UDF once with a `pd.Series` of all values in the group, returning a single scalar result. This is the natural shape for **tile / feature aggregators** — functions that reduce many rows to one output per key (one merged raster, one MVT tile blob).
+
+Arrow-backed via `pandas_udf(BinaryType())`, these aggregators sit inside a standard `.groupBy(...).agg(...)` call: the same API the heavyweight Scala aggregators (`TypedImperativeAggregate`) use, so the Python call pattern is identical.
+
+### Arrow scalar UDFs
+
+A **vectorized Arrow scalar `pandas_udf`** receives an Arrow batch of rows as a `pd.Series`, calls the function once per batch, and returns a `pd.Series`. The JVM–Python boundary is crossed **once per batch**, not once per row — the primary serialization saving over a plain `@udf`.
+
+This is the right shape for **per-row (1→1) tile and geometry transforms**: operations that produce one output tile or scalar per input tile, where the compute dominates the per-row overhead.
+
+:::note
+Functions that return `MapType` columns use a plain `@f.udf` for SQL registration (Arrow does not support `MapType` in all `pandas_udf` builds); the Python Column API routes through the `pandas_udf` path for all tile-returning operations.
+:::
+
+### Vectorized cores
+
+The compute underneath each UDF shape comes from best-in-class Python libraries rather than partial reimplementations:
+
+| Library | Role |
+|---|---|
+| **rasterio** | Tile open/decode, clip, warp, resample, CoG conversion, band I/O |
+| **NumPy** | Band math (spectral indices, map algebra, thresholding), array ops |
+| **SciPy** | Focal filtering (`rst_filter`, `rst_convolve`); Delaunay triangulation + barycentric interpolation for the TIN functions (`st_triangulate`, `st_interpolateelevation*`) |
+| **rio-tiler** | XYZ / web-tile output (`rst_tilexyz`, `rst_xyzpyramid`) |
+| **xarray-spatial** | Terrain analysis (slope, hillshade, aspect, tri, tpi, roughness, viewshed) |
+| **shapely** | WKB geometry handling (clip, polygonize, rasterize, grid aggregation); TIN geometry parse and legacy-struct decode to WKB (`st_legacyaswkb`) |
+| **pyogrio** | Vector reader I/O (Arrow-native columnar batches — OGR-free) |
+| **mapbox-vector-tile** | MVT protobuf encode / decode (`st_asmvt`, `st_asmvt_pyramid`) |
+
+These modules live in `python/geobrix/src/databricks/labs/gbx/pyrx/core/` and the corresponding `pyvx/` modules, and are called directly by the UDF harness — no subprocess, no native bridge.
+
+---
+
+## Function classification
+
+The tabs below enumerate which functions use each execution shape. The classification is derived from the registered implementations in `python/geobrix/src/databricks/labs/gbx/pyrx/functions.py` and `pyvx/functions.py`.
+
+<Tabs groupId="perf-technique">
+
+<TabItem value="udtf" label="Streaming UDTFs">
+
+These functions are Python UDTFs registered via `spark.udtf.register(...)`. Each yields rows incrementally, so the output is never fully buffered on the worker.
+
+**RasterX (pyrx)**
+
+| SQL name | Python name | Output per input tile |
+|---|---|---|
+| `gbx_rst_polygonize` | `rst_polygonize` | One row per contiguous polygon in the raster |
+| `gbx_rst_separatebands` | `rst_separatebands` | One row per band in the multi-band tile |
+| `gbx_rst_retile` | `rst_retile` | One row per retiled region |
+| `gbx_rst_tooverlappingtiles` | `rst_tooverlappingtiles` | One row per overlapping tile |
+| `gbx_rst_maketiles` | `rst_maketiles` | One row per subdivided tile |
+| `gbx_rst_h3_tessellate` | `rst_h3_tessellate` | One row per H3 cell covering the tile |
+| `gbx_rst_xyzpyramid` | `rst_xyzpyramid` | One row per intersecting XYZ tile across the zoom range |
+| `gbx_rst_h3_rastertogridavg` | `rst_h3_rastertogridavg` | One row per H3 cell covering the tile |
+| `gbx_rst_h3_rastertogridcount` | `rst_h3_rastertogridcount` | One row per H3 cell |
+| `gbx_rst_h3_rastertogridmax` | `rst_h3_rastertogridmax` | One row per H3 cell |
+| `gbx_rst_h3_rastertogridmin` | `rst_h3_rastertogridmin` | One row per H3 cell |
+| `gbx_rst_h3_rastertogridmedian` | `rst_h3_rastertogridmedian` | One row per H3 cell |
+| `gbx_rst_quadbin_rastertogridavg` | `rst_quadbin_rastertogridavg` | One row per QuadBin cell covering the tile |
+| `gbx_rst_quadbin_rastertogridcount` | `rst_quadbin_rastertogridcount` | One row per QuadBin cell |
+| `gbx_rst_quadbin_rastertogridmax` | `rst_quadbin_rastertogridmax` | One row per QuadBin cell |
+| `gbx_rst_quadbin_rastertogridmin` | `rst_quadbin_rastertogridmin` | One row per QuadBin cell |
+| `gbx_rst_quadbin_rastertogridmedian` | `rst_quadbin_rastertogridmedian` | One row per QuadBin cell |
+
+**VectorX (pyvx)**
+
+| SQL name | Python name | Output per input group |
+|---|---|---|
+| `gbx_st_asmvt_pyramid` | (SQL LATERAL only) | One MVT tile row per zoom-level tile in the pyramid |
+| `gbx_st_triangulate` | (SQL LATERAL only) | One row per triangle in the constrained-Delaunay tessellation |
+| `gbx_st_interpolateelevationbbox` | (SQL LATERAL only) | One elevation point per in-hull grid cell over a bounding box |
+| `gbx_st_interpolateelevationgeom` | (SQL LATERAL only) | One elevation point per in-hull grid cell over a geometry |
+
+**GridX (pygx) — BNG**
+
+| SQL name | Python name | Output per input row |
+|---|---|---|
+| `gbx_bng_kringexplode` | `bng_kringexplode` | One row per k-ring cell |
+| `gbx_bng_kloopexplode` | `bng_kloopexplode` | One row per k-loop cell |
+| `gbx_bng_geomkringexplode` | `bng_geomkringexplode` | One row per geometry k-ring cell |
+| `gbx_bng_geomkloopexplode` | `bng_geomkloopexplode` | One row per geometry k-loop cell |
+| `gbx_bng_tessellateexplode` | `bng_tessellateexplode` | One row per tessellated cell (cell ID + chip) |
+
+SQL invocation (LATERAL table function):
+
+```sql
+SELECT z, x, y, tile
+FROM   your_table,
+LATERAL gbx_rst_h3_rastertogridavg(tile, 8);   -- expands to one row per H3 cell at resolution 8
+```
+
+</TabItem>
+
+<TabItem value="grouped-agg" label="Grouped-aggregate UDFs">
+
+These functions are Arrow-backed `pandas_udf(BinaryType())` aggregators used inside `.groupBy(...).agg(...)`. Spark shuffles the group to one worker and calls the UDF once with all values.
+
+**RasterX (pyrx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_rst_merge_agg` | `rst_merge_agg` | Mosaic merge: combine overlapping tiles into one |
+| `gbx_rst_combineavg_agg` | `rst_combineavg_agg` | Pixel-wise weighted average across tile group |
+| `gbx_rst_frombands_agg` | `rst_frombands_agg` | Stack single-band tiles into a multi-band tile |
+| `gbx_rst_rasterize_agg` | `rst_rasterize_agg` | Burn vector geometries onto a raster |
+| `gbx_rst_derivedband_agg` | `rst_derivedband_agg` | Apply a user-supplied Python expression across a tile group |
+| `gbx_rst_gridfrompoints_agg` | `rst_gridfrompoints_agg` | Interpolate a raster from point observations |
+| `gbx_rst_dtmfromgeoms_agg` | `rst_dtmfromgeoms_agg` | Build a DTM raster from elevation geometries |
+
+**VectorX (pyvx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_st_asmvt` | `st_asmvt` | Encode a group of tile-local features into one MVT protobuf blob |
+
+**GridX (pygx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_quadbin_cellunion_agg` | `quadbin_cellunion_agg` | Dissolve a group of quadbin cell IDs into one unioned MultiPolygon (EWKB) |
+| `gbx_bng_cellunion_agg` | `bng_cellunion_agg` | Dissolve a group of one cell's chips into the unioned chip geometry (WKB, EPSG:27700) |
+| `gbx_bng_cellintersection_agg` | `bng_cellintersection_agg` | Intersect a group of one cell's chips into the dissolved chip geometry (WKB, EPSG:27700) |
+
+The two BNG aggregates return **`BINARY`** (the dissolved chip geometry) rather than the heavyweight `STRUCT<cellid, core, chip>` — a PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`. The aggregate only ever combines chips from one cell, so the heavyweight struct's `cellid` is the group key and `core` is recoverable from the chip; neither adds information beyond the BINARY payload. See [GridX BNG aggregator notes](./gridx-functions#bng_cellunion_agg).
+
+**Tiled output — format-agnostic (pyrx + pyvx)**
+
+| SQL name | Python name | Aggregation |
+|---|---|---|
+| `gbx_pmtiles_agg` | `pmtiles_agg` | Fold a group of `(tile, z, x, y)` rows into one PMTiles archive per key |
+
+`gbx_pmtiles_agg` is the grouped-aggregate companion to the PMTiles writer. Because a PMTiles archive can hold raster *or* vector tiles, it is **tier-neutral**: registered from both `pyrx` and `pyvx`, resolving to the same canonical wrapper, and it reuses the same archive assembler the PMTiles writer uses. It is the natural composition target for `gbx_st_asmvt` (encode features → MVT tiles → fold tiles into an archive) and the raster tiling functions.
+
+Python usage:
+
+```python
+# RasterX: merge tiles sharing the same cell ID
+df.groupBy("cellid").agg(rx.rst_merge_agg("tile").alias("merged"))
+
+# VectorX: encode features into MVT tiles
+df.groupBy("z", "x", "y").agg(vx.st_asmvt("geom", "attrs", "layer").alias("mvt"))
+
+# GridX: dissolve quadbin cell ids into one unioned coverage geometry per group
+df.groupBy("region").agg(gx.quadbin_cellunion_agg("cell").alias("coverage"))
+
+# PMTiles: fold a group of tiles into one archive per group key (raster or vector)
+from databricks.labs.gbx.pmtiles import functions as pt
+df.groupBy("layer").agg(pt.pmtiles_agg("tile", "z", "x", "y").alias("archive"))
+```
+
+</TabItem>
+
+<TabItem value="arrow-scalar" label="Arrow scalar UDFs">
+
+These functions are `pandas_udf`-backed (Arrow batch) scalar transforms: one input row produces one output row, and the JVM–Python boundary is crossed once per Arrow batch rather than once per row. The Python Column API routes all tile-returning operations through this path.
+
+**RasterX (pyrx) — constructors and tile-combining**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_fromcontent` | `rst_fromcontent` |
+| `gbx_rst_fromfile` | `rst_fromfile` |
+| `gbx_rst_merge` | `rst_merge` |
+| `gbx_rst_combineavg` | `rst_combineavg` |
+| `gbx_rst_frombands` | `rst_frombands` |
+
+**RasterX (pyrx) — warps and resampling**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_transform` | `rst_transform` |
+| `gbx_rst_to_webmercator` | `rst_to_webmercator` |
+| `gbx_rst_resample` | `rst_resample` |
+| `gbx_rst_resample_to_size` | `rst_resample_to_size` |
+| `gbx_rst_resample_to_res` | `rst_resample_to_res` |
+| `gbx_rst_clip` | `rst_clip` |
+
+**RasterX (pyrx) — edit and format**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_updatetype` | `rst_updatetype` |
+| `gbx_rst_initnodata` | `rst_initnodata` |
+| `gbx_rst_fillnodata` | `rst_fillnodata` |
+| `gbx_rst_setsrid` | `rst_setsrid` |
+| `gbx_rst_band` | `rst_band` |
+| `gbx_rst_asformat` | `rst_asformat` |
+| `gbx_rst_tryopen` | `rst_tryopen` |
+| `gbx_rst_buildoverviews` | `rst_buildoverviews` |
+| `gbx_rst_cog_convert` | `rst_cog_convert` |
+
+**RasterX (pyrx) — accessors and metadata**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_width` / `gbx_rst_height` / `gbx_rst_numbands` | `rst_width` / `rst_height` / `rst_numbands` |
+| `gbx_rst_srid` | `rst_srid` |
+| `gbx_rst_pixelwidth` / `gbx_rst_pixelheight` | `rst_pixelwidth` / `rst_pixelheight` |
+| `gbx_rst_upperleftx` / `gbx_rst_upperlefty` | `rst_upperleftx` / `rst_upperlefty` |
+| `gbx_rst_scalex` / `gbx_rst_scaley` | `rst_scalex` / `rst_scaley` |
+| `gbx_rst_skewx` / `gbx_rst_skewy` | `rst_skewx` / `rst_skewy` |
+| `gbx_rst_rotation` | `rst_rotation` |
+| `gbx_rst_isempty` | `rst_isempty` |
+| `gbx_rst_boundingbox` | `rst_boundingbox` |
+| `gbx_rst_format` | `rst_format` |
+| `gbx_rst_type` | `rst_type` |
+| `gbx_rst_getnodata` | `rst_getnodata` |
+| `gbx_rst_avg` / `gbx_rst_min` / `gbx_rst_max` / `gbx_rst_median` / `gbx_rst_pixelcount` | band statistics |
+| `gbx_rst_rastertoworldcoordx` / `..y` | `rst_rastertoworldcoordx` / `..y` |
+| `gbx_rst_worldtorastercoordx` / `..y` | `rst_worldtorastercoordx` / `..y` |
+
+**RasterX (pyrx) — analysis and terrain**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_slope` | `rst_slope` |
+| `gbx_rst_aspect` | `rst_aspect` |
+| `gbx_rst_hillshade` | `rst_hillshade` |
+| `gbx_rst_tri` | `rst_tri` |
+| `gbx_rst_tpi` | `rst_tpi` |
+| `gbx_rst_roughness` | `rst_roughness` |
+| `gbx_rst_color_relief` | `rst_color_relief` |
+| `gbx_rst_proximity` | `rst_proximity` |
+| `gbx_rst_viewshed` | `rst_viewshed` |
+| `gbx_rst_contour` | `rst_contour` |
+| `gbx_rst_sample` | `rst_sample` |
+| `gbx_rst_filter` | `rst_filter` |
+| `gbx_rst_convolve` | `rst_convolve` |
+| `gbx_rst_threshold` | `rst_threshold` |
+
+**RasterX (pyrx) — spectral indices and band math**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_ndvi` | `rst_ndvi` |
+| `gbx_rst_ndwi` | `rst_ndwi` |
+| `gbx_rst_nbr` | `rst_nbr` |
+| `gbx_rst_savi` | `rst_savi` |
+| `gbx_rst_evi` | `rst_evi` |
+| `gbx_rst_index` | `rst_index` |
+| `gbx_rst_mapalgebra` | `rst_mapalgebra` |
+| `gbx_rst_derivedband` | `rst_derivedband` |
+
+**RasterX (pyrx) — tiling, rasterization, vector-raster bridge**
+
+| SQL name | Python name |
+|---|---|
+| `gbx_rst_tilexyz` | `rst_tilexyz` |
+| `gbx_rst_rasterize` | `rst_rasterize` |
+| `gbx_rst_gridfrompoints` | `rst_gridfrompoints` |
+| `gbx_rst_dtmfromgeoms` | `rst_dtmfromgeoms` |
+
+**VectorX (pyvx) — legacy-geometry migration**
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_st_legacyaswkb` | `st_legacyaswkb` | Decode a legacy Mosaic geometry struct to WKB (Z + holes preserved) |
+
+**GridX (pygx) — quadbin cell ops**
+
+The impl is chosen per shape. **Scalar/bounded-output** functions (`pointascell`, `resolution`, `distance`, `aswkb`, `centroid`, `cellunion`) register as **`pandas_udf`s** — `pointascell`/`resolution` use numpy kernels (web-mercator clamp + Morton bit-packing) bit-identical to the scalar reference; the rest amortize the Arrow batch transfer. **Array-returning** functions (`kring`, `polyfill`, `tessellate`) register as **plain `@udf`s** instead: a scalar `pandas_udf` buffers a whole Arrow batch (~10k rows) of output, so variable-length array outputs (e.g. `polyfill` of a large bbox, `tessellate` of many chips) would risk worker memory at scale — a plain UDF streams row-by-row. `cellunion_agg` is the grouped aggregate. All stay Serverless-safe (`spark.udf.register` only, no Spark-config or JVM access).
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_quadbin_pointascell` | `quadbin_pointascell` | lon/lat (EPSG:4326) → quadbin cell ID at zoom |
+| `gbx_quadbin_resolution` | `quadbin_resolution` | quadbin cell ID → zoom level |
+| `gbx_quadbin_distance` | `quadbin_distance` | Chebyshev cell-step distance between two cells |
+| `gbx_quadbin_kring` | `quadbin_kring` | cell ID → array of cells within distance `k` |
+| `gbx_quadbin_polyfill` | `quadbin_polyfill` | geometry → array of covering cell IDs |
+| `gbx_quadbin_tessellate` | `quadbin_tessellate` | geometry → array of `STRUCT<cell, geom>` clips |
+| `gbx_quadbin_aswkb` | `quadbin_aswkb` | cell ID → footprint polygon (EWKB SRID 4326) |
+| `gbx_quadbin_centroid` | `quadbin_centroid` | cell ID → centroid point (EWKB SRID 4326) |
+| `gbx_quadbin_cellunion` | `quadbin_cellunion` | array of cell IDs → unioned MultiPolygon (EWKB) |
+
+**GridX (pygx) — BNG cell ops**
+
+Same per-shape split as quadbin. **Scalar/bounded-output** functions (`pointascell`, `eastnorthasbng`, `cellarea`, `distance`, `euclideandistance`, `aswkb`, `aswkt`, `centroid`, `cellintersection`, `cellunion`) register as **`pandas_udf`s** — the cell-id codec is a numpy-vectorized port of `BNG.scala` (resolution + letter-prefix maps, easting/northing bit math), exact-parity with the heavyweight tier. **Array-returning** functions (`kring`, `kloop`, `polyfill`, `geomkring`, `geomkloop`, `tessellate`) register as **plain `@udf`s** so variable-length outputs stream row-by-row rather than buffering a whole Arrow batch. The two `*_agg` functions are grouped aggregates (see the Grouped-aggregate UDFs tab). All stay Serverless-safe (`spark.udf`/`spark.udtf.register` only, no Spark-config or JVM access). Cell IDs are `STRING`; geometry outputs are plain WKB in **EPSG:27700** with no SRID.
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_bng_pointascell` | `bng_pointascell` | point WKT/WKB (EPSG:27700) → BNG cell ID at resolution |
+| `gbx_bng_eastnorthasbng` | `bng_eastnorthasbng` | easting/northing (EPSG:27700) → BNG cell ID at resolution |
+| `gbx_bng_cellarea` | `bng_cellarea` | cell ID → area in km² |
+| `gbx_bng_distance` | `bng_distance` | grid-step distance between two cells |
+| `gbx_bng_euclideandistance` | `bng_euclideandistance` | straight-line distance between two cell centroids |
+| `gbx_bng_aswkb` | `bng_aswkb` | cell ID → footprint polygon (WKB, EPSG:27700) |
+| `gbx_bng_aswkt` | `bng_aswkt` | cell ID → footprint polygon (WKT, EPSG:27700) |
+| `gbx_bng_centroid` | `bng_centroid` | cell ID → centroid point (WKB, EPSG:27700) |
+| `gbx_bng_cellintersection` | `bng_cellintersection` | two cell chips → dissolved chip |
+| `gbx_bng_cellunion` | `bng_cellunion` | two cell chips → dissolved chip |
+| `gbx_bng_kring` | `bng_kring` | cell ID → array of cells within distance `k` |
+| `gbx_bng_kloop` | `bng_kloop` | cell ID → array of cells at exactly distance `k` |
+| `gbx_bng_polyfill` | `bng_polyfill` | geometry → array of covering cell IDs |
+| `gbx_bng_geomkring` | `bng_geomkring` | geometry → array of k-ring cell IDs |
+| `gbx_bng_geomkloop` | `bng_geomkloop` | geometry → array of k-loop cell IDs |
+| `gbx_bng_tessellate` | `bng_tessellate` | geometry → array of `STRUCT<cellid, core, chip>` |
+
+</TabItem>
+
+<TabItem value="cores" label="Vectorized cores">
+
+Each UDF shape delegates compute to a focused Python module in `pyrx/core/` or `pyvx/`. No subprocess calls; no native bridge per operation.
+
+| Module | Library | Functions served |
+|---|---|---|
+| `pyrx/core/accessors.py` | rasterio | All metadata accessors (`rst_width`, `rst_srid`, `rst_avg`, …) |
+| `pyrx/core/coords.py` | rasterio | Coordinate transforms (`rst_rastertoworldcoord*`, `rst_worldtorastercoord*`) |
+| `pyrx/core/io.py` | rasterio | `rst_fromcontent`, `rst_fromfile`, `rst_asformat`, `rst_cog_convert`, `rst_buildoverviews` |
+| `pyrx/core/edit.py` | rasterio | `rst_clip`, `rst_updatetype`, `rst_initnodata`, `rst_setsrid`, `rst_fillnodata`, `rst_tryopen` |
+| `pyrx/core/warp.py` | rasterio | `rst_transform`, `rst_to_webmercator`, `rst_resample*` |
+| `pyrx/core/combine.py` | rasterio + NumPy | `rst_merge`, `rst_combineavg`, `rst_frombands`, `rst_band`, `rst_separatebands` |
+| `pyrx/core/bandmath.py` | NumPy | `rst_ndvi`, `rst_ndwi`, `rst_nbr`, `rst_savi`, `rst_evi`, `rst_index`, `rst_mapalgebra`, `rst_threshold`, `rst_derivedband` |
+| `pyrx/core/focal.py` | SciPy + NumPy | `rst_filter`, `rst_convolve` |
+| `pyrx/core/terrain.py` | xarray-spatial | `rst_slope`, `rst_aspect`, `rst_hillshade`, `rst_tri`, `rst_tpi`, `rst_roughness`, `rst_color_relief`, `rst_viewshed` |
+| `pyrx/core/analysis.py` | rasterio + shapely | `rst_proximity`, `rst_contour`, `rst_sample` |
+| `pyrx/core/tiles.py` | rasterio + rio-tiler | `rst_retile`, `rst_tooverlappingtiles`, `rst_maketiles`, `rst_tilexyz`, `rst_xyzpyramid` |
+| `pyrx/core/grid.py` | rasterio + shapely + h3/quadbin | `rst_h3_tessellate`, discrete-grid rastertogrid (UDTF path) |
+| `pyrx/core/bridge.py` | rasterio + shapely | `rst_rasterize`, `rst_gridfrompoints`, `rst_dtmfromgeoms` |
+| `pyrx/core/polygonize.py` | rasterio + shapely | `rst_polygonize` (UDTF path) |
+| `pyvx/_mvt.py` | mapbox-vector-tile + shapely | `st_asmvt` (grouped-agg), `st_asmvt_pyramid` (UDTF) |
+| `pyvx/_tin.py` | SciPy + shapely | `st_triangulate`, `st_interpolateelevationbbox`, `st_interpolateelevationgeom` (UDTF) |
+| `pyvx/_legacy.py` | shapely | `st_legacyaswkb` (scalar) |
+| `pygx/_quadbin.py` | quadbin + shapely | All `quadbin_*` cell math + EWKB geometry (`pointascell`, `polyfill`, `tessellate`, `cellunion`/`cellunion_agg`, …) |
+| `pygx/_bng.py` | pure-Python BNG codec + shapely | All `bng_*` cell math + WKB geometry (EPSG:27700, no SRID): codec port of `BNG.scala`, `pointascell`/`eastnorthasbng`, `polyfill`, `tessellate`, k-ring/k-loop, `cellunion`/`cellintersection`(`_agg`), … |
+| `pmtiles/_agg_light.py` | pmtiles | `pmtiles_agg` (grouped-agg; registered from pyrx + pyvx) |
+
+</TabItem>
+
+</Tabs>
+
+---
+
+## Streaming vs consolidated returns
+
+Not every fan-out function is a streaming UDTF. The choice follows directly from where the cost is:
+
+**Stream (UDTF)** when one input row fans out to many output rows and the consumer needs them as individual rows. A consolidated `ARRAY<...>` return there carries a triple cost: buffer the whole fan-out in worker memory before returning it, serialize the nested array across the JVM↔Python boundary, then explode it again downstream. For large fan-out this is the bottleneck — and it scales with fan-out size.
+
+The clearest example is `rst_separatebands` on hyperspectral or multispectral rasters. Each band-tile carries its own raster bytes. A consolidated return buffers all band-tiles per input row: on a 200-band AVIRIS scene that is 200 × tile-bytes held simultaneously in one worker, with proportional ser/de cost at the JVM boundary. The streaming UDTF yields one band-tile at a time — O(1) worker memory regardless of band count. The same logic applies to fine-resolution tessellation (`rst_h3_tessellate` at high H3 resolution), deep XYZ pyramids (`rst_xyzpyramid` across many zoom levels), and retiling (`rst_retile`, `rst_tooverlappingtiles`, `rst_maketiles`) where output tile count scales with input raster size.
+
+**Consolidate** when the collection is the actual answer: aggregations (`*_agg`) produce one result per group — the consolidation IS the reduction. The only consolidated returns in GeoBrix's lightweight tier are the `*_agg` reductions; every fan-out generator is a streaming UDTF.
+
+---
+
+## Where the lightweight tier wins — and where it doesn't
+
+The [Benchmarking](./benchmarking) page has the full per-function table; this section gives the pattern.
+
+**Big wins (10–100×+ pure-core, sustained at scale):**
+Band math — `rst_ndvi`, `rst_index`, `rst_mapalgebra`, `rst_threshold`, and the other spectral-index functions — show the largest lightweight advantages. The heavyweight tier shells out to a `gdal_calc` subprocess per call; the lightweight tier evaluates the expression in-process with NumPy. That subprocess overhead dominates the heavyweight timing, so the lightweight wins here by roughly two orders of magnitude in isolation.
+
+**Moderate wins (2–20×, some erosion at scale):**
+Tiling, warps, terrain, and the aggregators win by 2–20× in pure-core. At Spark-path scale, byte-heavy operations (those that move large tile buffers over the JVM–Python boundary per row) see some of this win erode. Band math and the largest reductions (`rst_dtmfromgeoms_agg` at 18× on a cluster) sustain their advantage because compute savings outweigh boundary cost.
+
+**Near-parity:**
+The `gbx_st_asmvt` MVT aggregator runs within ~6% of the heavyweight JVM/OGR aggregator on a cluster. The `gbx_pmtiles_agg` archive aggregator is a format-agnostic grouped aggregate — registered from both `pyrx` and `pyvx`, reusing the lightweight PMTiles writer's archive assembler (the `pmtiles` package) — that folds a group's tiles into one PMTiles archive per key. On a cluster it runs at roughly parity with the heavyweight Scala encoder: the lightweight median is ~1.07× the heavyweight median (0.742 s vs 0.695 s for 1,000 tiles → one archive), with overlapping spreads, so the gap is within run-to-run noise. The VectorX TIN and legacy-migration functions sit just behind the JVM/JTS tier on the cluster spark-path: legacy decoding (`gbx_st_legacyaswkb`) and elevation interpolation (`gbx_st_interpolateelevationbbox`, `gbx_st_interpolateelevationgeom`) run within ~0.75–0.88× of heavy, while `gbx_st_triangulate` runs ~1.7× slower. That gap is the JVM↔Python serialization of the geometry arrays crossing the UDTF boundary — the same boundary cost seen for other byte-heavy lightweight UDTFs — not the triangulation compute itself; decoded-output parity holds across both tiers. Small metadata accessors (`rst_width`, `rst_srid`, …) are sub-millisecond on both tiers; the JVM-native path can edge them out by a fraction of a millisecond — irrelevant at scale but visible in pure-core.
+
+**Heavyweight still faster:**
+Algorithm-bound GDAL operations — `rst_viewshed` (xrspatial/Numba), `rst_proximity`, `rst_contour`, `rst_polygonize` — run slower on the lightweight tier because no Python library matches the GDAL implementation. These are correct and production-usable; the heavyweight tier is simply the better choice when those specific operations dominate the workload.
+
+**GridX quadbin (pygx) — heavyweight faster, by the per-row UDF tax:**
+The quadbin functions are **sub-millisecond cell math**, so the lightweight spark-path timing is set by per-row JVM↔Python dispatch and cluster run-to-run variance, not by the work. At that scale precise per-function speedups don't reproduce — the *same* unchanged function varied ~±40% between repeated 5-iteration cluster runs — so the honest summary is that the lightweight tier sits **roughly at parity** with the heavyweight JVM tier across the quadbin surface (sometimes faster, sometimes modestly slower, within that variance), with **exact cell-set parity** for all 10. The numpy-vectorized `pointascell`/`resolution` `pandas_udf`s closed what had been a large per-row-dispatch gap; the array-returning ops use plain UDFs for scale safety (see the module note above). The lightweight tier's decisive advantage is **Serverless/ARM reach and no-JVM/JAR install** at competitive timing. See [Benchmarking — Grid](./benchmarking) for details.
+
+**GridX BNG (pygx) — same execution shape as quadbin, benchmarked at near-parity:**
+The lightweight BNG tier is a **pure-Python codec port of `BNG.scala`** plus shapely for geometry. It carries **exact cell-set parity** with the heavyweight tier — the cross-tier parity suite asserts identical cell IDs for `eastnorthasbng`/`pointascell`/`kring`/`polyfill`/`tessellate` and identical chip geometry for the aggregates. The performance shape mirrors quadbin: STRING cell-id math is sub-millisecond, so the spark-path timing is dominated by the per-row JVM↔Python boundary rather than the work; the numpy-vectorized scalar `pandas_udf`s amortize the Arrow transfer, while the WKB-geometry ops (`aswkb`, `tessellate`, the chip aggregates) additionally carry the geometry-bytes serialization cost across that boundary. The lightweight tier's decisive advantage is again **Serverless/ARM reach and no-JVM/JAR install**. **All 23 `gbx_bng_*` functions were benchmarked on a cluster** (spark-path, 1,000 tiles/iteration, both tiers) with **exact cell-set / decoded-geometry parity across all 23**: the lightweight tier runs within **~±20% of heavy (0.82×–1.18×)**, all sub-millisecond per tile — effectively at parity, within the run-to-run noise band at this scale. See [Benchmarking — Grid](./benchmarking) for the full per-function table.
+
+For output consistency: the two tiers agree within tolerance on the large majority of functions. The known divergences (`rst_convolve`, `rst_resample`, `rst_derivedband`, `rst_contour`) are at NoData/edge boundaries; interior pixel values agree. See [Benchmarking — Results](./benchmarking#results) for the per-function consistency labels.

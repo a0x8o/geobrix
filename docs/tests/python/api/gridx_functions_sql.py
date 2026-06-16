@@ -228,81 +228,312 @@ GROUP BY region;
 # =============================================================================
 
 bng_aswkb_sql_example_output = """
-+--------------------+
-|wkb_geom            |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++--------+
+|wkb_geom|
++--------+
+|[BINARY]|
++--------+
 """
 
 bng_aswkt_sql_example_output = """
-+------------------------------------------+
-|wkt_geom                                  |
-+------------------------------------------+
-|POLYGON ((...))                           |
-+------------------------------------------+
++---------------+
+|wkt_geom       |
++---------------+
+|POLYGON ((...))|
++---------------+
 """
 
 bng_cellarea_sql_example_output = """
-+------+----------+
-|cell  |area_km2  |
-+------+----------+
-|TQ3080|1.0       |
-+------+----------+
++------+--------+
+|cell  |area_km2|
++------+--------+
+|TQ3080|1.0     |
++------+--------+
 """
 
 bng_centroid_sql_example_output = """
-+--------------------+
-|centroid            |
-+--------------------+
-|POINT (...)         |
-+--------------------+
++-----------+
+|centroid   |
++-----------+
+|POINT (...)|
++-----------+
 """
 
 bng_eastnorthasbng_sql_example_output = """
-+----------+
-|bng_cell  |
-+----------+
-|TQ3080    |
-+----------+
++--------+
+|bng_cell|
++--------+
+|TQ3080  |
++--------+
 """
 
 bng_pointascell_sql_example_output = """
-+------------+
-|london_cell |
-+------------+
-|TQ3080      |
-+------------+
++-----------+
+|london_cell|
++-----------+
+|TQ3080     |
++-----------+
 """
 
 bng_kring_sql_example_output = """
-+------+--------------------------------+
-|cell_id|nearby_cells                   |
-+------+--------------------------------+
-|TQ3080|[TQ3079, TQ3081, TQ2979, ...]   |
-+------+--------------------------------+
++-------+-----------------------------+
+|cell_id|nearby_cells                 |
++-------+-----------------------------+
+|TQ3080 |[TQ3079, TQ3081, TQ2979, ...]|
++-------+-----------------------------+
 """
 
 bng_polyfill_sql_example_output = """
-+------------+-------------------+
-|region_name |cells              |
-+------------+-------------------+
-|London      |[TQ3079, TQ3080,..]|
-+------------+-------------------+
++-----------+-------------------+
+|region_name|cells              |
++-----------+-------------------+
+|London     |[TQ3079, TQ3080,..]|
++-----------+-------------------+
 """
 
 bng_cellintersection_agg_sql_example_output = """
-+--------+------------+
-|group_id|common_cell |
-+--------+------------+
-|1       |TQ3080      |
-+--------+------------+
++--------+-----------+
+|group_id|common_cell|
++--------+-----------+
+|1       |TQ3080     |
++--------+-----------+
 """
 
 bng_cellunion_agg_sql_example_output = """
-+------+--------------+
-|region|bounding_cell |
-+------+--------------+
-|South |TQ3080        |
-+------+--------------+
++------+-------------+
+|region|bounding_cell|
++------+-------------+
+|South |TQ3080       |
++------+-------------+
+"""
+
+
+# ============================================================================
+# Quadbin (CARTO v0) — 9 grid-math functions
+# ============================================================================
+
+def quadbin_pointascell_sql_example():
+    """Convert lon/lat (EPSG:4326) to a quadbin cell at a given zoom (0..26)."""
+    return """
+SELECT gbx_quadbin_pointascell(-122.4194, 37.7749, 10) as sf_cell;
+"""
+
+
+def quadbin_aswkb_sql_example():
+    """Return the quadbin cell footprint as EWKB (SRID=4326)."""
+    return """
+SELECT gbx_quadbin_aswkb(gbx_quadbin_pointascell(0.0, 0.0, 8)) as wkb;
+"""
+
+
+def quadbin_centroid_sql_example():
+    """Return the quadbin cell centroid as EWKB POINT (SRID=4326)."""
+    return """
+SELECT gbx_quadbin_centroid(gbx_quadbin_pointascell(0.0, 0.0, 8)) as centroid;
+"""
+
+
+def quadbin_resolution_sql_example():
+    """Return the resolution (zoom 0..26) of a quadbin cell."""
+    return """
+SELECT gbx_quadbin_resolution(gbx_quadbin_pointascell(0.0, 0.0, 12)) as z;
+"""
+
+
+def quadbin_polyfill_sql_example():
+    """Polyfill a geometry's bbox with quadbin cells at a given zoom (0..20)."""
+    return """
+SELECT gbx_quadbin_polyfill(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) as cells;
+"""
+
+
+def quadbin_kring_sql_example():
+    """Return all cells within Chebyshev distance k of a quadbin cell (inclusive)."""
+    return """
+SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 10), 1) as ring;
+"""
+
+
+def quadbin_tessellate_sql_example():
+    """Tessellate a geometry into quadbin cells; returns array of struct(cell, geom)."""
+    return """
+SELECT gbx_quadbin_tessellate(
+    st_geomfromtext('POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1))'), 5
+) as chips;
+"""
+
+
+def quadbin_cellunion_sql_example():
+    """Union an ARRAY<BIGINT> of quadbin cells to a single MultiPolygon EWKB."""
+    return """
+SELECT gbx_quadbin_cellunion(
+    gbx_quadbin_kring(gbx_quadbin_pointascell(0.0, 0.0, 8), 1)
+) as union_geom;
+"""
+
+
+def quadbin_cellunion_agg_sql_example():
+    """Aggregator: union quadbin cells per group into a single MultiPolygon EWKB."""
+    return """
+SELECT region, gbx_quadbin_cellunion_agg(cell) AS coverage
+FROM grid_cells
+GROUP BY region;
+"""
+
+
+quadbin_cellunion_agg_sql_example_output = """
++------+--------+
+|region|coverage|
++------+--------+
+|...   |[BINARY]|
++------+--------+
+"""
+
+
+def quadbin_distance_sql_example():
+    """Chebyshev distance between two quadbin cells at the same resolution."""
+    return """
+SELECT gbx_quadbin_distance(
+    gbx_quadbin_pointascell(0.0, 0.0, 10),
+    gbx_quadbin_pointascell(0.0001, 0.0, 10)
+) as d;
+"""
+
+
+quadbin_pointascell_sql_example_output = """
++-------------------+
+|sf_cell            |
++-------------------+
+|5233961839712272383|
++-------------------+
+"""
+
+quadbin_kring_sql_example_output = """
++-------------------------------------+
+|ring                                 |
++-------------------------------------+
+|[5227553336189779967, ..., (9 cells)]|
++-------------------------------------+
+"""
+
+quadbin_polyfill_sql_example_output = """
++--------------------------+
+|cells                     |
++--------------------------+
+|[5215660717881425919, ...]|
++--------------------------+
+"""
+
+
+# ============================================================================
+# Custom Grid — user-defined regular grid functions
+# ============================================================================
+
+def custom_grid_sql_example():
+    """Define a user-specified regular grid from origin, extent, resolution, and SRID."""
+    return """
+SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;
+"""
+
+
+def custom_pointascell_sql_example():
+    """Index points into a user-defined regular grid."""
+    return """
+SELECT gbx_custom_pointascell(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cell FROM points;
+"""
+
+
+def custom_cellaswkb_sql_example():
+    """Return the WKB footprint of a custom grid cell."""
+    return """
+SELECT gbx_custom_cellaswkb(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS geom FROM cells;
+"""
+
+
+def custom_cellaswkt_sql_example():
+    """Return the WKT footprint of a custom grid cell."""
+    return """
+SELECT gbx_custom_cellaswkt(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS wkt FROM cells;
+"""
+
+
+def custom_centroid_sql_example():
+    """Return the centroid of a custom grid cell."""
+    return """
+SELECT gbx_custom_centroid(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)) AS centroid FROM cells;
+"""
+
+
+def custom_polyfill_sql_example():
+    """Fill a geometry with custom grid cells at the given resolution."""
+    return """
+SELECT region_id, gbx_custom_polyfill(geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 5) AS cells FROM regions;
+"""
+
+
+def custom_kring_sql_example():
+    """Return all custom grid cells within k steps of a center cell."""
+    return """
+SELECT gbx_custom_kring(cell, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS ring FROM cells;
+"""
+
+
+custom_grid_sql_example_output = """
++----------------------------------------------+
+|grid                                          |
++----------------------------------------------+
+|{0, 1000000, 0, 1000000, 2, 1000, 1000, 27700}|
++----------------------------------------------+
+"""
+
+custom_pointascell_sql_example_output = """
++----------+
+|cell      |
++----------+
+|8444249301|
++----------+
+"""
+
+custom_cellaswkb_sql_example_output = """
++--------+
+|geom    |
++--------+
+|[BINARY]|
++--------+
+"""
+
+custom_cellaswkt_sql_example_output = """
++---------------------------------------------------------------+
+|wkt                                                            |
++---------------------------------------------------------------+
+|POLYGON ((530000 180000, 530031.25 180000, 530031.25 180031.25,|
+|530000 180031.25, 530000 180000))                              |
++---------------------------------------------------------------+
+"""
+
+custom_centroid_sql_example_output = """
++--------+
+|centroid|
++--------+
+|[BINARY]|
++--------+
+"""
+
+custom_polyfill_sql_example_output = """
++---------+-----------------------------------------+
+|region_id|cells                                    |
++---------+-----------------------------------------+
+|R-01     |[8444249301, 8444249302, 8444249567, ...]|
++---------+-----------------------------------------+
+"""
+
+custom_kring_sql_example_output = """
++----------+------------------------------------------------------------+
+|cell      |ring                                                        |
++----------+------------------------------------------------------------+
+|8444249301|[8444248813, 8444248814, 8444248815, 8444249300, 8444249301,|
+|          |8444249302, 8444249789, 8444249790, 8444249791]             |
++----------+------------------------------------------------------------+
 """

@@ -16,10 +16,10 @@ All of this runs **inside the geobrix-dev Docker container** (same as other doc/
 
 ```bash
 # Generate function-info.json from doc SQL examples, then run tests
-bash .cursor/commands/gbx-test-function-info.sh
+bash scripts/commands/gbx-test-function-info.sh
 
 # Or: only run tests (no generator)
-bash .cursor/commands/gbx-test-function-info.sh --skip-generate
+bash scripts/commands/gbx-test-function-info.sh --skip-generate
 ```
 
 From inside the container (e.g. after `docker exec -it geobrix-dev bash`):

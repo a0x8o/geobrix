@@ -7,7 +7,7 @@ import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUti
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression}
+import org.apache.spark.sql.catalyst.expressions.{CollectionGenerator, Expression, Literal}
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -18,6 +18,7 @@ import org.apache.spark.unsafe.types.UTF8String
 case class RST_H3_Tessellate(
     tileExpr: Expression,
     resolutionExpr: Expression,
+    modeExpr: Expression,
     exprConfExpr: Expression = ExpressionConfigExpr()
 ) extends CollectionGenerator
       with Serializable
@@ -29,8 +30,9 @@ case class RST_H3_Tessellate(
     override def position: Boolean = false
     override def inline: Boolean = false
     override def elementSchema: StructType = StructType(Array(StructField("tile", dataType)))
-    override def children: Seq[Expression] = Seq(tileExpr, resolutionExpr, exprConfExpr)
-    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression = copy(nc(0), nc(1), nc(2))
+    override def children: Seq[Expression] = Seq(tileExpr, resolutionExpr, modeExpr, exprConfExpr)
+    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
+        copy(nc(0), nc(1), nc(2), nc(3))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] =
         RST_ErrorHandler.safeEval(
@@ -40,8 +42,13 @@ case class RST_H3_Tessellate(
               RST_ExpressionUtil.init(exprConf)
               val rawTile = tileExpr.eval(input).asInstanceOf[InternalRow]
               val resolution = resolutionExpr.eval(input).asInstanceOf[Int]
+              val mode = modeExpr.eval(input).asInstanceOf[UTF8String].toString
+              require(
+                RasterTessellate.Modes.contains(mode),
+                s"gbx_rst_h3_tessellate mode must be one of ${RasterTessellate.Modes.mkString(", ")}; got '$mode'"
+              )
               val (_, ds, mtd) = RasterSerializationUtil.rowToTile(rawTile, rasterType)
-              val iter = RasterTessellate.tessellateH3Iter(ds, mtd, resolution)
+              val iter = RasterTessellate.tessellateH3Iter(ds, mtd, resolution, mode)
               RST_ExpressionUtil.addCleanupListener(iter)
               iter
                   .map { case (newCell, resDs, resMtd) =>
@@ -62,6 +69,14 @@ object RST_H3_Tessellate extends WithExpressionInfo {
 
     override def name: String = "gbx_rst_h3_tessellate"
 
-    override def builder(): FunctionBuilder = (c: Seq[Expression]) => new RST_H3_Tessellate(c(0), c(1))
+    override def builder(): FunctionBuilder = (c: Seq[Expression]) =>
+        c.length match {
+            case 2 => RST_H3_Tessellate(c(0), c(1), Literal("covering"))
+            case 3 => RST_H3_Tessellate(c(0), c(1), c(2))
+            case n =>
+                throw new IllegalArgumentException(
+                  s"gbx_rst_h3_tessellate takes 2 or 3 arguments (tile, resolution, [mode]); got $n"
+                )
+        }
 
 }

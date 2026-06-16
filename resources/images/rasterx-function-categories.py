@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
-"""Generate the RasterX function-categories infographic SVG.
+"""Generate the RasterX function-categories infographic SVG (portrait + landscape).
 
 Re-render after adding/removing/renaming a RasterX function:
 
     python3 resources/images/rasterx-function-categories.py
-    # then rasterize to PNG (used by docs/packages/rasterx.mdx):
+    # writes both:
+    #   resources/images/rasterx-function-categories.svg          (portrait, 2-col)
+    #   resources/images/rasterx-function-categories_landscape.svg (landscape, 3-col)
+
+Rasterize portrait PNG (used by docs/packages/rasterx.mdx):
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
         --headless --disable-gpu --hide-scrollbars \\
         --force-device-scale-factor=2 --window-size=1416,1100 \\
         --screenshot=resources/images/rasterx-function-categories.png \\
         resources/images/rasterx-function-categories.svg
+
+Rasterize landscape PNG (for slides / 16:9 decks):
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
+        --headless --disable-gpu --hide-scrollbars \\
+        --force-device-scale-factor=2 --window-size=2100,<landscape_height> \\
+        --screenshot=resources/images/rasterx-function-categories_landscape.png \\
+        resources/images/rasterx-function-categories_landscape.svg
+    # Landscape canvas is 2100x1200 (printed by the script on each run).
 """
 from dataclasses import dataclass, field
 from textwrap import dedent
 
-# --- Data: 65 functions, organized by category --------------------------------
+# --- Data: 107 functions, organized by category --------------------------------
 
 @dataclass
 class Section:
@@ -60,6 +72,7 @@ CARDS_LEFT = [
             ]),
             Section("Statistics", [
                 "rst_min", "rst_max", "rst_avg", "rst_median", "rst_summary",
+                "rst_sample", "rst_histogram",
             ]),
         ],
     ),
@@ -67,7 +80,27 @@ CARDS_LEFT = [
         title="Aggregators",
         subtitle="Combine tiles in GROUP BY",
         color="#7A4FD3", tint="#ECE6FA",
-        fns=["rst_combineavg_agg", "rst_derivedband_agg", "rst_merge_agg"],
+        fns=[
+            "rst_combineavg_agg", "rst_derivedband_agg", "rst_merge_agg",
+            "rst_frombands_agg", "rst_rasterize_agg",
+            "rst_dtmfromgeoms_agg", "rst_gridfrompoints_agg",
+        ],
+    ),
+    Card(
+        title="Terrain Analysis",
+        subtitle="Elevation-derived surface models via gdaldem",
+        color="#8B5E3C", tint="#F5EDE4",
+        fns=[
+            "rst_slope", "rst_aspect", "rst_hillshade",
+            "rst_tri", "rst_tpi", "rst_roughness",
+            "rst_color_relief", "rst_viewshed",
+        ],
+    ),
+    Card(
+        title="Spectral Indices",
+        subtitle="Band-math indices for vegetation, water, and fire",
+        color="#2E8B57", tint="#E0F4EA",
+        fns=["rst_ndvi", "rst_evi", "rst_savi", "rst_ndwi", "rst_nbr", "rst_index"],
     ),
 ]
 
@@ -89,11 +122,17 @@ CARDS_RIGHT = [
             Section("Transform", [
                 "rst_clip", "rst_transform", "rst_merge",
                 "rst_asformat", "rst_updatetype",
+                "rst_resample", "rst_resample_to_res", "rst_resample_to_size",
+                "rst_setsrid", "rst_band",
             ]),
             Section("Compute", [
-                "rst_ndvi", "rst_filter", "rst_convolve",
+                "rst_filter", "rst_convolve",
                 "rst_mapalgebra", "rst_combineavg",
                 "rst_derivedband", "rst_initnodata",
+                "rst_threshold", "rst_fillnodata", "rst_proximity", "rst_contour",
+            ]),
+            Section("Optimise", [
+                "rst_buildoverviews", "rst_cog_convert",
             ]),
             Section("Coordinates", [
                 "rst_rastertoworldcoord",
@@ -105,6 +144,15 @@ CARDS_RIGHT = [
         ],
     ),
     Card(
+        title="Vector-Raster Bridge",
+        subtitle="Convert between vector geometries and raster tiles",
+        color="#6B48A8", tint="#EEE8F8",
+        fns=[
+            "rst_rasterize", "rst_polygonize",
+            "rst_dtmfromgeoms", "rst_gridfrompoints",
+        ],
+    ),
+    Card(
         title="H3 Grid",
         subtitle="Aggregate raster values onto H3 cells",
         color="#0F8E8B", tint="#D5ECEC",
@@ -113,6 +161,22 @@ CARDS_RIGHT = [
             "rst_h3_rastertogridmax", "rst_h3_rastertogridmin",
             "rst_h3_rastertogridmedian",
         ],
+    ),
+    Card(
+        title="Quadbin Grid",
+        subtitle="Aggregate raster values onto Quadbin cells",
+        color="#1571A8", tint="#DFF0FA",
+        fns=[
+            "rst_quadbin_rastertogridavg", "rst_quadbin_rastertogridcount",
+            "rst_quadbin_rastertogridmax", "rst_quadbin_rastertogridmin",
+            "rst_quadbin_rastertogridmedian",
+        ],
+    ),
+    Card(
+        title="Web-Mercator Tile Output",
+        subtitle="Reproject and slice rasters to XYZ/web-mercator tiles",
+        color="#D44E12", tint="#FAECE3",
+        fns=["rst_to_webmercator", "rst_tilexyz", "rst_xyzpyramid"],
     ),
 ]
 
@@ -205,7 +269,7 @@ def render_card(x, y, card):
         f'fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" '
         f'filter="url(#card-shadow)"/>'
     )
-    # Top accent stripe — rounded only on top corners
+    # Top accent stripe - rounded only on top corners
     r = 14
     stripe_h = 5
     out.append(
@@ -302,21 +366,21 @@ def render():
     # Header block
     parts.append(
         f'<text x="{PAD}" y="{PAD + 28}" font-size="30" font-weight="800" fill="#0F1B2A">'
-        f'GeoBrix · RasterX'
+        f'GeoBrix &#183; RasterX'
         f'</text>'
     )
     parts.append(
         f'<text x="{PAD}" y="{PAD + 56}" font-size="15" fill="#3F4D5E">'
-        f'65 SQL functions for raster data on Spark — registered as '
+        f'107 SQL functions for raster data on Spark &#8212; registered as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan>'
-        f' · also available in Python &amp; Scala as '
+        f' &#183; also available in Python &amp; Scala as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">rst_*</tspan>'
         f'</text>'
     )
     # Version pill (top-right)
-    pill_text = "v0.3.0  ·  Beta"
+    pill_text = "v0.4.0  *  Beta"
     pw = int(len(pill_text) * 6.8) + 24
     parts.append(
         f'<rect x="{CANVAS_W - PAD - pw}" y="{PAD + 8}" rx="13" ry="13" '
@@ -343,7 +407,7 @@ def render():
     # Footer
     parts.append(
         f'<text x="{PAD}" y="{canvas_h - 14}" font-size="11" fill="#7A8794">'
-        f'databrickslabs/geobrix · DBR 17.3 LTS · Scala 2.13 / Spark 4.0 / Python 3.12'
+        f'databrickslabs/geobrix &#183; DBR 17.3 / 18 LTS &#183; Scala 2.13.16 / Spark 4.0&#8211;4.1 / Python 3.12'
         f'</text>'
     )
     parts.append(
@@ -357,13 +421,128 @@ def render():
     return "\n".join(parts)
 
 
+def render_landscape():
+    """Render a 3-column landscape variant — better aspect ratio for 16:9 slides.
+
+    All cards from CARDS_LEFT + CARDS_RIGHT are distributed across 3 columns
+    using a greedy height-balance algorithm: each card is placed into the
+    currently shortest column (by cumulative card_height + CARD_GAP).
+    """
+    NCOLS = 3
+    LANDSCAPE_W = PAD * 2 + CARD_W * NCOLS + COL_GAP * (NCOLS - 1)
+
+    all_cards = CARDS_LEFT + CARDS_RIGHT
+
+    # Greedy height-balanced column assignment.
+    # col_cards[i] = list of cards in column i
+    # col_h[i] = running pixel height of column i (cards + gaps so far)
+    col_cards = [[] for _ in range(NCOLS)]
+    col_h = [0] * NCOLS
+
+    for card in all_cards:
+        ch = card_height(card)
+        # Find the column with minimum current height
+        min_col = col_h.index(min(col_h))
+        if col_cards[min_col]:
+            col_h[min_col] += CARD_GAP
+        col_h[min_col] += ch
+        col_cards[min_col].append(card)
+
+    body_h = max(col_h)
+    canvas_h = PAD + TITLE_BLOCK_H + body_h + PAD
+
+    parts = []
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {LANDSCAPE_W} {canvas_h}" '
+        f'width="{LANDSCAPE_W}" height="{canvas_h}" '
+        f'style="font-family: Inter, -apple-system, system-ui, sans-serif;">'
+    )
+    # Defs (identical structure to portrait)
+    parts.append(dedent('''\
+        <defs>
+          <filter id="card-shadow" x="-5%" y="-5%" width="110%" height="115%">
+            <feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#0F1B2A" flood-opacity="0.08"/>
+          </filter>
+          <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#FAFBFC"/>
+            <stop offset="1" stop-color="#F1F4F8"/>
+          </linearGradient>
+        </defs>
+        '''))
+    # Background
+    parts.append(f'<rect x="0" y="0" width="{LANDSCAPE_W}" height="{canvas_h}" fill="url(#bg)"/>')
+
+    # Header block (same title, same subtitle, same version pill)
+    parts.append(
+        f'<text x="{PAD}" y="{PAD + 28}" font-size="30" font-weight="800" fill="#0F1B2A">'
+        f'GeoBrix &#183; RasterX'
+        f'</text>'
+    )
+    parts.append(
+        f'<text x="{PAD}" y="{PAD + 56}" font-size="15" fill="#3F4D5E">'
+        f'107 SQL functions for raster data on Spark &#8212; registered as '
+        f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
+        f'font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan>'
+        f' &#183; also available in Python &amp; Scala as '
+        f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
+        f'font-weight="700" fill="#0F1B2A">rst_*</tspan>'
+        f'</text>'
+    )
+    # Version pill (top-right)
+    pill_text = "v0.4.0  *  Beta"
+    pw = int(len(pill_text) * 6.8) + 24
+    parts.append(
+        f'<rect x="{LANDSCAPE_W - PAD - pw}" y="{PAD + 8}" rx="13" ry="13" '
+        f'width="{pw}" height="26" fill="#0F1B2A"/>'
+        f'<text x="{LANDSCAPE_W - PAD - pw/2}" y="{PAD + 26}" text-anchor="middle" '
+        f'font-size="12" font-weight="700" fill="#FFFFFF">{pill_text}</text>'
+    )
+
+    # Cards — 3 columns
+    body_y = PAD + TITLE_BLOCK_H
+    for col_i, cards in enumerate(col_cards):
+        col_x = PAD + col_i * (CARD_W + COL_GAP)
+        cy = body_y
+        for card in cards:
+            s, h = render_card(col_x, cy, card)
+            parts.append(s)
+            cy += h + CARD_GAP
+
+    # Footer
+    parts.append(
+        f'<text x="{PAD}" y="{canvas_h - 14}" font-size="11" fill="#7A8794">'
+        f'databrickslabs/geobrix &#183; DBR 17.3 / 18 LTS &#183; Scala 2.13.16 / Spark 4.0&#8211;4.1 / Python 3.12'
+        f'</text>'
+    )
+    parts.append(
+        f'<text x="{LANDSCAPE_W - PAD}" y="{canvas_h - 14}" text-anchor="end" '
+        f'font-size="11" fill="#7A8794">'
+        f'docs/api/rasterx-functions'
+        f'</text>'
+    )
+
+    parts.append('</svg>')
+    return "\n".join(parts), canvas_h
+
+
 if __name__ == "__main__":
     import os
     import sys
 
-    default = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "rasterx-function-categories.svg")
-    out = sys.argv[1] if len(sys.argv) > 1 else default
-    with open(out, "w") as f:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_portrait = os.path.join(script_dir, "rasterx-function-categories.svg")
+    default_landscape = os.path.join(script_dir, "rasterx-function-categories_landscape.svg")
+
+    # Portrait (unchanged behaviour: optional explicit path as first arg)
+    out_portrait = sys.argv[1] if len(sys.argv) > 1 else default_portrait
+    with open(out_portrait, "w") as f:
         f.write(render())
-    print(f"wrote {out}")
+    print(f"wrote {out_portrait}")
+
+    # Landscape (always next to portrait)
+    landscape_svg, landscape_h = render_landscape()
+    with open(default_landscape, "w") as f:
+        f.write(landscape_svg)
+    print(f"wrote {default_landscape}")
+    print(f"landscape canvas: {PAD * 2 + CARD_W * 3 + COL_GAP * 2} x {landscape_h}  "
+          f"(use --window-size={PAD * 2 + CARD_W * 3 + COL_GAP * 2},{landscape_h} for Chrome)")

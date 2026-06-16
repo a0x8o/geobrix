@@ -1,12 +1,86 @@
 ---
 sidebar_position: 5
+sidebar_label: GeoJSON
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import geojsonExamples from '!!raw-loader!../../tests/python/readers/geojson_examples.py';
 import geojsonScala from '!!raw-loader!../../tests/scala/readers/GeoJSONExamples.scala';
+import geojsonGbx from '!!raw-loader!../../tests/python/readers/geojson_gbx_examples.py';
 
 # GeoJSON Reader
+
+Both tiers produce the same `(attrs..., geom_0, geom_0_srid, geom_0_srid_proj)` schema — see [Choosing an Execution Tier](../api/execution-tiers#the-one-line-swap).
+
+:::tip Benchmark & tradeoff
+The lightweight (`*_gbx`) and heavyweight readers emit the **same schema**, but your
+**compute usually decides the tier**: the lightweight tier needs **no JAR or init script**
+and is the **only** option on Serverless, standard (shared), and ARM clusters. The
+heavyweight tier requires a **classic x86 cluster** (JAR + GDAL init script); where it is
+available it uses native GDAL on the JVM and tends to pull ahead on large workloads. See
+the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
+:::
+
+## Options
+
+### Lightweight (`geojson_gbx`)
+
+The driver (`GeoJSON`) is preset; there is no `multi` switch — `geojson_gbx` reads both GeoJSON and GeoJSONSeq files.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+| `chunkSize` | `"10000"` | Arrow batch size for the per-file read; controls in-memory batching, not partition splitting. |
+| `layerNumber` | `"0"` | Layer index to read (0-based). |
+| `layerName` | `""` | Layer name to read; takes precedence over `layerNumber` when set. |
+
+### Heavyweight (`geojson_ogr`)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `multi` | `"true"` | `"true"` uses the [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files); `"false"` uses the [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection). |
+| `chunkSize` | `"10000"` | Number of records per chunk for parallel reading. |
+| `asWKB` | `"true"` | Output geometry as WKB (binary) vs WKT (text). |
+
+All other [OGR reader options](./vector#options) (`driverName`, `layerN`, `layerName`, …) are also available.
+
+Example — reading newline-delimited GeoJSONSeq (the `multi` default):
+
+<CodeFromTest
+  code={geojsonExamples}
+  language="python"
+  functionName="READ_GEOJSONSEQ"
+  source="docs/tests/python/readers/geojson_examples.py"
+  testFile="docs/tests/python/readers/test_geojson_examples.py"
+  outputConstant="READ_GEOJSONSEQ_output"
+/>
+
+<Tabs groupId="gbx-tier" queryString="tier">
+<TabItem value="lightweight" label="Lightweight · geojson_gbx">
+
+`geojson_gbx` is the lightweight GeoJSON reader (pyogrio-backed, no JAR). It reads GeoJSON and GeoJSONSeq and emits the same schema as the heavyweight `geojson_ogr` reader.
+
+<CodeFromTest code={geojsonGbx} language="python" functionName="READ_GEOJSON_GBX"
+  source="docs/tests/python/readers/geojson_gbx_examples.py"
+  testFile="docs/tests/python/readers/test_geojson_gbx_examples.py" />
+
+It is the lightweight counterpart of the heavyweight `geojson_ogr` reader, supporting Python and SQL bindings (not Scala).
+
+### Typical pipeline: ingest into a table
+
+The common pattern is to land GeoJSON files in a table for downstream analytics — on Databricks a managed table is **Delta**:
+
+```python
+df = spark.read.format("geojson_gbx").load("/Volumes/main/geo/raw/")  # a folder of .geojson files
+df.write.mode("overwrite").saveAsTable("main.geo.boroughs")            # Delta table on Databricks
+```
+
+Reading a folder fans the files across the cluster (one partition per file), so ingest scales with the data — unlike a single-node `pyogrio.read_*` that parses one file on one machine. See [Benchmarking](../api/benchmarking) for light-vs-heavy ingest figures.
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight · geojson_ogr">
 
 The GeoJSON reader provides support for reading GeoJSON and GeoJSONSeq (newline-delimited GeoJSON) formats.
 
@@ -58,32 +132,6 @@ This is a named OGR Reader that intelligently switches between [GeoJSON](https:/
   outputConstant="SQL_GEOJSON_output"
 />
 
-## Options
-
-### `multi`
-
-**Default:** `"true"`
-
-Controls which GeoJSON driver to use:
-- `"true"` → Uses [GeoJSONSeq](https://gdal.org/en/stable/drivers/vector/geojsonseq.html) driver (newline-delimited, better for large files)
-- `"false"` → Uses [GeoJSON](https://gdal.org/en/stable/drivers/vector/geojson.html) driver (standard FeatureCollection format)
-
-<CodeFromTest
-  code={geojsonExamples}
-  language="python"
-  functionName="READ_GEOJSONSEQ"
-  source="docs/tests/python/readers/geojson_examples.py"
-  testFile="docs/tests/python/readers/test_geojson_examples.py"
-  outputConstant="READ_GEOJSONSEQ_output"
-/>
-
-### Other Options
-
-All [OGR reader options](./ogr#options) are available, e.g.:
-
-- `chunkSize` - Records per chunk (default: "10000")
-- `asWKB` - Output as WKB vs WKT (default: "true")
-
 ## Output Schema
 
 The output maintains attribute columns and adds three columns for geometry:
@@ -130,9 +178,12 @@ root
 
 **Read with:** `option("multi", "true")` (default) or omit the option
 
+</TabItem>
+</Tabs>
+
 ## Next Steps
 
 - [View API Reference](../api/overview)
 - [Check Examples](../examples/overview)
 - [Other Readers](./overview)
-- [Learn about VectorX](../packages/vectorx)
+- [Learn about VectorX](../api/vectorx-functions)

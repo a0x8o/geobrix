@@ -13,12 +13,9 @@ from path_config import SAMPLE_DATA_BASE
 SAMPLE_RASTER_PATH = f"{SAMPLE_DATA_BASE}/nyc/sentinel2/nyc_sentinel2_red.tif"
 
 # Common setup: create temp view so SQL examples can use FROM rasters
-def _rasterx_sql_setup_content():
-    return f"""-- After registering RasterX (Python: rx.register(spark)), create the view:
+RASTERX_SQL_SETUP = f"""-- After registering RasterX (Python: rx.register(spark)), create the view:
 CREATE OR REPLACE TEMP VIEW rasters AS
 SELECT * FROM gdal.`{SAMPLE_RASTER_PATH}`;"""
-
-RASTERX_SQL_SETUP = _rasterx_sql_setup_content()
 
 RASTERX_SQL_SETUP_output = """
 View `rasters` created. You can now run SELECT ... FROM rasters; for each example.
@@ -84,11 +81,11 @@ SELECT gbx_rst_numbands(tile) as bands FROM rasters;
 
 
 rst_numbands_sql_example_output = """
-+------+
-|bands |
-+------+
-|1     |
-+------+
++-----+
+|bands|
++-----+
+|1    |
++-----+
 """
 
 
@@ -100,11 +97,11 @@ SELECT gbx_rst_metadata(tile) as metadata FROM rasters;
 
 
 rst_metadata_sql_example_output = """
-+----------+
-|metadata  |
-+----------+
-|{...}     |
-+----------+
++--------+
+|metadata|
++--------+
+|{...}   |
++--------+
 """
 
 
@@ -132,11 +129,11 @@ SELECT gbx_rst_georeference(tile) as georeference FROM rasters;
 
 
 rst_georeference_sql_example_output = """
-+-------------+
-|georeference |
-+-------------+
-|[ ... ]      |
-+-------------+
++------------+
+|georeference|
++------------+
+|[ ... ]     |
++------------+
 """
 
 
@@ -148,11 +145,11 @@ SELECT gbx_rst_bandmetadata(tile, 1) as band1_metadata FROM rasters;
 
 
 rst_bandmetadata_sql_example_output = """
-+----------------+
-|band1_metadata  |
-+----------------+
-|{...}           |
-+----------------+
++--------------+
+|band1_metadata|
++--------------+
+|{...}         |
++--------------+
 """
 
 
@@ -164,11 +161,11 @@ SELECT gbx_rst_pixelcount(tile) as pixel_count FROM rasters;
 
 
 rst_pixelcount_sql_example_output = """
-+------------+
-|pixel_count |
-+------------+
-|120560400   |
-+------------+
++-----------+
+|pixel_count|
++-----------+
+|120560400  |
++-----------+
 """
 
 
@@ -189,11 +186,11 @@ WHERE gbx_rst_avg(tile)[0] > 50.0;
 
 
 rst_avg_sql_example_output = """
-+----+--------------+----------+
-|path|band_averages |band1_avg |
-+----+--------------+----------+
-|... |[0.42]        |0.42      |
-+----+--------------+----------+
++----+-------------+---------+
+|path|band_averages|band1_avg|
++----+-------------+---------+
+|... |[0.42]       |0.42     |
++----+-------------+---------+
 """
 
 
@@ -205,11 +202,11 @@ SELECT path, gbx_rst_min(tile) as min_per_band, gbx_rst_min(tile)[0] as band1_mi
 
 
 rst_min_sql_example_output = """
-+----+------------+----------+
-|path|min_per_band|band1_min |
-+----+------------+----------+
-|... |[0.0]       |0.0       |
-+----+------------+----------+
++----+------------+---------+
+|path|min_per_band|band1_min|
++----+------------+---------+
+|... |[0.0]       |0.0      |
++----+------------+---------+
 """
 
 
@@ -221,11 +218,11 @@ SELECT path, gbx_rst_max(tile) as max_per_band, gbx_rst_max(tile)[0] as band1_ma
 
 
 rst_max_sql_example_output = """
-+----+------------+----------+
-|path|max_per_band|band1_max |
-+----+------------+----------+
-|... |[255.0]     |255.0     |
-+----+------------+----------+
++----+------------+---------+
+|path|max_per_band|band1_max|
++----+------------+---------+
+|... |[255.0]     |255.0    |
++----+------------+---------+
 """
 
 
@@ -341,11 +338,11 @@ FROM rasters;
 
 
 rst_pixelsize_sql_example_output = """
-+----+-----------+------------+--------------+
-|path|pixel_width|pixel_height|total_width_m |
-+----+-----------+------------+--------------+
-|... |30.0       |-30.0       |329400.0      |
-+----+-----------+------------+--------------+
++----+-----------+------------+-------------+
+|path|pixel_width|pixel_height|total_width_m|
++----+-----------+------------+-------------+
+|... |30.0       |-30.0       |329400.0     |
++----+-----------+------------+-------------+
 """
 
 
@@ -380,11 +377,11 @@ FROM netcdf_files;
 
 
 rst_getsubdataset_sql_example_output = """
-+----+--------------------+
-|path|temp_layer          |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|temp_layer                                    |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -432,11 +429,11 @@ FROM rasters;
 
 
 rst_scalex_scaley_sql_example_output = """
-+----+--------+-------+
-|path|scale_x|scale_y |
-+----+--------+-------+
-|... |30.0   |-30.0   |
-+----+--------+-------+
++----+-------+-------+
+|path|scale_x|scale_y|
++----+-------+-------+
+|... |30.0   |-30.0  |
++----+-------+-------+
 """
 
 
@@ -452,11 +449,11 @@ FROM rasters;
 
 
 rst_skewx_skewy_sql_example_output = """
-+----+-------+------+
-|path|skew_x|skew_y |
-+----+-------+------+
-|... |0.0   |0.0    |
-+----+-------+------+
++----+------+------+
+|path|skew_x|skew_y|
++----+------+------+
+|... |0.0   |0.0   |
++----+------+------+
 """
 
 
@@ -468,11 +465,11 @@ SELECT path, gbx_rst_subdatasets(tile) as subdatasets FROM netcdf_rasters;
 
 
 rst_subdatasets_sql_example_output = """
-+----+--------------------+
-|path|subdatasets         |
-+----+--------------------+
-|... |[temp, precip, ...] |
-+----+--------------------+
++----+-------------------+
+|path|subdatasets        |
++----+-------------------+
+|... |[temp, precip, ...]|
++----+-------------------+
 """
 
 
@@ -484,11 +481,11 @@ SELECT path, gbx_rst_summary(tile) as summary FROM rasters;
 
 
 rst_summary_sql_example_output = """
-+----+--------+
-|path|summary |
-+----+--------+
-|... |{...}   |
-+----+--------+
++----+-------+
+|path|summary|
++----+-------+
+|... |{...}  |
++----+-------+
 """
 
 
@@ -504,11 +501,11 @@ FROM rasters;
 
 
 rst_upperleft_sql_example_output = """
-+----+-------------+-------------+
-|path|upper_left_x |upper_left_y |
-+----+-------------+-------------+
-|... |500000.0     |200000.0     |
-+----+-------------+-------------+
++----+------------+------------+
+|path|upper_left_x|upper_left_y|
++----+------------+------------+
+|... |500000.0    |200000.0    |
++----+------------+------------+
 """
 
 
@@ -533,11 +530,11 @@ FROM raster_paths;
 
 
 rst_fromfile_sql_example_output = """
-+--------------------+
-|tile                |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|tile                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
 
 +----+-----+------+
 |path|width|height|
@@ -559,11 +556,11 @@ FROM binary_raster_table;
 
 
 rst_fromcontent_sql_example_output = """
-+----+--------------------+
-|path|tile                |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|tile                                          |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -577,11 +574,31 @@ FROM separated_bands;
 
 
 rst_frombands_sql_example_output = """
-+--------------------+
-|multi_band          |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|multi_band                                    |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_frombands_agg_sql_example():
+    """Aggregator: collect ordered bands per group into a single multi-band tile."""
+    return """
+-- Collect per-band tiles in acquisition order into one multi-band raster per scene.
+SELECT scene_id,
+    gbx_rst_frombands_agg(tile, band_index) AS multi_band
+FROM band_tiles
+GROUP BY scene_id;
+"""
+
+
+rst_frombands_agg_sql_example_output = """
++--------+----------------------------------------------+
+|scene_id|multi_band                                    |
++--------+----------------------------------------------+
+|S2A_001 |{null, <raster bytes>, {driver -> GTiff, ...}}|
++--------+----------------------------------------------+
 """
 
 
@@ -605,11 +622,11 @@ FROM rasters;
 
 
 rst_clip_sql_example_output = """
-+----+--------------------+
-|path|clipped             |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|clipped                                       |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -632,11 +649,11 @@ FROM rasters;
 
 
 rst_transform_sql_example_output = """
-+----+--------------------+--------+
-|path|wgs84_tile          |new_srid|
-+----+--------------------+--------+
-|... |[BINARY]            |4326    |
-+----+--------------------+--------+
++----+----------------------------------------------+--------+
+|path|wgs84_tile                                    |new_srid|
++----+----------------------------------------------+--------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|4326    |
++----+----------------------------------------------+--------+
 """
 
 
@@ -658,11 +675,11 @@ FROM visualization_tiles;
 
 
 rst_asformat_sql_example_output = """
-+----+--------------------+
-|path|geotiff_tile        |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|geotiff_tile                                  |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -688,11 +705,11 @@ ORDER BY month;
 
 
 rst_ndvi_sql_example_output = """
-+----+----------+--------------------+---------+
-|path|date      |ndvi_tile           |mean_ndvi|
-+----+----------+--------------------+---------+
-|... |2024-01-15|[BINARY]            |0.42     |
-+----+----------+--------------------+---------+
++----+----------+----------------------------------------------+---------+
+|path|date      |ndvi_tile                                     |mean_ndvi|
++----+----------+----------------------------------------------+---------+
+|... |2024-01-15|{null, <raster bytes>, {driver -> GTiff, ...}}|0.42     |
++----+----------+----------------------------------------------+---------+
 """
 
 
@@ -714,11 +731,11 @@ FROM rasters;
 
 
 rst_filter_sql_example_output = """
-+----+--------------------+
-|path|denoised            |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|denoised                                      |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -731,11 +748,11 @@ SELECT path, gbx_rst_convolve(tile, kernel) as filtered FROM rasters_with_kernel
 
 
 rst_convolve_sql_example_output = """
-+----+--------------------+
-|path|filtered            |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|filtered                                      |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -756,11 +773,11 @@ FROM rasters;
 
 
 rst_rastertoworldcoord_sql_example_output = """
-+----+--------+---------+--------+
-|path|coords  |longitude|latitude|
-+----+--------+---------+--------+
-|... |POINT(...)|-74.0  |40.5    |
-+----+--------+---------+--------+
++----+----------+---------+--------+
+|path|coords    |longitude|latitude|
++----+----------+---------+--------+
+|... |POINT(...)|-74.0    |40.5    |
++----+----------+---------+--------+
 """
 
 
@@ -839,12 +856,12 @@ rst_worldtorastercoord_sql_example_output = """
 
 
 rst_worldtorastercoord_multi_sql_example_output = """
-+--------+---------+-----+
-|lat     |lon      |pixel|
-+--------+---------+-----+
-|37.7749 |-122.4194|...  |
-|37.7745 |-122.4183|...  |
-+--------+---------+-----+
++-------+---------+-----+
+|lat    |lon      |pixel|
++-------+---------+-----+
+|37.7749|-122.4194|...  |
+|37.7745|-122.4183|...  |
++-------+---------+-----+
 """
 
 
@@ -858,11 +875,11 @@ rst_worldtorastercoordx_sql_example_output = """
 
 
 rst_worldtorastercoordy_sql_example_output = """
-+----------+
-|pixel_row |
-+----------+
-|200       |
-+----------+
++---------+
+|pixel_row|
++---------+
+|200      |
++---------+
 """
 
 
@@ -887,11 +904,11 @@ FROM rasters;
 
 
 rst_isempty_sql_example_output = """
-+-----+-----------+------------+
-|total|empty_count|valid_count |
-+-----+-----------+------------+
-|100  |0          |100         |
-+-----+-----------+------------+
++-----+-----------+-----------+
+|total|empty_count|valid_count|
++-----+-----------+-----------+
+|100  |0          |100        |
++-----+-----------+-----------+
 """
 
 
@@ -917,11 +934,11 @@ FROM rasters;
 
 
 rst_tryopen_sql_example_output = """
-+-----+-----+--------+
-|total|valid|invalid |
-+-----+-----+--------+
-|100  |98   |2       |
-+-----+-----+--------+
++-----+-----+-------+
+|total|valid|invalid|
++-----+-----+-------+
+|100  |98   |2      |
++-----+-----+-------+
 """
 
 
@@ -943,11 +960,11 @@ FROM raster_arrays;
 
 
 rst_mapalgebra_sql_example_output = """
-+--------------------+
-|difference          |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|difference                                    |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
 """
 
 
@@ -960,11 +977,11 @@ SELECT path, gbx_rst_derivedband(tile, 'def my_func(arr): return arr * 2', 'my_f
 
 
 rst_derivedband_sql_example_output = """
-+----+--------------------+
-|path|derived             |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|derived                                       |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -976,11 +993,11 @@ SELECT region, gbx_rst_derivedband_agg(tile, 'def f(a): return a', 'f') as resul
 
 
 rst_derivedband_agg_sql_example_output = """
-+------+--------------------+
-|region|result              |
-+------+--------------------+
-|...   |[BINARY]            |
-+------+--------------------+
++------+----------------------------------------------+
+|region|result                                        |
++------+----------------------------------------------+
+|...   |{null, <raster bytes>, {driver -> GTiff, ...}}|
++------+----------------------------------------------+
 """
 
 
@@ -992,11 +1009,11 @@ SELECT gbx_rst_initnodata(tile) as tile FROM rasters;
 
 
 rst_initnodata_sql_example_output = """
-+--------------------+
-|tile                |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|tile                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
 """
 
 
@@ -1008,11 +1025,11 @@ SELECT gbx_rst_updatetype(tile, 'Float32') as float_tile FROM rasters;
 
 
 rst_updatetype_sql_example_output = """
-+--------------------+
-|float_tile          |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|float_tile                                    |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
 """
 
 
@@ -1032,11 +1049,11 @@ FROM loaded_tiles;
 
 
 rst_merge_sql_example_output = """
-+--------------------+
-|merged_mosaic       |
-+--------------------+
-|[BINARY]            |
-+--------------------+
++----------------------------------------------+
+|merged_mosaic                                 |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
 """
 
 
@@ -1045,38 +1062,31 @@ rst_merge_sql_example_output = """
 # ============================================================================
 
 def rst_h3_tessellate_sql_example():
-    """Tessellate raster to H3 grid"""
+    """Tessellate raster to H3 grid (covering or centroid mode)"""
     return """
--- Tessellate and explode H3 cells
-SELECT
-    path,
-    h3_tile.cellid as h3_cell,
-    h3_tile as tile,
-    gbx_rst_avg(h3_tile) as avg_value
-FROM rasters
-LATERAL VIEW explode(gbx_rst_h3_tessellate(tile, 7)) AS h3_tile;
+-- covering mode (default): every overlapping H3 cell, clipped to its hexagon
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;
 
--- Count cells per raster
-SELECT
-    path,
-    SIZE(gbx_rst_h3_tessellate(tile, 7)) as num_cells
-FROM rasters;
+-- centroid mode: pixel-centroid single-assignment partition (no double-count)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid') t;
+
+-- backward-compatible two-argument form (covering)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7) t;
 """
 
 
 rst_h3_tessellate_sql_example_output = """
-+----+--------+--------------------+---------+
-|path|h3_cell |tile                |avg_value|
-+----+--------+--------------------+---------+
-|... |8f283...|[BINARY]            |0.42     |
-+----+--------+--------------------+---------+
-
-+----+---------+
-|path|num_cells|
-+----+---------+
-|... |12       |
-+----+---------+
-"""
++------+------------------+--------------+
+|source|cellid            |raster        |
++------+------------------+--------------+
+|...   |599686042433355775|<raster bytes>|
++------+------------------+--------------+"""
 
 
 def rst_h3_rastertogridavg_sql_example():
@@ -1099,11 +1109,11 @@ LATERAL VIEW explode(gbx_rst_h3_rastertogridavg(tile, 6)[0]) AS cell;
 
 
 rst_h3_rastertogridavg_sql_example_output = """
-+----+--------------------+
-|path|h3_grid             |
-+----+--------------------+
-|... |[STRUCT...]         |
-+----+--------------------+
++----+------------------------------+
+|path|h3_grid                       |
++----+------------------------------+
+|... |[[{599686042433355775, 0.42}]]|
++----+------------------------------+
 
 +----+--------+---------+
 |path|h3_cell |avg_value|
@@ -1123,11 +1133,11 @@ FROM rasters;
 
 
 rst_h3_rastertogridcount_sql_example_output = """
-+--------------------+
-|pixel_counts        |
-+--------------------+
-|[STRUCT...]         |
-+--------------------+
++------------------------------+
+|pixel_counts                  |
++------------------------------+
+|[[{599686042433355775, 1024}]]|
++------------------------------+
 """
 
 
@@ -1191,6 +1201,118 @@ rst_h3_rastertogridmedian_sql_example_output = """
 """
 
 
+def rst_quadbin_rastertogridavg_sql_example():
+    """Aggregate raster values to CARTO quadbin v0 cells using average"""
+    return """
+-- Aggregate raster to quadbin grid
+SELECT
+    path,
+    gbx_rst_quadbin_rastertogridavg(tile, 6) as quadbin_grid
+FROM rasters;
+
+-- Get cells from the first band
+SELECT
+    path,
+    cell.cellID as quadbin_cell,
+    cell.measure as avg_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridavg(tile, 6)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridavg_sql_example_output = """
++----+-------------------------------+
+|path|quadbin_grid                   |
++----+-------------------------------+
+|... |[[{5188146770730811391, 0.42}]]|
++----+-------------------------------+
+
++----+------------+---------+
+|path|quadbin_cell|avg_value|
++----+------------+---------+
+|... |5188146...  |0.45     |
++----+------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridcount_sql_example():
+    """Count pixels per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    gbx_rst_quadbin_rastertogridcount(tile, 5) as pixel_counts
+FROM rasters;
+"""
+
+
+rst_quadbin_rastertogridcount_sql_example_output = """
++-------------------------------+
+|pixel_counts                   |
++-------------------------------+
+|[[{5188146770730811391, 1024}]]|
++-------------------------------+
+"""
+
+
+def rst_quadbin_rastertogridmax_sql_example():
+    """Get maximum values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as max_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmax(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmax_sql_example_output = """
++------------+---------+
+|quadbin_cell|max_value|
++------------+---------+
+|5188146...  |255.0    |
++------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridmin_sql_example():
+    """Get minimum values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as min_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmin(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmin_sql_example_output = """
++------------+---------+
+|quadbin_cell|min_value|
++------------+---------+
+|5188146...  |0.0      |
++------------+---------+
+"""
+
+
+def rst_quadbin_rastertogridmedian_sql_example():
+    """Get median values per CARTO quadbin v0 cell"""
+    return """
+SELECT
+    cell.cellID as quadbin_cell,
+    cell.measure as median_value
+FROM rasters
+LATERAL VIEW explode(gbx_rst_quadbin_rastertogridmedian(tile, 7)[0]) AS cell;
+"""
+
+
+rst_quadbin_rastertogridmedian_sql_example_output = """
++------------+------------+
+|quadbin_cell|median_value|
++------------+------------+
+|5188146...  |128.0       |
++------------+------------+
+"""
+
+
 # ============================================================================
 # Generator Functions - Produce Multiple Rows
 # ============================================================================
@@ -1214,11 +1336,11 @@ FROM rasters;
 
 
 rst_maketiles_sql_example_output = """
-+----+--------------------+
-|path|tile                |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|tile                                          |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 
 +----+---------+
 |path|num_tiles|
@@ -1240,11 +1362,11 @@ LATERAL VIEW explode(gbx_rst_retile(tile, 256, 256)) AS tile;
 
 
 rst_retile_sql_example_output = """
-+----+--------------------+
-|path|tile                |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|tile                                          |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -1260,11 +1382,11 @@ LATERAL VIEW explode(gbx_rst_tooverlappingtiles(tile, 256, 256, 10)) AS tile;
 
 
 rst_tooverlappingtiles_sql_example_output = """
-+----+--------------------+
-|path|tile                |
-+----+--------------------+
-|... |[BINARY]            |
-+----+--------------------+
++----+----------------------------------------------+
+|path|tile                                          |
++----+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+
 """
 
 
@@ -1284,11 +1406,11 @@ FROM (
 
 
 rst_separatebands_sql_example_output = """
-+----+--------------------+--------------------+--------------------+
-|path|red_band            |green_band          |blue_band           |
-+----+--------------------+--------------------+--------------------+
-|... |[BINARY]            |[BINARY]            |[BINARY]            |
-+----+--------------------+--------------------+--------------------+
++----+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+|path|red_band                                      |green_band                                    |blue_band                                     |
++----+----------------------------------------------+----------------------------------------------+----------------------------------------------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|{null, <raster bytes>, {driver -> GTiff, ...}}|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----+----------------------------------------------+----------------------------------------------+----------------------------------------------+
 """
 
 
@@ -1316,11 +1438,11 @@ GROUP BY week;
 
 
 rst_combineavg_sql_example_output = """
-+-------------------+--------------------+
-|week               |weekly_composite    |
-+-------------------+--------------------+
-|2024-01-01 00:00:00|[BINARY]            |
-+-------------------+--------------------+
++-------------------+----------------------------------------------+
+|week               |weekly_composite                              |
++-------------------+----------------------------------------------+
+|2024-01-01 00:00:00|{null, <raster bytes>, {driver -> GTiff, ...}}|
++-------------------+----------------------------------------------+
 """
 
 
@@ -1337,11 +1459,11 @@ GROUP BY region;
 
 
 rst_combineavg_agg_sql_example_output = """
-+------+--------------------+
-|region|regional_average    |
-+------+--------------------+
-|...   |[BINARY]            |
-+------+--------------------+
++------+----------------------------------------------+
+|region|regional_average                              |
++------+----------------------------------------------+
+|...   |{null, <raster bytes>, {driver -> GTiff, ...}}|
++------+----------------------------------------------+
 """
 
 
@@ -1357,9 +1479,732 @@ GROUP BY scene_id;
 
 
 rst_merge_agg_sql_example_output = """
-+--------+--------------------+
-|scene_id|merged_scene        |
-+--------+--------------------+
-|S2A_001 |[BINARY]            |
-+--------+--------------------+
++--------+----------------------------------------------+
+|scene_id|merged_scene                                  |
++--------+----------------------------------------------+
+|S2A_001 |{null, <raster bytes>, {driver -> GTiff, ...}}|
++--------+----------------------------------------------+
+"""
+
+
+# ============================================================================
+# Web-Mercator Tile Output Functions
+# ============================================================================
+
+def rst_to_webmercator_sql_example():
+    """Reproject a raster to EPSG:3857 (web mercator)"""
+    return """
+-- Reproject to web mercator before slippy-map tiling (default bilinear resampling).
+SELECT
+    path,
+    gbx_rst_to_webmercator(tile) as web_tile,
+    gbx_rst_srid(gbx_rst_to_webmercator(tile)) as new_srid
+FROM rasters;
+"""
+
+
+rst_to_webmercator_sql_example_output = """
++----+----------------------------------------------+--------+
+|path|web_tile                                      |new_srid|
++----+----------------------------------------------+--------+
+|... |{null, <raster bytes>, {driver -> GTiff, ...}}|3857    |
++----+----------------------------------------------+--------+
+"""
+
+
+def rst_tilexyz_sql_example():
+    """Render a single web-mercator XYZ tile to PNG bytes"""
+    return """
+-- Render tile (z=10, x=512, y=512) as 256x256 PNG bytes.
+SELECT
+    path,
+    gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png
+FROM rasters;
+"""
+
+
+rst_tilexyz_sql_example_output = """
++----+--------+
+|path|tile_png|
++----+--------+
+|... |[BINARY]|
++----+--------+
+"""
+
+
+def rst_xyzpyramid_sql_example():
+    """Generate one row per (z, x, y) tile across a zoom range"""
+    return """
+-- Explode a raster into per-tile rows across zoom levels 4..6 (PNG, 256px).
+SELECT
+    path,
+    t.tile.z as z,
+    t.tile.x as x,
+    t.tile.y as y,
+    t.tile.bytes as png_bytes
+FROM rasters
+LATERAL VIEW gbx_rst_xyzpyramid(tile, 4, 6) AS t;
+"""
+
+
+rst_xyzpyramid_sql_example_output = """
++----+-+-+-+---------+
+|path|z|x|y|png_bytes|
++----+-+-+-+---------+
+|... |4|5|6|[BINARY] |
++----+-+-+-+---------+
+"""
+
+
+# ============================================================================
+# Vector<->Raster Bridge Functions
+# ============================================================================
+
+def rst_rasterize_sql_example():
+    """Burn a square polygon (WKB) into a 100x100 raster tile."""
+    return """
+-- WKB hex below is POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)). The output `tile`
+-- is a GTiff-backed raster at the given extent and resolution; pixels inside
+-- the polygon carry the burn value (42.0), pixels outside are NoData.
+SELECT gbx_rst_rasterize(
+    unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'),
+    42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326
+) AS tile;
+"""
+
+
+rst_rasterize_sql_example_output = """
++----------------------------------------------+
+|tile                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_rasterize_agg_sql_example():
+    """Aggregator: stream geometry/value pairs and produce one tile per group."""
+    return """
+-- Aggregate per-feature burn values into one rasterized tile per region.
+SELECT region_id,
+    gbx_rst_rasterize_agg(
+        geom_wkb, burn_value,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        256, 256, 4326
+    ) AS tile
+FROM features
+GROUP BY region_id;
+"""
+
+
+rst_rasterize_agg_sql_example_output = """
++---------+----------------------------------------------+
+|region_id|tile                                          |
++---------+----------------------------------------------+
+|R-01     |{null, <raster bytes>, {driver -> GTiff, ...}}|
++---------+----------------------------------------------+
+"""
+
+
+def rst_polygonize_sql_example():
+    """Extract polygons from contiguous-value regions of a freshly-rasterized tile."""
+    return """
+-- Round-trip: rasterize a polygon then immediately polygonize it. The output
+-- array contains one feature per contiguous value region; each feature carries
+-- the burn value as the `value` field.
+SELECT gbx_rst_polygonize(
+    gbx_rst_rasterize(
+        unhex('010300000001000000050000000000000000000000000000000000000000000000000024400000000000000000000000000000244000000000000024400000000000000000000000000000244000000000000000000000000000000000'),
+        42.0, 0.0, 0.0, 10.0, 10.0, 100, 100, 4326
+    )
+) AS features;
+"""
+
+
+rst_polygonize_sql_example_output = """
++------------------+
+|features          |
++------------------+
+|[{[BINARY], 42.0}]|
++------------------+
+"""
+
+
+# ============================================================================
+# Terrain Analysis (DEM Processing) - Wave 8a
+#
+# Seven thin wrappers around gdal.DEMProcessing. Each one takes a single
+# input tile and produces a derived tile. Examples below use the `rasters`
+# view (load any single-band DEM tile to taste).
+# ============================================================================
+
+
+def rst_slope_sql_example():
+    """Compute slope (degrees) from a DEM tile."""
+    return """
+-- Slope in degrees per pixel. Use unit='percent' for rise/run, or pass scale
+-- 111120 for unprojected geographic CRS (lon/lat in degrees).
+SELECT gbx_rst_slope(tile, 'degrees', 1.0) AS slope FROM rasters;
+"""
+
+
+rst_slope_sql_example_output = """
++----------------------------------------------+
+|slope                                         |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_aspect_sql_example():
+    """Compute aspect (compass direction of slope) from a DEM tile."""
+    return """
+-- Aspect in compass degrees (0=N, 90=E, 180=S, 270=W). Flat areas get -9999
+-- unless zero_for_flat=true.
+SELECT gbx_rst_aspect(tile, false, false) AS aspect FROM rasters;
+"""
+
+
+rst_aspect_sql_example_output = """
++----------------------------------------------+
+|aspect                                        |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_hillshade_sql_example():
+    """Compute a shaded relief image from a DEM tile."""
+    return """
+-- 8-bit (0..255) hillshade: NW sun, 45-deg altitude, default z-factor.
+SELECT gbx_rst_hillshade(tile, 315.0, 45.0, 1.0) AS hillshade FROM rasters;
+"""
+
+
+rst_hillshade_sql_example_output = """
++----------------------------------------------+
+|hillshade                                     |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_tri_sql_example():
+    """Compute Terrain Ruggedness Index (TRI) from a DEM tile."""
+    return """
+-- TRI: mean absolute neighbour difference; useful for landscape ecology.
+SELECT gbx_rst_tri(tile) AS tri FROM rasters;
+"""
+
+
+rst_tri_sql_example_output = """
++----------------------------------------------+
+|tri                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_tpi_sql_example():
+    """Compute Topographic Position Index (TPI) from a DEM tile."""
+    return """
+-- TPI: difference from neighbour-mean; +ve = ridge, -ve = valley.
+SELECT gbx_rst_tpi(tile) AS tpi FROM rasters;
+"""
+
+
+rst_tpi_sql_example_output = """
++----------------------------------------------+
+|tpi                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_roughness_sql_example():
+    """Compute Roughness (largest neighbour delta) from a DEM tile."""
+    return """
+-- Roughness: max absolute neighbour difference in a 3x3 window.
+SELECT gbx_rst_roughness(tile) AS roughness FROM rasters;
+"""
+
+
+rst_roughness_sql_example_output = """
++----------------------------------------------+
+|roughness                                     |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_color_relief_sql_example():
+    """Apply a color relief mapping to a DEM tile.
+
+    The color table file is a plain-text gdaldem color file: each line
+    ``elevation R G B [A]``. Special values ``nv``, ``default``, ``0%`` and
+    ``100%`` are accepted.
+    """
+    return f"""
+-- Map elevation values to RGBA colors via a gdaldem color table.
+SELECT gbx_rst_color_relief(tile, '{SAMPLE_DATA_BASE}/colortables/elevation.clr') AS rgba
+FROM rasters;
+"""
+
+
+rst_color_relief_sql_example_output = """
++----------------------------------------------+
+|rgba                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+# ============================================================================
+# Spectral Indices (Multi-band Satellite Math) - Wave 8b
+#
+# Five compositions over gbx_rst_mapalgebra that take user-supplied band
+# indices, build a per-pixel formula string, and dispatch to gdal_calc for
+# evaluation. All return a single-band Float32 GTiff tile.
+# ============================================================================
+
+
+def rst_evi_sql_example():
+    """Enhanced Vegetation Index from red / NIR / blue bands."""
+    return """
+-- EVI = G * (NIR - Red) / (NIR + C1*Red - C2*Blue + L). Defaults follow the
+-- MODIS canonical coefficients: L=1.0, C1=6.0, C2=7.5, G=2.5.
+SELECT gbx_rst_evi(tile, 1, 2, 3) AS evi FROM rasters;
+"""
+
+
+rst_evi_sql_example_output = """
++----------------------------------------------+
+|evi                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_savi_sql_example():
+    """Soil-Adjusted Vegetation Index from red / NIR bands."""
+    return """
+-- SAVI = (NIR - Red) / (NIR + Red + L) * (1 + L). L=0.5 (default) is a
+-- balanced soil-vegetation tradeoff; L=0 reduces to NDVI.
+SELECT gbx_rst_savi(tile, 1, 2, 0.5) AS savi FROM rasters;
+"""
+
+
+rst_savi_sql_example_output = """
++----------------------------------------------+
+|savi                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_ndwi_sql_example():
+    """Normalized Difference Water Index from green / NIR bands."""
+    return """
+-- NDWI (McFeeters 1996) = (Green - NIR) / (Green + NIR). Positive values
+-- typically indicate open water.
+SELECT gbx_rst_ndwi(tile, 1, 2) AS ndwi FROM rasters;
+"""
+
+
+rst_ndwi_sql_example_output = """
++----------------------------------------------+
+|ndwi                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_nbr_sql_example():
+    """Normalized Burn Ratio from NIR / SWIR bands."""
+    return """
+-- NBR = (NIR - SWIR) / (NIR + SWIR). Difference of pre-fire and post-fire
+-- NBR (dNBR) is the canonical burn-severity index.
+SELECT gbx_rst_nbr(tile, 2, 3) AS nbr FROM rasters;
+"""
+
+
+rst_nbr_sql_example_output = """
++----------------------------------------------+
+|nbr                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_index_sql_example():
+    """Generic dispatcher for named spectral indices (NDVI shown)."""
+    return """
+-- Generic dispatcher - pick a built-in formula by name and wire bands by a
+-- MAP<STRING, INT>. Built-ins: ndvi, gndvi, msavi, ndvi_re, ndmi, ndsi.
+SELECT gbx_rst_index(tile, 'ndvi', map('red', 1, 'nir', 2)) AS ndvi
+FROM rasters;
+"""
+
+
+rst_index_sql_example_output = """
++----------------------------------------------+
+|ndvi                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_resample_sql_example():
+    """Resample a tile by a multiplicative factor."""
+    return """
+-- Upsample 2x with bilinear interpolation. Output dims = source dims * 2.
+SELECT gbx_rst_resample(tile, 2.0, 'bilinear') AS upsampled FROM rasters;
+"""
+
+
+rst_resample_sql_example_output = """
++----------------------------------------------+
+|upsampled                                     |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_resample_to_size_sql_example():
+    """Resample a tile to an explicit width x height in pixels."""
+    return """
+-- Force a 512 x 512 tile, near-neighbour for categorical rasters.
+SELECT gbx_rst_resample_to_size(tile, 512, 512, 'near') AS sized FROM rasters;
+"""
+
+
+rst_resample_to_size_sql_example_output = """
++----------------------------------------------+
+|sized                                         |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_resample_to_res_sql_example():
+    """Resample a tile to an explicit ground resolution in CRS units."""
+    return """
+-- Downsample to a 100 m grid (metric CRS). 'average' weights cells by area.
+SELECT gbx_rst_resample_to_res(tile, 100.0, 100.0, 'average') AS coarse
+FROM rasters;
+"""
+
+
+rst_resample_to_res_sql_example_output = """
++----------------------------------------------+
+|coarse                                        |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_gridfrompoints_sql_example():
+    """IDW interpolation - arrays of points / values in a single row."""
+    return """
+-- IDW (power=2, max_points=12) from arrays of point WKB and values.
+-- Output is a 256 x 256 Float64 GTiff covering the requested extent.
+SELECT gbx_rst_gridfrompoints(
+    points_wkb_array, values_array,
+    0.0, 0.0, 1000.0, 1000.0,
+    256, 256, 32633
+) AS idw
+FROM point_clouds;
+"""
+
+
+rst_gridfrompoints_sql_example_output = """
++----------------------------------------------+
+|idw                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_gridfrompoints_agg_sql_example():
+    """IDW interpolation aggregator - one point/value per row, grouped by extent key."""
+    return """
+-- Aggregate per-station observations into one IDW tile per region.
+SELECT region_id,
+    gbx_rst_gridfrompoints_agg(
+        station_wkb, observation,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        256, 256, 32633
+    ) AS idw
+FROM observations
+GROUP BY region_id;
+"""
+
+
+rst_gridfrompoints_agg_sql_example_output = """
++---------+----------------------------------------------+
+|region_id|idw                                           |
++---------+----------------------------------------------+
+|R-01     |{null, <raster bytes>, {driver -> GTiff, ...}}|
++---------+----------------------------------------------+
+"""
+
+
+def rst_fillnodata_sql_example():
+    """Interpolate NoData pixels from valid neighbours via gdal.FillNodata."""
+    return """
+-- Fill NoData holes searching up to 100 pixels in each direction.
+SELECT gbx_rst_fillnodata(tile, 100.0, 0) AS filled FROM rasters;
+"""
+
+
+rst_fillnodata_sql_example_output = """
++----------------------------------------------+
+|filled                                        |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_sample_sql_example():
+    """Sample raster pixel values at a POINT geometry (one Double per band)."""
+    return """
+-- Sample at a known lon/lat (point must be in the raster's CRS).
+SELECT gbx_rst_sample(tile, 'POINT(-0.13 51.5)') AS values FROM rasters;
+"""
+
+
+rst_sample_sql_example_output = """
++-------------------+
+|values             |
++-------------------+
+|[12.5, 88.0, 240.0]|
++-------------------+
+"""
+
+
+def rst_setsrid_sql_example():
+    """Re-stamp the raster's spatial-reference header to the given EPSG code."""
+    return """
+-- Tag the tile as EPSG:4326 without warping pixels.
+-- Use rst_transform if you actually need a reprojection.
+SELECT gbx_rst_setsrid(tile, 4326) AS tagged FROM rasters;
+"""
+
+
+rst_setsrid_sql_example_output = """
++----------------------------------------------+
+|tagged                                        |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_histogram_sql_example():
+    """Per-band pixel histogram as MAP<STRING, ARRAY<LONG>>."""
+    return """
+-- 16 equal-width buckets over [0, 1000]; one entry per band keyed band_<i>.
+SELECT gbx_rst_histogram(tile, 16, cast(0 as double), cast(1000 as double), false) AS hist
+FROM rasters;
+"""
+
+
+rst_histogram_sql_example_output = """
++-------------------------------+
+|hist                           |
++-------------------------------+
+|{band_1 -> [120, 340, 510, 88]}|
++-------------------------------+
+"""
+
+
+def rst_threshold_sql_example():
+    """Binarise a raster: (pixel > value) -> 1, else 0."""
+    return """
+-- Mark all pixels above 100 m as 1, others as 0.
+SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;
+"""
+
+
+rst_threshold_sql_example_output = """
++----------------------------------------------+
+|mask                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_buildoverviews_sql_example():
+    """Build internal overviews (image pyramid) on a raster tile."""
+    return """
+-- Add 2x / 4x overviews to the tile via the 'average' resampling.
+SELECT gbx_rst_buildoverviews(tile, array(2, 4), 'average') AS withovr
+FROM rasters;
+"""
+
+
+rst_buildoverviews_sql_example_output = """
++----------------------------------------------+
+|withovr                                       |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_band_sql_example():
+    """Extract a single band as a new single-band tile."""
+    return """
+-- Pull band 1 (1-based) as a fresh single-band tile.
+SELECT gbx_rst_band(tile, 1) AS b1 FROM rasters;
+"""
+
+
+rst_band_sql_example_output = """
++----------------------------------------------+
+|b1                                            |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_cog_convert_sql_example():
+    """Re-layout a tile as a Cloud Optimized GeoTIFF for HTTP range serving."""
+    return """
+-- Convert to COG with DEFLATE compression, 512-pixel blocks, AVERAGE overviews.
+SELECT gbx_rst_cog_convert(tile, 'DEFLATE', 512, 'AVERAGE') AS cog
+FROM rasters;
+"""
+
+
+rst_cog_convert_sql_example_output = """
++----------------------------------------------+
+|cog                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_proximity_sql_example():
+    """Compute per-pixel distance to the nearest non-NoData (or target-value) source pixel."""
+    return """
+-- Distance in pixels to any non-NoData pixel; cap distances at 100 pixels.
+SELECT gbx_rst_proximity(tile, '', 'PIXEL', cast(100.0 as double)) AS dist
+FROM rasters;
+"""
+
+
+rst_proximity_sql_example_output = """
++----------------------------------------------+
+|dist                                          |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_contour_sql_example():
+    """Generate contour LineStrings at an equal interval from an elevation tile."""
+    return """
+-- Equal-interval contours every 10 m. Pass array() of fixed levels to override.
+SELECT gbx_rst_contour(tile, array(), 10.0, 0.0, 'elev') AS contours
+FROM rasters;
+"""
+
+
+rst_contour_sql_example_output = """
++--------------------------------------+
+|contours                              |
++--------------------------------------+
+|[{[BINARY], 100.0}, {[BINARY], 200.0}]|
++--------------------------------------+
+"""
+
+
+def rst_viewshed_sql_example():
+    """Binary viewshed mask from a DEM and an observer POINT (coords in raster CRS)."""
+    return """
+-- Visibility from observer at (-73.5, 40.5), eye 100 m, target 1.6 m, cap 5000 m.
+SELECT gbx_rst_viewshed(tile, 'POINT(-73.5 40.5)', 100.0, 1.6, 5000.0) AS vs
+FROM rasters;
+"""
+
+
+rst_viewshed_sql_example_output = """
++----------------------------------------------+
+|vs                                            |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_dtmfromgeoms_sql_example():
+    """DTM via Delaunay-TIN interpolation from Z-valued points (+ optional breaklines)."""
+    return """
+-- TIN interpolation from arrays of Z-valued point WKB and breakline WKB.
+-- Output is a 100 x 100 Float64 GTiff over the extent. For N-metre cells set
+-- width_px = round((xmax-xmin)/N): here a 1000 m extent at 10 m cells -> 100 px.
+SELECT gbx_rst_dtmfromgeoms(
+    points_wkb_array, breaklines_wkb_array,
+    0.0, 0.01,
+    0.0, 0.0, 1000.0, 1000.0,
+    100, 100, 32633
+) AS dtm
+FROM survey_points;
+"""
+
+
+rst_dtmfromgeoms_sql_example_output = """
++----------------------------------------------+
+|dtm                                           |
++----------------------------------------------+
+|{null, <raster bytes>, {driver -> GTiff, ...}}|
++----------------------------------------------+
+"""
+
+
+def rst_dtmfromgeoms_agg_sql_example():
+    """DTM aggregator - one Z-valued point per row, grouped by extent key."""
+    return """
+-- Stream survey points per region into one TIN DTM tile. Breaklines are a
+-- per-group constant array; for 10 m cells over a 1000 m extent use 100 px.
+SELECT region_id,
+    gbx_rst_dtmfromgeoms_agg(
+        point_wkb, breaklines_wkb_array,
+        0.0, 0.01,
+        bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax,
+        100, 100, 32633
+    ) AS dtm
+FROM survey_points
+GROUP BY region_id;
+"""
+
+
+rst_dtmfromgeoms_agg_sql_example_output = """
++---------+----------------------------------------------+
+|region_id|dtm                                           |
++---------+----------------------------------------------+
+|R-01     |{null, <raster bytes>, {driver -> GTiff, ...}}|
++---------+----------------------------------------------+
 """
