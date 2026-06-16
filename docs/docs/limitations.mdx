@@ -82,7 +82,7 @@ GeoBrix requires Databricks Classic Clusters:
 - **Non-ARM instance types only (Intel or AMD x86_64).** The GDAL bundle ships `amd64` `.deb`s from the UbuntuGIS PPA — `amd64` and `x86_64` are the same architecture, and Intel and AMD CPUs are interchangeable. ARM-based instance types — AWS Graviton, Ampere, Apple Silicon — are not supported. The init script fails fast on `aarch64`.
 
 Databricks Runtime:
-- **Minimum**: DBR 17.1 (recommend DBR 17.3 LTS or later)
+- **Minimum**: DBR 17.1 (recommended/tested: DBR 17.3 LTS or 18 LTS)
 - GeoBrix is designed to work with Databricks product spatial functions (available DBR 17.1+)
 
 ## Format Support

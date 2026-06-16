@@ -29,7 +29,7 @@ You need a free account at [challenge.xviewdataset.org](https://challenge.xviewd
 
 ## Prerequisites
 
-- **Databricks Runtime 17.3 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
+- **Databricks Runtime 17.3 LTS or 18 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
 - **GeoBrix** installed on the cluster (JAR + Python wheel). The notebook imports `databricks.labs.gbx.rasterx` directly; use version >= 0.3.0.
 - **Unity Catalog**: set `catalog_name` / `schema_name` at the top of the notebook. A Volume named `data` must already exist under `<catalog>/<schema>`; the notebook will create the schema but not the Volume.
 - **`rasterio==1.4.3`** (installed via `%pip` at the top of the notebook) — used for in-notebook previewing of both full tiles and clipped outputs.

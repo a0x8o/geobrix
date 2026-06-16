@@ -59,7 +59,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 ## Prerequisites
 
-- **Databricks Runtime 17.3 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
+- **Databricks Runtime 17.3 LTS or 18 LTS** (Scala 2.13 / Spark 4 / Python 3.12).
 - **GeoBrix** installed on the cluster (JAR + Python wheel). The notebooks `import` the Python bindings directly from `databricks.labs.gbx.rasterx`.
 - **Unity Catalog**: edit `config_nb.ipynb` to set `catalog_name` and `schema_name` to your own locations. A Volume named `data` must already exist under `<catalog>/<schema>`. The notebooks create a schema if missing but will not create the Volume for you.
 - **Compute sizing** (the values used for the captured runs):

@@ -460,7 +460,7 @@ def render():
 
     # ---- Footer ----
     parts.append(text(PAD, canvas_h - 14,
-                      "databrickslabs/geobrix  ·  DBR 17.3 LTS  ·  Scala 2.13 / Spark 4.0 / Python 3.12",
+                      "databrickslabs/geobrix  ·  DBR 17.3 / 18 LTS  ·  Scala 2.13.16 / Spark 4.0–4.1 / Python 3.12",
                       size=11, fill=C_MUTED_3))
     parts.append(text(CANVAS_W - PAD, canvas_h - 14,
                       "docs/api/tile-structure",

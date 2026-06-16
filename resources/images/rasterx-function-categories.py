@@ -407,7 +407,7 @@ def render():
     # Footer
     parts.append(
         f'<text x="{PAD}" y="{canvas_h - 14}" font-size="11" fill="#7A8794">'
-        f'databrickslabs/geobrix &#183; DBR 17.3 LTS &#183; Scala 2.13 / Spark 4.0 / Python 3.12'
+        f'databrickslabs/geobrix &#183; DBR 17.3 / 18 LTS &#183; Scala 2.13.16 / Spark 4.0&#8211;4.1 / Python 3.12'
         f'</text>'
     )
     parts.append(
@@ -511,7 +511,7 @@ def render_landscape():
     # Footer
     parts.append(
         f'<text x="{PAD}" y="{canvas_h - 14}" font-size="11" fill="#7A8794">'
-        f'databrickslabs/geobrix &#183; DBR 17.3 LTS &#183; Scala 2.13 / Spark 4.0 / Python 3.12'
+        f'databrickslabs/geobrix &#183; DBR 17.3 / 18 LTS &#183; Scala 2.13.16 / Spark 4.0&#8211;4.1 / Python 3.12'
         f'</text>'
     )
     parts.append(

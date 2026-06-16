@@ -11,6 +11,10 @@ GeoBrix ships a benchmark suite that compares the two [execution tiers](./execut
 
 This page explains what the benchmark measures, how to run it **on a Databricks cluster** (the primary, same-hardware comparison), how to run it **locally**, how to read the output, and full tables of representative results — both the **pure-core** (algorithm-in-isolation) view and the **spark-path at scale** view from a cluster.
 
+:::note Runtime support vs. benchmark environment
+GeoBrix is [supported on both DBR 17.3 LTS and DBR 18 LTS](../installation#supported-databricks-runtimes). The per-result **Environment** stamps below record the specific cluster each benchmark actually ran on (DBR 17.3 LTS); they are factual records of the run, not a statement that DBR 18 is unsupported.
+:::
+
 ## What it measures
 
 Each function is timed under two independent models:

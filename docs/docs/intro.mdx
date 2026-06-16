@@ -9,6 +9,19 @@ import GeoBrixLogo from '../../resources/images/GeoBriX.png';
 
 GeoBrix is a high-performance spatial processing library for Databricks. It ships two **interchangeable execution tiers** — a **lightweight** pure-Python/PySpark tier (no JAR, no init script, no native GDAL; runs on Serverless, standard/shared, Lakeflow, and ARM compute) and a **heavyweight** Scala/GDAL tier (GDAL on Apache Spark, for distributed processing on classic x86 clusters). Both register the **same function names**, so moving between them is a one-line import swap — and GeoBrix is progressively bringing the lightweight tier to full parity with the heavyweight one. Today the lightweight tier covers all of **RasterX**, all of **VectorX** (MVT, TIN surfaces, legacy-geometry migration), and all of **GridX** (CARTO quadbin, British National Grid (BNG), and custom grids). See [Choosing an Execution Tier](./api/execution-tiers).
 
+## Supported Databricks Runtimes
+
+GeoBrix supports both current Databricks Runtime LTS releases — a **single wheel + single JAR** runs on both (Scala 2.13.16 matches both, the JAR is Java-17 bytecode that loads on both JVMs, and Spark is a `provided` dependency):
+
+| DBR LTS | Ubuntu | Spark | Python | Scala | Java | GeoBrix |
+|---|---|---|---|---|---|---|
+| **17.3 LTS** | 24.04 | 4.0.0 | 3.12.3 | 2.13.16 | 17 | ✅ Supported |
+| **18 LTS** | 24.04 | 4.1.0 | 3.12.3 | 2.13.16 | 21 | ✅ Supported |
+
+:::note DBR 19 LTS is coming soon
+**DBR 19 LTS is coming soon**, built on **Ubuntu 26.04**. The **lightweight** tier (pure-Python, rasterio's bundled GDAL) will be unaffected; the **heavyweight** tier's native GDAL/OGR libraries are compiled against the cluster OS, so they will need to be rebuilt for the new base image.
+:::
+
 {/*
   Function counts — keep verbatim with docs/tests-function-info/registered_functions.txt
   (the canonical source; total is guarded by `gbx:test:bindings`).

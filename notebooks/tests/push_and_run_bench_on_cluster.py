@@ -9,7 +9,7 @@ bench_results Delta table and land comparison.csv / summary.md under the out_dir
 configured Volume.
 
 The cluster + artifacts must be provisioned by the operator (see the installation docs):
-- heavyweight: x86 DBR 17.3 LTS with the init script + bundle + geobrix wheel + the bench
+- heavyweight: x86 DBR 17.3 or 18 LTS with the init script + bundle + geobrix wheel + the bench
   geobrix-*-tests.jar staged on a Volume (the tests.jar is attached here as a job library;
   the production fat JAR is installed by the heavyweight init script, NOT attached here).
 - lightweight (incl. ARM): just the [light] wheel (installed by the notebook's %pip cell).
