@@ -40,7 +40,7 @@ Each package exposes `functions` with `register(spark)` to install SQL UDFs. Sha
 
 Named readers extend generic readers and preset driver options via `dsExtraMap`. Pattern: `<format>_<engine>`. Generic readers (`ogr`, `gdal`) remain clean for flexibility.
 
-Scala 2.13.12, Spark 4.0.0, Java 17. Python 3.12+.
+Scala 2.13.16, Spark 4.0.0, Java 17. Python 3.12+.
 
 ## Development environment
 
