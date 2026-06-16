@@ -465,7 +465,7 @@
                 </property>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -500,12 +500,13 @@
                             <scalaVersion>${scala.version}</scalaVersion>
                             <!--
                                 Pin the scalac scoverage compiler plugin to a version that
-                                actually exists for scala_2.13.12. scoverage-maven-plugin
+                                actually exists for scala_2.13.16. scoverage-maven-plugin
                                 2.1.5's `scalacPluginVersion` defaults to "2.5.2", which is
-                                NOT published on Maven Central for scala 2.13.12 (only up
-                                through 2.3.0 exists for this scala minor). Without this
-                                pin, the build fails with "Could not find artifact
-                                org.scoverage:scalac-scoverage-plugin_2.13.12:jar:2.5.2".
+                                NOT published on Maven Central for scala 2.13.16 (the
+                                maven-metadata for scalac-scoverage-plugin_2.13.16 lists
+                                only 2.3.0 as latest/release for this scala minor). Without
+                                this pin, the build fails with "Could not find artifact
+                                org.scoverage:scalac-scoverage-plugin_2.13.16:jar:2.5.2".
                                 Bump alongside scoverage-maven-plugin upgrades; verify via
                                 maven-search.
                             -->
@@ -529,7 +530,7 @@
                 </property>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -568,7 +569,7 @@
                 <activeByDefault>true</activeByDefault>
             </activation>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
@@ -585,7 +586,7 @@
             -->
             <id>verify-pgp</id>
             <properties>
-                <scala.version>2.13.12</scala.version>
+                <scala.version>2.13.16</scala.version>
                 <scala.compat.version>2.13</scala.compat.version>
                 <spark.version>4.0.0</spark.version>
             </properties>
