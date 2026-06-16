@@ -184,6 +184,6 @@
 <text x="1426" y="1102" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="700" fill="#7A8794" letter-spacing="1.2">VALIDITY</text>
 <rect x="1426.0" y="1110.0" rx="13" ry="13" width="112" height="28" fill="#DDF1E6" stroke="#1F8F5A" stroke-opacity="0.35" stroke-width="1"/><text x="1482.0" y="1128.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#1F8F5A" font-weight="600">rst_isempty</text>
 <rect x="1546.0" y="1110.0" rx="13" ry="13" width="112" height="28" fill="#DDF1E6" stroke="#1F8F5A" stroke-opacity="0.35" stroke-width="1"/><text x="1602.0" y="1128.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#1F8F5A" font-weight="600">rst_tryopen</text>
-<text x="36" y="1186" font-size="11" fill="#7A8794">databrickslabs/geobrix &#183; DBR 17.3 LTS &#183; Scala 2.13 / Spark 4.0 / Python 3.12</text>
+<text x="36" y="1186" font-size="11" fill="#7A8794">databrickslabs/geobrix &#183; DBR 17.3 / 18 LTS &#183; Scala 2.13.16 / Spark 4.0&#8211;4.1 / Python 3.12</text>
 <text x="2064" y="1186" text-anchor="end" font-size="11" fill="#7A8794">docs/api/rasterx-functions</text>
 </svg>
