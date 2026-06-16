@@ -265,10 +265,26 @@ def main() -> int:
     # --mvt-only: ONLY run the MVT benchmark, skip all fn benchmarks.
     benchmark_mvt = "--benchmark-mvt" in sys.argv
     mvt_only = "--mvt-only" in sys.argv
+    # --benchmark-pmtiles-agg: also run the pmtiles_agg grouped-agg benchmark (light vs heavy).
+    # --pmtiles-agg-only: ONLY run the pmtiles_agg benchmark, skip all fn benchmarks.
+    benchmark_pmtiles_agg = "--benchmark-pmtiles-agg" in sys.argv
+    pmtiles_agg_only = "--pmtiles-agg-only" in sys.argv
     # --benchmark-vector-tin: also run the TIN + legacy benchmark (light pyvx vs heavy vectorx).
     # --vector-tin-only: ONLY run the TIN + legacy benchmark, skip all fn benchmarks.
     benchmark_vector_tin = "--benchmark-vector-tin" in sys.argv
     vector_tin_only = "--vector-tin-only" in sys.argv
+    # --benchmark-grid-quadbin: also run the quadbin grid benchmark (light pygx vs heavy gridx.quadbin).
+    # --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip all fn benchmarks.
+    benchmark_grid_quadbin = "--benchmark-grid-quadbin" in sys.argv
+    grid_quadbin_only = "--grid-quadbin-only" in sys.argv
+    # --benchmark-grid-bng: also run the BNG grid benchmark (light pygx vs heavy gridx.bng).
+    # --grid-bng-only: ONLY run the BNG grid benchmark, skip all fn benchmarks.
+    benchmark_grid_bng = "--benchmark-grid-bng" in sys.argv
+    grid_bng_only = "--grid-bng-only" in sys.argv
+    # --benchmark-grid-custom: also run the custom grid benchmark (light pygx vs heavy gridx.custom).
+    # --grid-custom-only: ONLY run the custom grid benchmark, skip all fn benchmarks.
+    benchmark_grid_custom = "--benchmark-grid-custom" in sys.argv
+    grid_custom_only = "--grid-custom-only" in sys.argv
     # --benchmark-fanout: also run the fan-out UDTF benchmark (rst_polygonize +
     #   rst_h3_rastertogridcount), light pyrx LATERAL vs heavy rasterx explode.
     # --fanout-only: ONLY run the fanout benchmark, skip all fn benchmarks.
@@ -325,8 +341,16 @@ def main() -> int:
             run_id = f"{run_id}-vector"
         elif mvt_only:
             run_id = f"{run_id}-mvt"
+        elif pmtiles_agg_only:
+            run_id = f"{run_id}-pmtiles-agg"
         elif vector_tin_only:
             run_id = f"{run_id}-vector-tin"
+        elif grid_quadbin_only:
+            run_id = f"{run_id}-grid-quadbin"
+        elif grid_bng_only:
+            run_id = f"{run_id}-grid-bng"
+        elif grid_custom_only:
+            run_id = f"{run_id}-grid-custom"
         elif fanout_only:
             run_id = f"{run_id}-fanout"
     functions = _arg("--functions", "")
@@ -471,10 +495,26 @@ def main() -> int:
         benchmark_mvt=benchmark_mvt,
         #  --mvt-only: ONLY run the MVT benchmark, skip fn benchmarks.
         mvt_only=mvt_only,
+        #  --benchmark-pmtiles-agg: also run pmtiles_agg grouped-agg benchmark (light vs heavy).
+        benchmark_pmtiles_agg=benchmark_pmtiles_agg,
+        #  --pmtiles-agg-only: ONLY run the pmtiles_agg benchmark, skip fn benchmarks.
+        pmtiles_agg_only=pmtiles_agg_only,
         #  --benchmark-vector-tin: also run TIN + legacy benchmark (light pyvx vs heavy vectorx).
         benchmark_vector_tin=benchmark_vector_tin,
         #  --vector-tin-only: ONLY run the TIN + legacy benchmark, skip fn benchmarks.
         vector_tin_only=vector_tin_only,
+        #  --benchmark-grid-quadbin: also run quadbin grid benchmark (light pygx vs heavy gridx.quadbin).
+        benchmark_grid_quadbin=benchmark_grid_quadbin,
+        #  --grid-quadbin-only: ONLY run the quadbin grid benchmark, skip fn benchmarks.
+        grid_quadbin_only=grid_quadbin_only,
+        #  --benchmark-grid-bng: also run BNG grid benchmark (light pygx vs heavy gridx.bng).
+        benchmark_grid_bng=benchmark_grid_bng,
+        #  --grid-bng-only: ONLY run the BNG grid benchmark, skip fn benchmarks.
+        grid_bng_only=grid_bng_only,
+        #  --benchmark-grid-custom: also run custom grid benchmark (light pygx vs heavy gridx.custom).
+        benchmark_grid_custom=benchmark_grid_custom,
+        #  --grid-custom-only: ONLY run the custom grid benchmark, skip fn benchmarks.
+        grid_custom_only=grid_custom_only,
         #  --benchmark-fanout: also run fan-out UDTF benchmark (all 8 streaming UDTFs).
         benchmark_fanout=benchmark_fanout,
         #  --fanout-only: ONLY run the fanout benchmark, skip fn benchmarks.
@@ -494,8 +534,20 @@ def main() -> int:
     if mvt_only:
         # MVT agg benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
+    if pmtiles_agg_only:
+        # PMTiles agg benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
     if vector_tin_only:
         # TIN + legacy benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if grid_quadbin_only:
+        # Quadbin grid benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if grid_bng_only:
+        # BNG grid benchmark is spark-path only; skip pure-core sections.
+        cfg["modes"] = "spark-path"
+    if grid_custom_only:
+        # Custom grid benchmark is spark-path only; skip pure-core sections.
         cfg["modes"] = "spark-path"
     if fanout_only:
         # Fan-out UDTF benchmark is spark-path only; skip pure-core sections.
@@ -568,7 +620,11 @@ def main() -> int:
         or cfg.get("pmtiles_only")
         or cfg.get("vector_only")
         or cfg.get("mvt_only")
+        or cfg.get("pmtiles_agg_only")
         or cfg.get("vector_tin_only")
+        or cfg.get("grid_quadbin_only")
+        or cfg.get("grid_bng_only")
+        or cfg.get("grid_custom_only")
         or cfg.get("fanout_only")
     )
     if (

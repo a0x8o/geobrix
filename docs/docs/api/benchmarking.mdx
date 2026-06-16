@@ -16,7 +16,7 @@ This page explains what the benchmark measures, how to run it **on a Databricks 
 Each function is timed under two independent models:
 
 - **Pure-core** — the raster operation in isolation: open **a single tile**, call the function, measure. It is always one tile per measurement (repeated once for each tile *shape* in the corpus — each tile-size / band-count / dtype / SRID combination), and it ignores `--row-counts` entirely. This is the fairest apples-to-apples view of the algorithm itself, with no Spark or serialization in the path.
-- **Spark-path** — the registered function (`gbx_rst_*`) applied to a Spark DataFrame of *N* rows (the only model that uses `--row-counts`). This includes the realistic per-row overhead (UDF dispatch, serialization, Python-worker round-trips for the lightweight tier), and is swept across a **row ladder** (e.g. 10 → 100 → 1,000 → 10,000 rows).
+- **Spark-path** — the registered function (`rst_*`) applied to a Spark DataFrame of *N* rows (the only model that uses `--row-counts`). This includes the realistic per-row overhead (UDF dispatch, serialization, Python-worker round-trips for the lightweight tier), and is swept across a **row ladder** (e.g. 10 → 100 → 1,000 → 10,000 rows).
 
 Both models run the function `--warmup` times **untimed** (to absorb cold caches, JIT, and worker spin-up) and then `--measured` times **timed**; the reported figure is the **median over the measured passes**. Locally the defaults are `2` warmup / `5` measured; on a cluster they are `1` / `3` for pure-core and `1` / `1` for spark-path (one full *N*-tile iteration is already substantial).
 
@@ -214,6 +214,38 @@ diverge — so the timing above is a like-for-like comparison of identical outpu
 > scratch and assembles on the driver, the same model the sharded/mosaic output
 > uses at scale.
 
+### Tiled output aggregate (`pmtiles_agg`)
+
+`pmtiles_agg` is the grouped-aggregate companion to the PMTiles writer: it
+folds a group of `(tile, z, x, y)` rows into **one PMTiles archive per group key**
+inside a `groupBy(...).agg(pmtiles_agg(...))` job. It is format-agnostic — the same
+function archives raster *or* vector tiles — and is registered from both lightweight
+tiers (`pyrx` and `pyvx`), reusing the same archive assembler as the PMTiles writer.
+The benchmark folds **1,000 tiles into a single archive** on each tier and verifies
+that every group emits a non-empty archive before timing. Run it with
+`gbx:bench:cluster --pmtiles-agg-only --row-counts 1000`.
+
+> **Environment:** Databricks · DBR 17.3 LTS · 1,000 synthetic tiles → one
+> `.pmtiles` archive per tier · `groupBy().agg()` whole-job wall-clock · 5 measured
+> iterations, median reported.
+
+| Aggregator | Tier | Whole-job median (1,000 tiles) | Per-tile | Speedup |
+|---|---|---|---|---|
+| `pmtiles_agg` | lightweight | 0.74 s | 0.74 ms | **~1.07×** (≈ parity) |
+| `pmtiles_agg` | heavyweight | 0.70 s | 0.70 ms | — |
+
+The lightweight tier runs at the heavyweight median **×1.07** (0.742 s vs 0.695 s).
+The distributions overlap — light min 0.654 s sits below the heavyweight p90 of
+0.758 s — so the gap is inside the run-to-run noise band for a grouped aggregate of
+this size; the two tiers are effectively at parity. Both produce **spec-valid PMTiles
+v3 archives** that decode to the **same tile set**. The archives are *not*
+byte-identical: the lightweight writer GZIP-compresses the internal directories while
+the heavyweight writer leaves them uncompressed (`none`) — both are spec-valid and
+decode identically. Decoded-tile parity (light == heavy) is checked separately by the
+JAR-gated `test/ds/test_pmtiles_agg_parity.py`. The lightweight aggregator is a
+grouped-aggregate Arrow UDF (`pandas_udf`) folding each group's tiles into an
+in-memory archive — the same execution shape as `st_asmvt`.
+
 ### Vector readers
 
 The vector readers are benchmarked on a scaled corpus: **5 × 1,000,000-feature** files
@@ -284,6 +316,12 @@ far higher:
 </TabItem>
 
 <TabItem value="raster" label="Raster">
+
+:::note Mode coverage (of the 107 RasterX functions)
+Not every function appears in both timing models — the gaps are deliberate measurement choices, not functional gaps (the lightweight tier implements all 107):
+- **Pure-core: 100 / 107.** The 7 absent are the grouped aggregators (`rst_*_agg`) — a UDAF has no single-tile, single-row form to time in isolation, so they appear only in spark-path.
+- **Spark-path: 83 / 107.** The 24 absent are pure-core-only because their call shape doesn't fit the spark-path tile-DataFrame model: geometry-input constructors (`rst_rasterize`, `rst_gridfrompoints`, `rst_dtmfromgeoms` — the tile DataFrame carries no geometry column), the path reader (`rst_fromfile`), functions needing an in-extent coordinate/geometry literal valid across the multi-CRS corpus (`rst_clip`, `rst_sample`, `rst_viewshed`, `rst_worldtorastercoord*`, `rst_resample_to_res`), render-engine-divergent tiles (`rst_tilexyz`, `rst_xyzpyramid`, `rst_color_relief`), and metadata/scalar accessors (`rst_metadata`, `rst_type`, `rst_summary`, …) whose spark-path cell would be an uncomparable timing-only result.
+:::
 
 ### Pure-core (local, 1024²)
 
@@ -417,7 +455,7 @@ The pure-core table is the **algorithm in isolation**: open one tile, call the f
 
 ### Spark-path at scale (cluster, 1000 tiles, 1024²)
 
-Pure-core measures the algorithm; **spark-path measures the job**. Each function runs as a registered `gbx_rst_*` UDF over a DataFrame of **1,000 distinct 1024² tiles** on a cluster, so the timing includes the realistic per-tile overhead — UDF dispatch, and for the lightweight tier the JVM↔Python serialization of tile bytes on every row.
+Pure-core measures the algorithm; **spark-path measures the job**. Each function runs as a registered `rst_*` UDF over a DataFrame of **1,000 distinct 1024² tiles** on a cluster, so the timing includes the realistic per-tile overhead — UDF dispatch, and for the lightweight tier the JVM↔Python serialization of tile bytes on every row.
 
 > **Environment:** Databricks · DBR 17.3 LTS · 2-band `float32` tiles at **1024²** (EPSG:32618) · **1,000 tiles per iteration** (every tile processed each iteration, not sampled). `Heavy/tile` and `Light/tile` are the whole-job wall-clock amortized over the 1,000 tiles. (At 1,000 tiles, the per-tile figure in ms equals the whole-iteration time in seconds.)
 >
@@ -574,12 +612,12 @@ The pure-Python lightweight aggregator (a grouped-aggregate pandas UDF over `map
 runs **at parity with the heavyweight JVM/OGR aggregator** (~6% apart). Both encode attributes with
 **native protobuf value types** and take features in tile-local `[0, extent]` coordinates, so the
 decoded tiles are **feature-equivalent** — a hard parity gate; the benchmark fails if the tiers
-diverge. Tiles compose with `gbx_pmtiles_agg` for end-to-end publishing.
+diverge. Tiles compose with `pmtiles_agg` for end-to-end publishing.
 
 ### TIN & legacy migration (`st_triangulate`, `st_interpolateelevation*`, `st_legacyaswkb`)
 
-The constrained-Delaunay TIN generators (`gbx_st_triangulate`, `gbx_st_interpolateelevationbbox`,
-`gbx_st_interpolateelevationgeom`) and the legacy-geometry migration function (`gbx_st_legacyaswkb`)
+The constrained-Delaunay TIN generators (`st_triangulate`, `st_interpolateelevationbbox`,
+`st_interpolateelevationgeom`) and the legacy-geometry migration function (`st_legacyaswkb`)
 are benchmarked light (pyvx) vs heavy (vectorx) with decoded-output parity. Light invokes the TIN
 generators as PySpark UDTFs (SQL `LATERAL`); heavy invokes the JVM generator expressions. Parity is
 asserted on decoded output, per the established posture: **triangle count + centroid match within
@@ -592,10 +630,10 @@ Cluster spark-path results (DBR 17.3 LTS; median wall-clock of one full distribu
 
 | Function | Tiles/iter | Heavy (s) | Light (s) | Light speedup |
 |---|---|---|---|---|
-| `gbx_st_interpolateelevationgeom` | 125 | 0.49 | 0.56 | 0.88× |
-| `gbx_st_legacyaswkb` | 1,000 | 0.39 | 0.48 | 0.82× |
-| `gbx_st_interpolateelevationbbox` | 245 | 0.40 | 0.53 | 0.75× |
-| `gbx_st_triangulate` | 220 | 0.41 | 0.70 | 0.60× |
+| `st_interpolateelevationgeom` | 125 | 0.49 | 0.56 | 0.88× |
+| `st_legacyaswkb` | 1,000 | 0.39 | 0.48 | 0.82× |
+| `st_interpolateelevationbbox` | 245 | 0.40 | 0.53 | 0.75× |
+| `st_triangulate` | 220 | 0.41 | 0.70 | 0.60× |
 
 The heavyweight JVM/JTS tier is modestly faster across all four. The lightweight tier is competitive
 on legacy migration and elevation interpolation (~0.75–0.88×) and ~1.7× behind on `st_triangulate`:
@@ -605,9 +643,148 @@ Decoded-output parity holds across both tiers (enforced by the cross-tier parity
 
 </TabItem>
 
-<TabItem value="grid" label="Grid (soon)">
+<TabItem value="grid" label="Grid">
 
-GridX function benchmarks (BNG, Quadbin, custom grids) are coming soon.
+### Quadbin (`quadbin_pointascell`, `quadbin_polyfill`, `quadbin_tessellate`, `quadbin_cellunion_agg`)
+
+The quadbin grid functions are benchmarked light (pygx) vs heavy (gridx.quadbin) with exact-output
+parity across four representative shapes: a scalar encode (`quadbin_pointascell`, lon/lat → cell),
+a geometry → cell-array fill (`quadbin_polyfill`), a geometry → cell-clip struct array
+(`quadbin_tessellate`), and a grouped aggregate (`quadbin_cellunion_agg`, cell ids → unioned
+coverage geometry). Both tiers expose the same `quadbin_*` SQL names, so the light tier is
+collected before the heavy tier re-registers. Parity is asserted on decoded output: **exact cell-id
+equality** for `pointascell` and `polyfill`, **exact cells with centroid match within 1e-6** for
+`tessellate`, and **decoded union-geometry equality (1e-6)** per group for `cellunion_agg`. Run it
+with `gbx:bench:cluster --grid-quadbin-only`.
+
+**All 10 quadbin functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path, 1,000
+tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set parity holds for all 10**
+(test-enforced — in-cell and by the `test_parity_quadbin` cross-tier suite).
+
+On *timing*, these are **sub-millisecond cell-math** operations, so the spark-path wall-clock is
+dominated by per-row JVM↔Python dispatch, not by the work itself. The 5-measured-iteration medians put
+the lightweight `pygx` tier **roughly at parity** with the heavyweight JVM tier across all 10
+(0.89×–1.33×): the small gaps are fixed UDF-boundary/dispatch cost on top of very cheap per-row cell
+math, not an algorithmic deficiency. (One honest caveat: at sub-millisecond per-tile work, these
+numbers still carry some run-to-run variance, so read the relative ordering rather than the last digit.)
+
+Cluster spark-path results (median wall-clock of one full distributed iteration over 1,000 tiles;
+speedup = heavy ÷ light, ≥1.0 → light faster):
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `quadbin_resolution` | 0.28 | 0.21 | 1.33× |
+| `quadbin_cellunion_agg` | 0.38 | 0.29 | 1.32× |
+| `quadbin_tessellate` | 0.20 | 0.18 | 1.11× |
+| `quadbin_polyfill` | 0.24 | 0.23 | 1.06× |
+| `quadbin_kring` | 0.23 | 0.22 | 1.05× |
+| `quadbin_distance` | 0.19 | 0.18 | 1.04× |
+| `quadbin_cellunion` | 0.23 | 0.22 | 1.04× |
+| `quadbin_aswkb` | 0.15 | 0.15 | 0.98× |
+| `quadbin_pointascell` | 0.21 | 0.22 | 0.96× |
+| `quadbin_centroid` | 0.17 | 0.19 | 0.89× |
+
+`quadbin_cellunion_agg` is a grouped aggregate over 8 groups; the other nine are 1,000-row
+scalar/array operations.
+
+The implementation is **scale-aware**: scalar/bounded-output ops (`pointascell`, `resolution`,
+`distance`, `aswkb`, `centroid`, `cellunion`) use vectorized/batched `pandas_udf`s, while
+**array-returning** ops (`kring`, `polyfill`, `tessellate`) use plain row-at-a-time UDFs so a single
+batch never buffers many large variable-length outputs (a memory-safety choice for large
+geometries/zoom levels). The lightweight `pygx` tier's decisive advantage here is **Serverless/ARM
+reach and no-JVM/JAR install**, with timing competitive with the heavyweight tier.
+
+### BNG (all 23 `bng_*` functions)
+
+The British National Grid functions are available in both tiers — light (pygx, a pure-Python
+codec port of `BNG.scala`) vs heavy (gridx.bng) — with the same exact-output parity contract as
+quadbin: **exact cell-set equality** for `eastnorthasbng`/`pointascell`/`polyfill`/`kring`,
+**exact cells with chip-geometry match** for `tessellate`, and **decoded chip-geometry equality**
+per group for the aggregates (asserted by the `test_parity_bng` cross-tier suite). The execution
+shape mirrors quadbin (numpy-vectorized scalar `pandas_udf`s for cell-id math, plain UDFs for
+array-returning ops, UDTFs for the explodes, grouped aggregates for the chip aggregators), so the
+timing expectation is the same: sub-millisecond STRING cell-id math dominated by the per-row
+JVM↔Python boundary, with WKB-geometry ops additionally carrying the geometry-bytes serialization
+cost. Run the BNG legs with `gbx:bench:cluster --grid-bng-only`.
+
+**All 23 `bng_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, spark-path, 1,000
+tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set / decoded-geometry parity
+holds for all 23** — light output equals heavy output, enforced by the in-cell parity gate and the
+`test_parity_bng` cross-tier suite (all 23 parity gates passed; 0 errors).
+
+On *timing*, the pure-Python `pygx` BNG tier runs at **near-parity** with the heavyweight JVM tier:
+across all 23 functions the lightweight tier is within **~±20% of heavy (0.82×–1.18×)**, all
+sub-millisecond per tile at 1,000 tiles/iteration. 7/23 are light-faster (best `bng_kring` 1.18×);
+16/23 are marginally heavy-faster (most `bng_cellintersection` 0.82×). These deltas sit within the
+run-to-run noise band for sub-second distributed jobs at this scale — effectively at parity. (Note
+BNG WKB carries no SRID for EPSG:27700, unlike quadbin's EWKB.)
+
+Cluster spark-path results (median wall-clock of one full distributed iteration over 1,000 tiles;
+speedup = heavy ÷ light, ≥1.0 → light faster):
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `bng_kring` | 0.20 | 0.17 | 1.18× |
+| `bng_geomkring` | 0.15 | 0.13 | 1.11× |
+| `bng_geomkringexplode` | 0.48 | 0.44 | 1.08× |
+| `bng_cellunion_agg` | 0.29 | 0.27 | 1.07× |
+| `bng_aswkt` | 0.18 | 0.17 | 1.06× |
+| `bng_centroid` | 0.14 | 0.14 | 1.06× |
+| `bng_kloop` | 0.13 | 0.13 | 1.01× |
+| `bng_cellunion` | 0.14 | 0.15 | 0.97× |
+| `bng_aswkb` | 0.14 | 0.14 | 0.96× |
+| `bng_kloopexplode` | 0.26 | 0.27 | 0.96× |
+| `bng_kringexplode` | 0.26 | 0.27 | 0.96× |
+| `bng_cellarea` | 0.15 | 0.16 | 0.94× |
+| `bng_geomkloopexplode` | 0.43 | 0.47 | 0.93× |
+| `bng_euclideandistance` | 0.14 | 0.15 | 0.91× |
+| `bng_geomkloop` | 0.15 | 0.16 | 0.90× |
+| `bng_polyfill` | 0.14 | 0.16 | 0.89× |
+| `bng_tessellateexplode` | 0.42 | 0.47 | 0.89× |
+| `bng_cellintersection_agg` | 0.25 | 0.28 | 0.89× |
+| `bng_eastnorthasbng` | 0.14 | 0.16 | 0.88× |
+| `bng_tessellate` | 0.14 | 0.17 | 0.86× |
+| `bng_pointascell` | 0.15 | 0.17 | 0.86× |
+| `bng_distance` | 0.13 | 0.16 | 0.86× |
+| `bng_cellintersection` | 0.14 | 0.17 | 0.82× |
+
+### Custom grid (all 7 `custom_*` functions)
+
+The custom equal-area grid functions are available in both tiers — light (pygx) vs heavy
+(gridx.custom) — with the same exact-output parity contract as quadbin and BNG: **exact cell-id /
+cell-set equality** for `pointascell`/`polyfill`/`kring` and the `grid` struct, **decoded geometry
+match within 1e-6** for `centroid`/`cellaswkb`/`cellaswkt`, and an **identical grid struct** for
+`grid` (asserted by the JAR-gated cross-tier parity suite and the in-cell hard-assert gates on the
+cluster run). The execution shape mirrors the other grids (vectorized scalar `pandas_udf`s for the
+cell-id math, plain UDFs for the geometry/array-returning ops), so the timing expectation is the
+same: sub-millisecond cell math dominated by the per-row JVM↔Python boundary, with WKB/WKT-geometry
+ops additionally carrying the geometry-bytes serialization cost. Run the custom legs with
+`gbx:bench:cluster --grid-custom-only`.
+
+**All 7 `custom_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path,
+1,000 tiles/iteration, 5 measured iterations, both tiers). **Exact cell-id/cell-set parity holds for
+all 7** — light output equals heavy output (cell ids/sets exact; geometry within 1e-6; grid struct
+identical), enforced by the JAR-gated cross-tier parity suite and the in-cell hard-assert gates on the
+cluster run.
+
+On *timing*, the 5-measured-iteration medians put the pure-Python `pygx` custom-grid tier **roughly at
+parity** with the heavyweight Scala tier across all 7 (0.87×–1.34×): it is faster on the cheapest ops
+(`custom_centroid` 1.34×, `custom_kring` 1.33×) and marginally slower on a few. Absolute times are all
+sub-second at 1,000 tiles (sub-millisecond per tile), so the gaps are the fixed Python UDF-boundary /
+Arrow serialization cost on top of very cheap per-row grid math, not an algorithmic deficiency.
+
+Cluster spark-path results (median wall-clock of one full distributed iteration over 1,000 tiles;
+speedup = heavy ÷ light, ≥1.0 → light faster):
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `custom_centroid` | 0.19 | 0.14 | 1.34× |
+| `custom_kring` | 0.17 | 0.13 | 1.33× |
+| `custom_cellaswkt` | 0.18 | 0.15 | 1.20× |
+| `custom_grid` | 0.15 | 0.15 | 0.97× |
+| `custom_pointascell` | 0.16 | 0.18 | 0.89× |
+| `custom_cellaswkb` | 0.14 | 0.16 | 0.89× |
+| `custom_polyfill` | 0.13 | 0.15 | 0.87× |
 
 </TabItem>
 

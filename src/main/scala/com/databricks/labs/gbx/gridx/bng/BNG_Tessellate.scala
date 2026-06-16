@@ -6,6 +6,7 @@ import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.locationtech.jts.geom.Geometry
@@ -29,29 +30,40 @@ case class BNG_Tessellate(
 /** Companion: SQL name gbx_bng_tessellate, builder, and eval. */
 object BNG_Tessellate extends WithExpressionInfo {
 
-    def eval(wkt: UTF8String, resolution: Int, keepCoreGeom: Boolean): Array[InternalRow] = {
-        val chips = executeWKT(wkt.toString, resolution, keepCoreGeom)
-            .map(c => InternalRow.fromSeq(Seq(UTF8String.fromString(c._1), c._2, JTS.toWKB(c._3))))
-        chips.toArray
+    /** Build the chip rows from the tessellation iterator.
+      *
+      * The chip geometry is null for core cells when keepCoreGeom is false; JTS.toWKB
+      * crashes on a null geometry ("Unknown Geometry type"), so emit a null WKB for
+      * those (the struct's geom field is nullable). The catalyst dataType is an
+      * ArrayType, so eval MUST return ArrayData — returning a raw Array[InternalRow]
+      * ClassCasts in the explode / projection path on collect (cf. Quadbin_Tessellate).
+      */
+    private def toRows(chips: Iterator[(String, Boolean, Geometry)]): ArrayData = {
+        val rows = chips
+            .map(c =>
+                InternalRow.fromSeq(
+                  Seq(
+                    UTF8String.fromString(c._1),
+                    c._2,
+                    if (c._3 == null) null else JTS.toWKB(c._3)
+                  )
+                )
+            )
+            .toArray
+        ArrayData.toArrayData(rows)
     }
 
-    def eval(wkb: Array[Byte], resolution: Int, keepCoreGeom: Boolean): Array[InternalRow] = {
-        val chips = executeWKB(wkb, resolution, keepCoreGeom)
-            .map(c => InternalRow.fromSeq(Seq(UTF8String.fromString(c._1), c._2, JTS.toWKB(c._3))))
-        chips.toArray
-    }
+    def eval(wkt: UTF8String, resolution: Int, keepCoreGeom: Boolean): ArrayData =
+        toRows(executeWKT(wkt.toString, resolution, keepCoreGeom))
 
-    def eval(wkt: UTF8String, resolution: UTF8String, keepCoreGeom: Boolean): Array[InternalRow] = {
-        val chips = executeWKT(wkt.toString, BNG.resolutionMap(resolution.toString), keepCoreGeom)
-            .map(c => InternalRow.fromSeq(Seq(UTF8String.fromString(c._1), c._2, JTS.toWKB(c._3))))
-        chips.toArray
-    }
+    def eval(wkb: Array[Byte], resolution: Int, keepCoreGeom: Boolean): ArrayData =
+        toRows(executeWKB(wkb, resolution, keepCoreGeom))
 
-    def eval(wkb: Array[Byte], resolution: UTF8String, keepCoreGeom: Boolean): Array[InternalRow] = {
-        val chips = executeWKB(wkb, BNG.resolutionMap(resolution.toString), keepCoreGeom)
-            .map(c => InternalRow.fromSeq(Seq(UTF8String.fromString(c._1), c._2, JTS.toWKB(c._3))))
-        chips.toArray
-    }
+    def eval(wkt: UTF8String, resolution: UTF8String, keepCoreGeom: Boolean): ArrayData =
+        toRows(executeWKT(wkt.toString, BNG.resolutionMap(resolution.toString), keepCoreGeom))
+
+    def eval(wkb: Array[Byte], resolution: UTF8String, keepCoreGeom: Boolean): ArrayData =
+        toRows(executeWKB(wkb, BNG.resolutionMap(resolution.toString), keepCoreGeom))
 
     def executeWKT(wkt: String, resolution: Int, keepCoreGeom: Boolean): Iterator[(String, Boolean, Geometry)] = {
         val geometry: Geometry = JTS.fromWKT(wkt)
@@ -65,7 +77,18 @@ object BNG_Tessellate extends WithExpressionInfo {
 
     override def name: String = "gbx_bng_tessellate"
 
-    override def builder(): FunctionBuilder = (c: Seq[Expression]) => new BNG_Tessellate(c(0), c(1), c(2))
+    /** Accept the canonical 2-arg form gbx_bng_tessellate(geom, resolution) — defaulting
+      * keepCoreGeom to false (core chips carry a null geom, materialized downstream) — as
+      * well as the explicit 3-arg form. The 2-arg form is the registered signature and the
+      * one the light tier exposes; only requiring 3 args threw IndexOutOfBoundsException. */
+    override def builder(): FunctionBuilder = {
+        case Seq(g, r)    => new BNG_Tessellate(g, r, Literal(false))
+        case Seq(g, r, k) => new BNG_Tessellate(g, r, k)
+        case other        =>
+            throw new IllegalArgumentException(
+              s"$name expects 2 or 3 arguments (geom, resolution[, keepCoreGeom]); got ${other.length}"
+            )
+    }
 
 
 }

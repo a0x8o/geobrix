@@ -98,6 +98,11 @@ def register(spark: SparkSession = None) -> None:
     spark.udtf.register("gbx_rst_maketiles", _RstMakeTilesUDTF)
     spark.udtf.register("gbx_rst_h3_tessellate", _RstH3TessellateUDTF)
     spark.udtf.register("gbx_rst_xyzpyramid", _RstXyzPyramidUDTF)
+    # PMTiles archive aggregate is format-agnostic (raster or vector tiles);
+    # register it from the light raster tier too.
+    from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+    register_pmtiles_agg(spark)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------

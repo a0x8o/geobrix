@@ -60,4 +60,8 @@ runs:
         # pyproject sets pythonpath=["src"]; exclude integration (network) tests.
         # test/ds = lightweight DataSource readers/writer + the tiled-output
         # framework (raster_gbx/gtiff_gbx/pmtiles_gbx); same light-dep set as pyrx.
-        pytest test/pyrx test/ds test/pyvx -m "not integration" -v
+        # The lightweight tier is exercised ONLY here (the heavy phase skips these
+        # dirs via test/conftest.py collect_ignore). Every light test dir must be
+        # listed: pyrx, ds, pyvx, pygx (light GridX), pmtiles_light (light
+        # pmtiles_agg). See test/conftest.py for the maintained condition.
+        pytest test/pyrx test/ds test/pyvx test/pygx test/pmtiles_light -m "not integration" -v

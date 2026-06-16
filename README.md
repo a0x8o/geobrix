@@ -7,6 +7,17 @@
 [![python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-Databricks-blue.svg)](LICENSE)
 
+<!--
+  Function counts — keep verbatim with docs/tests-function-info/registered_functions.txt
+  (the canonical source; total is guarded by `gbx:test:bindings`).
+  Update these badges and the sentence below if functions are added or removed.
+-->
+![Functions](https://img.shields.io/badge/functions-154-2e7d32)
+![RasterX](https://img.shields.io/badge/RasterX-107-1565c0)
+![GridX](https://img.shields.io/badge/GridX-40-1565c0)
+![VectorX](https://img.shields.io/badge/VectorX-6-1565c0)
+![PMTiles](https://img.shields.io/badge/PMTiles-1-1565c0)
+
 **GeoBrix** is a high-performance spatial library for Databricks that delivers the next generation of *product-augmenting* capabilities — raster, discrete global grids, and vector format I/O — and is built to drive you *deeper* into Databricks-native [`GEOMETRY`/`GEOGRAPHY` and ST/H3 functions](https://databrickslabs.github.io/geobrix/docs/databricks-spatial), not replace them. It is the modern successor to [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (now in maintenance).
 
 > **Full docs:** **https://databrickslabs.github.io/geobrix/** — this README is the 2-minute tour.
@@ -23,7 +34,7 @@
 <img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
 
 - **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster). **Both tiers** — lightweight `pyrx` and heavyweight Scala.
-- **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex). **Heavyweight** Scala tier (lightweight `pygx` planned).
+- **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex). **Both tiers** — lightweight `pygx` and heavyweight Scala.
 - **[VectorX](https://databrickslabs.github.io/geobrix/docs/api/vectorx-functions)** — MVT tiles, TIN surfaces, and legacy-geometry migration on top of native ST. **Both tiers** — lightweight `pyvx` and heavyweight Scala.
 
 All SQL functions register with a `gbx_` prefix (e.g. `gbx_rst_clip`, `gbx_bng_cellarea`, `gbx_st_asmvt`) so usage is clearly attributable to GeoBrix on classic compute. Python/Scala bindings mirror the names. See [benchmarks](https://databrickslabs.github.io/geobrix/docs/api/benchmarking) for light-vs-heavy timings. 
@@ -38,7 +49,7 @@ Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases
 
 ```python
 from databricks.labs.gbx.ds.register import register   # *_gbx readers/writers
-from databricks.labs.gbx.pyrx import functions as rx    # gbx_rst_* functions
+from databricks.labs.gbx.pyrx import functions as rx   # gbx_rst_* functions
 
 register(spark)
 rx.register(spark)   # optional — only to call the gbx_rst_* SQL functions
@@ -88,7 +99,7 @@ Light vector readers/writers exchange geometry as **WKB/WKT** with companion `*_
 
 ## Building, deploying, releasing
 
-See the [`scripts`](./scripts) folder and the [docs](https://databrickslabs.github.io/geobrix/).
+See the [`scripts`](./scripts) folder and the [docs](https://databrickslabs.github.io/geobrix/docs/developers).
 
 ## Support
 

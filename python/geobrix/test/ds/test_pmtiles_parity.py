@@ -10,19 +10,22 @@ Run: bash scripts/commands/gbx-test-python.sh \
     --with-integration --log pmtiles-parity.log
 """
 
+import contextlib
 import logging
 import os
 from pathlib import Path
 
 import pytest
+from pmtiles import tile as _pmtile
 from pmtiles.reader import MmapSource, Reader
+from pmtiles.tile import Compression
 
 pytestmark = pytest.mark.integration
 
 PNG = b"\x89PNG\r\n\x1a\n"
 
 _HERE = Path(__file__).resolve()
-_JARS = sorted((_HERE.parents[3] / "lib").glob("geobrix-*-jar-with-dependencies.jar"))
+_JARS = sorted((_HERE.parents[2] / "lib").glob("geobrix-*-jar-with-dependencies.jar"))
 
 
 @pytest.fixture(scope="module")
@@ -49,17 +52,40 @@ def spark_with_jar():
     yield session
 
 
+@contextlib.contextmanager
+def _internal_compression_aware(reader):
+    """Honor the archive's ``internal_compression`` when reading directories.
+
+    The stock ``pmtiles`` ``deserialize_directory`` unconditionally
+    ``gzip.decompress``-es the directory bytes. The heavy (Scala) writer emits
+    ``internal_compression=NONE`` directories (uncompressed varint stream), which
+    that hardcoded path can't read. The light writer forces GZIP. To compare both
+    tiers we make the decoder respect the header: pass directory bytes through
+    untouched when the header says NONE, and gzip-decompress otherwise.
+    """
+    if reader.header()["internal_compression"] == Compression.NONE:
+        orig = _pmtile.gzip.decompress
+        _pmtile.gzip.decompress = lambda b: b
+        try:
+            yield
+        finally:
+            _pmtile.gzip.decompress = orig
+    else:
+        yield
+
+
 def _decode_archive(path):
     out = {}
     with open(path, "rb") as f:
         r = Reader(MmapSource(f))
-        for z in range(0, 10):
-            n = 2**z
-            for x in range(n):
-                for y in range(n):
-                    t = r.get(z, x, y)
-                    if t is not None:
-                        out[(z, x, y)] = t
+        with _internal_compression_aware(r):
+            for z in range(0, 10):
+                n = 2**z
+                for x in range(n):
+                    for y in range(n):
+                        t = r.get(z, x, y)
+                        if t is not None:
+                            out[(z, x, y)] = t
     return out
 
 

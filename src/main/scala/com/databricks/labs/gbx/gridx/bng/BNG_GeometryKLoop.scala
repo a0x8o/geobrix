@@ -5,6 +5,7 @@ import com.databricks.labs.gbx.gridx.grid.BNG
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.locationtech.jts.geom.Geometry
@@ -28,17 +29,21 @@ case class BNG_GeometryKLoop(
 
 /** Companion: SQL name gbx_bng_geometrykloop, builder, and eval. */
 object BNG_GeometryKLoop extends WithExpressionInfo {
-    def eval(geom: UTF8String, res: Int, k: Int): Array[String] = {
+    def eval(geom: UTF8String, res: Int, k: Int): ArrayData = {
         val geometry = JTS.fromWKT(geom.toString)
         val result = execute(geometry, res, k)
-        result.toArray
+        ArrayData.toArrayData(result.map(UTF8String.fromString).toArray)
     }
 
-    def eval(geom: Array[Byte], res: Int, k: Int): Array[String] = {
+    def eval(geom: Array[Byte], res: Int, k: Int): ArrayData = {
         val geometry = JTS.fromWKB(geom)
         val result = execute(geometry, res, k)
-        result.toArray
+        ArrayData.toArrayData(result.map(UTF8String.fromString).toArray)
     }
+
+    def eval(geom: UTF8String, res: UTF8String, k: Int): ArrayData = eval(geom, BNG.getResolution(res), k)
+
+    def eval(geom: Array[Byte], res: UTF8String, k: Int): ArrayData = eval(geom, BNG.getResolution(res), k)
 
     def execute(geom: Geometry, res: Int, k: Int): Set[String] = {
         val kLoop = BNG.geometryKLoop(geom, res, k)

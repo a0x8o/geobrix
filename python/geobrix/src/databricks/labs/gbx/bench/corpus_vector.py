@@ -311,6 +311,416 @@ def generate_legacy_structs(n_rows: int):
     return rows, schema
 
 
+# ---------------------------------------------------------------------------------------------
+# Quadbin (light pygx vs heavy gridx.quadbin) corpus builders.  Plain-Python, deterministic.
+# Each returns (rows, schema) for ``spark.createDataFrame(rows, schema)``.  Shapes mirror the
+# benched quadbin functions:
+#   * points        -> quadbin_pointascell (scalar lon/lat -> cell)
+#   * polygons WKT  -> quadbin_polyfill (geom -> ARRAY<cell>) and quadbin_tessellate (struct-array)
+#   * cell-id arrays + group keys -> quadbin_cellunion_agg (grouped aggregate)
+#   * single cell ids -> quadbin_resolution / kring / aswkb / centroid (scalar cell-in)
+#   * cell-id pairs   -> quadbin_distance (scalar two-cell-in)
+#   * cell-id arrays  -> quadbin_cellunion (scalar ARRAY<cell> -> EWKB; reuses cellid_arrays)
+# Coordinates stay well inside the WebMercator-valid band (|lat| < 85) so both tiers agree.
+# ---------------------------------------------------------------------------------------------
+
+
+def generate_quadbin_points(n_rows: int):
+    """``n_rows`` deterministic WGS84 (lon, lat) points for quadbin_pointascell.
+
+    Returns ``(rows, schema)`` where each row is ``(lon, lat)``.  Points are
+    spread pseudo-randomly-but-deterministically over the WebMercator-valid band
+    (|lat| < 85) so row ``i`` always yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]  (inside |lat| < 85)
+        rows.append((float(lon), float(lat)))
+    return rows, "lon double, lat double"
+
+
+def generate_quadbin_polygons(n_rows: int):
+    """``n_rows`` deterministic WKT polygons for quadbin_polyfill / quadbin_tessellate.
+
+    Returns ``(rows, schema)`` where each row is a single-field tuple holding a
+    WKT polygon string.  Each polygon is a small axis-aligned box at a
+    deterministic pseudo-random lon/lat (inside |lat| < 85), sized so polyfill
+    yields a handful of cells -- enough to exercise the bbox enumeration + the
+    per-cell intersect (tessellate) without ballooning the cell count."""
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35000) / 100.0 - 175.0  # leave room for +d
+        lat = (i * 37 % 16000) / 100.0 - 80.0
+        d = 0.5  # ~0.5 deg box -> several cells at the benched resolution
+        wkt = (
+            f"POLYGON(({lon} {lat}, {lon + d} {lat}, "
+            f"{lon + d} {lat + d}, {lon} {lat + d}, {lon} {lat}))"
+        )
+        rows.append((wkt,))
+    return rows, "geom string"
+
+
+def generate_quadbin_cellid_arrays(n_rows: int, res: int = 8):
+    """``n_rows`` (group_key, cell BIGINT) rows for the quadbin_cellunion_agg grouped agg.
+
+    Returns ``(rows, schema)``.  Each row carries a ``group`` key plus a single
+    quadbin ``cell`` id (one cell per row, streamed into the aggregator).  Cells
+    are computed by pure-Python quadbin math (matching both tiers) from a
+    deterministic lon/lat at ``res``; rows are distributed across a small number
+    of groups so the grouped aggregate produces several unions.  Cells within a
+    group are spatially adjacent (a k=1 footprint walked deterministically) so
+    each group's union is a contiguous coverage, not scattered specks."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    n_groups = max(1, min(8, n_rows))
+    rows = []
+    for i in range(n_rows):
+        g = i % n_groups
+        # Deterministic center per (group); offset cells within the group by a
+        # small lon/lat step so a group spans a contiguous patch of cells.
+        base_lon = (g * 41 % 340) - 170.0
+        base_lat = (g * 23 % 160) - 80.0
+        step = (i // n_groups) + 1
+        lon = base_lon + (step % 5) * 0.5
+        lat = base_lat + ((step // 5) % 5) * 0.5
+        cell = _qb.point_as_cell(float(lon), float(lat), int(res))
+        rows.append((int(g), int(cell)))
+    return rows, "group int, cell bigint"
+
+
+def generate_quadbin_cells(n_rows: int, res: int = 12):
+    """``n_rows`` deterministic single quadbin ``cell`` ids for the scalar legs.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(cell,)``
+    holding a BIGINT quadbin cell id.  Cells are computed by the pure-Python
+    ``_quadbin.point_as_cell`` over a deterministic lon/lat sweep at a fixed
+    ``res`` (default 12), so light and heavy see the SAME input cells (cell-id
+    math is identical to both tiers' ``point_as_cell``).  Feeds the scalar
+    cell-in legs: ``resolution``, ``kring``, ``aswkb``, ``centroid``.  Points
+    stay inside the WebMercator-valid band (|lat| < 85) so every row yields a
+    well-defined cell."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]  (inside |lat| < 85)
+        cell = _qb.point_as_cell(float(lon), float(lat), int(res))
+        rows.append((int(cell),))
+    return rows, "cell bigint"
+
+
+def generate_quadbin_cell_pairs(n_rows: int, res: int = 12):
+    """``n_rows`` deterministic (cell_a, cell_b) BIGINT pairs for quadbin_distance.
+
+    Returns ``(rows, schema)`` where each row is ``(cell_a, cell_b)`` -- two
+    quadbin cell ids at the SAME ``res`` (a precondition of quadbin_distance).
+    ``cell_a`` is the deterministic sweep cell (same as ``generate_quadbin_cells``);
+    ``cell_b`` is a second cell a small, deterministic lon/lat step away (so the
+    two are at the same resolution but generally a non-zero chessboard distance
+    apart).  Cells are computed by pure-Python ``_quadbin.point_as_cell`` so both
+    tiers see identical inputs."""
+    from databricks.labs.gbx.pygx import _quadbin as _qb
+
+    rows = []
+    for i in range(n_rows):
+        lon = (i * 73 % 35900) / 100.0 - 179.0  # [-179, 179]
+        lat = (i * 37 % 16800) / 100.0 - 84.0  # [-84, 84]
+        # Second point a deterministic small step away, kept inside the band.
+        lon_b = lon + ((i % 5) + 1) * 0.05
+        lat_b = lat + ((i % 3) + 1) * 0.05
+        if lon_b > 179.0:
+            lon_b = lon - 0.25
+        if lat_b > 84.0:
+            lat_b = lat - 0.25
+        cell_a = _qb.point_as_cell(float(lon), float(lat), int(res))
+        cell_b = _qb.point_as_cell(float(lon_b), float(lat_b), int(res))
+        rows.append((int(cell_a), int(cell_b)))
+    return rows, "cell_a bigint, cell_b bigint"
+
+
+# ---------------------------------------------------------------------------------------------
+# BNG (light pygx vs heavy gridx.bng) corpus builders.  Plain-Python, deterministic.  Mirrors
+# the quadbin builders above but in EPSG:27700 (British National Grid eastings/northings, NOT
+# WGS84 lon/lat) and STRING cell ids (not BIGINT).  Each returns (rows, schema).  Shapes mirror
+# the benched BNG functions:
+#   * WKT points   -> bng_pointascell (geom centroid -> STRING cell)
+#   * WKT polygons -> bng_polyfill (geom -> ARRAY<STRING>) and bng_tessellate (chip struct-array)
+#   * single cells -> bng_kring (STRING cell-in -> ARRAY<STRING>)
+#   * (group, chip STRUCT) -> bng_cellunion_agg (grouped aggregate over chip structs)
+# Coordinates stay well inside the BNG-valid land extent (the GB land mass, roughly
+# easting [0, 700000], northing [0, 1300000]); a London anchor (e=530000, n=180000) keeps every
+# generated point on valid BNG land so both tiers agree.  Cells are computed by pure-Python
+# ``_bng`` so light and heavy consume identical inputs.  Resolutions are passed as the canonical
+# string keys ("1km", "100m", ...) -- NEVER metres-as-Int -- per the BNG resolution convention.
+# ---------------------------------------------------------------------------------------------
+
+# London anchor in EPSG:27700 (easting, northing) -- on valid BNG land.
+_BNG_ANCHOR_E = 530000.0
+_BNG_ANCHOR_N = 180000.0
+
+
+def generate_bng_points(n_rows: int):
+    """``n_rows`` deterministic EPSG:27700 WKT points for bng_pointascell.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(geom,)``
+    holding a WKT ``POINT(e n)`` in British National Grid eastings/northings
+    (NOT WGS84).  Points are spread deterministically over a ~50km x 50km patch
+    around the London anchor so they stay on valid BNG land and row ``i`` always
+    yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0  # +[0, 50000) m
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        rows.append((f"POINT({e} {n})",))
+    return rows, "geom string"
+
+
+def generate_bng_polygons(n_rows: int):
+    """``n_rows`` deterministic EPSG:27700 WKT polygons for bng_polyfill / bng_tessellate.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple holding a WKT
+    polygon string in BNG eastings/northings.  Each polygon is a small
+    axis-aligned box (~2.5km) at a deterministic offset from the London anchor,
+    sized so polyfill at "1km" yields a handful of cells -- enough to exercise
+    the bbox enumeration + per-cell intersect (tessellate) without ballooning."""
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 400) * 100.0  # +[0, 40000) m, leaves room for +d
+        n = _BNG_ANCHOR_N + (i * 37 % 400) * 100.0
+        d = 2500.0  # ~2.5km box -> several 1km cells
+        wkt = (
+            f"POLYGON(({e} {n}, {e + d} {n}, "
+            f"{e + d} {n + d}, {e} {n + d}, {e} {n}))"
+        )
+        rows.append((wkt,))
+    return rows, "geom string"
+
+
+def generate_bng_cells(n_rows: int, res="1km"):
+    """``n_rows`` deterministic single BNG ``cell`` id STRINGs for the scalar legs.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(cell,)``
+    holding a STRING BNG cell id.  Cells are computed by pure-Python
+    ``_bng.point_as_cell`` over a deterministic easting/northing sweep around the
+    London anchor at ``res`` (a string resolution key, default "1km"), so light
+    and heavy see the SAME input cells.  Feeds the scalar cell-in legs (kring)."""
+    from databricks.labs.gbx.pygx import _bng
+
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        cell = _bng.point_as_cell(float(e), float(n), res)
+        rows.append((str(cell),))
+    return rows, "cell string"
+
+
+def generate_bng_chip_groups(n_rows: int, res="1km"):
+    """``n_rows`` (group, chip STRUCT) rows for the bng_cellunion_agg grouped agg.
+
+    Returns ``(rows, schema)``.  Each row carries a ``group`` key plus a single
+    BNG chip ``STRUCT<cellid STRING, core BOOLEAN, chip BINARY>`` (one chip per
+    row, streamed into the aggregator).  Both tiers' cellunion_agg consume the
+    same chip struct shape; the chip geometry is the full cell polygon (a core
+    chip materialized to WKB) for the cell at a deterministic easting/northing.
+    Rows are distributed across a small number of groups. `cellunion_agg` is a
+    SAME-CELL union (heavy enforces one cell id per aggregate), so every chip in
+    a group is the SAME cell — the group key maps 1:1 to a distinct cell, and the
+    group's union is that cell's polygon. (A multi-cell group is outside the
+    function's contract and the two tiers legitimately diverge there, so we don't
+    benchmark it.)"""
+    from shapely import to_wkb as _to_wkb
+
+    from databricks.labs.gbx.pygx import _bng
+
+    n_groups = max(1, min(8, n_rows))
+    rows = []
+    for i in range(n_rows):
+        g = i % n_groups
+        # One distinct cell per group; ALL chips in a group share that cell, so
+        # the grouped aggregate performs a same-cell union (its contract).
+        e = _BNG_ANCHOR_E + (g * 7000.0)
+        n = _BNG_ANCHOR_N + (g * 5000.0)
+        cellid = _bng.point_as_cell(float(e), float(n), res)
+        chip = _to_wkb(_bng.cell_id_to_geometry(_bng.parse(cellid)))
+        rows.append((int(g), (str(cellid), False, chip)))
+    schema = "group int, chip struct<cellid:string,core:boolean,chip:binary>"
+    return rows, schema
+
+
+def generate_bng_cell_pairs(n_rows: int, res="1km"):
+    """``n_rows`` deterministic (cell_a, cell_b) STRING pairs for the two-arg legs.
+
+    Returns ``(rows, schema)`` where each row is ``(cell_a, cell_b)`` -- two BNG
+    cell ids at the SAME ``res`` (a precondition of bng_distance /
+    bng_euclideandistance).  ``cell_a`` is the deterministic sweep cell (same as
+    ``generate_bng_cells``); ``cell_b`` is a second cell a small, deterministic
+    easting/northing step away (so the two are at the same resolution but
+    generally a non-zero grid distance apart).  Cells are computed by pure-Python
+    ``_bng.point_as_cell`` over EPSG:27700 eastings/northings around the London
+    anchor so both tiers see identical inputs and stay on valid BNG land."""
+    from databricks.labs.gbx.pygx import _bng
+
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        # Second cell a deterministic small step away (+[100, 500]m east, +[100,
+        # 300]m north), kept on valid BNG land near the London anchor.
+        e_b = e + ((i % 5) + 1) * 100.0
+        n_b = n + ((i % 3) + 1) * 100.0
+        cell_a = _bng.point_as_cell(float(e), float(n), res)
+        cell_b = _bng.point_as_cell(float(e_b), float(n_b), res)
+        rows.append((str(cell_a), str(cell_b)))
+    return rows, "cell_a string, cell_b string"
+
+
+def generate_bng_eastnorth(n_rows: int):
+    """``n_rows`` deterministic (e, n) DOUBLE pairs for bng_eastnorthasbng.
+
+    Returns ``(rows, schema)`` where each row is ``(e, n)`` -- two EPSG:27700
+    eastings/northings (DOUBLE, BNG, NOT WGS84).  Mirrors ``generate_bng_points``
+    but emits two doubles instead of a WKT string, sweeping deterministically over
+    a ~50km x 50km patch around the London anchor so every row stays on valid BNG
+    land and yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        rows.append((float(e), float(n)))
+    return rows, "e double, n double"
+
+
+def generate_bng_chip_pairs(n_rows: int, res="1km"):
+    """``n_rows`` (lid, lcore, lchip, rid, rcore, rchip) rows for the chip-struct legs.
+
+    Returns ``(rows, schema)`` for bng_cellintersection / bng_cellunion, which
+    take TWO chip ``STRUCT<cellid, core, chip>`` args.  Each row holds two chip
+    structs over the SAME cell id (a core chip and a full-cell chip), so union /
+    intersection both produce the whole cell.  The chip geometry is the full cell
+    polygon materialized to WKB (``_to_wkb(_bng.cell_id_to_geometry(parse(cellid)))``)
+    for a deterministic cell swept around the London anchor at ``res`` (a string
+    resolution key), so light and heavy consume identical inputs.  Mirrors the
+    ``chip_row`` fixture in the BNG parity test: ``(seed, True, chip, seed, False,
+    chip)``."""
+    from shapely import to_wkb as _to_wkb
+
+    from databricks.labs.gbx.pygx import _bng
+
+    rows = []
+    for i in range(n_rows):
+        e = _BNG_ANCHOR_E + (i * 73 % 500) * 100.0
+        n = _BNG_ANCHOR_N + (i * 37 % 500) * 100.0
+        cellid = _bng.point_as_cell(float(e), float(n), res)
+        chip = _to_wkb(_bng.cell_id_to_geometry(_bng.parse(cellid)))
+        # Same cellid both sides: a core chip + a full-cell chip -> union /
+        # intersection over the same cell yield the whole cell polygon.
+        rows.append((str(cellid), True, chip, str(cellid), False, chip))
+    schema = (
+        "lid string, lcore boolean, lchip binary, "
+        "rid string, rcore boolean, rchip binary"
+    )
+    return rows, schema
+
+
+# ---------------------------------------------------------------------------------------------
+# Custom-grid corpus generators (gbx_custom_* light pygx vs heavy gridx.custom).
+#
+# All legs share ONE fixed grid spec -- the doc SQL example grid:
+#   gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700)
+# i.e. a 0..1,000,000 extent, cell_splits=2, 1000m root cells (1000x1000 of them at
+# res 0). Coordinates are arbitrary planar units in the grid CRS (here labelled
+# EPSG:27700 via srid, but the srid is METADATA only -- output geometry is plain WKB,
+# no SRID). pointascell uses the geometry's FIRST coordinate (heavy geom.getCoordinate),
+# NOT the centroid (unlike BNG), so the points/polygons are placed so their first
+# vertex falls strictly inside [0, 1000000) at the chosen resolution.
+# ---------------------------------------------------------------------------------------------
+
+# The fixed custom grid both tiers build via gbx_custom_grid(...). Shared by every
+# run_custom_* leg and the parity gate so light and heavy consume the SAME struct.
+CUSTOM_GRID_ARGS = (0, 1_000_000, 0, 1_000_000, 2, 1000, 1000, 27700)
+CUSTOM_GRID_SQL = "gbx_custom_grid(%d, %d, %d, %d, %d, %d, %d, %d)" % CUSTOM_GRID_ARGS
+
+# Anchor well inside the extent (mirrors the parity test's _PX/_PY) so the swept
+# corpus stays in-bounds at res 0 (1000m cells).
+_CUSTOM_ANCHOR_X = 530000.0
+_CUSTOM_ANCHOR_Y = 180000.0
+
+
+def _custom_conf():
+    """The shared CustomGridConf (pure-Python) for cell-id corpus generation."""
+    from databricks.labs.gbx.pygx import _custom
+
+    x_min, x_max, y_min, y_max, splits, rx, ry, srid = CUSTOM_GRID_ARGS
+    return _custom.CustomGridConf(
+        bound_x_min=x_min,
+        bound_x_max=x_max,
+        bound_y_min=y_min,
+        bound_y_max=y_max,
+        cell_splits=splits,
+        root_cell_size_x=rx,
+        root_cell_size_y=ry,
+        srid=srid,
+    )
+
+
+def generate_custom_points(n_rows: int):
+    """``n_rows`` deterministic WKT points (in the custom grid CRS) for custom_pointascell.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(geom,)`` holding a
+    WKT ``POINT(x y)`` in the grid's planar units.  Points sweep a ~50km x 50km patch
+    around the anchor, all strictly inside ``[0, 1000000)`` so the FIRST coordinate maps
+    to a valid cell at res 0.  Row ``i`` always yields the same cell in both tiers."""
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 500) * 100.0  # +[0, 50000)
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 500) * 100.0
+        rows.append((f"POINT({x} {y})",))
+    return rows, "geom string"
+
+
+def generate_custom_polygons(n_rows: int):
+    """``n_rows`` deterministic WKT polygons (custom grid CRS) for custom_polyfill.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple holding a WKT polygon.
+    Each polygon is a small axis-aligned ~3km box at a deterministic offset from the
+    anchor, sized so polyfill at res 0 (1000m cells) yields a handful of cells via the
+    centroid-containment filter -- enough to exercise the bbox over-scan + per-cell test
+    without ballooning.  All vertices stay inside ``[0, 1000000)``."""
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 400) * 100.0  # +[0, 40000), leaves room for +d
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 400) * 100.0
+        d = 3000.0  # ~3km box -> several 1000m cells by centroid containment
+        wkt = (
+            f"POLYGON(({x} {y}, {x + d} {y}, "
+            f"{x + d} {y + d}, {x} {y + d}, {x} {y}))"
+        )
+        rows.append((wkt,))
+    return rows, "geom string"
+
+
+def generate_custom_cells(n_rows: int, res: int = 0):
+    """``n_rows`` deterministic single custom-grid ``cell`` id BIGINTs for the scalar legs.
+
+    Returns ``(rows, schema)`` where each row is a one-field tuple ``(cell,)`` holding a
+    BIGINT custom-grid cell id.  Cells are computed by the pure-Python
+    ``_custom.point_to_cell_id`` over a deterministic x/y sweep around the anchor at
+    ``res`` (an INT resolution, default 0), so light and heavy see the SAME input cells.
+    Feeds cellaswkb / cellaswkt / centroid / kring."""
+    from databricks.labs.gbx.pygx import _custom
+
+    conf = _custom_conf()
+    rows = []
+    for i in range(n_rows):
+        x = _CUSTOM_ANCHOR_X + (i * 73 % 500) * 100.0
+        y = _CUSTOM_ANCHOR_Y + (i * 37 % 500) * 100.0
+        cell = _custom.point_to_cell_id(conf, float(x), float(y), res)
+        rows.append((int(cell),))
+    return rows, "cell long"
+
+
 def build_vector_corpus(
     spark, rows: int, copies: int, formats: List[str], out_base: str, srid: str = "4326"
 ) -> dict:

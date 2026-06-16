@@ -7,17 +7,16 @@ import TabItem from '@theme/TabItem';
 import CodeFromTest from '@site/src/components/CodeFromTest';
 import Tier from '@site/src/components/Tier';
 import { Impl } from '@site/src/components/Tier';
+import RasterXIcon from '../../../resources/images/RasterX.png';
 import rasterxCode from '!!raw-loader!../../tests/python/api/rasterx_functions.py';
 import pyrxCode from '!!raw-loader!../../tests/python/api/pyrx_functions.py';
 import rasterxSqlCode from '!!raw-loader!../../tests/python/api/rasterx_functions_sql.py';
 import packagesExamples from '!!raw-loader!../../tests/python/packages/examples.py';
 import rasterxScalaCode from '!!raw-loader!../../tests/scala/packages/RasterxPackageExamples.scala';
 
-# RasterX Function Reference
+# <img src={RasterXIcon} alt="RasterX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
 
 RasterX functions run in two execution tiers — **lightweight** (pure-Python `pyrx`) and **heavyweight** (`rasterx`). As of v0.4.0, **every RasterX function is available in both tiers** (badged `<Tier both/>` per function below); per-function notes call out where the lightweight implementation differs. See [Choosing an Execution Tier](./execution-tiers) for the comparison and the lightweight install.
-
-![RasterX](../../../resources/images/RasterX.png)
 
 Complete reference for all RasterX functions with detailed descriptions, parameters, return values, and examples.
 
@@ -150,12 +149,12 @@ metadata_df.show()
 ---
 
 :::note SQL examples
-Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages. In the lightweight tier, the registered `gbx_rst_*` SQL functions require every argument to be passed explicitly — optional defaults are honored only through the Python `prx.*` API.
+Examples on this page use **SQL**, where RasterX functions are prefixed with **`gbx_`** (e.g. `gbx_rst_boundingbox`, `gbx_rst_width`). For Python and Scala usage and more tips, see [Language Bindings](./language-bindings). In the lightweight tier, the registered `gbx_rst_*` SQL functions require every argument to be passed explicitly — optional defaults are honored only through the Python `prx.*` API.
 :::
 
 ## Tier availability
 
-As of v0.4.0, **all RasterX functions run in both execution tiers** — the lightweight `pyrx` (pure-Python) and heavyweight `rasterx` tiers share the same `rst_*` / `gbx_rst_*` names, and each function below carries a `:::note Lightweight tier (pyrx)` admonition with its backing library and any behavioral differences. For the heavyweight VRT Python pixel-function configuration (used by `gbx_rst_combineavg` / `gbx_rst_derivedband`), see **[VRT Python Pixel Functions](./raster-functions-heavyweight)**.
+As of v0.4.0, **all RasterX functions run in both execution tiers** — the lightweight `pyrx` (pure-Python) and heavyweight `rasterx` tiers share the same `rst_*` / `gbx_rst_*` names, and each function below carries a `:::note Lightweight tier (pyrx)` admonition with its backing library and any behavioral differences. For the heavyweight VRT Python pixel-function configuration (used by `gbx_rst_combineavg` / `gbx_rst_derivedband`), see **[VRT Python pixel functions](#vrt-python-pixel-functions)** at the end of this page.
 
 ## Accessor Functions
 
@@ -549,7 +548,20 @@ Combine or merge rasters in group-by (6 total).
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_combineavg_agg("tile"))` returns the NoData-aware per-pixel mean as one tile per group; input tiles must share the same grid (shape/extent/CRS). In SQL `gbx_rst_combineavg_agg` returns the raster BINARY (cellid dropped); wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_combineavg_agg("tile"))` returns the NoData-aware per-pixel mean as one tile per group; input tiles must share the same grid (shape/extent/CRS).
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_combineavg_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_combineavg_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(gbx_rst_combineavg_agg(tile), 'GTiff') AS tile
+FROM tiles
+GROUP BY group_key
+```
 :::
 
 **Signature:** `rst_combineavg_agg(tile: Column): Column` — Average tiles per group.
@@ -563,7 +575,20 @@ Powered by **rasterio** + **NumPy**. Aggregate — `groupBy(...).agg(rx.rst_comb
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `groupBy(...).agg(rx.rst_derivedband_agg("tile", pyfunc, funcName))` stacks the group's tiles as bands and applies your pixel function, returning one tile per group. In SQL `gbx_rst_derivedband_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `groupBy(...).agg(rx.rst_derivedband_agg("tile", pyfunc, funcName))` stacks the group's tiles as bands and applies your pixel function, returning one tile per group.
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_derivedband_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_derivedband_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(gbx_rst_derivedband_agg(tile, 'def f(a,b): return a+b', 'f'), 'GTiff') AS tile
+FROM tiles
+GROUP BY group_key
+```
 :::
 
 **Signature:** `rst_derivedband_agg(tile: Column, pyfunc: String, funcName: String): Column` — Apply Python UDF to tiles per group.
@@ -577,7 +602,23 @@ Powered by **rasterio** with GDAL VRT Python pixel functions. Aggregate — `gro
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** + **SciPy** (`scipy.spatial.Delaunay`). Aggregate — builds one TIN DTM tile per group from the group's Z-valued points via barycentric interpolation over an **unconstrained** Delaunay triangulation; `breaklines`, `merge_tolerance`, and `snap_tolerance` are accepted but not enforced (the heavyweight tier builds a constrained TIN). In SQL `gbx_rst_dtmfromgeoms_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** + **SciPy** (`scipy.spatial.Delaunay`). Aggregate — builds one TIN DTM tile per group from the group's Z-valued points via barycentric interpolation over an **unconstrained** Delaunay triangulation; `breaklines`, `merge_tolerance`, and `snap_tolerance` are accepted but not enforced (the heavyweight tier builds a constrained TIN).
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_dtmfromgeoms_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_dtmfromgeoms_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(
+    gbx_rst_dtmfromgeoms_agg(point, null, 0.0, 0.0, 0,0,10,10, 8,8, 32633),
+    'GTiff'
+  ) AS tile
+FROM observations
+GROUP BY group_key
+```
 :::
 
 Streaming aggregator that accepts one Z-valued point WKB per row and produces a TIN/Delaunay DTM raster tile per group; breaklines are supplied as a per-group constant array to enforce hard terrain edges.
@@ -595,7 +636,20 @@ Streaming aggregator that accepts one Z-valued point WKB per row and produces a 
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio**. Aggregate — `groupBy(...).agg(rx.rst_frombands_agg("tile", "band_index"))` stacks the group's tiles into one multi-band tile ordered by ascending `band_index`. In SQL `gbx_rst_frombands_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio**. Aggregate — `groupBy(...).agg(rx.rst_frombands_agg("tile", "band_index"))` stacks the group's tiles into one multi-band tile ordered by ascending `band_index`.
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_frombands_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_frombands_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(gbx_rst_frombands_agg(tile, band_index), 'GTiff') AS tile
+FROM bands
+GROUP BY group_key
+```
 :::
 
 Streaming aggregator that collects ordered per-band tiles (one row per band) into a single multi-band raster tile per group; use when bands arrive as separate rows rather than a pre-built array.
@@ -613,7 +667,20 @@ Streaming aggregator that collects ordered per-band tiles (one row per band) int
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.rst_merge_agg("tile"))` merges the group's tiles into one mosaic tile (output spans the union extent). In SQL `gbx_rst_merge_agg` returns the merged raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.rst_merge_agg("tile"))` merges the group's tiles into one mosaic tile (output spans the union extent).
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_merge_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_merge_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(gbx_rst_merge_agg(tile), 'GTiff') AS tile
+FROM tiles
+GROUP BY group_key
+```
 :::
 
 **Signature:** `rst_merge_agg(tile: Column): Column` — Merge tiles per group.
@@ -627,7 +694,23 @@ Powered by **rasterio** (`rasterio.merge`). Aggregate — `groupBy(...).agg(rx.r
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** (`rasterio.features`). Aggregate — burns the group's `(geom, value)` rows into one tile over the given extent/size/SRID (last-wins on overlap). In SQL `gbx_rst_rasterize_agg` returns the raster BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** (`rasterio.features`). Aggregate — burns the group's `(geom, value)` rows into one tile over the given extent/size/SRID (last-wins on overlap).
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_rasterize_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_rasterize_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(
+    gbx_rst_rasterize_agg(geom, value, 0,0,10,10, 8,8, 32633),
+    'GTiff'
+  ) AS tile
+FROM features
+GROUP BY group_key
+```
 :::
 
 Streaming aggregator that burns geometry/value pairs (one row per feature) into a single rasterized tile per group; use when features arrive as individual rows rather than as a pre-built collection.
@@ -645,7 +728,23 @@ Streaming aggregator that burns geometry/value pairs (one row per feature) into 
 <Tier both/> <Impl groupedAgg/>
 
 :::note Lightweight tier (pyrx)
-Powered by **rasterio** + **SciPy** (`cKDTree` IDW). Aggregate — `groupBy(...).agg(rx.rst_gridfrompoints_agg(...))` inverse-distance-interpolates the group's points into one Float64 grid tile (NoData −9999). In SQL `gbx_rst_gridfrompoints_agg` returns BINARY; wrap with `gbx_rst_fromcontent(...)` for a tile.
+Powered by **rasterio** + **SciPy** (`cKDTree` IDW). Aggregate — `groupBy(...).agg(rx.rst_gridfrompoints_agg(...))` inverse-distance-interpolates the group's points into one Float64 grid tile (NoData −9999).
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_gridfrompoints_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_gridfrompoints_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  group_key AS cellid,
+  gbx_rst_fromcontent(
+    gbx_rst_gridfrompoints_agg(point, value, 0,0,10,10, 8,8, 32633, 2.0, 12),
+    'GTiff'
+  ) AS tile
+FROM observations
+GROUP BY group_key
+```
 :::
 
 Streaming IDW-interpolation aggregator that accepts one point geometry and one scalar value per row and produces a Float64 GeoTIFF tile per group; use when observations arrive one per row rather than as pre-built arrays.
@@ -1726,6 +1825,52 @@ Powered by **xarray-spatial** (`xrspatial.viewshed`). Returns a Byte tile (255 v
 **Signature:** `rst_viewshed(tile: Column, observerGeom: Column, observerHeight: Column, [targetHeight: Column = lit(1.6), maxDistance: Column = null]): Column` — Compute a binary viewshed Byte raster (`255` = visible, `0` = invisible / out-of-range) from a DEM tile and an observer POINT via `gdal.ViewshedGenerate`. `observerGeom` is WKB / WKT POINT in the raster's CRS; non-POINT geometries raise an error at execution time. Heights are above the DEM at each pixel. `maxDistance` clips the search radius; `null` = unlimited.
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_viewshed_sql_example" outputConstant="rst_viewshed_sql_example_output" code={rasterxSqlCode} />
+
+---
+
+## Heavyweight-tier specifics
+
+Every RasterX function runs in both execution tiers, so the per-function reference above applies regardless of tier. This section documents one heavyweight-tier execution detail: the GDAL VRT Python pixel-function configuration used by `gbx_rst_combineavg` / `gbx_rst_derivedband` (and their `_agg` forms).
+
+### VRT Python pixel functions
+
+`gbx_rst_combineavg`, `gbx_rst_combineavg_agg`, `gbx_rst_derivedband`, and `gbx_rst_derivedband_agg` evaluate a Python expression on each pixel via GDAL's [VRT Python pixel-function API](https://gdal.org/en/stable/drivers/raster/vrt.html#using-derived-bands-with-pixel-functions-in-python). That API is gated behind the GDAL config option `GDAL_VRT_ENABLE_PYTHON`, which **GeoBrix sets to `NO` at executor startup** (see [Security - Restrict GDAL drivers](../security#6-vrt-python-pixel-functions-off-by-default-by-design)). When you call one of the four functions above, GeoBrix flips the option to `YES` for the duration of that call only — via the internal `GDALManager.withVrtPython` bracket — and restores `NO` immediately on return. You don't need to set anything on the cluster or in your notebook to use the built-in functions.
+
+#### When you need to enable it yourself
+
+If you're invoking the GDAL Python bindings (`from osgeo import gdal`) **directly** — outside the built-in RasterX functions — and you read a VRT that declares a `<PixelFunctionLanguage>Python</...>` band, you'll get an empty/null read unless you enable the option in the same process. Pick one of:
+
+**Python — programmatic, scoped to your read.** Recommended in all cases. Mirrors what GeoBrix does internally, works for both driver-side `pyspark.sql` calls and inside `mapPartitions` / `mapInPandas` UDFs that load VRT-with-pyfunc via `osgeo.gdal`, and survives interleaving with GeoBrix built-in calls (each GeoBrix call resets the option to `NO` on exit, so re-set it on every read):
+
+```python
+from osgeo import gdal
+
+gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "YES")
+try:
+    ds = gdal.Open("/path/to/your/vrt-with-pixel-function.vrt")
+    arr = ds.GetRasterBand(1).ReadAsArray()
+    ds = None
+finally:
+    gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")
+```
+
+**Cluster env var — for Python-worker processes only.** Setting `spark.executorEnv.GDAL_VRT_ENABLE_PYTHON YES` on the cluster works for Python UDF workers (a separate process from the JVM, where GDAL initializes from env vars). It does **not** help JVM-side reads — GeoBrix calls `gdal.SetConfigOption("GDAL_VRT_ENABLE_PYTHON", "NO")` at executor JVM startup, and `SetConfigOption` takes precedence over the env var. Prefer the programmatic form above unless you have a strong reason to globally enable.
+
+**Scala / JVM code.** If you're writing custom Spark expressions that consume Python-pixel VRTs, wrap the read/translate in the same helper GeoBrix uses internally — it refcounts the option so concurrent tasks on the same executor JVM compose safely:
+
+```scala
+import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+
+val result = GDALManager.withVrtPython {
+    val ds = org.gdal.gdal.gdal.Open(vrtPath)
+    // ... GDAL reads / translates here see the Python pixel function ...
+    ds
+}
+```
+
+#### Trusted-modules variant
+
+GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTHON_TRUSTED_MODULES` allowlist if you want pixel-function code restricted to specific Python module prefixes. GeoBrix uses the plain `YES` form because the pixel-function source is constructed in-process from trusted (geobrix-generated) strings, never from user-supplied VRT XML on disk. If your custom code path reads VRTs whose `<PixelFunctionCode>` originates from less-trusted sources, switch to the `TRUSTED_MODULES` form and allowlist only what you intend to load.
 
 ---
 

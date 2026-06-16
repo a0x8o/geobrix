@@ -10,8 +10,9 @@ import vectorxSqlCode from '!!raw-loader!../../tests/python/api/vectorx_function
 import quickstartCode from '!!raw-loader!../../tests/python/quickstart/examples.py';
 import Tier from '@site/src/components/Tier';
 import { Impl } from '@site/src/components/Tier';
+import VectorXIcon from '../../../resources/images/VectorX.png';
 
-# VectorX Function Reference
+# <img src={VectorXIcon} alt="VectorX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
 
 VectorX augments the product's native `ST_*` functions with vector-tile encoding, TIN surface modeling, and legacy-geometry migration helpers. As of v0.4.0 it covers:
 
@@ -27,7 +28,7 @@ VectorX augments the product's native `ST_*` functions with vector-tile encoding
 :::
 
 :::note SQL examples
-Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For more language-specific tips, see the [Python](./python), [Scala](./scala), and [SQL](./sql) API pages.
+Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For SQL, Python, and Scala usage patterns, see [Language Bindings](./language-bindings).
 :::
 
 :::note Geometry input encodings
@@ -347,7 +348,7 @@ The lightweight tier raises `NotImplementedError` on `mode='conforming'` — it 
 In the **lightweight** tier these TIN generators are PySpark UDTFs with **no Python DataFrame Column form** — invoke them via SQL `LATERAL` (e.g. `... , LATERAL gbx_st_triangulate(...) t`), the same pattern as `gbx_st_asmvt_pyramid`. In the **heavyweight** tier they are exposed as generator Columns (usable in `select(...)`) and via SQL `LATERAL VIEW`. SQL `LATERAL` works for **both** tiers; the Python DataFrame Column form is heavyweight-only for these generators.
 :::
 
-### gbx_st_triangulate
+### st_triangulate
 
 <Tier both/> <Impl udtf/>
 
@@ -386,7 +387,7 @@ In the lightweight tier, call the registered UDTF via SQL `LATERAL` (shown above
 
 ---
 
-### gbx_st_interpolateelevationbbox
+### st_interpolateelevationbbox
 
 <Tier both/> <Impl udtf/>
 
@@ -413,7 +414,7 @@ Builds a TIN from mass points and breaklines, then samples elevation on a regula
 
 ---
 
-### gbx_st_interpolateelevationgeom
+### st_interpolateelevationgeom
 
 <Tier both/> <Impl udtf/>
 

@@ -23,7 +23,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Notebooks',
-      collapsed: false,
+      collapsed: true,
       items: [
         'notebooks/eo-series',
         'notebooks/xview',
@@ -32,7 +32,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Sample Data',
-      collapsed: false,
+      collapsed: true,
       items: [
         'sample-data/overview',
         'sample-data/setup',
@@ -44,26 +44,26 @@ const sidebars = {
     {
       type: 'category',
       label: 'Readers & Writers',
-      collapsed: false,
+      collapsed: true,
       items: [
-        'readers/overview',
-        'writers/overview',
         {
           type: 'category',
           label: 'Readers',
-          collapsed: false,
+          collapsed: true,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['readers/raster', 'readers/vector'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
+            'readers/overview',
+            { type: 'category', label: 'General', collapsed: true, items: ['readers/raster', 'readers/vector'] },
+            { type: 'category', label: 'Named', collapsed: true, items: ['readers/geotiff', 'readers/shapefile', 'readers/geojson', 'readers/geopackage', 'readers/filegdb'] },
           ],
         },
         {
           type: 'category',
           label: 'Writers',
-          collapsed: false,
+          collapsed: true,
           items: [
-            { type: 'category', label: 'General', collapsed: false, items: ['writers/raster', 'writers/vector'] },
-            { type: 'category', label: 'Named', collapsed: false, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
+            'writers/overview',
+            { type: 'category', label: 'General', collapsed: true, items: ['writers/raster', 'writers/vector'] },
+            { type: 'category', label: 'Named', collapsed: true, items: ['writers/geotiff', 'writers/pmtiles', 'writers/shapefile', 'writers/geojson', 'writers/geojsonl', 'writers/geopackage', 'writers/filegdb'] },
           ],
         },
       ],
@@ -71,36 +71,33 @@ const sidebars = {
     {
       type: 'category',
       label: 'Functions',
-      collapsed: false,
+      collapsed: true,
       items: [
         'api/overview',
         'api/tile-structure',
+        'api/execution-tiers',
+        'api/language-bindings',
         {
           type: 'category',
-          label: 'Function Reference',
-          collapsed: false,
+          label: 'RasterX',
+          collapsed: true,
+          link: { type: 'doc', id: 'api/raster-functions' },
           items: [
-            'api/execution-tiers',
-            {
-              type: 'category',
-              label: 'Performance & Benchmarking',
-              collapsed: false,
-              items: [
-                'api/performance',
-                'api/benchmarking',
-              ],
-            },
-            'api/raster-functions',
-            'api/raster-functions-heavyweight',
             'api/h3-raster-tessellation',
-            'api/gridx-functions',
-            'api/vectorx-functions',
-            'api/pmtiles-functions',
           ],
         },
-        'api/scala',
-        'api/python',
-        'api/sql',
+        { type: 'doc', id: 'api/vectorx-functions', label: 'VectorX' },
+        { type: 'doc', id: 'api/gridx-functions', label: 'GridX' },
+        { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
+        {
+          type: 'category',
+          label: 'Performance & Benchmarking',
+          collapsed: true,
+          items: [
+            'api/performance',
+            'api/benchmarking',
+          ],
+        },
       ],
     },
     // Temporarily hidden until Examples section is ready to ship
@@ -114,7 +111,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Advanced Usage',
-      collapsed: false,
+      collapsed: true,
       items: [
         'advanced/overview',
         'advanced/custom-udfs',

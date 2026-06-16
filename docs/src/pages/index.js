@@ -15,8 +15,8 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs/quick-start?tier=lightweight">
-            Get Started — Lightweight →
+            to="/docs/intro">
+            Get Started
           </Link>
         </div>
       </div>
@@ -47,24 +47,24 @@ function HomepageFeatures() {
         <div className="row">
           <Feature
             title="RasterX"
-            description="Satellite imagery, elevation models, and gridded data: reprojection, terrain analysis, spectral indices, tiling, and H3/quadbin aggregation. Recommended lightweight tier (pyrx) — a single wheel, runs everywhere, full raster coverage — with a heavyweight Scala/GDAL tier for specialized cases."
+            description="Satellite imagery, elevation models, and gridded data — reprojection, terrain analysis, spectral indices, XYZ/PMTiles tiling, and H3/quadbin aggregation."
             link="/docs/api/raster-functions"
           />
           <Feature
             title="GridX"
-            description="Discrete global grid indexing for British National Grid (BNG), CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
+            description="Discrete global grid indexing — British National Grid, CARTO quadbin, and custom user-defined grids: cell math, tessellation, and grid-aware aggregation."
             link="/docs/api/gridx-functions"
           />
           <Feature
             title="VectorX"
-            description="Encode Mapbox Vector Tiles, build TIN elevation surfaces, and migrate legacy Mosaic geometries to Databricks spatial types. Available in the lightweight tier (pyvx) — pure Python, Serverless/ARM-ready — and the heavyweight Scala tier."
+            description="Mapbox Vector Tile encoding, TIN elevation surfaces, and legacy Mosaic geometry migration to Databricks spatial types."
             link="/docs/api/vectorx-functions"
           />
         </div>
         <div className="row" style={{marginTop: '2rem'}}>
           <Feature
-            title="Powerful Readers"
-            description="Automatically registered Spark readers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, and more."
+            title="Powerful Readers & Writers"
+            description="Automatically registered Spark readers and writers for Shapefile, GeoJSON, GeoPackage, GeoTIFF, PMTiles, and more."
             link="/docs/readers/overview"
           />
           <Feature
@@ -102,8 +102,9 @@ export default function Home() {
                   The lightweight tier (pyrx) runs the full GeoBrix raster API on pure Python + rasterio:
                   a single wheel, no JAR and no init script, and it works everywhere — serverless,
                   standard/shared clusters, ARM, and Lakeflow declarative pipelines. VectorX is
-                  likewise available lightweight (pyvx). The heavyweight Scala/GDAL tier is there when
-                  you need the GDAL/OGR readers or the GridX package.
+                  likewise available lightweight (pyvx), as is all of GridX — BNG, quadbin, and
+                  custom grids (pygx). The heavyweight Scala/GDAL tier is there when you need full
+                  GDAL/OGR.
                 </p>
                 <Link
                   className="button button--primary button--md"

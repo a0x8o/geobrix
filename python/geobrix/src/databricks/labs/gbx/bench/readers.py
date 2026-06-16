@@ -1123,6 +1123,245 @@ def run_mvt_agg(
         )
 
 
+def run_pmtiles_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_tiles: int = 1000,
+    n_groups: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time a grouped pmtiles_agg over synthetic in-memory PNG tiles.
+
+    Folds ``n_tiles`` synthetic PNG tiles distributed across ``n_groups``
+    (z,x,y) addresses into PMTiles archive(s) via a
+    ``groupBy(g).agg(pmtiles_agg(tile, z, x, y))`` job. Registers the chosen
+    tier, caches the DataFrame, then times the aggregation to completion.
+    Returns a single ResultRow (mode="spark-path", category="pmtiles_agg").
+
+    Both tiers resolve the same canonical ``pmtiles_agg`` wrapper
+    (``databricks.labs.gbx.pmtiles.functions.pmtiles_agg`` ->
+    ``gbx_pmtiles_agg``); ``api`` only controls which register path installs
+    the SQL function:
+        "lightweight"  -> ``register_pmtiles_agg`` (pure-Python grouped agg)
+        "heavyweight"  -> ``functions.register`` (Scala UDAF via the JAR)
+    """
+    env = capture_env(where)
+
+    # Register the tier.
+    try:
+        if api == "lightweight":
+            from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+            register_pmtiles_agg(spark)
+        else:
+            from databricks.labs.gbx.pmtiles import functions as _pt_reg
+
+            _pt_reg.register(spark)
+        from databricks.labs.gbx.pmtiles import functions as pt
+
+        agg_fn = pt.pmtiles_agg
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"register error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    # Build n_tiles distinct (z, x, y) synthetic PNG tiles spread across n_groups
+    # group keys. z is chosen so side*side >= n_tiles (no duplicate addresses).
+    try:
+        from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
+
+        png_header = b"\x89PNG\r\n\x1a\n"
+        z = max(1, (max(1, n_tiles) - 1).bit_length() // 2 + 1)
+        while (2**z) ** 2 < n_tiles:
+            z += 1
+        side = 2**z
+        n_groups = max(1, int(n_groups))
+
+        rows_data = []
+        for i in range(n_tiles):
+            x = i % side
+            y = (i // side) % side
+            rows_data.append(
+                (
+                    i % n_groups,
+                    bytearray(png_header + i.to_bytes(4, "big")),
+                    z,
+                    x,
+                    y,
+                )
+            )
+        schema = StructType(
+            [
+                StructField("g", IntegerType(), False),
+                StructField("tile", BinaryType(), True),
+                StructField("z", IntegerType(), False),
+                StructField("x", IntegerType(), False),
+                StructField("y", IntegerType(), False),
+            ]
+        )
+        df = spark.createDataFrame(rows_data, schema=schema).cache()
+        n = int(df.count())
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=0,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=f"dataframe build error: {str(e)[-400:]}",
+            output_fingerprint="",
+            **env,
+        )
+
+    def _job():
+        import pyspark.sql.functions as _F2
+
+        return (
+            df.groupBy("g")
+            .agg(
+                agg_fn(_F2.col("tile"), _F2.col("z"), _F2.col("x"), _F2.col("y")).alias(
+                    "arc"
+                )
+            )
+            .count()
+        )
+
+    try:
+        # Guard against a tier that "succeeds" (groups counted) but emits all-NULL or
+        # all-empty archives. Counting groups alone masks that, so validate (once,
+        # untimed) that every group produced a non-empty PMTiles blob; an empty result
+        # becomes a status="error" row (via the except below), not a misleading "ok".
+        import pyspark.sql.functions as _F3
+
+        _validation = (
+            df.groupBy("g")
+            .agg(
+                agg_fn(_F3.col("tile"), _F3.col("z"), _F3.col("x"), _F3.col("y")).alias(
+                    "arc"
+                )
+            )
+            .collect()
+        )
+        _nonempty = sum(
+            1 for _r in _validation if _r["arc"] and len(bytes(_r["arc"])) > 0
+        )
+        if _nonempty == 0:
+            raise RuntimeError(
+                f"pmtiles_agg {api} produced {len(_validation)} group(s) but every "
+                "archive blob is NULL/empty."
+            )
+        stats = time_iters(_job, warmup, measured)
+        ms = stats["iter_median_ms"]
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=stats["warmup_iters"],
+            measured_iters=stats["measured_iters"],
+            iter_median_s=ms / 1000.0,
+            iter_min_s=stats["iter_min_ms"] / 1000.0,
+            iter_p90_s=stats["iter_p90_ms"] / 1000.0,
+            iter_total_wall_clock_s=stats["iter_total_wall_clock_ms"] / 1000.0,
+            avg_wall_clock_s=stats["avg_wall_clock_ms"] / 1000.0,
+            per_tile_avg_s=(ms / n / 1000.0) if (ms and n) else 0.0,
+            per_tile_avg_ms=(ms / n) if (ms and n) else 0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=(n / (ms / 1000.0)) if (ms and n) else 0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="ok",
+            note=f"pmtiles_agg {api} {n} tiles -> {len(_validation)} archive(s)",
+            output_fingerprint="",
+            **env,
+        )
+    except Exception as e:  # noqa: BLE001
+        return ResultRow(
+            run_id=run_id,
+            api=api,
+            fn="pmtiles_agg",
+            category="pmtiles_agg",
+            mode="spark-path",
+            tile_px=0,
+            bands=0,
+            dtype="",
+            srid=0,
+            rows=n,
+            nodata_frac=0.0,
+            warmup_iters=warmup,
+            measured_iters=0,
+            iter_median_s=0.0,
+            iter_min_s=0.0,
+            iter_p90_s=0.0,
+            iter_total_wall_clock_s=0.0,
+            avg_wall_clock_s=0.0,
+            per_tile_avg_s=0.0,
+            per_tile_avg_ms=0.0,
+            throughput_mpix_s=0.0,
+            throughput_rows_s=0.0,
+            peak_rss_mb=peak_rss_mb(),
+            status="error",
+            note=str(e)[-500:],
+            output_fingerprint="",
+            **env,
+        )
+
+
 def _tin_result_row(
     *,
     run_id: str,
@@ -1671,6 +1910,3238 @@ def run_interp_geom(
         )
 
 
+def _register_quadbin(spark, api: str) -> None:
+    """Register exactly one quadbin tier.
+
+    light  -> ``databricks.labs.gbx.pygx`` (gx.register: spark.udf only).
+    heavy  -> ``databricks.labs.gbx.gridx.quadbin`` (JVM Scala UDFs).
+
+    Both tiers expose the SAME ``gbx_quadbin_*`` SQL names, so registering one
+    overwrites the other in the session catalog.  Each ``run_quadbin_*`` call
+    therefore registers a single tier; the light-vs-heavy parity gate (which
+    must collect light BEFORE re-registering heavy) lives in the cluster cell,
+    not here.
+    """
+    if api == "lightweight":
+        from databricks.labs.gbx.pygx import functions as gx
+
+        gx.register(spark)
+    else:
+        from databricks.labs.gbx.gridx.quadbin import functions as hx
+
+        hx.register(spark)
+
+
+def run_quadbin_pointascell(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_pointascell (scalar lon/lat -> cell) over ``n_rows`` points.
+
+    Light registers pygx (``gbx_quadbin_pointascell`` via spark.udf); heavy
+    registers gridx.quadbin (the SAME SQL name, JVM). Records ``rows`` = number
+    of cells produced. Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_points
+
+    env = capture_env(where)
+    fn = "quadbin_pointascell"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_pointascell(lon, lat, {res}) AS cell "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm non-null cell ids are produced.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_pointascell(lon, lat, {res}) AS cell "
+            "FROM _quadbin_bench_v WHERE lon IS NOT NULL LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("quadbin_pointascell produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_pointascell {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_polyfill(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_polyfill (geom -> ARRAY<cell>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.quadbin (same SQL name). Records
+    ``rows`` = number of input polygons (each producing a cell array). Returns one
+    ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_polygons
+
+    env = capture_env(where)
+    fn = "quadbin_polyfill"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_polyfill(geom, {res}) AS cells "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty cell array.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_polyfill(geom, {res}) AS cells "
+            "FROM _quadbin_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["cells"]:
+            raise RuntimeError("quadbin_polyfill produced empty cell array")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_polyfill {api} filled {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_tessellate(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_tessellate (geom -> ARRAY<STRUCT<cell,geom>>) over polygons.
+
+    Light registers pygx; heavy registers gridx.quadbin (same SQL name). Records
+    ``rows`` = number of input polygons. Returns one ResultRow (mode="spark-path",
+    category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_polygons
+
+    env = capture_env(where)
+    fn = "quadbin_tessellate"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_tessellate(geom, {res}) AS chips "
+            "FROM _quadbin_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty chip array with bytes.
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_tessellate(geom, {res}) AS chips "
+            "FROM _quadbin_bench_v LIMIT 1"
+        ).head(1)
+        _chips = _val[0]["chips"] if _val else None
+        if (
+            not _chips
+            or _chips[0]["geom"] is None
+            or len(bytes(_chips[0]["geom"])) == 0
+        ):
+            raise RuntimeError("quadbin_tessellate produced empty/null chips")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_tessellate {api} tessellated {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_cellunion_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_cellunion_agg (grouped aggregate) over ``n_rows`` cell ids.
+
+    Streams one cell id per row, grouped by a small key set, unioning each
+    group's cell boundaries into one EWKB MultiPolygon.  Light registers pygx
+    (a GROUPED_AGG pandas UDF); heavy registers gridx.quadbin (the SAME SQL
+    name, a JVM TypedImperativeAggregate). Records ``rows`` = number of input
+    cells. Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cellid_arrays
+
+    env = capture_env(where)
+    fn = "quadbin_cellunion_agg"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cellid_arrays(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_agg_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT group, gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _quadbin_agg_v GROUP BY group"
+        ).count()
+
+    try:
+        # Untimed validation: confirm each group produced a non-empty union blob.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_cellunion_agg(cell) AS u "
+            "FROM _quadbin_agg_v GROUP BY group"
+        ).collect()
+        _nonempty = sum(1 for _r in _val if _r["u"] and len(bytes(_r["u"])) > 0)
+        if _nonempty == 0:
+            raise RuntimeError("quadbin_cellunion_agg produced 0 non-empty union blobs")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_cellunion_agg {api} unioned {n} cells -> {_nonempty} groups",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_resolution(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_resolution (scalar cell -> INT) over ``n_rows`` cell ids.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact INT equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_resolution"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the resolution comes back as the input res.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_resolution(cell) AS r FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["r"] != res:
+            raise RuntimeError("quadbin_resolution produced unexpected resolution")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_resolution {api} resolved {n} cells",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_kring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_kring (scalar cell -> ARRAY<LONG>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact sorted
+    cell-set per row at a fixed ``k``.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_kring"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_quadbin_kring(cell, {k}) AS ring FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring (k=1 -> up to 9 cells).
+        _val = spark.sql(
+            f"SELECT gbx_quadbin_kring(cell, {k}) AS ring FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("quadbin_kring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_kring {api} ringed {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_distance(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_distance (scalar (cell_a, cell_b) -> INT) over ``n_rows`` pairs.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input pairs. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): exact INT equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cell_pairs
+
+    env = capture_env(where)
+    fn = "quadbin_distance"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cell_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_pair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _quadbin_pair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null integer distance comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_distance(cell_a, cell_b) AS d FROM _quadbin_pair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["d"] is None:
+            raise RuntimeError("quadbin_distance produced null distance")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_distance {api} measured {n} pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_aswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_aswkb (scalar cell -> EWKB polygon) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): decoded geometry
+    within 1e-6 + SRID 4326.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_aswkb"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty EWKB polygon comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_aswkb(cell) AS g FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("quadbin_aswkb produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_aswkb {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_centroid(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 12,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_centroid (scalar cell -> EWKB point) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.quadbin (the SAME SQL name).
+    Records ``rows`` = number of input cells. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell): decoded point
+    within 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cells
+
+    env = capture_env(where)
+    fn = "quadbin_centroid"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_quadbin_cell_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _quadbin_cell_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty EWKB point comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_centroid(cell) AS g FROM _quadbin_cell_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("quadbin_centroid produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_centroid {api} encoded {n} cell centroids",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_quadbin_cellunion(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 8,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_quadbin_cellunion (scalar ARRAY<cell> -> EWKB) over grouped cell arrays.
+
+    Reuses the cellunion_agg corpus (``generate_quadbin_cellid_arrays``):
+    collect each group's cells into an ARRAY<LONG>, then call the scalar
+    ``gbx_quadbin_cellunion`` on the array. Light registers pygx; heavy registers
+    gridx.quadbin (the SAME SQL name). Records ``rows`` = number of unioned arrays
+    (one per group). Returns one ResultRow (mode="spark-path", category="grid").
+    Parity (cluster cell): decoded union geometry via symmetric-difference-area
+    < 1e-6 (member-ordering-robust, like the cellunion_agg leg).
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_quadbin_cellid_arrays
+
+    env = capture_env(where)
+    fn = "quadbin_cellunion"
+    cat = "grid"
+    try:
+        _register_quadbin(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_quadbin_cellid_arrays(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema)
+        df.createOrReplaceTempView("_quadbin_cellsrc_v")
+        # Collapse the streamed (group, cell) rows into one ARRAY<cell> per group
+        # so the scalar cellunion gets the same cell sets the agg unions.
+        arr_df = spark.sql(
+            "SELECT group, collect_list(cell) AS cells "
+            "FROM _quadbin_cellsrc_v GROUP BY group"
+        ).cache()
+        n = int(arr_df.count())
+        arr_df.createOrReplaceTempView("_quadbin_cellarr_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_quadbin_cellunion(cells) AS u FROM _quadbin_cellarr_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty union blob comes back.
+        _val = spark.sql(
+            "SELECT gbx_quadbin_cellunion(cells) AS u FROM _quadbin_cellarr_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["u"] is None or len(bytes(_val[0]["u"])) == 0:
+            raise RuntimeError("quadbin_cellunion produced empty/null union")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"quadbin_cellunion {api} unioned {n} cell arrays",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def _register_bng(spark, api: str) -> None:
+    """Register exactly one BNG tier.
+
+    light  -> ``databricks.labs.gbx.pygx`` (gx.register: spark.udf/udtf only).
+    heavy  -> ``databricks.labs.gbx.gridx.bng`` (JVM Scala UDFs).
+
+    Both tiers expose the SAME ``gbx_bng_*`` SQL names, so registering one
+    overwrites the other in the session catalog.  Each ``run_bng_*`` call
+    therefore registers a single tier; the light-vs-heavy parity gate (which
+    must collect light BEFORE re-registering heavy) lives in the cluster cell,
+    not here.
+    """
+    if api == "lightweight":
+        from databricks.labs.gbx.pygx import functions as gx
+
+        gx.register(spark)
+    else:
+        from databricks.labs.gbx.gridx.bng import functions as hx
+
+        hx.register(spark)
+
+
+def run_bng_pointascell(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_pointascell (geom centroid -> STRING cell) over ``n_rows`` points.
+
+    Light registers pygx (``gbx_bng_pointascell`` via spark.udf); heavy registers
+    gridx.bng (the SAME SQL name, JVM). Inputs are EPSG:27700 WKT points (BNG
+    eastings/northings, not WGS84). Records ``rows`` = number of cells produced.
+    Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_points
+
+    env = capture_env(where)
+    fn = "bng_pointascell"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_pointascell(geom, '{res}') AS cell FROM _bng_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm non-null cell ids are produced.
+        _val = spark.sql(
+            f"SELECT gbx_bng_pointascell(geom, '{res}') AS cell "
+            "FROM _bng_bench_v WHERE geom IS NOT NULL LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("bng_pointascell produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_pointascell {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_polyfill(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_polyfill (geom -> ARRAY<STRING cell>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.bng (same SQL name). Inputs are
+    EPSG:27700 WKT polygons. Records ``rows`` = number of input polygons (each
+    producing a cell array). Returns one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_polyfill"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_polyfill(geom, '{res}') AS cells FROM _bng_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty cell array.
+        _val = spark.sql(
+            f"SELECT gbx_bng_polyfill(geom, '{res}') AS cells FROM _bng_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["cells"]:
+            raise RuntimeError("bng_polyfill produced empty cell array")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_polyfill {api} filled {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_tessellate(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_tessellate (geom -> ARRAY<STRUCT<cellid,core,chip>>) over polygons.
+
+    Light registers pygx; heavy registers gridx.bng (same SQL name). Inputs are
+    EPSG:27700 WKT polygons. Records ``rows`` = number of input polygons. Returns
+    one ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_tessellate"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_tessellate(geom, '{res}') AS chips FROM _bng_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty chip array with cellids.
+        _val = spark.sql(
+            f"SELECT gbx_bng_tessellate(geom, '{res}') AS chips FROM _bng_bench_v LIMIT 1"
+        ).head(1)
+        _chips = _val[0]["chips"] if _val else None
+        if not _chips or _chips[0]["cellid"] is None:
+            raise RuntimeError("bng_tessellate produced empty/null chips")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_tessellate {api} tessellated {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_kring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_kring (scalar STRING cell -> ARRAY<STRING>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_kring"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_kring(cell, {k}) AS ring FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_bng_kring(cell, {k}) AS ring FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("bng_kring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_kring {api} ringed {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_cellunion_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_cellunion_agg (grouped aggregate) over ``n_rows`` chip structs.
+
+    Streams one chip ``STRUCT<cellid, core, chip>`` per row, grouped by a small
+    key set, dissolving each group's chip geometries into one blob.  Light
+    registers pygx (a GROUPED_AGG pandas UDF returning BINARY); heavy registers
+    gridx.bng (the SAME SQL name, a JVM TypedImperativeAggregate returning a
+    STRUCT). Records ``rows`` = number of input chips. Returns one ResultRow
+    (mode="spark-path", category="grid"). Parity (cluster cell) compares the
+    decoded chip GEOMETRY (light BINARY vs heavy struct's chip field).
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_chip_groups
+
+    env = capture_env(where)
+    fn = "bng_cellunion_agg"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_chip_groups(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_agg_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT group, gbx_bng_cellunion_agg(chip) AS u "
+            "FROM _bng_agg_v GROUP BY group"
+        ).count()
+
+    try:
+        # Untimed validation: confirm each group produced a non-null union.
+        _val = spark.sql(
+            "SELECT gbx_bng_cellunion_agg(chip) AS u " "FROM _bng_agg_v GROUP BY group"
+        ).collect()
+        _nonempty = sum(1 for _r in _val if _r["u"] is not None)
+        if _nonempty == 0:
+            raise RuntimeError("bng_cellunion_agg produced 0 non-null unions")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_cellunion_agg {api} dissolved {n} chips -> {_nonempty} groups",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_aswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_aswkb (scalar STRING cell -> WKB polygon) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): decoded geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_aswkb"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_aswkb(cell) AS g FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKB polygon comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_aswkb(cell) AS g FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("bng_aswkb produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_aswkb {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_aswkt(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_aswkt (scalar STRING cell -> WKT polygon) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): decoded geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_aswkt"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_aswkt(cell) AS g FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKT string comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_aswkt(cell) AS g FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["g"]:
+            raise RuntimeError("bng_aswkt produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_aswkt {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_centroid(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_centroid (scalar STRING cell -> WKB point) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): decoded point distance < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_centroid"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_centroid(cell) AS g FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKB point comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_centroid(cell) AS g FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("bng_centroid produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_centroid {api} encoded {n} cell centroids",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_cellarea(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_cellarea (scalar STRING cell -> DOUBLE sq km) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact scalar equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_cellarea"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_cellarea(cell) AS a FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null area comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_cellarea(cell) AS a FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["a"] is None:
+            raise RuntimeError("bng_cellarea produced null area")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_cellarea {api} measured {n} cells",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_distance(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_distance (scalar (cell_a, cell_b) -> LONG) over ``n_rows`` pairs.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input pairs. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact scalar equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cell_pairs
+
+    env = capture_env(where)
+    fn = "bng_distance"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cell_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_pair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_distance(cell_a, cell_b) AS d FROM _bng_pair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null distance comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_distance(cell_a, cell_b) AS d FROM _bng_pair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["d"] is None:
+            raise RuntimeError("bng_distance produced null distance")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_distance {api} measured {n} pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_euclideandistance(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_euclideandistance (scalar (cell_a, cell_b) -> LONG) over pairs.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input pairs. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact scalar equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cell_pairs
+
+    env = capture_env(where)
+    fn = "bng_euclideandistance"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cell_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_pair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_euclideandistance(cell_a, cell_b) AS d FROM _bng_pair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null distance comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_euclideandistance(cell_a, cell_b) AS d "
+            "FROM _bng_pair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["d"] is None:
+            raise RuntimeError("bng_euclideandistance produced null distance")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_euclideandistance {api} measured {n} pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_eastnorthasbng(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_eastnorthasbng ((e, n, res) -> STRING cell) over ``n_rows`` points.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Inputs
+    are EPSG:27700 eastings/northings (DOUBLE, BNG, not WGS84). Records ``rows`` =
+    number of input points. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact STRING cell-id equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_eastnorth
+
+    env = capture_env(where)
+    fn = "bng_eastnorthasbng"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_eastnorth(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_eastnorth_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_eastnorthasbng(e, n, '{res}') AS cell "
+            "FROM _bng_eastnorth_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null cell id comes back.
+        _val = spark.sql(
+            f"SELECT gbx_bng_eastnorthasbng(e, n, '{res}') AS cell "
+            "FROM _bng_eastnorth_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("bng_eastnorthasbng produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_eastnorthasbng {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_kloop(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_kloop (scalar STRING cell -> ARRAY<STRING>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_kloop"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_kloop(cell, {k}) AS ring FROM _bng_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_bng_kloop(cell, {k}) AS ring FROM _bng_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("bng_kloop produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_kloop {api} looped {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_geomkring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_geomkring (geom -> ARRAY<STRING>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Inputs
+    are EPSG:27700 WKT polygons. Records ``rows`` = number of input polygons.
+    Returns one ResultRow (mode="spark-path", category="grid"). Parity (cluster
+    cell): exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_geomkring"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    # Heavy BNG_GeometryKRing.eval only accepts Int resolution (no String
+    # overload); function-info canonical is int too. Pass the int index.
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_geomkring(geom, {res_i}, {k}) AS ring FROM _bng_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_bng_geomkring(geom, {res_i}, {k}) AS ring "
+            "FROM _bng_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("bng_geomkring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_geomkring {api} ringed {n} polygons (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_geomkloop(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_geomkloop (geom -> ARRAY<STRING>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.bng (the SAME SQL name). Inputs
+    are EPSG:27700 WKT polygons. Records ``rows`` = number of input polygons.
+    Returns one ResultRow (mode="spark-path", category="grid"). Parity (cluster
+    cell): exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_geomkloop"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    # Heavy BNG_GeometryKLoop.eval only accepts Int resolution (no String
+    # overload); function-info canonical is int too. Pass the int index.
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_bng_geomkloop(geom, {res_i}, {k}) AS ring FROM _bng_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_bng_geomkloop(geom, {res_i}, {k}) AS ring "
+            "FROM _bng_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("bng_geomkloop produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_geomkloop {api} looped {n} polygons (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_cellintersection(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_cellintersection (two chip STRUCTs -> chip STRUCT) over ``n_rows``.
+
+    Both chip structs cover the SAME cell (a core chip + a full-cell chip), so the
+    intersection produces the whole cell. Light registers pygx; heavy registers
+    gridx.bng (the SAME SQL name). Records ``rows`` = number of chip pairs. Returns
+    one ResultRow (mode="spark-path", category="grid"). Parity (cluster cell):
+    decoded .chip geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_chip_pairs
+
+    env = capture_env(where)
+    fn = "bng_cellintersection"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_chip_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_chippair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_cellintersection("
+            "struct(lid, lcore, lchip), struct(rid, rcore, rchip)) AS c "
+            "FROM _bng_chippair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null chip struct comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_cellintersection("
+            "struct(lid, lcore, lchip), struct(rid, rcore, rchip)) AS c "
+            "FROM _bng_chippair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["c"] is None or _val[0]["c"]["chip"] is None:
+            raise RuntimeError("bng_cellintersection produced null chip")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_cellintersection {api} intersected {n} chip pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_cellunion(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_cellunion (two chip STRUCTs -> chip STRUCT) over ``n_rows`` pairs.
+
+    Both chip structs cover the SAME cell (a core chip + a full-cell chip), so the
+    union produces the whole cell. Light registers pygx; heavy registers gridx.bng
+    (the SAME SQL name). Records ``rows`` = number of chip pairs. Returns one
+    ResultRow (mode="spark-path", category="grid"). Parity (cluster cell): decoded
+    .chip geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_chip_pairs
+
+    env = capture_env(where)
+    fn = "bng_cellunion"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_chip_pairs(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_chippair_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT gbx_bng_cellunion("
+            "struct(lid, lcore, lchip), struct(rid, rcore, rchip)) AS c "
+            "FROM _bng_chippair_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null chip struct comes back.
+        _val = spark.sql(
+            "SELECT gbx_bng_cellunion("
+            "struct(lid, lcore, lchip), struct(rid, rcore, rchip)) AS c "
+            "FROM _bng_chippair_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["c"] is None or _val[0]["c"]["chip"] is None:
+            raise RuntimeError("bng_cellunion produced null chip")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_cellunion {api} unioned {n} chip pairs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_cellintersection_agg(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_cellintersection_agg (grouped aggregate) over ``n_rows`` chips.
+
+    Mirror of cellunion_agg over the SAME-CELL chip groups (``generate_bng_chip_groups``;
+    heavy enforces one cell id per aggregate). Light registers pygx (a GROUPED_AGG
+    pandas UDF returning BINARY); heavy registers gridx.bng (the SAME SQL name, a
+    JVM TypedImperativeAggregate returning a STRUCT). Records ``rows`` = number of
+    input chips. Returns one ResultRow (mode="spark-path", category="grid"). Parity
+    (cluster cell) compares the decoded chip GEOMETRY (light BINARY vs heavy
+    struct's chip field).
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_chip_groups
+
+    env = capture_env(where)
+    fn = "bng_cellintersection_agg"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_chip_groups(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_agg_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            "SELECT group, gbx_bng_cellintersection_agg(chip) AS u "
+            "FROM _bng_agg_v GROUP BY group"
+        ).count()
+
+    try:
+        # Untimed validation: confirm each group produced a non-null intersection.
+        _val = spark.sql(
+            "SELECT gbx_bng_cellintersection_agg(chip) AS u "
+            "FROM _bng_agg_v GROUP BY group"
+        ).collect()
+        _nonempty = sum(1 for _r in _val if _r["u"] is not None)
+        if _nonempty == 0:
+            raise RuntimeError("bng_cellintersection_agg produced 0 non-null results")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=(
+                f"bng_cellintersection_agg {api} intersected {n} chips "
+                f"-> {_nonempty} groups"
+            ),
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_kringexplode(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_kringexplode (UDTF: STRING cell -> rows of cellid) over cells.
+
+    A table-valued generator: timed via a SQL LATERAL query (NOT the Column API;
+    the Python wrapper raises NotImplementedError). Both tiers register the SAME
+    ``gbx_bng_kringexplode`` SQL name (light a pygx UDTF, heavy a JVM
+    CollectionGenerator), so the LATERAL ``_job`` is tier-agnostic. Records
+    ``rows`` = number of input cells. Returns one ResultRow (mode="spark-path",
+    category="grid"). Parity (cluster cell): exploded cellid set == kring's set.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_kringexplode"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT t.cellid FROM _bng_cell_bench_v, "
+            f"LATERAL gbx_bng_kringexplode(cell, {k}) t"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the LATERAL generator yields a row.
+        _val = spark.sql(
+            f"SELECT t.cellid FROM _bng_cell_bench_v, "
+            f"LATERAL gbx_bng_kringexplode(cell, {k}) t LIMIT 1"
+        ).head(1)
+        if not _val:
+            raise RuntimeError("bng_kringexplode produced no rows")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_kringexplode {api} exploded {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_kloopexplode(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_kloopexplode (UDTF: STRING cell -> rows of cellid) over cells.
+
+    Mirror of kringexplode (k-loop / hollow ring). Timed via SQL LATERAL; both
+    tiers register the SAME ``gbx_bng_kloopexplode`` SQL name (tier-agnostic job).
+    Records ``rows`` = number of input cells. Parity (cluster cell): exploded
+    cellid set == kloop's set.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_cells
+
+    env = capture_env(where)
+    fn = "bng_kloopexplode"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT t.cellid FROM _bng_cell_bench_v, "
+            f"LATERAL gbx_bng_kloopexplode(cell, {k}) t"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the LATERAL generator yields a row.
+        _val = spark.sql(
+            f"SELECT t.cellid FROM _bng_cell_bench_v, "
+            f"LATERAL gbx_bng_kloopexplode(cell, {k}) t LIMIT 1"
+        ).head(1)
+        if not _val:
+            raise RuntimeError("bng_kloopexplode produced no rows")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_kloopexplode {api} exploded {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_geomkringexplode(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_geomkringexplode (UDTF: geom -> rows of cellid) over polygons.
+
+    A table-valued generator: timed via SQL LATERAL over WKT polygons. Both tiers
+    register the SAME ``gbx_bng_geomkringexplode`` SQL name (tier-agnostic job).
+    Records ``rows`` = number of input polygons. Parity (cluster cell): exploded
+    cellid set == geomkring's set.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_geomkringexplode"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    # Align resolution to the int index for parity with the canonical
+    # function-info form (heavy accepts Int or String here).
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
+    def _job():
+        return spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_geomkringexplode(geom, {res_i}, {k}) t"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the LATERAL generator yields a row.
+        _val = spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_geomkringexplode(geom, {res_i}, {k}) t LIMIT 1"
+        ).head(1)
+        if not _val:
+            raise RuntimeError("bng_geomkringexplode produced no rows")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_geomkringexplode {api} exploded {n} polygons (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_geomkloopexplode(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_geomkloopexplode (UDTF: geom -> rows of cellid) over polygons.
+
+    Mirror of geomkringexplode (k-loop). Timed via SQL LATERAL; both tiers
+    register the SAME ``gbx_bng_geomkloopexplode`` SQL name (tier-agnostic job).
+    Records ``rows`` = number of input polygons. Parity (cluster cell): exploded
+    cellid set == geomkloop's set.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_geomkloopexplode"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    # Align resolution to the int index for parity with the canonical
+    # function-info form (heavy accepts Int or String here).
+    from databricks.labs.gbx.pygx import _bng
+
+    res_i = _bng.get_resolution(res)
+
+    def _job():
+        return spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_geomkloopexplode(geom, {res_i}, {k}) t"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the LATERAL generator yields a row.
+        _val = spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_geomkloopexplode(geom, {res_i}, {k}) t LIMIT 1"
+        ).head(1)
+        if not _val:
+            raise RuntimeError("bng_geomkloopexplode produced no rows")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_geomkloopexplode {api} exploded {n} polygons (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_bng_tessellateexplode(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res="1km",
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_bng_tessellateexplode (UDTF: geom -> rows of (cellid, core, chip)).
+
+    A table-valued generator: timed via SQL LATERAL over WKT polygons. Both tiers
+    register the SAME ``gbx_bng_tessellateexplode`` SQL name (tier-agnostic job).
+    Records ``rows`` = number of input polygons. Parity (cluster cell): exploded
+    cellid set == tessellate's chip cellid set.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import generate_bng_polygons
+
+    env = capture_env(where)
+    fn = "bng_tessellateexplode"
+    cat = "grid"
+    try:
+        _register_bng(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_bng_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_bng_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_tessellateexplode(geom, '{res}') t"
+        ).count()
+
+    try:
+        # Untimed validation: confirm the LATERAL generator yields a row.
+        _val = spark.sql(
+            f"SELECT t.cellid FROM _bng_bench_v, "
+            f"LATERAL gbx_bng_tessellateexplode(geom, '{res}') t LIMIT 1"
+        ).head(1)
+        if not _val:
+            raise RuntimeError("bng_tessellateexplode produced no rows")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"bng_tessellateexplode {api} exploded {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
 def _make_synthetic_geotiff(
     n_regions: int = 4,
     size: int = 64,
@@ -1906,6 +5377,741 @@ def _fanout_spec(fn: str, scale: float):
         return tile_kwargs, light, heavy
 
     raise ValueError(f"unknown fanout fn: {fn}")
+
+
+# =============================================================================
+# Custom-grid bench legs (gbx_custom_* light pygx vs heavy gridx.custom).
+#
+# All legs build the SAME fixed grid struct via gbx_custom_grid(...) (see
+# corpus_vector.CUSTOM_GRID_SQL) so both tiers consume an identical STRUCT.  Cell
+# ids are BIGINT; geometry outputs are plain WKB, no SRID (the grid's srid is
+# metadata only).  pointascell uses the geometry's FIRST coordinate (heavy
+# geom.getCoordinate), NOT the centroid -- unlike BNG.  Representative spread
+# (per the plan): pointascell (geom->BIGINT, scalar encode), polyfill
+# (geom->ARRAY<BIGINT>), kring (cell-in->ARRAY<BIGINT>), cellaswkb (cell->WKB,
+# the UDF-boundary leg).  Parity (cluster cell): exact cell-id/set; decoded geom.
+# =============================================================================
+
+
+def _register_custom(spark, api: str) -> None:
+    """Register exactly one custom-grid tier.
+
+    light  -> ``databricks.labs.gbx.pygx`` (gx.register: spark.udf only).
+    heavy  -> ``databricks.labs.gbx.gridx.custom`` (JVM Scala expressions).
+
+    Both tiers expose the SAME ``gbx_custom_*`` SQL names, so registering one
+    overwrites the other in the session catalog.  Each ``run_custom_*`` call
+    therefore registers a single tier; the light-vs-heavy parity gate (which must
+    collect light BEFORE re-registering heavy) lives in the cluster cell.
+    """
+    if api == "lightweight":
+        from databricks.labs.gbx.pygx import functions as gx
+
+        gx.register(spark)
+    else:
+        from databricks.labs.gbx.gridx.custom import functions as hx
+
+        hx.register(spark)
+
+
+def run_custom_pointascell(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_pointascell (geom first-coord -> BIGINT cell) over ``n_rows`` points.
+
+    Light registers pygx (``gbx_custom_pointascell`` via spark.udf); heavy registers
+    gridx.custom (the SAME SQL name, JVM). The grid is built inline via
+    gbx_custom_grid(...).  Records ``rows`` = number of cells produced.  Returns one
+    ResultRow (mode="spark-path", category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_points,
+    )
+
+    env = capture_env(where)
+    fn = "custom_pointascell"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_pointascell(geom, {CUSTOM_GRID_SQL}, {res}) AS cell "
+            "FROM _custom_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm non-null cell ids are produced.
+        _val = spark.sql(
+            f"SELECT gbx_custom_pointascell(geom, {CUSTOM_GRID_SQL}, {res}) AS cell "
+            "FROM _custom_bench_v WHERE geom IS NOT NULL LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["cell"] is None:
+            raise RuntimeError("custom_pointascell produced null cell")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_pointascell {api} encoded {n} points",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_polyfill(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_polyfill (geom -> ARRAY<BIGINT cell>) over ``n_rows`` WKT polygons.
+
+    Light registers pygx; heavy registers gridx.custom (same SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Records ``rows`` = number of input polygons
+    (each producing a cell array).  Returns one ResultRow (mode="spark-path",
+    category="grid").
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_polygons,
+    )
+
+    env = capture_env(where)
+    fn = "custom_polyfill"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_polygons(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_polyfill(geom, {CUSTOM_GRID_SQL}, {res}) AS cells "
+            "FROM _custom_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm at least one non-empty cell array.
+        _val = spark.sql(
+            f"SELECT gbx_custom_polyfill(geom, {CUSTOM_GRID_SQL}, {res}) AS cells "
+            "FROM _custom_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["cells"]:
+            raise RuntimeError("custom_polyfill produced empty cell array")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_polyfill {api} filled {n} polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_kring(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    k: int = 1,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_kring (scalar BIGINT cell -> ARRAY<BIGINT>) over ``n_rows`` cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Records ``rows`` = number of input cells.
+    Returns one ResultRow (mode="spark-path", category="grid").  Parity (cluster cell):
+    exact sorted cell-set equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_kring"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_kring(cell, {CUSTOM_GRID_SQL}, {k}) AS ring "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty ring comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_kring(cell, {CUSTOM_GRID_SQL}, {k}) AS ring "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["ring"]:
+            raise RuntimeError("custom_kring produced empty ring")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_kring {api} ringed {n} cells (k={k})",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_cellaswkb(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_cellaswkb (scalar BIGINT cell -> WKB polygon, no SRID) over cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  This is the UDF-boundary leg (tile/geometry
+    bytes cross JVM<->Python).  Records ``rows`` = number of input cells.  Returns one
+    ResultRow (mode="spark-path", category="grid").  Parity (cluster cell): decoded
+    geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_cellaswkb"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_cellaswkb(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKB polygon comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_cellaswkb(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("custom_cellaswkb produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_cellaswkb {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_cellaswkt(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_cellaswkt (scalar BIGINT cell -> WKT polygon string, no SRID) over cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Mirrors run_custom_cellaswkb but the cell ->
+    geometry crosses the JVM<->Python boundary as a WKT STRING rather than WKB bytes.
+    Records ``rows`` = number of input cells.  Returns one ResultRow (mode="spark-path",
+    category="grid").  Parity (cluster cell): decoded geometry sym-diff area < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_cellaswkt"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_cellaswkt(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKT polygon string comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_cellaswkt(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or not _val[0]["g"]:
+            raise RuntimeError("custom_cellaswkt produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_cellaswkt {api} encoded {n} cell polygons",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_centroid(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    res: int = 0,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_centroid (scalar BIGINT cell -> WKB point, no SRID) over cells.
+
+    Light registers pygx; heavy registers gridx.custom (the SAME SQL name). The grid is
+    built inline via gbx_custom_grid(...).  Mirrors run_custom_cellaswkb but returns the
+    cell centroid point (WKB) rather than the cell polygon.  Records ``rows`` = number of
+    input cells.  Returns one ResultRow (mode="spark-path", category="grid").  Parity
+    (cluster cell): decoded point distance < 1e-6.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_cells,
+    )
+
+    env = capture_env(where)
+    fn = "custom_centroid"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    try:
+        data, schema = generate_custom_cells(n_rows, res=res)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_cell_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT gbx_custom_centroid(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-empty WKB point comes back.
+        _val = spark.sql(
+            f"SELECT gbx_custom_centroid(cell, {CUSTOM_GRID_SQL}) AS g "
+            "FROM _custom_cell_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["g"] is None or len(bytes(_val[0]["g"])) == 0:
+            raise RuntimeError("custom_centroid produced empty/null geometry")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_centroid {api} encoded {n} cell centroids",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
+
+
+def run_custom_grid(
+    spark,
+    run_id: str,
+    warmup: int,
+    measured: int,
+    *,
+    api: str,
+    n_rows: int = 1000,
+    where: str = "cluster",
+) -> "ResultRow":
+    """Time gbx_custom_grid (8 scalar args -> validated grid STRUCT) over ``n_rows`` rows.
+
+    Light registers pygx (a validating @udf returning CUSTOM_GRID_SCHEMA); heavy registers
+    gridx.custom (the SAME SQL name, a JVM expression).  gbx_custom_grid is the validating
+    STRUCT constructor consumed by every other gbx_custom_* op -- a per-row scalar
+    construction, not a geo op.  This leg times constructing the grid struct from the 8
+    CUSTOM_GRID_ARGS literals once per corpus row.  Both tiers build the SAME struct (same
+    8 named fields), so it is parity-comparable on the struct field tuple.  Records
+    ``rows`` = number of constructions.  Returns one ResultRow (mode="spark-path",
+    category="grid").  Parity (cluster cell): exact struct field-tuple equality.
+    """
+    from databricks.labs.gbx.bench.corpus_vector import (
+        CUSTOM_GRID_SQL,
+        generate_custom_points,
+    )
+
+    env = capture_env(where)
+    fn = "custom_grid"
+    cat = "grid"
+    try:
+        _register_custom(spark, api)
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"register error: {e}",
+            warmup=warmup,
+        )
+
+    # Reuse the points corpus purely to get n_rows rows to construct the grid over
+    # (the geom column is unused; gbx_custom_grid takes only literal scalar args).
+    try:
+        data, schema = generate_custom_points(n_rows)
+        df = spark.createDataFrame(data, schema=schema).cache()
+        n = int(df.count())
+        df.createOrReplaceTempView("_custom_bench_v")
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=0,
+            status="error",
+            note=f"dataframe build error: {e}",
+            warmup=warmup,
+        )
+
+    def _job():
+        return spark.sql(
+            f"SELECT {CUSTOM_GRID_SQL} AS grid FROM _custom_bench_v"
+        ).count()
+
+    try:
+        # Untimed validation: confirm a non-null grid struct comes back.
+        _val = spark.sql(
+            f"SELECT {CUSTOM_GRID_SQL} AS grid FROM _custom_bench_v LIMIT 1"
+        ).head(1)
+        if not _val or _val[0]["grid"] is None:
+            raise RuntimeError("custom_grid produced null struct")
+        stats = time_iters(_job, warmup, measured)
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="ok",
+            note=f"custom_grid {api} built {n} grid structs",
+            stats=stats,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _tin_result_row(
+            run_id=run_id,
+            api=api,
+            fn=fn,
+            category=cat,
+            env=env,
+            rows=n,
+            status="error",
+            note=str(e),
+            warmup=warmup,
+        )
 
 
 def run_fanout_udtf(

@@ -5,6 +5,7 @@ import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.must.Matchers.{be, not}
 import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
+import org.apache.spark.unsafe.types.UTF8String
 
 class BNG_ExpressionExecuteTest extends AnyFunSuite {
 
@@ -172,6 +173,25 @@ class BNG_ExpressionExecuteTest extends AnyFunSuite {
         val triangle = JTS.fromWKT("POLYGON ((10000 10000, 20000 10000, 20000 20000, 10000 10000))")
         val geomKLoop = BNG_GeometryKRing.execute(triangle, 3, 2).toSeq
         geomKLoop.length shouldBe 151
+    }
+
+    test("BNG_GeometryKRing/KLoop eval accept a string resolution equal to the int index") {
+        val wkt = "POLYGON ((10000 10000, 20000 10000, 20000 20000, 10000 10000))"
+        val wktUtf8 = UTF8String.fromString(wkt)
+        val wkb = JTS.toWKB(JTS.fromWKT(wkt))
+
+        // "1km" maps to BNG resolution index 3
+        BNG.getResolution(UTF8String.fromString("1km")) shouldBe 3
+
+        // String-resolution overloads must return the same cell set as the int form.
+        BNG_GeometryKRing.eval(wktUtf8, UTF8String.fromString("1km"), 1) shouldBe
+            BNG_GeometryKRing.eval(wktUtf8, 3, 1)
+        BNG_GeometryKRing.eval(wkb, UTF8String.fromString("1km"), 1) shouldBe
+            BNG_GeometryKRing.eval(wkb, 3, 1)
+        BNG_GeometryKLoop.eval(wktUtf8, UTF8String.fromString("1km"), 1) shouldBe
+            BNG_GeometryKLoop.eval(wktUtf8, 3, 1)
+        BNG_GeometryKLoop.eval(wkb, UTF8String.fromString("1km"), 1) shouldBe
+            BNG_GeometryKLoop.eval(wkb, 3, 1)
     }
 
     test("BNG_KLoop should return cell IDs of the KLoop disk") {
