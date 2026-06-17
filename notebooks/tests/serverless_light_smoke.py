@@ -17,6 +17,7 @@ Usage (run under .venv-pyrx which has databricks-sdk):
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -24,8 +25,9 @@ import time
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import compute, jobs, workspace
 
-HOST = "https://e2-demo-field-eng.cloud.databricks.com"
-NB_PATH = "/Users/mjohns@databricks.com/geobrix_serverless_light_smoke"
+HOST = os.environ.get(
+    "DATABRICKS_HOST", "https://e2-demo-field-eng.cloud.databricks.com")
+NB_NAME = "geobrix_serverless_light_smoke"
 DEFAULT_SPEC = (
     "geobrix[light] @ file:///Volumes/geospatial_docs/geobrix/sample-data/"
     "geobrix-0.4.0-py3-none-any.whl"
@@ -322,11 +324,12 @@ def main():
         src = diagnose_source(args.spec, dry_run=not args.real_install)
     else:
         src = notebook_source(args.spec)
+    nb_path = f"/Users/{w.current_user.me().user_name}/{NB_NAME}"
     print(f"Install spec: {args.spec}")
-    print(f"Uploading smoke notebook to {NB_PATH} ...")
+    print(f"Uploading smoke notebook to {nb_path} ...")
     import base64
     w.workspace.import_(
-        path=NB_PATH, format=workspace.ImportFormat.SOURCE,
+        path=nb_path, format=workspace.ImportFormat.SOURCE,
         language=workspace.Language.PYTHON,
         content=base64.b64encode(src.encode()).decode(), overwrite=True,
     )
@@ -336,7 +339,7 @@ def main():
         run_name=args.run_name,
         tasks=[jobs.SubmitTask(
             task_key="smoke",
-            notebook_task=jobs.NotebookTask(notebook_path=NB_PATH),
+            notebook_task=jobs.NotebookTask(notebook_path=nb_path),
             environment_key="light_env",
         )],
         environments=[jobs.JobEnvironment(
