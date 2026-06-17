@@ -7,12 +7,15 @@ Spark-Connect health + key package versions + the pyrx import, and exits a
 JSON verdict. Lets us iterate on the Serverless "halo" install without a
 cluster.
 
-Auth: mints an oauth-fe bearer token (the SDK's profile refresh is flaky on
-some networks) and uses WorkspaceClient(host, token).
+Workspace config (host, profile, Volume coordinates) is read from the gitignored
+notebooks/tests/databricks_cluster_config.env. Auth mints a bearer token from the
+configured CLI profile (the SDK's profile refresh is flaky on some networks) and
+uses WorkspaceClient(host, token). With no --spec, the Volume-staged [light] wheel
+path is derived from GBX_BUNDLE_VOLUME_*.
 
 Usage (run under .venv-pyrx which has databricks-sdk):
     .venv-pyrx/bin/python notebooks/tests/serverless_light_smoke.py \
-        --spec 'geobrix[light] @ file:///Volumes/geospatial_docs/geobrix/sample-data/geobrix-0.4.0-py3-none-any.whl' \
+        --spec 'geobrix[light] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl' \
         --env-version 5
 """
 import argparse
@@ -21,22 +24,69 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import compute, jobs, workspace
 
-HOST = os.environ.get(
-    "DATABRICKS_HOST", "https://e2-demo-field-eng.cloud.databricks.com")
+# All workspace-specific values (host, profile, Volume coordinates) come from the
+# gitignored notebooks/tests/databricks_cluster_config.env so nothing internal is
+# baked into this committed file. Same env file the bench launcher uses.
+_ENV_FILE = Path(__file__).resolve().parent / "databricks_cluster_config.env"
+if _ENV_FILE.exists():
+    for _line in _ENV_FILE.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            _k, _v = _k.strip(), _v.strip().strip("'\"")
+            if _k and _v and not os.environ.get(_k):
+                os.environ[_k] = _v
+
+PROFILE = os.environ.get("DATABRICKS_CONFIG_PROFILE", "")
 NB_NAME = "geobrix_serverless_light_smoke"
-DEFAULT_SPEC = (
-    "geobrix[light] @ file:///Volumes/geospatial_docs/geobrix/sample-data/"
-    "geobrix-0.4.0-py3-none-any.whl"
-)
+
+
+def _derive_host() -> str:
+    """Host from DATABRICKS_HOST, else the configured CLI profile — never hardcoded."""
+    h = os.environ.get("DATABRICKS_HOST")
+    if h:
+        return h.rstrip("/")
+    if PROFILE:
+        try:
+            out = subprocess.run(
+                ["databricks", "auth", "env", "--profile", PROFILE],
+                capture_output=True, text=True, timeout=30,
+            ).stdout
+            return json.loads(out).get("env", {}).get("DATABRICKS_HOST", "").rstrip("/")
+        except Exception:
+            return ""
+    return ""
+
+
+def _default_spec() -> str:
+    """Volume-staged [light] wheel path, derived from GBX_BUNDLE_VOLUME_* config."""
+    catalog = os.environ.get("GBX_BUNDLE_VOLUME_CATALOG", "main")
+    schema = os.environ.get("GBX_BUNDLE_VOLUME_SCHEMA", "default")
+    volume = os.environ.get("GBX_BUNDLE_VOLUME_NAME", "geobrix_samples")
+    ver = os.environ.get("GBX_VERSION", "0.4.0")
+    return (
+        f"geobrix[light] @ file:///Volumes/{catalog}/{schema}/{volume}/"
+        f"geobrix-{ver}-py3-none-any.whl"
+    )
+
+
+HOST = _derive_host()
+DEFAULT_SPEC = _default_spec()
 
 
 def token():
+    if not PROFILE:
+        raise SystemExit(
+            "No DATABRICKS_CONFIG_PROFILE — set it (or DATABRICKS_HOST/TOKEN) via "
+            "notebooks/tests/databricks_cluster_config.env"
+        )
     out = subprocess.run(
-        ["databricks", "auth", "token", "-p", "oauth-fe"],
+        ["databricks", "auth", "token", "-p", PROFILE],
         capture_output=True, text=True, timeout=60,
     ).stdout
     return json.loads(out)["access_token"]
