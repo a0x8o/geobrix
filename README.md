@@ -57,8 +57,10 @@ A **single wheel + single JAR** runs on both: Scala 2.13.16 matches both runtime
 Stage the wheel (a [Releases](https://github.com/databrickslabs/geobrix/releases) artifact, not on PyPI) in a Unity Catalog Volume, then install the `[light]` extra:
 
 ```python
-%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl[light]'
+%pip install "geobrix[light] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl"
 ```
+
+> **Use the quoted `geobrix[light] @ file://…` form** (PEP 508, one argument). Don't put the extra on the path (`'/Volumes/…/…whl[light]'`) — on Serverless, `%pip` keeps the surrounding quotes and pip reads `[light]` as part of the filename, failing with *"Expected package name at the start of dependency specifier."* The named form installs cleanly on Serverless, standard/shared, and ARM.
 
 ```python
 from databricks.labs.gbx.ds.register import register   # *_gbx readers/writers

@@ -39,8 +39,19 @@ The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **
 3. **Install** it — either notebook-scoped with the `%pip` magic (installs across the whole cluster for the notebook session; plain `pip` installs only on the driver), or as a [cluster-scoped library](https://docs.databricks.com/aws/en/libraries/notebooks-python-libraries#manage-libraries-with-pip-commands) pointing at the same Volume path (works on Serverless and Classic):
 
 ```python
-%pip install '/Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl[light]'
+%pip install "geobrix[light] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl"
 ```
+
+:::warning Use the quoted `geobrix[light] @ file://…` form
+Install with the **PEP 508 named form above**, wrapped in quotes as a single
+argument. Do **not** put the extra on the path —
+`%pip install '/Volumes/…/geobrix-<version>-py3-none-any.whl[light]'`. On
+**Serverless**, `%pip` writes the requirement to a file *including the
+surrounding quotes*, so pip reads `[light]` as part of the filename and fails
+with *"Expected package name at the start of dependency specifier."* The named
+`geobrix[light] @ file:///…` form installs cleanly on **Serverless**,
+standard/shared, and ARM.
+:::
 
 Then import the package(s) you need and (optionally) register their SQL functions. Each light package exposes the same `functions` / `register(spark)` pattern:
 
