@@ -69,8 +69,44 @@ def _default_spec() -> str:
 DEFAULT_SPEC = _default_spec()
 
 
+def _host_from_cfg() -> str:
+    h = os.environ.get("DATABRICKS_HOST")
+    if h:
+        return h.rstrip("/")
+    cfg = Path.home() / ".databrickscfg"
+    if PROFILE and cfg.exists():
+        in_p = False
+        for line in cfg.read_text().splitlines():
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                in_p = (s == f"[{PROFILE}]")
+            elif in_p and s.lower().startswith("host"):
+                return s.split("=", 1)[1].strip().rstrip("/")
+    return ""
+
+
+def _mint_token() -> str:
+    """Bearer token via the CLI's cached access token (no SDK rotating-refresh)."""
+    pre = os.environ.get("DATABRICKS_TOKEN")
+    if pre:
+        return pre
+    if not PROFILE:
+        return ""
+    clean = {k: v for k, v in os.environ.items() if k != "DATABRICKS_CONFIG_PROFILE"}
+    out = subprocess.run(
+        ["databricks", "auth", "token", "-p", PROFILE],
+        capture_output=True, text=True, timeout=60, env=clean,
+    ).stdout
+    return json.loads(out)["access_token"] if out.strip().startswith("{") else ""
+
+
 def _client() -> WorkspaceClient:
-    """Authenticate via the configured CLI profile (default credential chain if unset)."""
+    """Authenticate with a CLI-minted bearer token (reliable here — the SDK's
+    profile path rotates the single-use refresh token on each client and breaks
+    across repeated runs). Falls back to profile/default chain if no token."""
+    host, tok = _host_from_cfg(), _mint_token()
+    if host and tok:
+        return WorkspaceClient(host=host, token=tok)
     return WorkspaceClient(profile=PROFILE) if PROFILE else WorkspaceClient()
 
 
