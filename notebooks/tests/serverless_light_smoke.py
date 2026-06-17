@@ -29,38 +29,29 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service import compute, jobs, workspace
 
-# All workspace-specific values (host, profile, Volume coordinates) come from the
+# All workspace-specific values (profile, Volume coordinates) come from the
 # gitignored notebooks/tests/databricks_cluster_config.env so nothing internal is
 # baked into this committed file. Same env file the bench launcher uses.
+#
+# IMPORTANT: the profile is captured into PROFILE and passed explicitly to
+# WorkspaceClient(profile=...), but DATABRICKS_CONFIG_PROFILE is deliberately kept
+# OUT of os.environ. When that var is present in the environment, the CLI/SDK
+# databricks-cli auth takes a refresh path that fails ("refresh token is invalid")
+# on this setup, whereas the explicit profile= arg with a clean env mints fine.
+_CFG = {}
 _ENV_FILE = Path(__file__).resolve().parent / "databricks_cluster_config.env"
 if _ENV_FILE.exists():
     for _line in _ENV_FILE.read_text().splitlines():
         _line = _line.strip()
         if _line and not _line.startswith("#") and "=" in _line:
             _k, _, _v = _line.partition("=")
-            _k, _v = _k.strip(), _v.strip().strip("'\"")
-            if _k and _v and not os.environ.get(_k):
-                os.environ[_k] = _v
+            _CFG[_k.strip()] = _v.strip().strip("'\"")
+            if _k.strip() != "DATABRICKS_CONFIG_PROFILE" and not os.environ.get(_k.strip()):
+                os.environ[_k.strip()] = _CFG[_k.strip()]
 
-PROFILE = os.environ.get("DATABRICKS_CONFIG_PROFILE", "")
+PROFILE = _CFG.get("DATABRICKS_CONFIG_PROFILE", os.environ.get("DATABRICKS_CONFIG_PROFILE", ""))
+os.environ.pop("DATABRICKS_CONFIG_PROFILE", None)  # keep it out of the env
 NB_NAME = "geobrix_serverless_light_smoke"
-
-
-def _derive_host() -> str:
-    """Host from DATABRICKS_HOST, else the configured CLI profile — never hardcoded."""
-    h = os.environ.get("DATABRICKS_HOST")
-    if h:
-        return h.rstrip("/")
-    if PROFILE:
-        try:
-            out = subprocess.run(
-                ["databricks", "auth", "env", "--profile", PROFILE],
-                capture_output=True, text=True, timeout=30,
-            ).stdout
-            return json.loads(out).get("env", {}).get("DATABRICKS_HOST", "").rstrip("/")
-        except Exception:
-            return ""
-    return ""
 
 
 def _default_spec() -> str:
@@ -75,21 +66,12 @@ def _default_spec() -> str:
     )
 
 
-HOST = _derive_host()
 DEFAULT_SPEC = _default_spec()
 
 
-def token():
-    if not PROFILE:
-        raise SystemExit(
-            "No DATABRICKS_CONFIG_PROFILE — set it (or DATABRICKS_HOST/TOKEN) via "
-            "notebooks/tests/databricks_cluster_config.env"
-        )
-    out = subprocess.run(
-        ["databricks", "auth", "token", "-p", PROFILE],
-        capture_output=True, text=True, timeout=60,
-    ).stdout
-    return json.loads(out)["access_token"]
+def _client() -> WorkspaceClient:
+    """Authenticate via the configured CLI profile (default credential chain if unset)."""
+    return WorkspaceClient(profile=PROFILE) if PROFILE else WorkspaceClient()
 
 
 def notebook_source(spec: str) -> str:
@@ -246,18 +228,42 @@ try:
     r["mvt_ok"] = len(b) > 0; r["mvt_bytes"] = len(b)
 except Exception as e:
     r["mvt_ok"] = False; r["mvt_error"] = repr(e)
+# pyrx: import + register (the SQL names)
 try:
     from databricks.labs.gbx.pyrx import functions as rx
     rx.register(spark)
-    r["pyrx_import"] = "ok"
-    r["gbx_rst_count"] = len([f.name for f in spark.catalog.listFunctions() if f.name.startswith("gbx_rst_")])
+    r["pyrx_register"] = "ok"
 except Exception as e:
-    r["pyrx_import"] = "ERROR"; r["pyrx_error"] = repr(e); r["pyrx_trace"] = traceback.format_exc()[-1000:]
+    r["pyrx_register"] = "ERROR"; r["pyrx_register_error"] = repr(e)[:400]
+# pyrx: REAL execution on Serverless workers (the user-facing proof) — build a
+# tiny in-memory GeoTIFF and read its width back through the Column API.
+try:
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from databricks.labs.gbx.pyrx import functions as rx
+    with MemoryFile() as mf:
+        with mf.open(driver="GTiff", width=4, height=4, count=1, dtype="uint8") as ds:
+            ds.write(np.arange(16, dtype="uint8").reshape(4, 4), 1)
+        content = mf.read()
+    df = spark.createDataFrame([(content,)], "content binary")
+    w_ = df.select(rx.rst_width(rx.rst_fromcontent("content")).alias("w")).collect()
+    r["pyrx_exec_width"] = int(w_[0]["w"]) if w_ else None
+    r["pyrx_exec_ok"] = (r.get("pyrx_exec_width") == 4)
+except Exception as e:
+    r["pyrx_exec_ok"] = False; r["pyrx_exec_error"] = repr(e)[:400]
+# pyvx register
 try:
     from databricks.labs.gbx.pyvx import functions as vx
     vx.register(spark); r["pyvx_register"] = "ok"
 except Exception as e:
-    r["pyvx_register"] = "ERROR"; r["pyvx_error"] = repr(e)
+    r["pyvx_register"] = "ERROR"; r["pyvx_error"] = repr(e)[:400]
+# Characterize the catalog.listFunctions() SUM:DOUBLE separately (NOT a gbx
+# call path users need — it's a Serverless/UC introspection quirk).
+try:
+    n = len([f for f in spark.catalog.listFunctions() if f.name.startswith("gbx_rst_")])
+    r["listfunctions_ok"] = True; r["gbx_rst_count"] = n
+except Exception as e:
+    r["listfunctions_ok"] = False; r["listfunctions_error"] = repr(e)[:200]
 dbutils.notebook.exit(json.dumps(r))
 '''
     return "# Databricks notebook source\n" + body
@@ -360,7 +366,7 @@ def main():
                     help="env-deps + wrap register to pinpoint the failing UDF registration")
     args = ap.parse_args()
 
-    w = WorkspaceClient(host=HOST, token=token())
+    w = _client()
     if args.isolate_register:
         src = isolate_register_source()
         args.env_deps = True  # provision deps via the Environment spec
