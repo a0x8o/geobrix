@@ -25,10 +25,10 @@ READ_RASTER_GBX_output = """+--------------------------------------------------+
 READ_GTIFF_GBX = """# Named lightweight GeoTIFF reader (preset for GeoTIFF)
 df = spark.read.format("gtiff_gbx").load("{SAMPLE_RASTER_PATH}")"""
 
-READ_WITH_OPTIONS = """# Options: sizeInMB (tile split threshold) + filterRegex (directory listing)
+READ_WITH_OPTIONS = r"""# Options: sizeInMB (tile split threshold) + filterRegex (directory listing)
 df = (spark.read.format("raster_gbx")
       .option("sizeInMB", "16")
-      .option("filterRegex", r".*\\.tif$")
+      .option("filterRegex", r".*\.tif$")
       .load("{SAMPLE_RASTER_PATH}"))"""
 
 
