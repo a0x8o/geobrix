@@ -305,12 +305,15 @@ def _fromfile_udf(path, driver):
         return None
     import rasterio
 
+    from databricks.labs.gbx.ds._listing import to_local_path
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     drv = "GTiff" if driver is None else str(driver)
     try:
-        with rasterio.open(str(path)) as src:
+        # Columns carry dbfs:-qualified paths (to_spark_uri); rasterio opens the
+        # bare FUSE path, so strip the scheme right before the open.
+        with rasterio.open(to_local_path(str(path))) as src:
             data = src.read()
             profile = src.profile.copy()
             profile.update(driver="GTiff")

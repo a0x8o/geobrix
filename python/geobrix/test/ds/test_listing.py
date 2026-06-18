@@ -39,3 +39,11 @@ def test_single_file_path_returns_that_file(tree):
 def test_no_match_raises(tree):
     with pytest.raises(FileNotFoundError):
         _listing.list_files(str(tree), filter_regex=r".*\.nope$")
+
+
+def test_list_files_strips_file_scheme(tree):
+    """A scheme-qualified input (columns store dbfs:/file: paths) lists the same
+    files as the bare path -- list_files strips the scheme before os.* resolves it."""
+    bare = _listing.list_files(str(tree), filter_regex=r".*\.tif$")
+    qualified = _listing.list_files("file:" + str(tree), filter_regex=r".*\.tif$")
+    assert qualified == bare

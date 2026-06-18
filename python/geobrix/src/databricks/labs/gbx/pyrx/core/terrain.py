@@ -357,8 +357,12 @@ def color_relief(ds, color_table_path: str) -> bytes:
     if band_min == band_max:
         band_max = band_min + 1.0
 
+    # The color-table path may arrive dbfs:-qualified (from a column); strip the
+    # scheme back to the bare FUSE path before opening the file.
+    from databricks.labs.gbx.ds._listing import to_local_path
+
     stops, nv_color, has_alpha = _parse_color_table(
-        color_table_path, band_min, band_max
+        to_local_path(color_table_path), band_min, band_max
     )
 
     if not stops:

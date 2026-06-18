@@ -1120,6 +1120,26 @@ def test_rst_fromfile_roundtrip(spark, tmp_path):
         assert ds.crs.to_epsg() == 4326
 
 
+def test_rst_fromfile_strips_scheme_before_open(spark, tmp_path):
+    # Columns carry scheme-qualified paths (to_spark_uri -> dbfs:/file:); the udf
+    # must strip the scheme back to the bare FUSE path before rasterio.open, else
+    # the open fails (rasterio cannot open 'file:/...'). A bare tmp file prefixed
+    # with 'file:' exercises that strip (file:/tmp/x -> /tmp/x, which exists).
+    import rasterio
+
+    p = str(tmp_path / "scene.tif")
+    with _serde.open_tile(make_geotiff_bytes(width=4, height=3, epsg=4326)) as src:
+        profile = src.profile.copy()
+        data = src.read()
+    with rasterio.open(p, "w", **profile) as dst:
+        dst.write(data)
+    df = spark.createDataFrame([("file:" + p,)], ["path"])
+    tile = df.select(prx.rst_fromfile("path", f.lit("GTiff")).alias("t")).first()["t"]
+    assert tile is not None  # scheme stripped -> open succeeded
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.width == 4 and ds.height == 3
+
+
 def test_rst_fromfile_bad_path_returns_none(spark):
     # Heavyweight returns NULL on read failure; pyrx matches.
     df = spark.createDataFrame([("/no/such/raster.tif",)], ["path"])

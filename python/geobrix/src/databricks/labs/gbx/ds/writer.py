@@ -63,7 +63,11 @@ class RasterGbxWriter(DataSourceWriter):
                 f"nameCol {name_col!r} is not a column; available: "
                 f"{[f.name for f in schema.fields]} (overwrite 'source')."
             )
-        self.path = path
+        from databricks.labs.gbx.ds._listing import to_local_path
+
+        # The output path may arrive dbfs:-qualified; strip the scheme once so all
+        # os.* writes operate on the bare FUSE path.
+        self.path = to_local_path(path)
         self.overwrite = overwrite
         self.name_col = name_col
         self.ext = ext
