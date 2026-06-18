@@ -275,6 +275,7 @@ except Exception as e:
 # tiny in-memory GeoTIFF and read its width back through the Column API.
 try:
     import numpy as np
+    from pyspark.sql.functions import lit
     from rasterio.io import MemoryFile
     from databricks.labs.gbx.pyrx import functions as rx
     with MemoryFile() as mf:
@@ -282,7 +283,10 @@ try:
             ds.write(np.arange(16, dtype="uint8").reshape(4, 4), 1)
         content = mf.read()
     df = spark.createDataFrame([(content,)], "content binary")
-    w_ = df.select(rx.rst_width(rx.rst_fromcontent("content")).alias("w")).collect()
+    # rst_fromcontent(content, driver) — the GDAL driver name is required.
+    w_ = df.select(
+        rx.rst_width(rx.rst_fromcontent("content", lit("GTiff"))).alias("w")
+    ).collect()
     r["pyrx_exec_width"] = int(w_[0]["w"]) if w_ else None
     r["pyrx_exec_ok"] = (r.get("pyrx_exec_width") == 4)
 except Exception as e:
