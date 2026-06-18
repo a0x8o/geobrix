@@ -148,6 +148,25 @@ def test_whole_file_gtiff_is_passthrough(spark, tmp_path):
     )
 
 
+def test_source_column_is_spark_uri_qualified(spark, tmp_path):
+    # The emitted source column is to_spark_uri()-qualified so a light-produced
+    # DataFrame joins cleanly against binaryFile / heavy gdal (dbfs:/Volumes/...).
+    # A tmp-dir read is a bare local path, so to_spark_uri leaves it UNCHANGED
+    # (proves no mangling of local dev/test paths); the /Volumes mapping is
+    # asserted directly since local tests cannot read from a real Volume.
+    from databricks.labs.gbx.ds._listing import to_spark_uri
+
+    f = tmp_path / "sample.tif"
+    _write_sample(str(f))
+    spark.dataSource.register(RasterGbxDataSource)
+    rows = spark.read.format("raster_gbx").load(str(f)).collect()
+    assert len(rows) == 1
+    # (a) bare local tmp path passes through unchanged.
+    assert rows[0]["source"] == to_spark_uri(str(f)) == str(f)
+    # (b) the Volume case the reader exists to fix maps to the Hadoop form.
+    assert to_spark_uri("/Volumes/x/y.tif") == "dbfs:/Volumes/x/y.tif"
+
+
 def test_multi_tile_subwindows_are_reencoded(spark, tmp_path):
     # When the source splits into sub-tiles, those CANNOT pass through (each is a
     # window of the source), so they must be re-encoded -> bytes differ from source.

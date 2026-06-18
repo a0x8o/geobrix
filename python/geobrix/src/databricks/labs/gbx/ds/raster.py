@@ -66,6 +66,11 @@ class RasterGbxReader(DataSourceReader):
 
         _env.configure_gdal_env()
 
+        # rasterio reads the BARE FUSE path; only the emitted source column is
+        # scheme-qualified to match binaryFile / heavy gdal (dbfs:/Volumes/...),
+        # so a light-produced DataFrame joins cleanly against that convention.
+        source = _listing.to_spark_uri(partition.file_path)
+
         # Heavy keys the BalancedSubdivision split on RasterAccessors.memSize,
         # which for an on-disk source is the file's encoded byte size. Reuse the
         # shared, tested split math in core.tiling rather than re-deriving it.
@@ -89,7 +94,7 @@ class RasterGbxReader(DataSourceReader):
                     all_parents="",
                     compression=compression,
                 )
-                yield (partition.file_path, (cellid, raster_bytes, meta))
+                yield (source, (cellid, raster_bytes, meta))
                 return
 
             row_off = 0
@@ -104,7 +109,7 @@ class RasterGbxReader(DataSourceReader):
                         source_path=partition.file_path,
                         all_parents="",
                     )
-                    yield (partition.file_path, (cellid, raster_bytes, meta))
+                    yield (source, (cellid, raster_bytes, meta))
                     col_off += tile_x
                 row_off += tile_y
 
