@@ -128,6 +128,58 @@ def test_rst_clip(spark):
     assert 0 < row["w"] < 4 and 0 < row["h"] < 3
 
 
+def test_rst_clip_geom_encodings(spark):
+    # Parity bug fix: rst_clip must accept the SAME geometry as WKB / EWKB /
+    # WKT / EWKT (heavyweight accepts all four; the xView example passes EWKT).
+    import shapely
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import box
+
+    poly = box(10.5, 49.0, 11.5, 49.5)
+    encodings = {
+        "wkb": to_wkb(poly),
+        "ewkb": to_wkb(set_srid(poly, 4326), include_srid=True),
+        "wkt": poly.wkt,
+        "ewkt": f"SRID=4326;{poly.wkt}",
+    }
+
+    results = {}
+    for name, geom in encodings.items():
+        df = _tile_df(spark, width=4, height=3, epsg=4326)
+        df = df.withColumn("g", f.lit(geom))
+        row = (
+            df.select(prx.rst_clip("tile", "g", False).alias("t"))
+            .select(f.col("t.raster").alias("b"))
+            .first()
+        )
+        assert row is not None and row["b"] is not None, f"{name} produced a null tile"
+        results[name] = bytes(row["b"])
+
+    # All four encodings of the same geometry must produce identical raster bytes.
+    distinct = set(results.values())
+    assert (
+        len(distinct) == 1
+    ), f"encodings diverged: { {k: len(v) for k, v in results.items()} }"
+
+
+def test_rst_sample_geom_encodings(spark):
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import Point
+
+    pt = Point(10.75, 49.75)
+    encodings = {
+        "wkb": to_wkb(pt),
+        "ewkb": to_wkb(set_srid(pt, 4326), include_srid=True),
+        "wkt": pt.wkt,
+        "ewkt": f"SRID=4326;{pt.wkt}",
+    }
+    for name, geom in encodings.items():
+        df = _tile_df(spark, width=4, height=3, count=2)
+        df = df.withColumn("g", f.lit(geom))
+        vals = df.select(prx.rst_sample("tile", "g").alias("v")).first()["v"]
+        assert vals == [1.0, 101.0], f"{name} sampled {vals}"
+
+
 def test_rst_updatetype(spark):
     df = _tile_df(spark, width=4, height=3)
     out = df.select(prx.rst_updatetype("tile", f.lit("Int32")).alias("t"))

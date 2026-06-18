@@ -591,11 +591,12 @@ def rst_resample_to_res(
 def _clip_udf(tile, geom_wkb, all_touched):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import geom_to_wkb
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = edit.clip_to_geom(ds, bytes(geom_wkb), bool(all_touched))
+        new_bytes = edit.clip_to_geom(ds, geom_to_wkb(geom_wkb), bool(all_touched))
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
@@ -624,7 +625,7 @@ def _init_nodata_udf(tile):
 
 
 def rst_clip(tile: ColLike, clip: ColLike, cutline_all_touched: ColLike) -> Column:
-    """Clip the raster to a geometry (WKB). cutline_all_touched includes pixels touched by the boundary."""
+    """Clip the raster to a geometry (WKB, EWKB, WKT, or EWKT). cutline_all_touched includes pixels touched by the boundary."""
     return _clip_udf(_col(tile), _col(clip), _col(cutline_all_touched))
 
 
@@ -704,11 +705,12 @@ def _buildoverviews_udf(tile, levels, resampling):
 def _sample_udf(tile, geom_wkb):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import geom_to_wkb
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        return ops_core.sample(ds, bytes(geom_wkb))
+        return ops_core.sample(ds, geom_to_wkb(geom_wkb))
 
 
 @f.udf(_serde.TILE_SCHEMA)
@@ -1068,7 +1070,7 @@ def rst_viewshed(
 
 
 def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
-    """Sample per-band raster values at a POINT geometry (WKB).
+    """Sample per-band raster values at a POINT geometry (WKB, EWKB, WKT, or EWKT).
 
     Mirrors the heavyweight ``gbx_rst_sample``: requires a POINT geometry
     (raises otherwise), uses (geom.x, geom.y) as a world coordinate already
@@ -1077,7 +1079,7 @@ def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
 
     Args:
         tile:     Tile struct column.
-        geom_wkb: POINT geometry as WKB bytes.
+        geom_wkb: POINT geometry as WKB, EWKB, WKT, or EWKT.
 
     Returns:
         ARRAY<DOUBLE>: one value per band, or null if the point is out of extent.
@@ -1370,11 +1372,12 @@ def rst_evi(  # noqa: E741
 def _rasterize_udf(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid):
     if geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import geom_to_wkb
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     new_bytes = features.rasterize_geom(
-        bytes(geom_wkb), value, xmin, ymin, xmax, ymax, width_px, height_px, srid
+        geom_to_wkb(geom_wkb), value, xmin, ymin, xmax, ymax, width_px, height_px, srid
     )
     return _serde.build_tile(new_bytes, "GTiff", 0)
 
@@ -1390,7 +1393,7 @@ def rst_rasterize(
     height_px: ColLike,
     srid: ColLike,
 ) -> Column:
-    """Burn a geometry (WKB) into a new raster tile at the given extent/size/SRID."""
+    """Burn a geometry (WKB, EWKB, WKT, or EWKT) into a new raster tile at the given extent/size/SRID."""
     return _rasterize_udf(
         _col(geom_wkb),
         _col(value),
