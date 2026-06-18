@@ -31,8 +31,8 @@ def _write(profile, data) -> bytes:
         return mf.read()
 
 
-def clip_to_geom(ds, geom, all_touched: bool = False) -> bytes:
-    """Clip a raster to a geometry; return GTiff bytes.
+def clip_to_geom(ds, geom, all_touched: bool = False):
+    """Clip a raster to a geometry; return GTiff bytes, or ``None`` on non-overlap.
 
     ``geom`` may be a shapely geometry (preferred — carries SRID via
     ``shapely.set_srid``) or raw WKB/EWKB ``bytes`` (back-compat).
@@ -42,6 +42,13 @@ def clip_to_geom(ds, geom, all_touched: bool = False) -> bytes:
     before masking. Otherwise (srid 0/unknown, or no raster CRS) the cutline is
     assumed to already be in the raster CRS and used as-is. Any failure to build
     the source CRS or transform falls back to using the cutline as-is.
+
+    If the (reprojected) cutline does NOT overlap the raster, ``rasterio.mask``
+    raises ``ValueError: Input shapes do not overlap raster.``. Heavy GDAL Warp
+    ``-cutline`` produces an empty/NoData result rather than crashing a whole
+    distributed job, so we mirror that intent by returning ``None`` (a null tile)
+    on non-overlap. Only that specific non-overlap condition is caught; unrelated
+    errors propagate.
     """
     if isinstance(geom, (bytes, bytearray)):
         geom = shapely.wkb.loads(bytes(geom))  # handles WKB and EWKB
@@ -64,9 +71,17 @@ def clip_to_geom(ds, geom, all_touched: bool = False) -> bytes:
             # "fall back to the raster's CRS" intent: assume already aligned).
             mask_shape = geom
 
-    out_image, out_transform = _rio_mask(
-        ds, [mask_shape], crop=True, all_touched=bool(all_touched)
-    )
+    try:
+        out_image, out_transform = _rio_mask(
+            ds, [mask_shape], crop=True, all_touched=bool(all_touched)
+        )
+    except ValueError as exc:
+        # rasterio.mask raises ValueError("Input shapes do not overlap raster.")
+        # when the cutline misses the raster entirely. Match heavy's empty-result
+        # behavior with a null tile; re-raise anything else.
+        if "do not overlap" in str(exc).lower():
+            return None
+        raise
     profile = ds.profile.copy()
     profile.update(
         driver="GTiff",

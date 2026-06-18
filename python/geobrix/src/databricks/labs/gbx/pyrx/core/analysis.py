@@ -366,18 +366,28 @@ def viewshed(ds, observer_x, observer_y, observer_height, target_height, max_dis
     xs = np.asarray(xs, dtype="float64")
     ys = np.asarray(ys, dtype="float64")
 
-    da = xr.DataArray(band, dims=["y", "x"], coords={"y": ys, "x": xs})
-    res = _viewshed(
-        da,
-        x=observer_x,
-        y=observer_y,
-        observer_elev=observer_height,
-        target_elev=target_height,
-        max_distance=max_distance,
-    )
-    vals = np.asarray(res.values)
-    # Visible cells carry an angle in [0, 180]; invisible/out-of-range carry -1.
-    out = np.where(vals >= 0.0, 255, 0).astype("uint8")
+    # Graceful out-of-bounds: an observer outside the raster extent has no valid
+    # line-of-sight origin. xrspatial would error (or clamp) on such input; heavy
+    # GDAL ViewshedGenerate likewise produces no visibility. Mirror that with an
+    # all-invisible (0) raster rather than crashing the job. Bounds are the
+    # min/max pixel-center coords (north-up: ys descends, so use min/max).
+    x_lo, x_hi = float(min(xs[0], xs[-1])), float(max(xs[0], xs[-1]))
+    y_lo, y_hi = float(min(ys[0], ys[-1])), float(max(ys[0], ys[-1]))
+    if not (x_lo <= observer_x <= x_hi and y_lo <= observer_y <= y_hi):
+        out = np.zeros((height, width), dtype="uint8")
+    else:
+        da = xr.DataArray(band, dims=["y", "x"], coords={"y": ys, "x": xs})
+        res = _viewshed(
+            da,
+            x=observer_x,
+            y=observer_y,
+            observer_elev=observer_height,
+            target_elev=target_height,
+            max_distance=max_distance,
+        )
+        vals = np.asarray(res.values)
+        # Visible cells carry an angle in [0, 180]; invisible/out-of-range carry -1.
+        out = np.where(vals >= 0.0, 255, 0).astype("uint8")
 
     profile = ds.profile.copy()
     profile.update(driver="GTiff", count=1, dtype="uint8", nodata=None)

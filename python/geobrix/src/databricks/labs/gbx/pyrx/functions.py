@@ -602,6 +602,10 @@ def _clip_udf(tile, geom_wkb, all_touched):
         return None
     with _serde.open_tile(bytes(tile["raster"])) as ds:
         new_bytes = edit.clip_to_geom(ds, geom, bool(all_touched))
+    if new_bytes is None:
+        # Cutline does not overlap the raster -> null tile (no crash), mirroring
+        # heavy GDAL Warp -cutline producing an empty result.
+        return None
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
@@ -710,12 +714,17 @@ def _buildoverviews_udf(tile, levels, resampling):
 def _sample_udf(tile, geom_wkb):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
-    from databricks.labs.gbx._geom import geom_to_wkb
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    # parse_geom keeps the SRID (EWKT/EWKB carry it) so ops_core.sample can
+    # reproject the point to the raster CRS, mirroring heavy intent.
+    geom = parse_geom(geom_wkb)
+    if geom is None:
+        return None
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        return ops_core.sample(ds, geom_to_wkb(geom_wkb))
+        return ops_core.sample(ds, geom)
 
 
 @f.udf(_serde.TILE_SCHEMA)
@@ -780,7 +789,27 @@ def _viewshed_udf(tile, observer_geom, observer_height, target_height, max_dista
     th = 0.0 if target_height is None else float(target_height)
     md = None if max_distance is None else float(max_distance)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = analysis_core.viewshed(ds, geom.x, geom.y, oh, th, md)
+        # CRS-align the observer: if the point carries a positive SRID and the
+        # raster has a CRS, reproject EPSG:srid -> raster CRS so a 4326 observer
+        # over a UTM DEM lands correctly. Heavy RST_Viewshed assumes a pre-aligned
+        # observer; the light tier reprojects so a differently-projected point does
+        # not silently miss. Unknown EPSG / transform failure -> use as-is.
+        import shapely as _shapely
+
+        ox, oy = geom.x, geom.y
+        srid = _shapely.get_srid(geom)
+        if srid > 0 and ds.crs is not None:
+            try:
+                import rasterio as _rio
+                from rasterio.warp import transform as _transform
+
+                src_crs = _rio.crs.CRS.from_epsg(srid)
+                if src_crs != ds.crs:
+                    xs, ys = _transform(src_crs, ds.crs, [ox], [oy])
+                    ox, oy = xs[0], ys[0]
+            except Exception:
+                ox, oy = geom.x, geom.y
+        new_bytes = analysis_core.viewshed(ds, ox, oy, oh, th, md)
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
