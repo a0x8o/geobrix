@@ -591,12 +591,17 @@ def rst_resample_to_res(
 def _clip_udf(tile, geom_wkb, all_touched):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
-    from databricks.labs.gbx._geom import geom_to_wkb
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    # parse_geom keeps the SRID (EWKT/EWKB carry it) so clip_to_geom can
+    # reproject the cutline to the raster CRS, mirroring heavy RST_Clip.
+    geom = parse_geom(geom_wkb)
+    if geom is None:
+        return None
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = edit.clip_to_geom(ds, geom_to_wkb(geom_wkb), bool(all_touched))
+        new_bytes = edit.clip_to_geom(ds, geom, bool(all_touched))
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
