@@ -18,7 +18,7 @@ class GDAL_Batch(schema: StructType, options: Map[String, String]) extends Scan 
     /** One partition per file under path (filtered by filterRegex), each with sizeInMB and expression config. */
     override def planInputPartitions(): Array[InputPartition] = {
         val inPath = options("path")
-        val sizeInMB = options.getOrElse("sizeInMB", "16").toInt
+        val sizeInMB = options.getOrElse("sizeInMB", "-1").toInt
         val filterRegex = options.getOrElse("filterRegex", ".*")
 
         val sparkSession = SparkSession.builder.getOrCreate

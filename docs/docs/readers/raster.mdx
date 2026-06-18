@@ -37,7 +37,7 @@ the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and meth
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `sizeInMB` | `"-1"` | Default (`<= 0`) = no split: one whole-image tile per file. Set a positive MB value to tile large rasters into multiple tiles. |
 | `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
 
 <CodeFromTest code={rasterGbxExamples} language="python" functionName="READ_WITH_OPTIONS"
@@ -50,7 +50,7 @@ the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and meth
 | Option | Default | Description |
 |--------|---------|-------------|
 | `driver` | auto-detected from extension | Explicitly specify the GDAL driver to use (regardless of extension). |
-| `sizeInMB` | `"16"` | Split threshold for large files (parallel processing). |
+| `sizeInMB` | `"-1"` | Default (`<= 0`) = no split: one whole-image tile per file. Set a positive MB value to split large files into multiple tiles for parallel processing. |
 | `filterRegex` | `".*"` | Filter files by regex when reading from a directory. |
 | `readSubdatasets` | `"false"` | Read subdatasets if present (e.g. HDF, NetCDF). |
 | `rasterAsGrid` | `"false"` | Read as grid instead of tiles. |

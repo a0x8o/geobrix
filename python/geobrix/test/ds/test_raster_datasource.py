@@ -194,3 +194,73 @@ def test_multi_tile_subwindows_are_reencoded(spark, tmp_path):
     assert all(
         bytes(r["tile"]["raster"]) != raw for r in rows
     ), "sub-tiles must be re-encoded"
+
+
+def _write_big_incompressible(path, side=2048):
+    rng = np.random.default_rng(2)
+    data = rng.integers(0, 255, size=(3, side, side), dtype="uint8")
+    profile = dict(
+        driver="GTiff",
+        width=side,
+        height=side,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(0.0, 0.0, 1.0, 1.0),
+    )
+    with rasterio.open(str(path), "w", **profile) as ds:
+        ds.write(data)
+
+
+def test_no_split_by_default_yields_one_row(spark, tmp_path):
+    # The default (sizeInMB=-1) must NOT split, even for a large raster that the
+    # old 16MB-split default would have multi-tiled. One file -> one row.
+    f = tmp_path / "big_default.tif"
+    _write_big_incompressible(str(f))
+    spark.dataSource.register(RasterGbxDataSource)
+    df = spark.read.format("raster_gbx").load(str(f))  # no sizeInMB option
+    rows = df.collect()
+    assert len(rows) == 1, "default reader must emit exactly one tile per file"
+    assert rows[0]["tile"]["cellid"] == -1
+
+
+def test_explicit_small_sizeinmb_still_splits(spark, tmp_path):
+    # Tiling is explicit opt-in: a small positive sizeInMB still splits >1.
+    f = tmp_path / "big_split.tif"
+    _write_big_incompressible(str(f))
+    spark.dataSource.register(RasterGbxDataSource)
+    df = spark.read.format("raster_gbx").option("sizeInMB", "8").load(str(f))
+    assert df.count() > 1
+
+
+def test_no_split_oversized_tile_raises_clear_error(tmp_path, monkeypatch):
+    # A single whole-image tile that would exceed the ~2GB cell limit must fail
+    # with an actionable "set sizeInMB" message instead of a giant cell. Driving
+    # the reader's read() directly (not through Spark workers) lets a tiny
+    # monkeypatched threshold stand in for 2GB without any large allocation.
+    import pytest
+
+    import databricks.labs.gbx.ds.raster as raster_mod
+    from databricks.labs.gbx.ds.raster import RasterGbxReader, _FilePartition
+
+    f = tmp_path / "oversized.tif"
+    _write_sample(str(f))  # tiny raster; threshold made tiny instead
+    monkeypatch.setattr(raster_mod, "_MAX_TILE_BYTES", 1)
+
+    reader = RasterGbxReader({"path": str(f)})
+    assert reader.size_mib == -1  # default = no split
+    with pytest.raises(ValueError) as ei:
+        list(reader.read(_FilePartition(str(f), reader.size_mib)))
+    msg = str(ei.value)
+    assert "sizeInMB" in msg and "single tile" in msg
+
+
+def test_estimate_tile_bytes_uses_max_of_raw_and_file():
+    import databricks.labs.gbx.ds.raster as raster_mod
+
+    # raw = 4*3*1*4 (float32) = 48 bytes; file_size larger -> picks file_size.
+    assert raster_mod._estimate_tile_bytes(4, 3, 1, "float32", 1000) == 1000
+    # raw larger than file_size -> picks raw.
+    assert (
+        raster_mod._estimate_tile_bytes(100, 100, 2, "float32", 10) == 100 * 100 * 2 * 4
+    )

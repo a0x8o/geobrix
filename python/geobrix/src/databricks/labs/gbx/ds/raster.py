@@ -25,6 +25,34 @@ from pyspark.sql.types import StringType, StructField, StructType
 from databricks.labs.gbx.ds import _encode, _listing
 from databricks.labs.gbx.pyrx import _serde
 
+# Spark BinaryType cells are bounded by the JVM 2 GiB array limit; a single
+# whole-image tile larger than this cannot be materialized and would otherwise
+# fail deep in the writer with an opaque error. Guard the no-split path against
+# it (conservative ~1.9 GiB) so users get an actionable "set sizeInMB" message.
+_MAX_TILE_BYTES = 1932735283  # ~1.8 GiB
+
+
+def _numpy_itemsize(dtype: str) -> int:
+    import numpy as np
+
+    try:
+        return np.dtype(dtype).itemsize
+    except TypeError:
+        return 1
+
+
+def _estimate_tile_bytes(
+    width: int, height: int, count: int, dtype, file_size: int
+) -> int:
+    """Conservative encoded-size estimate for a single whole-image tile.
+
+    Uses the larger of the raw pixel-array size (width*height*bands*itemsize) and
+    the on-disk encoded size, so neither a highly compressed source nor an
+    expanded re-encode slips past the cell-limit guard.
+    """
+    raw = width * height * max(count, 1) * _numpy_itemsize(str(dtype))
+    return max(raw, file_size)
+
 
 def reader_schema() -> StructType:
     """(source, tile) — tile from the single-source TILE_SCHEMA."""
@@ -49,7 +77,7 @@ class RasterGbxReader(DataSourceReader):
         self.path = options.get("path")
         if not self.path:
             raise ValueError("raster_gbx requires a 'path' (e.g. .load(path)).")
-        self.size_mib = int(options.get("sizeInMB", "16"))
+        self.size_mib = int(options.get("sizeInMB", "-1"))
         self.filter_regex = options.get("filterRegex", ".*")
 
     def partitions(self) -> Sequence[InputPartition]:
@@ -79,6 +107,20 @@ class RasterGbxReader(DataSourceReader):
             tile_x, tile_y = core_tiling._get_tile_size(
                 ds.width, ds.height, size_bytes, partition.size_mib
             )
+            # Large-raster safety: a single whole-image tile that would exceed
+            # Spark's ~2 GiB BinaryType cell limit must fail with an actionable
+            # message rather than producing a giant (or unmaterializable) cell.
+            if tile_x >= ds.width and tile_y >= ds.height:
+                est = _estimate_tile_bytes(
+                    ds.width, ds.height, ds.count, ds.dtypes[0], size_bytes
+                )
+                if est > _MAX_TILE_BYTES:
+                    raise ValueError(
+                        f"raster {partition.file_path} is ~{est // (1024 * 1024)} MB "
+                        f"as a single tile, which exceeds the ~2 GB Spark cell limit; "
+                        f"set the reader option sizeInMB=<n> (a positive MB value) to "
+                        f"tile it into smaller pieces."
+                    )
             # Fast path: when the split is a single tile spanning the whole raster
             # AND the source is already a GTiff, emit the original file bytes
             # instead of decoding + re-encoding (the re-encode is ~95% of per-tile

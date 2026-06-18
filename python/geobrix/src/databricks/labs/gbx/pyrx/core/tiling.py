@@ -94,7 +94,13 @@ def _get_tile_size(width, height, size_bytes, size_in_mb):
     ``size_bytes`` is the *encoded* raster byte length (heavy keys on GDAL's
     in-memory file size, i.e. the serialized GTiff buffer length), NOT the raw
     width*height*bands*itemsize pixel-array size.
+
+    ``size_in_mb <= 0`` means *no split*: the whole-image dimensions are
+    returned so the caller emits one tile per file (the reader default). Only a
+    positive MB value opts into tiling.
     """
+    if int(size_in_mb) <= 0:
+        return width, height
     limit = int(size_in_mb) * 1024 * 1024
     k = 0
     while k < 9 and (size_bytes >> (2 * k)) > limit and (1 << (2 * (k + 1))) <= 512:
