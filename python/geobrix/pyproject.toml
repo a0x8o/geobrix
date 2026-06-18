@@ -75,6 +75,12 @@ light = [
     # with the h11>=0.16 the stack pulls. Force httpcore>=1.0.9 so the on-cluster
     # install resolves cleanly (no h11 conflict warning).
     "httpcore>=1.0.9",
+    # idna is a transitive dep (requests / anyio / httpx) with no upper bound, so
+    # pip would pull the latest (3.18) and shadow Serverless v5's base idna 3.7,
+    # firing the "a core Python package changed: idna" notebook notice. Nothing in
+    # the stack needs >3.7 (requests <4,>=2.5; anyio >=2.8; httpx unpinned), so cap
+    # at <3.8 to keep the Serverless base in place and silence the notice.
+    "idna<3.8",
     "rio-cogeo>=7.0,<8",
     "h3>=4.0,<5",
     "quadbin>=0.2,<0.3",
