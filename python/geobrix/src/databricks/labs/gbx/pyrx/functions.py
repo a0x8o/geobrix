@@ -759,17 +759,14 @@ def _contour_udf(tile, levels, interval, base, attr_field):
 def _viewshed_udf(tile, observer_geom, observer_height, target_height, max_distance):
     if tile is None or tile["raster"] is None or observer_geom is None:
         return None
-    import shapely.wkb
-    import shapely.wkt
-
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
-    # observer_geom may be WKB (binary) or WKT (string); require a POINT.
-    if isinstance(observer_geom, (bytes, bytearray)):
-        geom = shapely.wkb.loads(bytes(observer_geom))
-    else:
-        geom = shapely.wkt.loads(str(observer_geom))
+    # observer_geom may be WKB/EWKB (binary) or WKT/EWKT (string); require a POINT.
+    geom = parse_geom(observer_geom)
+    if geom is None:
+        return None
     if geom.geom_type != "Point":
         raise ValueError(
             f"rst_viewshed requires a POINT observer_geom; got {geom.geom_type}"
@@ -1447,20 +1444,20 @@ def _gridfrompoints_udf(
 ):
     if points is None or values is None:
         return None
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     # Decode points and values together so a null/empty point drops its paired
-    # value too, keeping the two arrays parallel for the IDW solver.
+    # value too, keeping the two arrays parallel for the IDW solver. Each point
+    # may be WKB/EWKB/WKT/EWKT (routed through the shared decoder).
     xy = []
     vals = []
-    for wkb, v in zip(points, values):
-        if wkb is None or len(bytes(wkb)) == 0 or v is None:
+    for raw, v in zip(points, values):
+        if v is None:
             continue
-        g = _swkb.loads(bytes(wkb))
-        if g.is_empty:
+        g = _parse_geom_elem(raw)
+        if g is None or g.is_empty:
             continue
         xy.append((g.x, g.y))
         vals.append(float(v))
@@ -1552,7 +1549,9 @@ def _dtmfromgeoms_udf(
 
     _env.configure_gdal_env()
     pts_xyz = tin_core.points_xyz_from_wkb(points)
-    bl = [bytes(b) for b in breaklines if b is not None] if breaklines else None
+    # breaklines may be WKB/EWKB/WKT/EWKT; pass through untouched so
+    # delaunay_dtm decodes each element via the shared geom parser.
+    bl = [b for b in breaklines if b is not None] if breaklines else None
     new_bytes = tin_core.delaunay_dtm(
         pts_xyz,
         bl,
@@ -2971,18 +2970,17 @@ def _gridfrompoints_agg_udf(
     power: pd.Series = None,
     max_pts: pd.Series = None,
 ) -> bytes:
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     xy = []
     vals = []
     for g, v in zip(point, value):
-        if g is None or v is None:
+        if v is None:
             continue
-        geom = _swkb.loads(bytes(g))
-        if geom.is_empty:
+        geom = _parse_geom_elem(g)
+        if geom is None or geom.is_empty:
             continue
         xy.append((geom.x, geom.y))
         vals.append(float(v))
@@ -3019,17 +3017,14 @@ def _dtmfromgeoms_agg_udf(
     srid: pd.Series,
     no_data: pd.Series = None,
 ) -> bytes:
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     pts = []
     for g in point:
-        if g is None:
-            continue
-        geom = _swkb.loads(bytes(g))
-        if geom.is_empty:
+        geom = _parse_geom_elem(g)
+        if geom is None or geom.is_empty:
             continue
         if not geom.has_z:
             raise ValueError(
@@ -3040,9 +3035,10 @@ def _dtmfromgeoms_agg_udf(
         pts.append((c[0], c[1], c[2]))
     if not pts:
         return None
-    # breaklines is a per-group constant ARRAY<BINARY>; read from row 0.
+    # breaklines is a per-group constant ARRAY of geoms (WKB/EWKB/WKT/EWKT);
+    # read from row 0 and let delaunay_dtm decode each element.
     bl_arr = breaklines.iloc[0]
-    bl = [bytes(b) for b in bl_arr if b is not None] if bl_arr is not None else None
+    bl = [b for b in bl_arr if b is not None] if bl_arr is not None else None
     return tin_core.delaunay_dtm(
         pts,
         bl,
