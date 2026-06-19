@@ -21,6 +21,10 @@ object BalancedSubdivision {
     def getTileSize(ds: Dataset, destMiB: Int): (Int, Int) = {
         val x = ds.getRasterXSize
         val y = ds.getRasterYSize
+        // destMiB <= 0 means no split: return the whole-image dimensions so the
+        // reader emits one tile per file (the reader default). Only a positive
+        // MB budget opts into tiling.
+        if (destMiB <= 0) return (x, y)
         val sizeBytes = RasterAccessors.memSize(ds).toLong
         val limit = destMiB.toLong * 1024 * 1024
         // k = number of quad-split rounds; splits = 4^k; nx=ny=2^k

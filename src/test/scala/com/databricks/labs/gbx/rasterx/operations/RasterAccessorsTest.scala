@@ -59,6 +59,20 @@ class RasterAccessorsTest extends AnyFunSuite with BeforeAndAfterAll {
         } finally ds.delete()
     }
 
+    test("getTileSize returns whole-image dims when destMiB <= 0 (no split)") {
+        val ds = bigMemDataset()
+        try {
+            // destMiB <= 0 = no split: the whole-image dimensions are returned
+            // regardless of the (large) encoded byte size. This is the reader
+            // default (sizeInMB = -1) -> one tile per file.
+            for (destMiB <- Seq(-1, 0)) {
+                val (tileX, tileY) = BalancedSubdivision.getTileSize(ds, destMiB)
+                tileX shouldBe ds.getRasterXSize
+                tileY shouldBe ds.getRasterYSize
+            }
+        } finally ds.delete()
+    }
+
     test("memSize uses Files.size for a real file path") {
         val tmp = java.nio.file.Files.createTempFile("memsize_", ".tif")
         try {

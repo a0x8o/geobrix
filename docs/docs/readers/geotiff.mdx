@@ -36,7 +36,7 @@ Inherits the [lightweight `raster_gbx` options](./raster#options):
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `sizeInMB` | `"16"` | Split threshold (MB on disk) for tiling large rasters into multiple tiles. |
+| `sizeInMB` | `"-1"` | Default (`<= 0`) = no split: one whole-image tile per file. Set a positive MB value to tile large rasters into multiple tiles. |
 | `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches this regex. |
 
 ### Heavyweight (`gtiff_gdal`)

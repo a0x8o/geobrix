@@ -165,3 +165,17 @@ def test_make_tiles_single_when_budget_large():
     with _serde.open_tile(make_geotiff_bytes(width=4, height=4)) as ds:
         parts = tiling.make_tiles(ds, 100.0)  # huge budget -> one tile
     assert len(parts) == 1
+
+
+def test_get_tile_size_no_split_when_size_in_mb_nonpositive():
+    # sizeInMB <= 0 = no split: return the whole-image dims regardless of how
+    # large the (encoded) byte size is. This is the reader default behavior.
+    huge_bytes = 5 * 1024 * 1024 * 1024  # 5 GiB
+    for size_in_mb in (-1, 0):
+        assert tiling._get_tile_size(2048, 1024, huge_bytes, size_in_mb) == (2048, 1024)
+
+
+def test_get_tile_size_positive_mb_still_splits():
+    # A positive MB budget below the encoded size must still split (unchanged).
+    tile_x, tile_y = tiling._get_tile_size(1024, 1024, 8 * 1024 * 1024, 1)
+    assert tile_x < 1024 and tile_y < 1024

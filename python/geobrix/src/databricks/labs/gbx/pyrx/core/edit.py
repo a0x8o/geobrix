@@ -4,6 +4,7 @@ GTiff bytes."""
 
 import numpy as np
 import rasterio
+import shapely
 import shapely.wkb
 from rasterio.io import MemoryFile
 from rasterio.mask import mask as _rio_mask
@@ -30,12 +31,57 @@ def _write(profile, data) -> bytes:
         return mf.read()
 
 
-def clip_to_geom(ds, geom_wkb: bytes, all_touched: bool = False) -> bytes:
-    """Clip a raster to a geometry (WKB bytes); return GTiff bytes."""
-    geom = shapely.wkb.loads(bytes(geom_wkb))
-    out_image, out_transform = _rio_mask(
-        ds, [geom], crop=True, all_touched=bool(all_touched)
-    )
+def clip_to_geom(ds, geom, all_touched: bool = False):
+    """Clip a raster to a geometry; return GTiff bytes, or ``None`` on non-overlap.
+
+    ``geom`` may be a shapely geometry (preferred — carries SRID via
+    ``shapely.set_srid``) or raw WKB/EWKB ``bytes`` (back-compat).
+
+    Mirrors heavyweight ``RST_Clip``: if the cutline carries a positive SRID and
+    the raster has a CRS, reproject the cutline from EPSG:srid to the raster CRS
+    before masking. Otherwise (srid 0/unknown, or no raster CRS) the cutline is
+    assumed to already be in the raster CRS and used as-is. Any failure to build
+    the source CRS or transform falls back to using the cutline as-is.
+
+    If the (reprojected) cutline does NOT overlap the raster, ``rasterio.mask``
+    raises ``ValueError: Input shapes do not overlap raster.``. Heavy GDAL Warp
+    ``-cutline`` produces an empty/NoData result rather than crashing a whole
+    distributed job, so we mirror that intent by returning ``None`` (a null tile)
+    on non-overlap. Only that specific non-overlap condition is caught; unrelated
+    errors propagate.
+    """
+    if isinstance(geom, (bytes, bytearray)):
+        geom = shapely.wkb.loads(bytes(geom))  # handles WKB and EWKB
+
+    mask_shape = geom
+    srid = shapely.get_srid(geom)  # 0 when no SRID is set
+    dst_crs = ds.crs  # rasterio CRS or None
+    if srid > 0 and dst_crs is not None:
+        try:
+            from rasterio.warp import transform_geom
+            from shapely.geometry import mapping
+
+            src_crs = rasterio.crs.CRS.from_epsg(srid)
+            if src_crs != dst_crs:
+                # transform_geom returns a GeoJSON-like dict; rasterio.mask
+                # accepts GeoJSON geometries directly.
+                mask_shape = transform_geom(src_crs, dst_crs, mapping(geom))
+        except Exception:
+            # Unknown EPSG / transform failure -> fall back to as-is (heavy's
+            # "fall back to the raster's CRS" intent: assume already aligned).
+            mask_shape = geom
+
+    try:
+        out_image, out_transform = _rio_mask(
+            ds, [mask_shape], crop=True, all_touched=bool(all_touched)
+        )
+    except ValueError as exc:
+        # rasterio.mask raises ValueError("Input shapes do not overlap raster.")
+        # when the cutline misses the raster entirely. Match heavy's empty-result
+        # behavior with a null tile; re-raise anything else.
+        if "do not overlap" in str(exc).lower():
+            return None
+        raise
     profile = ds.profile.copy()
     profile.update(
         driver="GTiff",

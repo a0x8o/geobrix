@@ -87,8 +87,12 @@ class PMTilesGbxWriter(DataSourceWriter):
     def __init__(self, path: str, options: Dict[str, str], overwrite: bool):
         # PySpark DataSource V2 lowercases all option keys (e.g. shardZoom → shardzoom).
         # Normalise once so the rest of the class uses consistent names.
+        from databricks.labs.gbx.ds._listing import to_local_path
+
         opts = {k.lower(): v for k, v in options.items()}
-        self.path = path
+        # The output path may arrive dbfs:-qualified; strip the scheme once so all
+        # os.path.{exists,isfile,isdir,join} + writes operate on the bare FUSE path.
+        self.path = to_local_path(path)
         self.overwrite = overwrite
         self.shard_zoom = int(opts.get("shardzoom", "6"))
         tps = opts.get("targettilespershard")

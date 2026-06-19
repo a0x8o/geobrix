@@ -128,6 +128,56 @@ def test_rst_clip(spark):
     assert 0 < row["w"] < 4 and 0 < row["h"] < 3
 
 
+def test_rst_clip_geom_encodings(spark):
+    # Parity bug fix: rst_clip must accept the SAME geometry as WKB / EWKB /
+    # WKT / EWKT (heavyweight accepts all four; the xView example passes EWKT).
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import box
+
+    poly = box(10.5, 49.0, 11.5, 49.5)
+    encodings = {
+        "wkb": to_wkb(poly),
+        "ewkb": to_wkb(set_srid(poly, 4326), include_srid=True),
+        "wkt": poly.wkt,
+        "ewkt": f"SRID=4326;{poly.wkt}",
+    }
+
+    results = {}
+    for name, geom in encodings.items():
+        df = _tile_df(spark, width=4, height=3, epsg=4326)
+        df = df.withColumn("g", f.lit(geom))
+        row = (
+            df.select(prx.rst_clip("tile", "g", False).alias("t"))
+            .select(f.col("t.raster").alias("b"))
+            .first()
+        )
+        assert row is not None and row["b"] is not None, f"{name} produced a null tile"
+        results[name] = bytes(row["b"])
+
+    # All four encodings of the same geometry must produce identical raster bytes.
+    distinct = set(results.values())
+    sizes = {k: len(v) for k, v in results.items()}
+    assert len(distinct) == 1, f"encodings diverged: {sizes}"
+
+
+def test_rst_sample_geom_encodings(spark):
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import Point
+
+    pt = Point(10.75, 49.75)
+    encodings = {
+        "wkb": to_wkb(pt),
+        "ewkb": to_wkb(set_srid(pt, 4326), include_srid=True),
+        "wkt": pt.wkt,
+        "ewkt": f"SRID=4326;{pt.wkt}",
+    }
+    for name, geom in encodings.items():
+        df = _tile_df(spark, width=4, height=3, count=2)
+        df = df.withColumn("g", f.lit(geom))
+        vals = df.select(prx.rst_sample("tile", "g").alias("v")).first()["v"]
+        assert vals == [1.0, 101.0], f"{name} sampled {vals}"
+
+
 def test_rst_updatetype(spark):
     df = _tile_df(spark, width=4, height=3)
     out = df.select(prx.rst_updatetype("tile", f.lit("Int32")).alias("t"))
@@ -1120,6 +1170,26 @@ def test_rst_fromfile_roundtrip(spark, tmp_path):
         assert ds.crs.to_epsg() == 4326
 
 
+def test_rst_fromfile_strips_scheme_before_open(spark, tmp_path):
+    # Columns carry scheme-qualified paths (to_spark_uri -> dbfs:/file:); the udf
+    # must strip the scheme back to the bare FUSE path before rasterio.open, else
+    # the open fails (rasterio cannot open 'file:/...'). A bare tmp file prefixed
+    # with 'file:' exercises that strip (file:/tmp/x -> /tmp/x, which exists).
+    import rasterio
+
+    p = str(tmp_path / "scene.tif")
+    with _serde.open_tile(make_geotiff_bytes(width=4, height=3, epsg=4326)) as src:
+        profile = src.profile.copy()
+        data = src.read()
+    with rasterio.open(p, "w", **profile) as dst:
+        dst.write(data)
+    df = spark.createDataFrame([("file:" + p,)], ["path"])
+    tile = df.select(prx.rst_fromfile("path", f.lit("GTiff")).alias("t")).first()["t"]
+    assert tile is not None  # scheme stripped -> open succeeded
+    with _serde.open_tile(bytes(tile["raster"])) as ds:
+        assert ds.width == 4 and ds.height == 3
+
+
 def test_rst_fromfile_bad_path_returns_none(spark):
     # Heavyweight returns NULL on read failure; pyrx matches.
     df = spark.createDataFrame([("/no/such/raster.tif",)], ["path"])
@@ -1219,6 +1289,209 @@ def test_rst_dtmfromgeoms_agg_equals_constructor(spark):
         transform = ds.transform
     wx, wy = transform * (5 + 0.5, 5 + 0.5)
     assert np.isclose(arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Geom-encoding parity: every pyrx function that accepts a user geometry must
+# treat the SAME geometry expressed as WKB / EWKB / WKT / EWKT identically.
+# These mirror test_rst_clip_geom_encodings / test_rst_sample_geom_encodings.
+# ---------------------------------------------------------------------------
+
+
+def _encode_geom(geom, srid=4326):
+    """The same geometry in all four accepted encodings."""
+    from shapely import set_srid, to_wkb
+
+    return {
+        "wkb": to_wkb(geom),
+        "ewkb": to_wkb(set_srid(geom, srid), include_srid=True),
+        "wkt": geom.wkt,
+        "ewkt": f"SRID={srid};{geom.wkt}",
+    }
+
+
+def test_rst_rasterize_geom_encodings(spark):
+    from shapely.geometry import box
+
+    results = {}
+    for name, geom in _encode_geom(box(1.0, 1.0, 3.0, 3.0)).items():
+        df = spark.createDataFrame([(geom,)], ["g"])
+        tile = df.select(
+            prx.rst_rasterize("g", 5.0, 0.0, 0.0, 4.0, 4.0, 4, 4, 4326).alias("t")
+        ).first()["t"]
+        assert tile is not None and tile["raster"] is not None, f"{name} null tile"
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            results[name] = ds.read(1).tobytes()
+    assert len(set(results.values())) == 1, "rst_rasterize encodings diverged"
+
+
+def test_rst_viewshed_geom_encodings(spark):
+    import numpy as np
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+    from shapely.geometry import Point
+
+    dem = np.zeros((7, 7), dtype="float64")
+    dem[:, 3] = 100.0
+    profile = dict(
+        driver="GTiff",
+        width=7,
+        height=7,
+        count=1,
+        dtype="float64",
+        crs="EPSG:32633",
+        transform=from_origin(0.0, 7.0, 1.0, 1.0),
+        nodata=None,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(dem, 1)
+        src = mf.read()
+
+    results = {}
+    for name, geom in _encode_geom(Point(0.5, 3.5), srid=32633).items():
+        df = spark.createDataFrame([(src, geom)], ["raster", "g"]).select(
+            prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile"),
+            f.col("g"),
+        )
+        tile = df.select(
+            prx.rst_viewshed("tile", f.col("g"), 1.0, 0.0, None).alias("t")
+        ).first()["t"]
+        assert tile is not None and tile["raster"] is not None, f"{name} null tile"
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            results[name] = ds.read(1).tobytes()
+    assert len(set(results.values())) == 1, "rst_viewshed encodings diverged"
+
+
+def test_rst_gridfrompoints_geom_encodings(spark):
+    from shapely.geometry import Point
+
+    # IDW of p0=(0,0) v=10 and p1=(2,2) v=30 at the 1x1 center -> 20.
+    results = {}
+    for name in ("wkb", "ewkb", "wkt", "ewkt"):
+        p0 = _encode_geom(Point(0.0, 0.0), srid=32633)[name]
+        p1 = _encode_geom(Point(2.0, 2.0), srid=32633)[name]
+        df = spark.createDataFrame([([p0, p1], [10.0, 30.0])], ["pts", "vals"])
+        tile = df.select(
+            prx.rst_gridfrompoints(
+                "pts", "vals", 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2
+            ).alias("t")
+        ).first()["t"]
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            v = ds.read(1)[0, 0]
+        assert np.isclose(v, 20.0), f"{name} gridfrompoints -> {v}"
+        results[name] = v
+    assert all(np.isclose(v, 20.0) for v in results.values())
+
+
+def test_rst_gridfrompoints_agg_geom_encodings(spark):
+    from shapely.geometry import Point
+
+    for name in ("wkb", "ewkb", "wkt", "ewkt"):
+        p0 = _encode_geom(Point(0.0, 0.0), srid=32633)[name]
+        p1 = _encode_geom(Point(2.0, 2.0), srid=32633)[name]
+        df = spark.createDataFrame([("g", p0, 10.0), ("g", p1, 30.0)], ["k", "pt", "v"])
+        tile = (
+            df.groupBy("k")
+            .agg(
+                prx.rst_gridfrompoints_agg(
+                    "pt", "v", 0.0, 0.0, 2.0, 2.0, 1, 1, 32633, 2.0, 2
+                ).alias("t")
+            )
+            .first()["t"]
+        )
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            v = ds.read(1)[0, 0]
+        assert np.isclose(v, 20.0), f"{name} gridfrompoints_agg -> {v}"
+
+
+def _z_point_encodings(x, y, z, srid=32633):
+    """Point-with-Z in all four encodings (WKT/EWKT carry 'POINT Z')."""
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import Point
+
+    p = Point(x, y, z)
+    return {
+        "wkb": to_wkb(p, output_dimension=3),
+        "ewkb": to_wkb(set_srid(p, srid), output_dimension=3, include_srid=True),
+        "wkt": p.wkt,
+        "ewkt": f"SRID={srid};{p.wkt}",
+    }
+
+
+def test_rst_dtmfromgeoms_geom_encodings(spark):
+    # z = 2x + 3y + 1 plane; barycentric interpolation is exact in-hull.
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    for name in ("wkb", "ewkb", "wkt", "ewkt"):
+        pts = [_z_point_encodings(x, y, 2 * x + 3 * y + 1)[name] for x, y in corners]
+        df = spark.createDataFrame([(pts,)], ["pts"])
+        tile = df.select(
+            prx.rst_dtmfromgeoms(
+                "pts", f.lit(None), 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633
+            ).alias("t")
+        ).first()["t"]
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            arr = ds.read(1)
+            transform = ds.transform
+        wx, wy = transform * (5 + 0.5, 5 + 0.5)
+        assert np.isclose(
+            arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6
+        ), f"{name} dtmfromgeoms diverged"
+
+
+def test_rst_dtmfromgeoms_agg_geom_encodings(spark):
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    for name in ("wkb", "ewkb", "wkt", "ewkt"):
+        rows = [
+            ("g", _z_point_encodings(x, y, 2 * x + 3 * y + 1)[name]) for x, y in corners
+        ]
+        df = spark.createDataFrame(rows, ["k", "pt"])
+        tile = (
+            df.groupBy("k")
+            .agg(
+                prx.rst_dtmfromgeoms_agg(
+                    "pt", f.lit(None), 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633
+                ).alias("t")
+            )
+            .first()["t"]
+        )
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            arr = ds.read(1)
+            transform = ds.transform
+        wx, wy = transform * (5 + 0.5, 5 + 0.5)
+        assert np.isclose(
+            arr[5, 5], 2 * wx + 3 * wy + 1, atol=1e-6
+        ), f"{name} dtmfromgeoms_agg diverged"
+
+
+def test_rst_dtmfromgeoms_breakline_encodings(spark):
+    # Breaklines are also user geometry input — accept all four encodings.
+    from shapely import set_srid, to_wkb
+    from shapely.geometry import LineString, Point
+
+    corners = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (10.0, 10.0), (5.0, 5.0)]
+    pts = [
+        to_wkb(Point(x, y, 2 * x + 3 * y + 1), output_dimension=3) for x, y in corners
+    ]
+    line = LineString([(2.0, 2.0, 11.0), (8.0, 8.0, 41.0)])
+    bl_encodings = {
+        "wkb": to_wkb(line, output_dimension=3),
+        "ewkb": to_wkb(set_srid(line, 32633), output_dimension=3, include_srid=True),
+        "wkt": line.wkt,
+        "ewkt": f"SRID=32633;{line.wkt}",
+    }
+    results = {}
+    for name, bl in bl_encodings.items():
+        df = spark.createDataFrame([(pts, [bl])], ["pts", "bls"])
+        tile = df.select(
+            prx.rst_dtmfromgeoms(
+                "pts", "bls", 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10, 10, 32633
+            ).alias("t")
+        ).first()["t"]
+        assert tile is not None and tile["raster"] is not None, f"{name} null tile"
+        with _serde.open_tile(bytes(tile["raster"])) as ds:
+            results[name] = ds.read(1).tobytes()
+    assert len(set(results.values())) == 1, "dtmfromgeoms breakline encodings diverged"
 
 
 def test_rst_index_ndvi(spark):

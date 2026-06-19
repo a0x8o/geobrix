@@ -16,3 +16,12 @@ def test_parse_wkb_wkt_ewkt_ewkb_none():
     assert g.equals(Point(1, 2)) and get_srid(g) == 4326
     e = _geom.parse_geom(to_wkb(set_srid(Point(1, 2), 4326), include_srid=True))
     assert get_srid(e) == 4326
+
+
+def test_pygx_geom_reexports_shared_module():
+    # pygx._geom must be a thin re-export of the tier-wide gbx._geom (single
+    # source of truth), exposing both parse_geom and geom_to_wkb.
+    from databricks.labs.gbx import _geom as shared
+
+    assert _geom.parse_geom is shared.parse_geom
+    assert _geom.geom_to_wkb is shared.geom_to_wkb

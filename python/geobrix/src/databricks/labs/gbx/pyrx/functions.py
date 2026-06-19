@@ -305,12 +305,15 @@ def _fromfile_udf(path, driver):
         return None
     import rasterio
 
+    from databricks.labs.gbx.ds._listing import to_local_path
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     drv = "GTiff" if driver is None else str(driver)
     try:
-        with rasterio.open(str(path)) as src:
+        # Columns carry dbfs:-qualified paths (to_spark_uri); rasterio opens the
+        # bare FUSE path, so strip the scheme right before the open.
+        with rasterio.open(to_local_path(str(path))) as src:
             data = src.read()
             profile = src.profile.copy()
             profile.update(driver="GTiff")
@@ -588,11 +591,21 @@ def rst_resample_to_res(
 def _clip_udf(tile, geom_wkb, all_touched):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    # parse_geom keeps the SRID (EWKT/EWKB carry it) so clip_to_geom can
+    # reproject the cutline to the raster CRS, mirroring heavy RST_Clip.
+    geom = parse_geom(geom_wkb)
+    if geom is None:
+        return None
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = edit.clip_to_geom(ds, bytes(geom_wkb), bool(all_touched))
+        new_bytes = edit.clip_to_geom(ds, geom, bool(all_touched))
+    if new_bytes is None:
+        # Cutline does not overlap the raster -> null tile (no crash), mirroring
+        # heavy GDAL Warp -cutline producing an empty result.
+        return None
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
@@ -621,7 +634,7 @@ def _init_nodata_udf(tile):
 
 
 def rst_clip(tile: ColLike, clip: ColLike, cutline_all_touched: ColLike) -> Column:
-    """Clip the raster to a geometry (WKB). cutline_all_touched includes pixels touched by the boundary."""
+    """Clip the raster to a geometry (WKB, EWKB, WKT, or EWKT). cutline_all_touched includes pixels touched by the boundary."""
     return _clip_udf(_col(tile), _col(clip), _col(cutline_all_touched))
 
 
@@ -701,11 +714,17 @@ def _buildoverviews_udf(tile, levels, resampling):
 def _sample_udf(tile, geom_wkb):
     if tile is None or tile["raster"] is None or geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
+    # parse_geom keeps the SRID (EWKT/EWKB carry it) so ops_core.sample can
+    # reproject the point to the raster CRS, mirroring heavy intent.
+    geom = parse_geom(geom_wkb)
+    if geom is None:
+        return None
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        return ops_core.sample(ds, bytes(geom_wkb))
+        return ops_core.sample(ds, geom)
 
 
 @f.udf(_serde.TILE_SCHEMA)
@@ -754,17 +773,14 @@ def _contour_udf(tile, levels, interval, base, attr_field):
 def _viewshed_udf(tile, observer_geom, observer_height, target_height, max_distance):
     if tile is None or tile["raster"] is None or observer_geom is None:
         return None
-    import shapely.wkb
-    import shapely.wkt
-
+    from databricks.labs.gbx._geom import parse_geom
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
-    # observer_geom may be WKB (binary) or WKT (string); require a POINT.
-    if isinstance(observer_geom, (bytes, bytearray)):
-        geom = shapely.wkb.loads(bytes(observer_geom))
-    else:
-        geom = shapely.wkt.loads(str(observer_geom))
+    # observer_geom may be WKB/EWKB (binary) or WKT/EWKT (string); require a POINT.
+    geom = parse_geom(observer_geom)
+    if geom is None:
+        return None
     if geom.geom_type != "Point":
         raise ValueError(
             f"rst_viewshed requires a POINT observer_geom; got {geom.geom_type}"
@@ -773,7 +789,27 @@ def _viewshed_udf(tile, observer_geom, observer_height, target_height, max_dista
     th = 0.0 if target_height is None else float(target_height)
     md = None if max_distance is None else float(max_distance)
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        new_bytes = analysis_core.viewshed(ds, geom.x, geom.y, oh, th, md)
+        # CRS-align the observer: if the point carries a positive SRID and the
+        # raster has a CRS, reproject EPSG:srid -> raster CRS so a 4326 observer
+        # over a UTM DEM lands correctly. Heavy RST_Viewshed assumes a pre-aligned
+        # observer; the light tier reprojects so a differently-projected point does
+        # not silently miss. Unknown EPSG / transform failure -> use as-is.
+        import shapely as _shapely
+
+        ox, oy = geom.x, geom.y
+        srid = _shapely.get_srid(geom)
+        if srid > 0 and ds.crs is not None:
+            try:
+                import rasterio as _rio
+                from rasterio.warp import transform as _transform
+
+                src_crs = _rio.crs.CRS.from_epsg(srid)
+                if src_crs != ds.crs:
+                    xs, ys = _transform(src_crs, ds.crs, [ox], [oy])
+                    ox, oy = xs[0], ys[0]
+            except Exception:
+                ox, oy = geom.x, geom.y
+        new_bytes = analysis_core.viewshed(ds, ox, oy, oh, th, md)
     return _serde.build_tile(new_bytes, "GTiff", tile["cellid"])
 
 
@@ -1065,7 +1101,7 @@ def rst_viewshed(
 
 
 def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
-    """Sample per-band raster values at a POINT geometry (WKB).
+    """Sample per-band raster values at a POINT geometry (WKB, EWKB, WKT, or EWKT).
 
     Mirrors the heavyweight ``gbx_rst_sample``: requires a POINT geometry
     (raises otherwise), uses (geom.x, geom.y) as a world coordinate already
@@ -1074,7 +1110,7 @@ def rst_sample(tile: ColLike, geom_wkb: ColLike) -> Column:
 
     Args:
         tile:     Tile struct column.
-        geom_wkb: POINT geometry as WKB bytes.
+        geom_wkb: POINT geometry as WKB, EWKB, WKT, or EWKT.
 
     Returns:
         ARRAY<DOUBLE>: one value per band, or null if the point is out of extent.
@@ -1367,11 +1403,12 @@ def rst_evi(  # noqa: E741
 def _rasterize_udf(geom_wkb, value, xmin, ymin, xmax, ymax, width_px, height_px, srid):
     if geom_wkb is None:
         return None
+    from databricks.labs.gbx._geom import geom_to_wkb
     from databricks.labs.gbx.pyrx import _env
 
     _env.configure_gdal_env()
     new_bytes = features.rasterize_geom(
-        bytes(geom_wkb), value, xmin, ymin, xmax, ymax, width_px, height_px, srid
+        geom_to_wkb(geom_wkb), value, xmin, ymin, xmax, ymax, width_px, height_px, srid
     )
     return _serde.build_tile(new_bytes, "GTiff", 0)
 
@@ -1387,7 +1424,7 @@ def rst_rasterize(
     height_px: ColLike,
     srid: ColLike,
 ) -> Column:
-    """Burn a geometry (WKB) into a new raster tile at the given extent/size/SRID."""
+    """Burn a geometry (WKB, EWKB, WKT, or EWKT) into a new raster tile at the given extent/size/SRID."""
     return _rasterize_udf(
         _col(geom_wkb),
         _col(value),
@@ -1441,20 +1478,20 @@ def _gridfrompoints_udf(
 ):
     if points is None or values is None:
         return None
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     # Decode points and values together so a null/empty point drops its paired
-    # value too, keeping the two arrays parallel for the IDW solver.
+    # value too, keeping the two arrays parallel for the IDW solver. Each point
+    # may be WKB/EWKB/WKT/EWKT (routed through the shared decoder).
     xy = []
     vals = []
-    for wkb, v in zip(points, values):
-        if wkb is None or len(bytes(wkb)) == 0 or v is None:
+    for raw, v in zip(points, values):
+        if v is None:
             continue
-        g = _swkb.loads(bytes(wkb))
-        if g.is_empty:
+        g = _parse_geom_elem(raw)
+        if g is None or g.is_empty:
             continue
         xy.append((g.x, g.y))
         vals.append(float(v))
@@ -1546,7 +1583,9 @@ def _dtmfromgeoms_udf(
 
     _env.configure_gdal_env()
     pts_xyz = tin_core.points_xyz_from_wkb(points)
-    bl = [bytes(b) for b in breaklines if b is not None] if breaklines else None
+    # breaklines may be WKB/EWKB/WKT/EWKT; pass through untouched so
+    # delaunay_dtm decodes each element via the shared geom parser.
+    bl = [b for b in breaklines if b is not None] if breaklines else None
     new_bytes = tin_core.delaunay_dtm(
         pts_xyz,
         bl,
@@ -2965,18 +3004,17 @@ def _gridfrompoints_agg_udf(
     power: pd.Series = None,
     max_pts: pd.Series = None,
 ) -> bytes:
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     xy = []
     vals = []
     for g, v in zip(point, value):
-        if g is None or v is None:
+        if v is None:
             continue
-        geom = _swkb.loads(bytes(g))
-        if geom.is_empty:
+        geom = _parse_geom_elem(g)
+        if geom is None or geom.is_empty:
             continue
         xy.append((geom.x, geom.y))
         vals.append(float(v))
@@ -3013,17 +3051,14 @@ def _dtmfromgeoms_agg_udf(
     srid: pd.Series,
     no_data: pd.Series = None,
 ) -> bytes:
-    import shapely.wkb as _swkb
-
     from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core.tin import _parse_geom_elem
 
     _env.configure_gdal_env()
     pts = []
     for g in point:
-        if g is None:
-            continue
-        geom = _swkb.loads(bytes(g))
-        if geom.is_empty:
+        geom = _parse_geom_elem(g)
+        if geom is None or geom.is_empty:
             continue
         if not geom.has_z:
             raise ValueError(
@@ -3034,9 +3069,10 @@ def _dtmfromgeoms_agg_udf(
         pts.append((c[0], c[1], c[2]))
     if not pts:
         return None
-    # breaklines is a per-group constant ARRAY<BINARY>; read from row 0.
+    # breaklines is a per-group constant ARRAY of geoms (WKB/EWKB/WKT/EWKT);
+    # read from row 0 and let delaunay_dtm decode each element.
     bl_arr = breaklines.iloc[0]
-    bl = [bytes(b) for b in bl_arr if b is not None] if bl_arr is not None else None
+    bl = [b for b in bl_arr if b is not None] if bl_arr is not None else None
     return tin_core.delaunay_dtm(
         pts,
         bl,

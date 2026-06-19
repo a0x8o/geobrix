@@ -201,9 +201,14 @@ class VectorGbxReader(DataSourceReader):
     }
 
     def __init__(self, options: Dict[str, str]):
-        self.path = options.get("path")
-        if not self.path:
+        from databricks.labs.gbx.ds._listing import to_local_path
+
+        raw_path = options.get("path")
+        if not raw_path:
             raise ValueError("vector_gbx requires a 'path' (e.g. .load(path)).")
+        # Columns/options may carry a dbfs:-qualified path; strip the scheme once
+        # so all os.* + pyogrio reads use the bare FUSE path.
+        self.path = to_local_path(raw_path)
         self.driver = options.get("driverName", "") or self._DRIVER
         # `multi=true` reads a DIRECTORY of newline-delimited GeoJSONL shards (the
         # output of geojsonl_gbx): switch a GeoJSON reader to the GeoJSONSeq driver so
@@ -478,8 +483,11 @@ class VectorGbxWriter(DataSourceWriter):
     writer's executor-scratch / driver-merge shape."""
 
     def __init__(self, path, schema, driver, options, overwrite):
+        from databricks.labs.gbx.ds._listing import to_local_path
+
         opts = {k.lower(): v for k, v in options.items()}
-        self.path = path
+        # Strip a dbfs:/file: scheme so all os.* writes hit the bare FUSE path.
+        self.path = to_local_path(path)
         self.driver = opts.get("drivername", "") or driver
         if not self.driver:
             raise ValueError(
@@ -800,8 +808,11 @@ class GeoJSONLGbxWriter(DataSourceWriter):
     _EXT = ".geojsonl"
 
     def __init__(self, path, schema, options, overwrite):
+        from databricks.labs.gbx.ds._listing import to_local_path
+
         opts = {k.lower(): v for k, v in options.items()}
-        self.path = path
+        # Strip a dbfs:/file: scheme so all os.* writes hit the bare FUSE path.
+        self.path = to_local_path(path)
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")

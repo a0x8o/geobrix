@@ -41,3 +41,11 @@ def test_parse_geom_empty_string():
     # I4: empty / whitespace-only string must be None, not a from_wkt parse error.
     assert parse_geom("") is None
     assert parse_geom("   ") is None
+
+
+def test_pyvx_reexports_shared_parse_geom():
+    # pyvx._geom.parse_geom must BE the shared gbx._geom.parse_geom (single
+    # source of truth) so pyvx behavior is unchanged after centralization.
+    from databricks.labs.gbx._geom import parse_geom as shared_parse_geom
+
+    assert parse_geom is shared_parse_geom

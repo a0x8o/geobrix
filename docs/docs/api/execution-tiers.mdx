@@ -20,6 +20,10 @@ df.select(rx.rst_slope("tile", unit="degrees"))
 
 After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rst_*`), so SQL is portable across tiers.
 
+:::warning Heavyweight needs more than the wheel
+The one-line *import* swap is symmetric, but the *install* is not. The **lightweight** tier is just the `[light]` wheel (`%pip`, no JAR, no init script). The **heavyweight** tier additionally requires the **GeoBrix JAR as a cluster library and the GDAL init script** on a **classic x86 cluster** — the wheel alone will not resolve the import or the JVM expressions. See [Installation](../installation) for the heavyweight setup.
+:::
+
 ## Tradeoffs
 
 | Aspect | Heavyweight (rasterx) | Lightweight (pyrx) |

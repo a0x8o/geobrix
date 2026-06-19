@@ -1,30 +1,15 @@
 """Shared geometry-input parsing for the pygx light tier.
 
-Every geom-accepting pygx function uses parse_geom so the accepted encodings
-(WKB / EWKB / WKT / EWKT) stay consistent across the ST surface and match the
+Every geom-accepting pygx function uses ``parse_geom`` so the accepted encodings
+(WKB / EWKB / WKT / EWKT) stay consistent across the grid surface and match the
 heavyweight tier (which accepts BINARY|STRING for geometry inputs).
+
+This is a thin re-export of the tier-wide decoder in ``databricks.labs.gbx._geom``
+(the single source of truth). ``gbx._geom`` depends only on ``shapely`` — a
+pygx dependency — so re-exporting it never drags in another tier's deps and
+keeps decoding behavior identical across pyrx / pyvx / pygx.
 """
 
-from typing import Any, Optional
+from databricks.labs.gbx._geom import geom_to_wkb, parse_geom
 
-from shapely import from_wkb, from_wkt, set_srid
-from shapely.geometry.base import BaseGeometry
-
-
-def parse_geom(x: Any) -> Optional[BaseGeometry]:
-    """Parse a geometry from WKB/EWKB bytes or WKT/EWKT text. None -> None."""
-    if x is None:
-        return None
-    if isinstance(x, (bytes, bytearray)):
-        return from_wkb(bytes(x))  # handles WKB and EWKB
-    s = str(x).strip()
-    if not s:
-        return None
-    if s[:5].upper() == "SRID=":
-        srid_part, _, wkt_part = s.partition(";")
-        geom = from_wkt(wkt_part)
-        try:
-            return set_srid(geom, int(srid_part[5:]))
-        except ValueError:
-            return geom
-    return from_wkt(s)
+__all__ = ["parse_geom", "geom_to_wkb"]

@@ -23,13 +23,29 @@ PARITY DIVERGENCES vs heavyweight (documented inline):
 """
 
 import numpy as np
-import shapely.wkb
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
 from scipy.spatial import Delaunay, cKDTree
 from scipy.spatial.distance import cdist
 
+from databricks.labs.gbx._geom import parse_geom
+
 _NODATA = -9999.0
+
+
+def _parse_geom_elem(raw):
+    """Decode one user-geom element (WKB/EWKB/WKT/EWKT) -> shapely geom | None.
+
+    Skips ``None`` and empty bytes/string elements (so a null or zero-length
+    entry drops out rather than raising), then routes through the shared
+    ``gbx._geom.parse_geom`` so every encoding is accepted uniformly.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)) and len(raw) == 0:
+        return None
+    return parse_geom(raw)
+
 
 # Output cells processed per chunk in the all-points IDW path. Bounds the
 # transient (chunk x npts) distance matrix so memory stays modest regardless of
@@ -288,10 +304,10 @@ def delaunay_dtm(
     # constraint edges — scipy Delaunay is unconstrained). Drop vertices without
     # a usable Z.
     extra = []
-    for wkb in breaklines or []:
-        if wkb is None or len(bytes(wkb)) == 0:
+    for raw in breaklines or []:
+        geom = _parse_geom_elem(raw)
+        if geom is None or geom.is_empty:
             continue
-        geom = shapely.wkb.loads(bytes(wkb))
         for x, y, z in _coords_with_z(geom):
             if not np.isnan(z):
                 extra.append((x, y, z))
@@ -338,11 +354,9 @@ def points_xy_from_wkb(wkbs):
     where only planar coordinates matter.
     """
     out = []
-    for wkb in wkbs:
-        if wkb is None or len(bytes(wkb)) == 0:
-            continue
-        g = shapely.wkb.loads(bytes(wkb))
-        if g.is_empty:
+    for raw in wkbs:
+        g = _parse_geom_elem(raw)
+        if g is None or g.is_empty:
             continue
         out.append((g.x, g.y))
     return (
@@ -357,11 +371,9 @@ def points_xyz_from_wkb(wkbs):
     (mirrors the heavyweight RST_DTMFromGeoms requirement).
     """
     out = []
-    for wkb in wkbs:
-        if wkb is None or len(bytes(wkb)) == 0:
-            continue
-        g = shapely.wkb.loads(bytes(wkb))
-        if g.is_empty:
+    for raw in wkbs:
+        g = _parse_geom_elem(raw)
+        if g is None or g.is_empty:
             continue
         if not g.has_z:
             raise ValueError(
