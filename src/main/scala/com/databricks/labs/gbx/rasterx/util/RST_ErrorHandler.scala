@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.rasterx.util
 
 import com.databricks.labs.gbx.expressions.ExpressionConfig
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.DataType
@@ -13,7 +14,7 @@ import scala.util.Try
   * Wraps raster expression eval so failures produce an error row (with error_message in metadata)
   * instead of failing the task, unless ExpressionConfig.crashExpressions is true.
   */
-object RST_ErrorHandler {
+object RST_ErrorHandler extends Logging {
 
     /** True if metadata contains RasterX error keys (e.g. from createErrorMetadata). */
     private def hasError(metadata: Map[String, String]): Boolean = {
@@ -84,7 +85,7 @@ object RST_ErrorHandler {
         try {
             eval()
         } catch {
-            case _: Throwable =>
+            case t: Throwable =>
                 val exprConf = ExpressionConfig.fromB64(conf.toString)
                 if (exprConf.crashExpressions) {
                     val (cellId, metadata) = Try { // just in case of malformed rows and unexpected errors
@@ -92,11 +93,19 @@ object RST_ErrorHandler {
                         RasterDriver.releaseDataset(ds)
                         (cellId, metadata)
                     }.getOrElse((-1L, Map.empty[String, String]))
-                    throw new Error(s"""
+                    val wrapped = new Error(s"""
                                        |Error during expression evaluation. Cell ID: $cellId
                                        |Metadata: $metadata
                                        |""".stripMargin)
+                    // Chain the real cause (FileNotFound / IO / GDAL / ...) so it shows up as
+                    // `Caused by:` instead of being lost behind the generic wrapper message.
+                    wrapped.initCause(t)
+                    throw wrapped
                 }
+                // Default (non-crashing) mode: log the swallowed failure so it isn't entirely
+                // silent -- otherwise a null tile only surfaces downstream as an opaque
+                // "Long cannot be cast to InternalRow" with no link back to the real error.
+                logWarning(s"RasterX expression evaluation failed; returning null tile: ${t.getMessage}", t)
                 null // swallow the error and return null for any eval
         }
     }

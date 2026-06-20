@@ -4,7 +4,6 @@ import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigEx
 import com.databricks.labs.gbx.rasterx.gdal.GDAL
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil}
 import com.databricks.labs.gbx.util.{HadoopUtils, SerializationUtil}
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -39,9 +38,11 @@ object RST_FromFile extends WithExpressionInfo {
             () => {
                 val exprConf = ExpressionConfig.fromB64(conf.toString)
                 RST_ExpressionUtil.init(exprConf)
-                val hPath = new Path(HadoopUtils.cleanPath(path.toString))
-                val fs = hPath.getFileSystem(exprConf.hConf.value)
-                val content = HadoopUtils.readContent(fs, fs.getFileStatus(hPath))
+                // readBytes reads FUSE/local paths (UC Volumes /Volumes/..., /dbfs/Volumes/...,
+                // /tmp/, file:/...) directly via NIO and dbfs:/ via the Hadoop FS API. Robust on
+                // classic UC compute, where a scheme-less /Volumes path resolved against the
+                // serialized fs.defaultFS (dbfs:) and silently returned a null tile.
+                val content = HadoopUtils.readBytes(path.toString, exprConf.hConf)
                 val mtd = Map(
                   "driver" -> driver.toString,
                   "extension" -> GDAL.getExtension(driver.toString),

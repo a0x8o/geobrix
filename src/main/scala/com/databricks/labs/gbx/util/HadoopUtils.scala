@@ -19,25 +19,42 @@ object HadoopUtils {
         hadoopConf = hconf
     }
 
-    /** Normalizes path for Hadoop (e.g. /dbfs/ -> dbfs:/, /tmp/ -> file:/tmp/, /Volumes/ unchanged). */
+    /** Normalizes a path to a Hadoop-resolvable URI on the local (FUSE-backed) `file:` connector.
+      *
+      * The supported storage fabric on current DBRs is FUSE-mounted under `/Volumes/...` (Unity
+      * Catalog Volumes) and `/Workspace/...` (Workspace files); their URI forms `dbfs:/Volumes/...`
+      * and `file:/...` are accepted too. A scheme-less `/Volumes/...` would otherwise resolve
+      * against `fs.defaultFS` (`dbfs:` on classic UC compute), which does NOT reach the FUSE mount
+      * and silently returns a null tile — so everything is routed to `file:`.
+      *
+      * Legacy pre-Volumes DBFS (`/dbfs/...`, `dbfs:/...`) is NOT a supported target: the retired
+      * `/dbfs/` FUSE mount and the `dbfs:` connector are never emitted. A `/dbfs/Volumes/` or
+      * `dbfs:/Volumes/` alias is coerced to the supported `file:/Volumes/...`; any other legacy DBFS
+      * path is coerced off the `/dbfs` prefix (best-effort `file:` — such reads are expected to fail
+      * rather than silently use the retired mount).
+      *
+      *  - `/Volumes/...`, `dbfs:/Volumes/...`, `/dbfs/Volumes/...` -> `file:/Volumes/...`
+      *  - `/Workspace/...` -> `file:/Workspace/...`; `file:/...` kept as-is
+      *  - `/tmp/...` and other OS-absolute paths -> `file:...`
+      */
     def cleanPath(inPath: String): String = {
         inPath match {
-            // Handle Unity Catalog Volumes path
-            case _ if inPath.startsWith("/Volumes/")     => inPath
-            case _ if inPath.startsWith("/dbfs/Volume/") => inPath.replace("/dbfs/Volume/", "/Volume/")
-            // If it isn't a volumes path but starts with /dbfs/ then it is a DBFS path
-            // Hadoop will not work with this path so we need to replace it with dbfs:/
-            case _ if inPath.startsWith("/dbfs/")        => inPath.replace("/dbfs/", "dbfs:/")
-            // If it is a local path, we need to replace the /tmp/ with file:/tmp/
-            // This is because Hadoop will interpret any path as /dbfs/ location unless it is prefixed with file:/
-            case _ if inPath.startsWith("/tmp/")         => inPath.replace("/tmp/", "file:/tmp/")
-            // If the path is starting with file:/ keep it that way, it is the local file system
-            case _ if inPath.startsWith("file:/")        => inPath
-            // If the path is starting with dbfs:/ keep it that way, it is the DBFS file system
-            case _ if inPath.startsWith("dbfs:/")        => inPath
-            // All other paths are considered as local paths
-            case _ if inPath.startsWith("/")             => s"file:$inPath"
-            case _                                       => s"file:/$inPath"
+            // Unity Catalog Volumes (FUSE OS path, the dbfs:/Volumes URI, or the legacy /dbfs/Volumes
+            // alias) -> the supported local connector at file:/Volumes/...
+            case _ if inPath.startsWith("/Volumes/")       => s"file:$inPath"
+            case _ if inPath.startsWith("dbfs:/Volumes/")  => s"file:${inPath.stripPrefix("dbfs:")}"
+            case _ if inPath.startsWith("/dbfs/Volumes/")  => s"file:${inPath.stripPrefix("/dbfs")}"
+            // Workspace files FUSE -> file:/Workspace/...
+            case _ if inPath.startsWith("/Workspace/")     => s"file:$inPath"
+            // Already a local/FUSE connector URI (file:/Volumes/, file:/Workspace/, file:/tmp/, ...).
+            case _ if inPath.startsWith("file:/")          => inPath
+            // Legacy pre-Volumes DBFS is unsupported: coerce AWAY from /dbfs and the dbfs: connector
+            // (neither is used on supported DBRs). No automatic mapping to /Volumes or /Workspace.
+            case _ if inPath.startsWith("/dbfs/")          => s"file:${inPath.stripPrefix("/dbfs")}"
+            case _ if inPath.startsWith("dbfs:/")          => s"file:/${inPath.stripPrefix("dbfs:/")}"
+            // OS-absolute local paths (incl. /tmp/).
+            case _ if inPath.startsWith("/")               => s"file:$inPath"
+            case _                                         => s"file:/$inPath"
         }
     }
 
@@ -195,6 +212,28 @@ object HadoopUtils {
             ByteStreams.toByteArray(stream)
         } finally { // noinspection UnstableApiUsage
             Closeables.close(stream, true)
+        }
+    }
+
+    /** Reads the bytes at `rawPath`, choosing the most robust transport per location:
+      *
+      *  - `file:`-scheme paths (which `cleanPath` produces for UC Volumes `/Volumes/...`, their
+      *    `/dbfs/Volumes/...` / `dbfs:/Volumes/...` aliases, legacy `/dbfs/...`, `/tmp/`, and other
+      *    OS-absolute local paths) are read straight off the OS filesystem via NIO — the same FUSE
+      *    mount GDAL JNI reads successfully. This bypasses the Hadoop FS layer entirely, so it does
+      *    not depend on the (driver-serialized) `fs.defaultFS` / `fs.file.impl` config surviving to
+      *    the executor, which is what silently broke `/Volumes/...` reads on classic UC compute.
+      *  - Any other scheme is read through the Hadoop FileSystem API (defensive fallback; `cleanPath`
+      *    currently routes all recognized inputs to `file:`).
+      */
+    def readBytes(rawPath: String, hConf: SerializableConfiguration): Array[Byte] = {
+        val cleaned = cleanPath(rawPath)
+        if (cleaned.startsWith("file:")) {
+            java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(cleaned.stripPrefix("file:")))
+        } else {
+            val p = new Path(cleaned)
+            val fs = p.getFileSystem(hConf.value)
+            readContent(fs, fs.getFileStatus(p))
         }
     }
 
