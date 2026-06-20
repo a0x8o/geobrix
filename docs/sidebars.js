@@ -89,6 +89,7 @@ const sidebars = {
         { type: 'doc', id: 'api/vectorx-functions', label: 'VectorX' },
         { type: 'doc', id: 'api/gridx-functions', label: 'GridX' },
         { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
+        { type: 'doc', id: 'api/stac', label: 'STAC' },
         {
           type: 'category',
           label: 'Performance & Benchmarking',
