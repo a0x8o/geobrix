@@ -1,4 +1,5 @@
 import pytest
+
 from databricks.labs.gbx.stac._sign import resolve_signer
 
 
