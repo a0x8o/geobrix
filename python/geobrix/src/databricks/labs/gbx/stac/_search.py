@@ -3,7 +3,9 @@
 The Spark fan-out (a pandas-UDF over AOI rows) lives in client.py; these helpers are
 pure/injectable so they unit-test without Spark or the network.
 """
+
 import json
+import warnings
 from typing import Dict, List
 
 
@@ -33,12 +35,22 @@ def extract_assets(item_json: str) -> List[Dict]:
     return out
 
 
-def search_one(catalog, collections: List[str], datetime: str, geojson: str) -> List[str]:
+def search_one(
+    catalog, collections: List[str], datetime: str, geojson: str
+) -> List[str]:
     """Search one AOI; return item JSON strings. Retries transient failures; on a
-    permanent failure returns [] (so one bad AOI does not fail the whole job)."""
+    permanent failure returns [] (so one bad AOI does not fail the whole job).
+
+    M4: a warning is emitted on the swallowed exception so a wrong catalog URL or
+    total network outage is observable (silent [] for EVERY AOI looks like success).
+    """
     from tenacity import retry, stop_after_attempt, wait_exponential
 
-    @retry(wait=wait_exponential(multiplier=2, min=4, max=60), stop=stop_after_attempt(5), reraise=True)
+    @retry(
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    )
     def _do():
         search = catalog.search(
             collections=collections, intersects=json.loads(geojson), datetime=datetime
@@ -47,5 +59,9 @@ def search_one(catalog, collections: List[str], datetime: str, geojson: str) -> 
 
     try:
         return _do()
-    except Exception:
+    except Exception as exc:
+        warnings.warn(
+            f"STAC search_one swallowed exception (AOI returned []): {exc}",
+            stacklevel=2,
+        )
         return []

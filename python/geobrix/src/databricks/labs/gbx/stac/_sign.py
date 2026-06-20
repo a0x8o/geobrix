@@ -4,6 +4,7 @@ A *signer* is ``Callable[[str], str]`` applied to an asset href. A *modifier* is
 pystac-client ``modifier=`` callback applied to each item on search (Planetary
 Computer's ``sign_inplace`` mutates item asset hrefs in place).
 """
+
 from typing import Callable, Optional
 
 

@@ -4,7 +4,12 @@ Parallelism is via DataFrame.repartition(N) (NOT spark.conf, which is a no-op on
 Serverless). No caching or persistence calls — Serverless-safe. Asset download is
 resilient (read-validated + retried). The catalog opener is injectable
 (_catalog_opener) for unit tests.
+
+Note on item_properties: values are stringified into a MapType(String, String).
+Downstream numeric filters must cast (e.g. ``CAST(item_properties['eo:cloud_cover']
+AS DOUBLE) < 20``).
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional
@@ -17,26 +22,38 @@ PLANETARY_COMPUTER = "https://planetarycomputer.microsoft.com/api/stac/v1"
 
 def _spark_types():
     from pyspark.sql.types import (
-        ArrayType, DoubleType, MapType, StringType, StructField, StructType,
+        ArrayType,
+        DoubleType,
+        MapType,
+        StringType,
+        StructField,
+        StructType,
     )
-    asset_schema = ArrayType(StructType([
-        StructField("asset_name", StringType()),
-        StructField("href", StringType()),
-    ]))
-    item_schema = StructType([
-        StructField("item_id", StringType()),
-        StructField("date", StringType()),
-        StructField("item_bbox", ArrayType(DoubleType())),
-        StructField("item_properties", MapType(StringType(), StringType())),
-    ])
+
+    asset_schema = ArrayType(
+        StructType(
+            [
+                StructField("asset_name", StringType()),
+                StructField("href", StringType()),
+            ]
+        )
+    )
+    item_schema = StructType(
+        [
+            StructField("item_id", StringType()),
+            StructField("date", StringType()),
+            StructField("item_bbox", ArrayType(DoubleType())),
+            StructField("item_properties", MapType(StringType(), StringType())),
+        ]
+    )
     return asset_schema, item_schema
 
 
-def _search_driver(catalog, df: "DataFrame", geojson_col: str, collections: List[str],
-                   datetime: str) -> "DataFrame":
+def _search_driver(
+    catalog, df: "DataFrame", geojson_col: str, collections: List[str], datetime: str
+) -> "DataFrame":
     """Run search on the driver (for test injection; no UDF pickling required)."""
-    from pyspark.sql import Row
-    from databricks.labs.gbx.stac._search import search_one, parse_item, extract_assets
+    from databricks.labs.gbx.stac._search import extract_assets, parse_item, search_one
 
     rows = []
     carried = [c for c in df.columns if c != geojson_col]
@@ -48,23 +65,33 @@ def _search_driver(catalog, df: "DataFrame", geojson_col: str, collections: List
             props = {k: str(v) for k, v in (p["item_properties"] or {}).items()}
             for asset in extract_assets(item_json):
                 row_dict = {c: r[c] for c in carried}
-                row_dict.update({
-                    "item_id": p["item_id"],
-                    "date": p["date"],
-                    "item_bbox": p["item_bbox"],
-                    "item_properties": props,
-                    "asset_name": asset["asset_name"],
-                    "href": asset["href"],
-                })
+                row_dict.update(
+                    {
+                        "item_id": p["item_id"],
+                        "date": p["date"],
+                        "item_bbox": p["item_bbox"],
+                        "item_properties": props,
+                        "asset_name": asset["asset_name"],
+                        "href": asset["href"],
+                    }
+                )
                 rows.append(row_dict)
 
     from pyspark.sql import SparkSession
+    from pyspark.sql.types import (
+        ArrayType,
+        DoubleType,
+        MapType,
+        StringType,
+        StructField,
+        StructType,
+    )
+
     spark = SparkSession.getActiveSession()
     if not rows:
-        from pyspark.sql.types import ArrayType, DoubleType, MapType, StringType, StructField, StructType
-        _ASSET_SCHEMA, _ITEM_SCHEMA = _spark_types()
         schema = StructType(
-            [StructField(c, df.schema[c].dataType) for c in carried] + [
+            [StructField(c, df.schema[c].dataType) for c in carried]
+            + [
                 StructField("item_id", StringType()),
                 StructField("date", StringType()),
                 StructField("item_bbox", ArrayType(DoubleType())),
@@ -78,7 +105,12 @@ def _search_driver(catalog, df: "DataFrame", geojson_col: str, collections: List
 
 
 class StacClient:
-    def __init__(self, catalog=PLANETARY_COMPUTER, sign="planetary_computer", _catalog_opener=None):
+    def __init__(
+        self,
+        catalog=PLANETARY_COMPUTER,
+        sign="planetary_computer",
+        _catalog_opener=None,
+    ):
         self.catalog = catalog
         self.sign = sign
         self._catalog_opener = _catalog_opener
@@ -87,16 +119,36 @@ class StacClient:
         if self._catalog_opener is not None:
             return self._catalog_opener()
         import pystac_client
+
         from databricks.labs.gbx.stac._sign import resolve_modifier
 
-        return pystac_client.Client.open(self.catalog, modifier=resolve_modifier(self.sign))
+        return pystac_client.Client.open(
+            self.catalog, modifier=resolve_modifier(self.sign)
+        )
 
-    def search(self, df: "DataFrame", geojson_col: str, collections: List[str],
-               datetime: str, partitions: int = 512) -> "DataFrame":
+    def search(
+        self,
+        df: "DataFrame",
+        geojson_col: str,
+        collections: List[str],
+        datetime: str,
+        partitions: int = 512,
+    ) -> "DataFrame":
+        """Search a STAC catalog for all AOIs in df[geojson_col].
+
+        Returns one row per (AOI, item, asset). Carried columns (all columns except
+        geojson_col) are preserved. Duplicate (item_id, asset_name) rows that arise
+        when multiple AOIs overlap the same item are collapsed by .distinct().
+
+        item_properties values are stringified to MapType(String, String); downstream
+        numeric filters must cast (e.g. CAST(item_properties['eo:cloud_cover'] AS DOUBLE)).
+        """
         # When a catalog opener is injected (test mode) run on the driver to avoid
         # pickling test-local callables into the Spark UDF worker.
         if self._catalog_opener is not None:
-            return _search_driver(self._catalog_opener(), df, geojson_col, collections, datetime)
+            return _search_driver(
+                self._catalog_opener(), df, geojson_col, collections, datetime
+            )
 
         from pyspark.sql import functions as F
         from pyspark.sql.types import ArrayType, StringType
@@ -106,20 +158,26 @@ class StacClient:
 
         @F.udf(ArrayType(StringType()))
         def _items(geojson):
+            import pystac_client
+
             from databricks.labs.gbx.stac._search import search_one
             from databricks.labs.gbx.stac._sign import resolve_modifier
-            import pystac_client
-            cat = pystac_client.Client.open(catalog_url, modifier=resolve_modifier(sign))
+
+            cat = pystac_client.Client.open(
+                catalog_url, modifier=resolve_modifier(sign)
+            )
             return search_one(cat, list(collections), datetime, geojson)
 
         @F.udf(_ASSET_SCHEMA)
         def _assets(item_json):
             from databricks.labs.gbx.stac._search import extract_assets
+
             return [(a["asset_name"], a["href"]) for a in extract_assets(item_json)]
 
         @F.udf(_ITEM_SCHEMA)
         def _item_fields(item_json):
             from databricks.labs.gbx.stac._search import parse_item
+
             p = parse_item(item_json)
             props = {k: str(v) for k, v in (p["item_properties"] or {}).items()}
             return (p["item_id"], p["date"], p["item_bbox"], props)
@@ -127,23 +185,45 @@ class StacClient:
         carried = [c for c in df.columns if c != geojson_col]
         return (
             df.repartition(partitions)
-              .withColumn("_item", F.explode(_items(F.col(geojson_col))))
-              .withColumn("_f", _item_fields("_item"))
-              .withColumn("_a", F.explode(_assets("_item")))
-              .select(
-                  *carried,
-                  F.col("_f.item_id").alias("item_id"),
-                  F.col("_f.date").alias("date"),
-                  F.col("_f.item_bbox").alias("item_bbox"),
-                  F.col("_f.item_properties").alias("item_properties"),
-                  F.col("_a.asset_name").alias("asset_name"),
-                  F.col("_a.href").alias("href"),
-              )
+            .withColumn("_item", F.explode(_items(F.col(geojson_col))))
+            .withColumn("_f", _item_fields("_item"))
+            .withColumn("_a", F.explode(_assets("_item")))
+            .select(
+                *carried,
+                F.col("_f.item_id").alias("item_id"),
+                F.col("_f.date").alias("date"),
+                F.col("_f.item_bbox").alias("item_bbox"),
+                F.col("_f.item_properties").alias("item_properties"),
+                F.col("_a.asset_name").alias("asset_name"),
+                F.col("_a.href").alias("href"),
+            )
+            .dropDuplicates(["item_id", "asset_name"])
         )
 
-    def download(self, df: "DataFrame", out_dir: str, asset_names: Optional[List[str]] = None,
-                 name: str = "{asset_name}_{item_id}.tif", validate: bool = True,
-                 max_tries: int = 5, partitions: Optional[int] = None) -> "DataFrame":
+    def download(
+        self,
+        df: "DataFrame",
+        out_dir: str,
+        asset_names: Optional[List[str]] = None,
+        name: str = "{asset_name}_{item_id}.tif",
+        validate: bool = True,
+        max_tries: int = 5,
+        partitions: Optional[int] = None,
+        _get_fn=None,
+    ) -> "DataFrame":
+        """Download STAC assets to out_dir.
+
+        validate=True (default): publish only if rasterio can decode a window of the
+            file; is_out_file_valid reflects decode success.
+        validate=False: publish without rasterio decode; is_out_file_valid reflects
+            download+publish success only.
+
+        Already-valid files (idempotency): if the target path exists and passes the
+        validity check, the asset is skipped (no re-download).
+
+        Returns a DataFrame with columns: item_id, asset_name, out_file_path,
+        out_file_sz, is_out_file_valid, last_update.
+        """
         from pyspark.sql import functions as F
         from pyspark.sql.types import StringType
 
@@ -152,13 +232,19 @@ class StacClient:
         targets = df.select("item_id", "asset_name").distinct()
         n = partitions if partitions is not None else max(1, targets.count())
         catalog_url, sign = self.catalog, self.sign
+        _validate = validate
+        _injected_get = _get_fn  # None in production; injectable for tests
 
         @F.udf(StringType())
         def _fetch(item_id, asset_name):
+            import pystac_client
+
             from databricks.labs.gbx.stac._download import fetch_validate_publish
             from databricks.labs.gbx.stac._sign import resolve_modifier, resolve_signer
-            import pystac_client
-            cat = pystac_client.Client.open(catalog_url, modifier=resolve_modifier(sign))
+
+            cat = pystac_client.Client.open(
+                catalog_url, modifier=resolve_modifier(sign)
+            )
             signer = resolve_signer(sign)
 
             def href_fn():
@@ -166,22 +252,37 @@ class StacClient:
                 return signer(item.assets[asset_name].href)
 
             filename = name.format(asset_name=asset_name, item_id=item_id)
-            return fetch_validate_publish(href_fn, out_dir, filename, max_tries=max_tries)
+            kwargs = {} if _injected_get is None else {"get": _injected_get}
+            return fetch_validate_publish(
+                href_fn,
+                out_dir,
+                filename,
+                max_tries=max_tries,
+                validate=_validate,
+                **kwargs,
+            )
 
         @F.udf("long")
         def _size(path):
             import os
+
             return os.path.getsize(path) if path and os.path.exists(path) else None
 
         return (
             targets.repartition(n)
-              .withColumn("out_file_path", _fetch("item_id", "asset_name"))
-              .withColumn("out_file_sz", _size("out_file_path"))
-              .withColumn("is_out_file_valid", F.col("out_file_path").isNotNull())
+            .withColumn("out_file_path", _fetch("item_id", "asset_name"))
+            .withColumn("out_file_sz", _size("out_file_path"))
+            .withColumn("is_out_file_valid", F.col("out_file_path").isNotNull())
+            .withColumn("last_update", F.current_timestamp())
         )
 
-    def repair(self, target, where: str = "is_out_file_valid = false",
-               spark=None, out_dir: Optional[str] = None) -> "DataFrame":
+    def repair(
+        self,
+        target,
+        where: str = "is_out_file_valid = false",
+        spark=None,
+        out_dir: Optional[str] = None,
+    ) -> "DataFrame":
         from pyspark.sql import SparkSession
 
         spark = spark or SparkSession.getActiveSession()
@@ -196,20 +297,29 @@ class StacClient:
             from delta.tables import DeltaTable
 
             dt = DeltaTable.forName(spark, target)
-            (dt.alias("t").merge(
-                repaired.alias("u"),
-                "t.item_id = u.item_id AND t.asset_name = u.asset_name")
-             .whenMatchedUpdate(set={
-                 "out_file_path": "u.out_file_path",
-                 "out_file_sz": "u.out_file_sz",
-                 "is_out_file_valid": "u.is_out_file_valid",
-             }).execute())
+            (
+                dt.alias("t")
+                .merge(
+                    repaired.alias("u"),
+                    "t.item_id = u.item_id AND t.asset_name = u.asset_name",
+                )
+                .whenMatchedUpdate(
+                    set={
+                        "out_file_path": "u.out_file_path",
+                        "out_file_sz": "u.out_file_sz",
+                        "is_out_file_valid": "u.is_out_file_valid",
+                        "last_update": "u.last_update",
+                    }
+                )
+                .execute()
+            )
         return repaired
 
 
 def _common_dir(df: "DataFrame") -> str:
     """Infer the output dir from existing out_file_path values (repair convenience)."""
     import os
+
     from pyspark.sql import functions as F
 
     row = df.filter(F.col("out_file_path").isNotNull()).select("out_file_path").first()

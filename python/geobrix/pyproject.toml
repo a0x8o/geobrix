@@ -124,6 +124,7 @@ stac = [
     "pystac-client>=0.7,<1",
     "planetary-computer>=1.0,<2",
     "tenacity>=8,<10",
+    "requests>=2.25",
 ]
 
 [tool.coverage.run]
@@ -141,7 +142,7 @@ omit = [
 exclude_lines = ["pragma: no cover"]
 
 [tool.pytest.ini_options]
-pythonpath = [ "src" ]
+pythonpath = [ "src", "." ]
 markers = [
     "integration: tests that need network or long-running setup (excluded from CI)",
 ]
