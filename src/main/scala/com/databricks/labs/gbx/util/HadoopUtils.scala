@@ -215,26 +215,21 @@ object HadoopUtils {
         }
     }
 
-    /** Reads the bytes at `rawPath`, choosing the most robust transport per location:
+    /** Reads the bytes at `rawPath` through the Hadoop FileSystem.
       *
-      *  - `file:`-scheme paths (which `cleanPath` produces for UC Volumes `/Volumes/...`, their
-      *    `/dbfs/Volumes/...` / `dbfs:/Volumes/...` aliases, legacy `/dbfs/...`, `/tmp/`, and other
-      *    OS-absolute local paths) are read straight off the OS filesystem via NIO — the same FUSE
-      *    mount GDAL JNI reads successfully. This bypasses the Hadoop FS layer entirely, so it does
-      *    not depend on the (driver-serialized) `fs.defaultFS` / `fs.file.impl` config surviving to
-      *    the executor, which is what silently broke `/Volumes/...` reads on classic UC compute.
-      *  - Any other scheme is read through the Hadoop FileSystem API (defensive fallback; `cleanPath`
-      *    currently routes all recognized inputs to `file:`).
+      * `cleanPath` routes UC Volumes / Workspace / local paths to the `file:` scheme, which the
+      * executor's `fs.file.impl` resolves to Databricks' `WorkspaceLocalFileSystem` — the
+      * UC-credentialed FUSE connector. We deliberately do NOT read via raw NIO
+      * (`java.nio.file.Files`): in an expression's execution context (UC ephemeral-credential
+      * scope) a raw POSIX read of a `/Volumes/...` FUSE path is denied ("Operation not
+      * permitted"), whereas `WorkspaceLocalFileSystem` mediates the credential and succeeds
+      * (issue #34). A fresh executor-side `Configuration` is used because the executor classpath's
+      * core-site.xml registers `fs.file.impl`, while the driver-serialized `hConf` may not carry it.
       */
     def readBytes(rawPath: String, hConf: SerializableConfiguration): Array[Byte] = {
-        val cleaned = cleanPath(rawPath)
-        if (cleaned.startsWith("file:")) {
-            java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(cleaned.stripPrefix("file:")))
-        } else {
-            val p = new Path(cleaned)
-            val fs = p.getFileSystem(hConf.value)
-            readContent(fs, fs.getFileStatus(p))
-        }
+        val p = new Path(cleanPath(rawPath))
+        val fs = p.getFileSystem(new org.apache.hadoop.conf.Configuration())
+        readContent(fs, fs.getFileStatus(p))
     }
 
     /** Deletes the path recursively if it exists. */
