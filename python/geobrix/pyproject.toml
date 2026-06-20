@@ -69,7 +69,11 @@ light = [
     # typing_extensions; DBR 17.3 ships an older one, so pin the floor explicitly
     # or the [light] import fails on-cluster (rio_tiler/types.py TypeError).
     "typing_extensions>=4.13",
-    "rio-tiler>=9.0,<10",
+    # Exclude rio-tiler 9.3.0: it regressed the PEP 728 TypedDict(extra_items=...)
+    # import on Python 3.12 (Serverless env v5) — `import rio_tiler` raises
+    # TypeError even with typing_extensions>=4.13 present. 9.2.1 imports cleanly.
+    # Revisit the <9.3 cap once a fixed 9.3.x ships.
+    "rio-tiler>=9.0,<9.3",
     # rio-tiler -> httpx -> httpcore (which needs h11>=0.16). DBR ships an older
     # httpcore 1.0.2 (pinned h11<0.15) that %pip leaves in place, so it conflicts
     # with the h11>=0.16 the stack pulls. Force httpcore>=1.0.9 so the on-cluster
@@ -90,7 +94,10 @@ light = [
     # OGR-free vector reading for the light *_gbx vector DataSources. pyogrio
     # bundles its own libgdal; pyproj (pulled by pyogrio) maps CRS->srid/proj4.
     "pyogrio>=0.12,<1",
-    "pyproj>=3.6",
+    # Cap pyproj: a floor-only, native-PROJ-tied dep that floats to "latest" on
+    # Serverless (not held by the immutable base) — same float-and-break risk as
+    # rio-tiler 9.3.0. No 4.x exists yet, so <4 is a no-op today but future-proofs.
+    "pyproj>=3.6,<4",
     # mapbox-vector-tile pinned to 2.1.x for the pyvx MVT encoder. Why this exact
     # range matters on Databricks **Serverless** (env v5, the lightweight "halo"
     # target): the resolver otherwise grabs 2.2.0, which hard-requires
@@ -110,6 +117,13 @@ light = [
 # For sample-data bundle uploads to Unity Catalog Volumes and gbx:test:bundle-databricks
 databricks = [
     "databricks-sdk",
+]
+# STAC catalog client (lightweight): distributed search + resilient download + repair.
+# Optional extra so [light] users who don't need STAC don't pull pystac/planetary-computer.
+stac = [
+    "pystac-client>=0.7,<1",
+    "planetary-computer>=1.0,<2",
+    "tenacity>=8,<10",
 ]
 
 [tool.coverage.run]
