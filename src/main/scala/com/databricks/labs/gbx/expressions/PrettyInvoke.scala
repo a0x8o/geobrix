@@ -18,7 +18,8 @@ class PrettyInvoke(
     methodInputTypes: Seq[DataType] = Nil,
     propagateNull: Boolean = true,
     returnNullable: Boolean = true,
-    isDeterministic: Boolean = true
+    isDeterministic: Boolean = true,
+    nonFoldable: Boolean = false
 ) extends Invoke(
       targetObject,
       functionName,
@@ -29,6 +30,12 @@ class PrettyInvoke(
       returnNullable,
       isDeterministic
     ) {
+
+    /** When nonFoldable, never let Catalyst ConstantFolding evaluate this at plan time on the
+      * DRIVER (Invoke.foldable is otherwise true for all-literal, deterministic args). Required for
+      * I/O expressions like rst_fromfile: a literal path must be read at runtime on the EXECUTOR
+      * (which has the UC Volume FUSE mount), not folded on the driver. */
+    override def foldable: Boolean = if (nonFoldable) false else super.foldable
 
     /** Overrides toString: readable function name and args; long literals redacted as "literal(...)". */
     override def toString(): String = {
@@ -51,7 +58,8 @@ class PrettyInvoke(
           methodInputTypes = methodInputTypes,
           propagateNull = propagateNull,
           returnNullable = returnNullable,
-          isDeterministic = isDeterministic
+          isDeterministic = isDeterministic,
+          nonFoldable = nonFoldable
         )
 
 }

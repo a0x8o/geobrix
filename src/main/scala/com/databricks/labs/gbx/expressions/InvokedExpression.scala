@@ -16,8 +16,10 @@ trait InvokedExpression extends RuntimeReplaceable with ImplicitCastInputTypes {
     /** Overrides ImplicitCastInputTypes.inputTypes: one-to-one with children data types. */
     override def inputTypes: Seq[DataType] = children.map(_.dataType)
 
-    /** Builds the runtime invocation: call `methodName` on `companion` with `children` as arguments. */
-    def invoke(companion: Object, methodName: String = "eval"): PrettyInvoke = {
+    /** Builds the runtime invocation: call `methodName` on `companion` with `children` as arguments.
+      * Set `nonFoldable=true` for I/O expressions (e.g. rst_fromfile) so Catalyst ConstantFolding
+      * never evaluates them on the driver at plan time — they must run at runtime on executors. */
+    def invoke(companion: Object, methodName: String = "eval", nonFoldable: Boolean = false): PrettyInvoke = {
         val moduleLiteral = Literal.create(
           companion,
           ObjectType(companion.getClass)
@@ -33,7 +35,8 @@ trait InvokedExpression extends RuntimeReplaceable with ImplicitCastInputTypes {
           methodInputTypes = inputTypes,
           propagateNull = true,
           returnNullable = true,
-          isDeterministic = true
+          isDeterministic = true,
+          nonFoldable = nonFoldable
         )
     }
 

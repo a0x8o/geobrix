@@ -24,7 +24,11 @@ case class RST_FromFile(
     override def dataType: DataType = RST_ExpressionUtil.tileDataType(BinaryType)
     override def nullable: Boolean = true
     override def prettyName: String = RST_FromFile.name
-    override def replacement: Expression = invoke(RST_FromFile)
+    // Non-foldable: this reads a file (I/O) and MUST run at runtime on an executor, never be
+    // constant-folded onto the driver at plan time (the driver can't open a UC Volume FUSE path
+    // in the optimizer context -> "Operation not permitted" -> null tile). See issue #34.
+    override def foldable: Boolean = false
+    override def replacement: Expression = invoke(RST_FromFile, nonFoldable = true)
     override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression = copy(nc(0), nc(1))
 
 }
