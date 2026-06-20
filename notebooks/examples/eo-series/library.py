@@ -46,27 +46,6 @@ def generate_cells(extent, resolution, spark):
   return cells
 
 
-def get_unique_hrefs(assets_df, item_name):
-  return (
-    assets_df
-      .select(
-        "area_id",
-        "h3",
-        "asset.name",
-        "asset.href",
-        "item_id",
-        F.to_date("item_properties.datetime").alias("date")
-      )
-      .where(
-        f"name == '{item_name}'"
-      )
-      .groupBy(
-      "href", "item_id", "date"
-      )
-      .agg(F.first("h3").alias("h3"))
-  )
-
-
 def to_numpy_arr(raster):
   with MemoryFile(BytesIO(raster)) as memfile:
     with memfile.open() as src:
