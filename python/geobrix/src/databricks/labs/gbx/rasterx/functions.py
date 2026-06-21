@@ -46,6 +46,19 @@ def register(_spark: SparkSession) -> None:
     _spark = SparkSession.builder.getOrCreate()
     _spark.read.format("register_ds").option("functions", "rasterx").load().collect()
 
+    # gbx_rst_fromfile reads a file on the executor. On Databricks the JVM (Scala) cannot read a
+    # UC Volume (/Volumes/...) FUSE path in the Spark execution context -- the UC credential is held
+    # only by Spark's managed Python worker -- so the canonical implementation is the pyrx Python
+    # UDF, which DOES read /Volumes (and /Workspace, DBFS, local). Override the Scala registration
+    # with it when pyrx ([light]) is importable. If it is NOT present, skip gracefully and leave the
+    # Scala gbx_rst_fromfile in place (it still reads local / DBFS / Workspace, just not /Volumes).
+    try:
+        from databricks.labs.gbx.pyrx.functions import _fromfile_udf as _pyrx_fromfile_udf
+
+        _spark.udf.register("gbx_rst_fromfile", _pyrx_fromfile_udf)
+    except Exception:  # noqa: BLE001 - pyrx/[light] not installed: keep the Scala fallback
+        pass
+
 
 def rst_avg(tile: ColLike) -> Column:
     """Return the average pixel value per band for the tile.
