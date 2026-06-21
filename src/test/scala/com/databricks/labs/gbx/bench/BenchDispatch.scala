@@ -156,7 +156,7 @@ object BenchDispatch {
     // bucket C, group C1 (readers + buildoverviews) + C2 (subdataset fns).
     // tryopen / subdatasets / getsubdataset are accessor-flavored; the readers
     // and buildoverviews emit a tile -> format.
-    "rst_tryopen" -> ACC, "rst_fromcontent" -> FMT, "rst_fromfile" -> FMT,
+    "rst_tryopen" -> ACC, "rst_fromcontent" -> FMT,
     "rst_buildoverviews" -> FMT,
     "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC,
     // bucket C, group C3: multi-tile-input fns (consume an ARRAY of tiles) -> format.
@@ -193,7 +193,9 @@ object BenchDispatch {
   // path (the dispatch opens it). Reader/constructor fns take content/path, not
   // an open ds, so they cannot use the shared ds-in pureCore path.
   private val byteInput: Set[String] = Set("rst_tryopen", "rst_fromcontent")
-  private val pathInput: Set[String] = Set("rst_fromfile")
+  // rst_fromfile is lightweight-only now (the JVM cannot read UC Volumes, issue #34),
+  // so there is no heavy-tier dispatch for it -- the "path" input_kind is unused.
+  private val pathInput: Set[String] = Set.empty
   // bucket C, group C3: multi-tile fns consume an ARRAY of tiles. The bench
   // synthesizes the multi-tile input from the corpus tile and writes it ONCE
   // (write-once-read-both); the heavy runner reads the SAME synthesized files.
@@ -605,12 +607,8 @@ object BenchDispatch {
   def pureCorePath(fn: String, path: String, a: Map[String, String]): String = {
     Files.createDirectories(NodeFilePathUtil.rootPath)
     fn match {
-      // rst_fromfile: read the raster at `path` into a dataset and fingerprint it
-      // (the pyrx side returns the file bytes -> the same raster fp).
-      case "rst_fromfile" =>
-        val d = RasterDriver.read(path, Map.empty)
-        try BenchFingerprint.ofDataset(d)
-        finally RasterDriver.releaseDataset(d)
+      // rst_fromfile was the only "path" reader; it is lightweight-only now (issue #34),
+      // so the heavy bench no longer dispatches any path-input fn.
       case other => throw new IllegalArgumentException(s"unknown bench path fn: $other")
     }
   }
@@ -879,15 +877,13 @@ object BenchDispatch {
         rst_sample(tile, lit("POINT (0 0)"))
       // bucket C, group C1/C2. tryopen takes the tile; fromcontent reads the
       // tile's raster (binary content) column; buildoverviews takes the tile +
-      // an ARRAY<INT> levels literal. fromfile / subdatasets / getsubdataset are
+      // an ARRAY<INT> levels literal. subdatasets / getsubdataset are
       // pure-core-only here; their column form exists only to keep the match
-      // exhaustive (the spark-path runner filters by modes).
+      // exhaustive (the spark-path runner filters by modes). rst_fromfile is
+      // lightweight-only now (issue #34) and is not dispatched on the heavy tier.
       case "rst_tryopen"     => rst_tryopen(tile)
       case "rst_fromcontent" =>
         rst_fromcontent(tile.getField("raster"), argS(a, "driver", "GTiff"))
-      case "rst_fromfile" =>
-        import org.apache.spark.sql.functions.lit
-        rst_fromfile(lit("__unused__"), argS(a, "driver", "GTiff"))
       case "rst_buildoverviews" =>
         rst_buildoverviews(tile, argIntArray(a, "levels", Array(2, 4)), argS(a, "resampling", "average"))
       case "rst_subdatasets"   => rst_subdatasets(tile)

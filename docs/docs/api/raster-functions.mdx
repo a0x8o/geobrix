@@ -766,10 +766,12 @@ Create or load rasters from path, binary content, or bands (4 total).
 
 ### rst_fromfile
 
-<Tier both/>
+<Tier light/>
 
-:::note Lightweight tier (pyrx)
-Powered by **rasterio**. Opens the raster at `path` and re-encodes it as a GeoTIFF tile; the `driver` arg is a format hint (rasterio auto-detects on open). A missing/unreadable path returns null.
+:::note Lightweight tier only (pyrx) — callable from Python and SQL
+Powered by **rasterio**. Opens the raster at `path` and re-encodes it as a GeoTIFF tile; the `driver` arg is a format hint (rasterio auto-detects on open). A missing/unreadable path returns null. Requires `geobrix[light]`.
+
+`gbx_rst_fromfile` has **no heavyweight (JVM) implementation**. On Databricks the executor JVM cannot read a Unity Catalog Volume (`/Volumes/...`) FUSE path — the UC credential is held only by Spark's managed Python worker — so the function is registered as a Python UDF even when you call it from SQL. With `geobrix[light]` installed it is available in SQL (`SELECT gbx_rst_fromfile(...)`) and in Python (`rx.rst_fromfile(...)`); without `[light]` it is not registered, and the Python binding raises with guidance.
 :::
 
 Load a raster from a file path.
@@ -783,6 +785,23 @@ Load a raster from a file path.
 **SQL:**
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_fromfile_sql_example" outputConstant="rst_fromfile_sql_example_output" code={rasterxSqlCode} />
+
+:::tip Portable alternative — `binaryFile` + `rst_fromcontent`
+If `geobrix[light]` is not installed, or you want a tier-agnostic path that works on any compute, read the bytes with Spark's built-in `binaryFile` reader and build the tile from content. This reads `/Volumes` reliably (the reader runs in Spark, which holds the credential) and works in both tiers:
+
+```python
+df = (
+    spark.read.format("binaryFile")
+    .load("/Volumes/main/geobrix_samples/geobrix-examples/nyc/*.tif")
+    .selectExpr("path", "gbx_rst_fromcontent(content, 'GTiff') AS tile")
+)
+```
+
+```sql
+SELECT path, gbx_rst_fromcontent(content, 'GTiff') AS tile
+FROM read_files('/Volumes/main/geobrix_samples/geobrix-examples/nyc/', format => 'binaryFile')
+```
+:::
 
 ---
 

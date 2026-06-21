@@ -266,7 +266,7 @@ class MyExpressionEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("result", my_expression(col("raster"), lit(param)))
 
         noException should be thrownBy df.collect()
@@ -275,6 +275,8 @@ class MyExpressionEvalTest extends PlanTest with SilentSparkSession {
     }
 }
 ```
+
+> Note: `udfs.rasterFromPath` (in `com.databricks.labs.gbx.udfs`) is the test helper for loading local rasters JVM-side. The `gbx_rst_fromfile` function is lightweight-only (a pyrx Python UDF) and has no Scala expression, because the JVM cannot read UC Volumes (see issue #34).
 
 ## Environment Setup
 

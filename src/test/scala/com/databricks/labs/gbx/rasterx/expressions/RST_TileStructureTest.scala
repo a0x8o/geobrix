@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions.{col, explode, lit}
@@ -26,7 +27,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString
 
         val df = spark.range(1)
-          .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(lit(tifPath)))
 
         // Verify tile schema has expected fields
         val tileSchema = df.schema("tile").dataType
@@ -70,7 +71,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString
 
         val df = spark.range(1)
-          .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(lit(tifPath)))
           .select(
             col("tile.raster").alias("raster_binary"),
             col("tile.metadata").alias("metadata")
@@ -115,7 +116,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString
 
         val df = spark.range(1)
-          .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(lit(tifPath)))
           .select(
             col("tile.metadata").alias("metadata"),
             col("tile.metadata.driver").alias("driver"),
@@ -149,7 +150,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         // rst_h3_tessellate is a generator that produces multiple rows directly (no explode needed)
         // Use resolution 1 (coarse) to avoid generating too many cells
         val df = spark.range(1)
-          .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(lit(tifPath)))
           .withColumn("tessellated", rst_h3_tessellate(col("tile"), lit(1)))
           .select(col("tessellated.cellid").alias("cellid"))
           .limit(10) // Limit results for test efficiency
@@ -171,7 +172,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString
 
         val df = spark.range(1)
-          .withColumn("tile", rst_fromfile(lit(tifPath), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(lit(tifPath)))
           .select(
             col("tile"),
             col("tile.metadata").alias("metadata_direct"),
@@ -205,7 +206,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"),
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")
         ).toDF("id", "path")
-          .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(col("path")))
 
         // Filter by metadata
         val gTiffTiles = df.filter(col("tile.metadata.driver") === "GTiff")
@@ -226,7 +227,7 @@ class RST_TileStructureTest extends PlanTest with SilentSparkSession {
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"),
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")
         ).toDF("id", "path")
-          .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+          .withColumn("tile", udfs.rasterFromPath(col("path")))
           .withColumn("is_b01", col("path").contains("B01"))
 
         val result = df.collect()

@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions.{array, col, lit}
 import org.apache.spark.sql.test.SilentSparkSession
@@ -62,7 +63,7 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"
         ).toDF("path")
-            .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("tile", udfs.rasterFromPath(col("path")))
             .groupBy(lit(1).alias("g"))
             .agg(rst_merge_agg(col("tile")).alias("merged"))
             .select(
@@ -84,9 +85,9 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
 
         val tifPath = this.getClass.getResource("/modis/").toString
         val df = Seq(1).toDF("id")
-            .withColumn("b1", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"), lit("GTiff")))
-            .withColumn("b2", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"), lit("GTiff")))
-            .withColumn("b3", rst_fromfile(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"), lit("GTiff")))
+            .withColumn("b1", udfs.rasterFromPath(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")))
+            .withColumn("b2", udfs.rasterFromPath(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")))
+            .withColumn("b3", udfs.rasterFromPath(lit(s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF")))
             .withColumn("stacked", rst_frombands(array(col("b1"), col("b2"), col("b3"))))
             .select(
               col("stacked.raster").alias("raster"),
@@ -114,7 +115,7 @@ class RST_NoVrtPayloadTest extends PlanTest with SilentSparkSession {
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF",
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF"
         ).toDF("path")
-            .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("tile", udfs.rasterFromPath(col("path")))
             .groupBy(lit(1).alias("g"))
             .agg(rst_combineavg_agg(col("tile")).alias("avg"))
             .select(

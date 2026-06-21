@@ -550,20 +550,22 @@ def rst_fromfile(path: ColLike, driver: ColLike) -> Column:
         Column of raster tile.
 
     Note:
-        On Databricks the heavyweight (JVM) reader cannot read UC Volume (``/Volumes/...``)
-        paths: in the Catalyst execution context ``file:`` resolves to ``RawLocalFileSystem``
-        (the UC-credentialed ``WorkspaceLocalFileSystem`` FUSE connector is not reachable from the
-        library JAR's classloader). The lightweight ``pyrx`` loader reads via a Python ``pandas_udf``
-        — the Python process *does* hold the UC FUSE credential — and produces a tile that is
-        schema-compatible with the heavyweight tier. So we delegate to ``pyrx.rst_fromfile`` when it
-        is importable (requires ``geobrix[light]``); otherwise we fall back to the Scala
-        ``gbx_rst_fromfile`` UDF (reads local / DBFS / Workspace paths, but not ``/Volumes``). For
-        raw SQL on a ``/Volumes`` path, use ``spark.read.format("binaryFile")`` + ``gbx_rst_fromcontent``.
+        ``gbx_rst_fromfile`` is **lightweight-only**: it is implemented by the ``pyrx`` Python loader
+        (a ``pandas_udf``) and has no JVM/Scala implementation. On Databricks the executor JVM cannot
+        read a UC Volume (``/Volumes/...``) FUSE path — the UC credential is held only by Spark's
+        managed Python worker — so this delegates to ``pyrx.rst_fromfile`` and **requires
+        ``geobrix[light]``**. If ``[light]`` is not installed, this raises with guidance. The
+        portable alternative (no ``[light]``, works on every tier) is
+        ``spark.read.format("binaryFile").load(path)`` + ``gbx_rst_fromcontent(content, driver)``.
     """
     try:
         from databricks.labs.gbx.pyrx import functions as _pyrx
-    except ImportError:
-        return f.call_function("gbx_rst_fromfile", _col(path), _col(driver))
+    except ImportError as e:  # pragma: no cover
+        raise ImportError(
+            "gbx_rst_fromfile is lightweight-only and requires geobrix[light] (it is implemented by "
+            "the pyrx Python reader; the JVM cannot read UC Volumes). Install geobrix[light], or use "
+            "spark.read.format('binaryFile').load(path) + gbx_rst_fromcontent(content, driver)."
+        ) from e
     return _pyrx.rst_fromfile(path, driver)
 
 

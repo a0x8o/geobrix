@@ -33,6 +33,13 @@ FUNCTION_INFO_JSON = REPO_ROOT / "src/main/resources/com/databricks/labs/gbx/fun
 SCALA_ROOT = REPO_ROOT / "src/main/scala"
 PYTHON_ROOT = REPO_ROOT / "python/geobrix/src"
 
+# Functions registered as a Python UDF (via spark.udf.register in the Python `register`), NOT a
+# Scala expression companion, because they cannot be implemented in the JVM tier. gbx_rst_fromfile
+# reads a file path, and on Databricks only the credentialed Python worker can read a UC Volume
+# (/Volumes) FUSE path -- the executor JVM cannot. These are EXEMPT from the Scala-expression
+# requirement; they still require a Python binding and a function-info.json entry. Issue #34.
+PYTHON_REGISTERED = {"gbx_rst_fromfile"}
+
 # `override def name: String = "gbx_..."` — the canonical SQL name a companion registers under.
 SCALA_NAME_RE = re.compile(r'override\s+def\s+name\s*:\s*String\s*=\s*"(gbx_[a-z0-9_]+)"')
 # A quoted gbx_ literal (call_function("gbx_..."))/('gbx_...'); quoting excludes docstring
@@ -103,7 +110,10 @@ def main() -> int:
               f"!= {REGISTERED_TXT.relative_to(REPO_ROOT)} -- re-copy the canonical file.")
 
     for label, found in bindings.items():
-        missing = sorted(sql - found)
+        # Python-registered functions (e.g. gbx_rst_fromfile) have no Scala expression by design;
+        # exempt them from the Scala arm. Python binding + function-info are still required.
+        required = sql - PYTHON_REGISTERED if label == "Scala (override def name)" else sql
+        missing = sorted(required - found)
         if missing:
             failed = True
             print(f"❌ {len(missing)} canonical function(s) missing from {label}:")

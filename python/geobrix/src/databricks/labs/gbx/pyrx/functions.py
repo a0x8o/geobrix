@@ -303,7 +303,7 @@ def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
 def _fromfile_udf(path, driver):
     if path is None:
         return None
-    import rasterio
+    from rasterio.io import MemoryFile
 
     from databricks.labs.gbx.ds._listing import to_local_path
     from databricks.labs.gbx.pyrx import _env
@@ -311,14 +311,16 @@ def _fromfile_udf(path, driver):
     _env.configure_gdal_env()
     drv = "GTiff" if driver is None else str(driver)
     try:
-        # Columns carry dbfs:-qualified paths (to_spark_uri); rasterio opens the
-        # bare FUSE path, so strip the scheme right before the open.
-        with rasterio.open(to_local_path(str(path))) as src:
+        # Read the source bytes SEQUENTIALLY (FUSE-safe) and open from an in-memory
+        # MemoryFile, rather than rasterio.open() on the path: a tiled/COG GTiff over a
+        # UC Volume seeks to block offsets on read, which Volume FUSE can't serve. Columns
+        # carry dbfs:-qualified paths (to_spark_uri); strip the scheme for the open().
+        with open(to_local_path(str(path)), "rb") as _fh:
+            _src_bytes = _fh.read()
+        with MemoryFile(_src_bytes) as _src_mf, _src_mf.open() as src:
             data = src.read()
             profile = src.profile.copy()
             profile.update(driver="GTiff")
-            from rasterio.io import MemoryFile
-
             with MemoryFile() as mf:
                 with mf.open(**profile) as dst:
                     dst.write(data)
@@ -1804,6 +1806,8 @@ class _RstH3TessellateUDTF:
             for cellid, raster in tessellate_core.iter_tessellate_h3(
                 ds, int(resolution), mode=effective_mode
             ):
+                if raster is None:  # defensive: never emit a null-raster tile row
+                    continue
                 yield _serde.build_tile(raster, "GTiff", cellid)
 
 

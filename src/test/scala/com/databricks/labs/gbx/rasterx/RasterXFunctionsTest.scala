@@ -189,11 +189,6 @@ class RasterXFunctionsTest extends AnyFunSuite {
         result should not be null
     }
 
-    test("rst_fromfile should accept path and driver") {
-        val result = functions.rst_fromfile(col("path"), col("driver"))
-        result should not be null
-    }
-
     test("rst_frombands should accept bands") {
         val result = functions.rst_frombands(col("bands"))
         result should not be null
@@ -369,8 +364,6 @@ class RasterXFunctionsTest extends AnyFunSuite {
         functions.rst_updatetype(col("tile"), "Float32") should not be null
         functions.rst_filter(col("tile"), 3, "median") should not be null
         functions.rst_mapalgebra(col("tiles"), "{\"calc\": \"A+2*A\"}") should not be null
-        // rst_fromfile with string path + driver
-        functions.rst_fromfile("/some/path.tif", "GTiff") should not be null
         // double scalars
         functions.rst_worldtorastercoord(col("tile"), 1.0, 2.0) should not be null
     }

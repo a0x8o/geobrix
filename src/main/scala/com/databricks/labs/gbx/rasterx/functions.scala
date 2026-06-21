@@ -4,7 +4,7 @@ import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
 import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_MergeAgg, RST_RasterizeAgg}
 import com.databricks.labs.gbx.rasterx.expressions.analysis._
-import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent, RST_FromFile}
+import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent}
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.generators._
 import com.databricks.labs.gbx.rasterx.expressions.grid._
@@ -85,7 +85,10 @@ object functions extends Serializable {
         // Constructors
         rd.register(RST_FromBands)
         rd.register(RST_FromContent)
-        rd.register(RST_FromFile)
+        // gbx_rst_fromfile is NOT registered here: it cannot be implemented in the JVM tier
+        // (the executor JVM lacks the UC FUSE credential for /Volumes). It is registered as a
+        // Python UDF in the lightweight tier (databricks.labs.gbx.rasterx.functions.register ->
+        // pyrx), accessible from Python and SQL when geobrix[light] is installed. Issue #34.
 
         // Generators
         rd.register(RST_H3_Tessellate)
@@ -218,7 +221,7 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
 
     // Constructors
     def rst_fromcontent(content: Column, driver: Column): Column = ColumnAdapter(RST_FromContent.name, Seq(content, driver))
-    def rst_fromfile(path: Column, driver: Column): Column = ColumnAdapter(RST_FromFile.name, Seq(path, driver))
+    // rst_fromfile is lightweight-only (Python UDF); no Scala/JVM column helper (see register/#34).
     def rst_frombands(bands: Column): Column = ColumnAdapter(RST_FromBands.name, Seq(bands))
 
     // Generators
@@ -294,8 +297,8 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
     def rst_bandmetadata(tileExpr: Column, band: Int): Column = rst_bandmetadata(tileExpr, lit(band))
     def rst_getsubdataset(tileExpr: Column, subsetName: String): Column = rst_getsubdataset(tileExpr, lit(subsetName))
     def rst_fromcontent(content: Column, driver: String): Column = rst_fromcontent(content, lit(driver))
-    def rst_fromfile(path: String, driver: String): Column = rst_fromfile(lit(path), lit(driver))
-    def rst_fromfile(path: Column, driver: String): Column = rst_fromfile(path, lit(driver))
+    // rst_fromfile is lightweight-only (Python UDF); no Scala/JVM column helper or scalar
+    // overloads (the JVM cannot read UC Volumes -- see register/#34). Use the Python/SQL binding.
     def rst_h3_tessellate(tileExpr: Column, resolution: Int): Column = rst_h3_tessellate(tileExpr, lit(resolution))
     def rst_h3_tessellate(tileExpr: Column, resolution: Int, mode: String): Column =
         rst_h3_tessellate(tileExpr, lit(resolution), mode)
