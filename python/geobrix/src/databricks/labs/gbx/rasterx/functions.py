@@ -535,8 +535,23 @@ def rst_fromfile(path: ColLike, driver: ColLike) -> Column:
 
     Returns:
         Column of raster tile.
+
+    Note:
+        On Databricks the heavyweight (JVM) reader cannot read UC Volume (``/Volumes/...``)
+        paths: in the Catalyst execution context ``file:`` resolves to ``RawLocalFileSystem``
+        (the UC-credentialed ``WorkspaceLocalFileSystem`` FUSE connector is not reachable from the
+        library JAR's classloader). The lightweight ``pyrx`` loader reads via a Python ``pandas_udf``
+        — the Python process *does* hold the UC FUSE credential — and produces a tile that is
+        schema-compatible with the heavyweight tier. So we delegate to ``pyrx.rst_fromfile`` when it
+        is importable (requires ``geobrix[light]``); otherwise we fall back to the Scala
+        ``gbx_rst_fromfile`` UDF (reads local / DBFS / Workspace paths, but not ``/Volumes``). For
+        raw SQL on a ``/Volumes`` path, use ``spark.read.format("binaryFile")`` + ``gbx_rst_fromcontent``.
     """
-    return f.call_function("gbx_rst_fromfile", _col(path), _col(driver))
+    try:
+        from databricks.labs.gbx.pyrx import functions as _pyrx
+    except ImportError:
+        return f.call_function("gbx_rst_fromfile", _col(path), _col(driver))
+    return _pyrx.rst_fromfile(path, driver)
 
 
 def rst_frombands(bands: ColLike) -> Column:
