@@ -221,37 +221,19 @@ object HadoopUtils {
         }
     }
 
-    /** Runs `body` with a FileSystem for `path` that resolves `file:` to the UC-credentialed
-      * WorkspaceLocalFileSystem, then closes it.
+    /** Runs `body` with the Hadoop FileSystem for `path` (resolved from the caller's config).
       *
-      * On Databricks `file:` must resolve to WorkspaceLocalFileSystem (the UC FUSE connector) to
-      * read `/Volumes` / `/Workspace`. Two pitfalls (issue #34):
-      *  1. A bare `new Configuration()` (and the driver-serialized hconf) resolve `file:` to
-      *     RawLocalFileSystem in the Catalyst-codegen / DataSource-planning execution context
-      *     (which cannot read a `/Volumes` FUSE mount). We instead build the config FRESH ON THE
-      *     EXECUTOR from the live Spark conf via SparkHadoopUtil, which overlays `spark.hadoop.*`
-      *     (where Databricks registers the WorkspaceLocalFileSystem `fs.file.impl`).
-      *  2. `Path.getFileSystem` returns a CACHED FS keyed by (scheme, ugi); a stale
-      *     `file:`->RawLocalFileSystem would be reused, so we use `FileSystem.newInstance` to bypass
-      *     the cache and close the instance afterward.
-      *
-      * Falls back to the caller's `hconf` when SparkEnv is unavailable (e.g. local unit tests),
-      * where `file:` stays RawLocalFileSystem -- correct for real local files. */
+      * NOTE (issue #34): this reads local / DBFS / Workspace paths. It does NOT read UC Volume
+      * (`/Volumes/...`) paths from the JVM in the Spark execution context — the UC FUSE credential
+      * is held only by Spark's managed Python worker, so `/Volumes` reads go through the Python
+      * implementation (`gbx_rst_fromfile` is registered as the `pyrx` UDF; or use `binaryFile` +
+      * `gbx_rst_fromcontent`). The Scala readers/`rst_fromfile` here serve non-Volume paths. */
     private def withFileSystem[T](path: Path, hconf: SerializableConfiguration)(body: FileSystem => T): T = {
-        val conf =
-            try org.apache.spark.sql.adapters.SparkHadoopUtils.sdu.newConfiguration(org.apache.spark.SparkEnv.get.conf)
-            catch { case _: Throwable => hconf.value }
-        val fs = FileSystem.newInstance(path.toUri, conf)
-        try body(fs) finally fs.close()
+        body(path.getFileSystem(hconf.value))
     }
 
-    /** Reads the bytes at `rawPath` through the Hadoop FileSystem (`withFileSystem` ensures a
-      * `file:`/`/Volumes` path resolves to the UC-credentialed `WorkspaceLocalFileSystem`). We
-      * deliberately do NOT read via raw NIO (`java.nio.file.Files`): in an expression's execution
-      * context (UC ephemeral-credential scope) a raw POSIX read of a `/Volumes/...` FUSE path is
-      * denied ("Operation not permitted"), whereas `WorkspaceLocalFileSystem` mediates the
-      * credential and succeeds (issue #34).
-      */
+    /** Reads the bytes at `rawPath` through the Hadoop FileSystem (local / DBFS / Workspace).
+      * Not for UC Volume (`/Volumes/...`) paths from the JVM — see `withFileSystem` (issue #34). */
     def readBytes(rawPath: String, hConf: SerializableConfiguration): Array[Byte] = {
         val p = new Path(cleanPath(rawPath))
         withFileSystem(p, hConf) { fs => readContent(fs, fs.getFileStatus(p)) }
