@@ -221,56 +221,26 @@ object HadoopUtils {
         }
     }
 
-    /** Resolves the Hadoop FileSystem for a (cleaned) path, ensuring the `file:` scheme maps to
-      * Databricks' FUSE-backed `WorkspaceLocalFileSystem` (the UC-credentialed connector) rather
-      * than the plain `RawLocalFileSystem`.
-      *
-      * `cleanPath` routes UC Volumes (`/Volumes/...`, `dbfs:/Volumes/...`), Workspace
-      * (`/Workspace/...`, `file:/Workspace/...`) and local paths to the `file:` scheme. On
-      * Databricks `fs.file.impl=...WorkspaceLocalFileSystem` is registered in the cluster
-      * classpath's core-site.xml, but a driver-serialized config may not carry it — so `file:`
-      * would fall back to `RawLocalFileSystem`, which cannot read a `/Volumes` FUSE mount (and a
-      * raw NIO read is denied in the expression execution context's UC credential scope). We
-      * overlay the classpath's `fs.file.impl` onto a copy of the caller's config so reads/listings
-      * resolve to `WorkspaceLocalFileSystem` in any execution context. Issue #34. (Off Databricks —
-      * e.g. local tests — the classpath has no such impl, so `file:` stays `RawLocalFileSystem`.)
-      */
-    /** WorkspaceLocalFileSystem is the UC-credentialed FUSE connector for `file:`/`/Volumes` on
-      * Databricks. The DEFAULT `file:` impl is context-dependent — it resolves to
-      * WorkspaceLocalFileSystem in notebook/UDF threads but falls back to RawLocalFileSystem in the
-      * Catalyst codegen (`Invoke`) and DataSource `planInputPartitions` threads (which cannot read a
-      * /Volumes FUSE mount). So we PIN it explicitly. */
-    private val WorkspaceLocalFsClass = "com.databricks.backend.daemon.driver.WorkspaceLocalFileSystem"
-
     /** Runs `body` with a FileSystem for `path` that resolves `file:` to the UC-credentialed
-      * WorkspaceLocalFileSystem in EVERY execution context, then closes it.
+      * WorkspaceLocalFileSystem, then closes it.
       *
-      * Two things make this necessary on Databricks (issue #34):
-      *  1. The default `file:` impl is context-dependent — WorkspaceLocalFileSystem in notebook/UDF
-      *     threads, but RawLocalFileSystem in the Catalyst-codegen / DataSource-planning threads
-      *     (which cannot read a `/Volumes` FUSE mount). So we PIN `fs.file.impl` explicitly.
-      *  2. `Path.getFileSystem` returns a CACHED instance keyed by (scheme, ugi); if `file:` was
-      *     already cached as RawLocalFileSystem in the JVM, the pin is ignored. So we use
-      *     `FileSystem.newInstance` to bypass the cache and honor the pinned impl (and close it).
+      * On Databricks `file:` must resolve to WorkspaceLocalFileSystem (the UC FUSE connector) to
+      * read `/Volumes` / `/Workspace`. Two pitfalls (issue #34):
+      *  1. A bare `new Configuration()` (and the driver-serialized hconf) resolve `file:` to
+      *     RawLocalFileSystem in the Catalyst-codegen / DataSource-planning execution context
+      *     (which cannot read a `/Volumes` FUSE mount). We instead build the config FRESH ON THE
+      *     EXECUTOR from the live Spark conf via SparkHadoopUtil, which overlays `spark.hadoop.*`
+      *     (where Databricks registers the WorkspaceLocalFileSystem `fs.file.impl`).
+      *  2. `Path.getFileSystem` returns a CACHED FS keyed by (scheme, ugi); a stale
+      *     `file:`->RawLocalFileSystem would be reused, so we use `FileSystem.newInstance` to bypass
+      *     the cache and close the instance afterward.
       *
-      * Off Databricks (e.g. local tests) the class is absent -> no pin -> RawLocalFileSystem, which
-      * is correct for real local files. The `hconf` param is retained for call-site compatibility. */
+      * Falls back to the caller's `hconf` when SparkEnv is unavailable (e.g. local unit tests),
+      * where `file:` stays RawLocalFileSystem -- correct for real local files. */
     private def withFileSystem[T](path: Path, hconf: SerializableConfiguration)(body: FileSystem => T): T = {
-        val conf = new org.apache.hadoop.conf.Configuration()
-        // Pin fs.file.impl to WorkspaceLocalFileSystem, resolved via the THREAD CONTEXT classloader.
-        // WorkspaceLocalFileSystem is a Databricks runtime class NOT visible to this library JAR's
-        // own classloader (so a plain Class.forName(name) throws and the pin would be skipped ->
-        // RawLocalFileSystem). The context classloader can see it; we both verify with it and set it
-        // on the conf so Hadoop's FileSystem.newInstance loads the impl through that loader. Off
-        // Databricks (local tests) the class is absent -> no pin -> default RawLocalFileSystem. #34.
-        val ccl = Thread.currentThread.getContextClassLoader
-        if (ccl != null) {
-            try {
-                Class.forName(WorkspaceLocalFsClass, false, ccl)
-                conf.setClassLoader(ccl)
-                conf.set("fs.file.impl", WorkspaceLocalFsClass)
-            } catch { case _: Throwable => () }
-        }
+        val conf =
+            try org.apache.spark.sql.adapters.SparkHadoopUtils.sdu.newConfiguration(org.apache.spark.SparkEnv.get.conf)
+            catch { case _: Throwable => hconf.value }
         val fs = FileSystem.newInstance(path.toUri, conf)
         try body(fs) finally fs.close()
     }
