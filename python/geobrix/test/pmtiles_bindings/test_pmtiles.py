@@ -111,7 +111,7 @@ def test_pmtiles_datasource_write(spark, pmtiles_registered):
     tiles = [
         (2, x, y, f"tile_{x}_{y}".encode("utf-8")) for x in range(3) for y in range(3)
     ]
-    df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"]).repartition(2)
+    df = spark.createDataFrame(tiles, schema=["z", "x", "y", "bytes"]).repartition(2, f.col("x"), f.col("y"))
 
     with tempfile.TemporaryDirectory(prefix="pmtiles-py-test-") as tmp:
         out_path = f"{tmp}/out-{uuid.uuid4()}.pmtiles"

@@ -1,4 +1,5 @@
 import pytest
+from pyspark.sql import functions as F
 from pyspark.sql.types import (
     BinaryType,
     IntegerType,
@@ -86,7 +87,7 @@ def test_multi_partition_merge(spark, tmp_path):
         rows,
         schema="name string, pop int, geom_0 binary, "
         "geom_0_srid string, geom_0_srid_proj string",
-    ).repartition(4)
+    ).repartition(4, F.col("geom_0"))
     assert df.rdd.getNumPartitions() == 4
     df.write.format("vector_gbx").mode("overwrite").option(
         "driverName", "GeoJSON"
