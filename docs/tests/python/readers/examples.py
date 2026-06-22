@@ -13,13 +13,15 @@ All functions are tested in test_examples.py to ensure documentation accuracy.
 # Conditional imports for compatibility
 try:
     from pyspark.sql import SparkSession, DataFrame
+    import pyspark.sql.functions as F
     from pyspark.sql.functions import expr
     PYSPARK_AVAILABLE = True
 except ImportError:
     SparkSession = None
     DataFrame = None
+    F = None
     PYSPARK_AVAILABLE = False
-    
+
     # Define dummy expr function for when PySpark isn't available
     def expr(x):
         return None
@@ -1077,8 +1079,8 @@ def parallel_raster_processing(spark, path="/data/rasters"):
         
         # Repartition to match cluster size
         num_executors = spark.sparkContext.defaultParallelism
-        rasters_partitioned = rasters.repartition(num_executors)
-        
+        rasters_partitioned = rasters.repartition(num_executors, F.col("source"))
+
         # Process in parallel
         processed = rasters_partitioned.select(
             "path",
@@ -1087,9 +1089,9 @@ def parallel_raster_processing(spark, path="/data/rasters"):
         ```
     """
     rasters = spark.read.format("gdal").load(path)
-    
+
     num_executors = spark.sparkContext.defaultParallelism
-    rasters_partitioned = rasters.repartition(num_executors)
+    rasters_partitioned = rasters.repartition(num_executors, F.col("source"))
     
     return rasters_partitioned
 
@@ -1872,14 +1874,14 @@ def troubleshoot_large_shapefile(spark, path="/data/large.shp"):
             .load("/data/large.shp")
         
         # Repartition and cache
-        df.repartition(100).cache()
+        df.repartition(100, F.col("geom_0")).cache()
         ```
     """
     df = spark.read.format("shapefile_ogr") \
         .option("chunkSize", "10000") \
         .load(path)
-    
-    df_processed = df.repartition(100).cache()
+
+    df_processed = df.repartition(100, F.col("geom_0")).cache()
     
     return df_processed
 
@@ -2657,7 +2659,7 @@ def troubleshoot_large_geopackage_performance(spark, path="/data/large.gpkg"):
         .option("chunkSize", "100000") \
         .load(path)
     
-    df = df.repartition(100)
+    df = df.repartition(100, F.col("geom_0"))
     return df
 
 
@@ -3106,7 +3108,7 @@ def repartition_filegdb_data(spark, path="/data/database.gdb"):
         .option("layerName", "large_features") \
         .load(path)
     
-    df = df.repartition(200)
+    df = df.repartition(200, F.col("geom_0"))
     return df
 
 
@@ -3152,7 +3154,7 @@ def troubleshoot_large_filegdb_performance(spark, path="/data/large.gdb"):
         .option("chunkSize", "100000") \
         .load(path)
     
-    df = df.repartition(100)
+    df = df.repartition(100, F.col("geom_0"))
     return df
 
 
@@ -3477,7 +3479,7 @@ def parallel_reading_with_ogr(spark, path="/path/to/directory/*.shp"):
     df = spark.read.format("ogr").load(path)
     
     # Repartition for processing
-    df.repartition(100).write.saveAsTable("processed_vectors")
+    df.repartition(100, F.col("geom_0")).write.saveAsTable("processed_vectors")
     return df
 
 
