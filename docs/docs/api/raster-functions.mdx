@@ -768,6 +768,10 @@ Create or load rasters from path, binary content, or bands (4 total).
 
 <Tier light/>
 
+:::tip Loading rasters at scale? Use the [Raster Reader](../readers/raster).
+`rst_fromfile` is a **convenience** for pulling columnar raster paths into a tile column inline. To ingest rasters as a normal Spark job — partitioned parallel reads, optional tiling (`sizeInMB`), and FUSE-safe Volume staging — use the **[Raster Reader](../readers/raster)** (`raster_gbx` / `gtiff_gbx`, or heavyweight `gdal` / `gtiff_gdal`): `spark.read.format("raster_gbx").load(path)`.
+:::
+
 :::note Lightweight tier only (pyrx) — callable from Python and SQL
 Powered by **rasterio**. Opens the raster at `path` and re-encodes it as a GeoTIFF tile; the `driver` arg is a format hint (rasterio auto-detects on open). A missing/unreadable path returns null. Requires `geobrix[light]`.
 

@@ -144,10 +144,17 @@ its partition to a worker-local GeoJSONL shard and sequentially copies it into t
 directory (rename-free, so safe on FUSE-mounted Unity Catalog Volumes / DBFS). Because GeoJSONL
 is splittable and concatenable, the directory of shards *is* the dataset — there is nothing to
 assemble on the driver, so **write throughput scales with the number of partitions**. Use
-`df.repartition(n)` to set shard granularity, or `maxRecordsPerFile` to cap features per shard
-(splitting a large partition into several shards). This holds for both tiers — the lightweight
+`df.repartition(n, "<col>")` to set shard granularity, or `maxRecordsPerFile` to cap features per
+shard (splitting a large partition into several shards). This holds for both tiers — the lightweight
 writer parallelizes per partition with pyogrio, the heavyweight writer with native GDAL/OGR on the
 JVM.
+
+:::warning Serverless: repartition by a column
+On Serverless, hash by a column — `df.repartition(n, "<key>")` — to control parallelism. A
+**number-only** `df.repartition(n)` (round-robin) is coalesced by AQE back toward a single
+partition on small data (= serial write), and AQE can't be disabled there. Hashing by any
+high-cardinality column (an id/key) is respected. On classic clusters either form works.
+:::
 
 Choose the single-file GeoJSON writer when you want one file; choose GeoJSONL for large, streaming,
 or highly parallel writes.
@@ -160,14 +167,14 @@ write parallelism (one shard per partition):
 | Step | Code (lightweight) |
 |---|---|
 | 1. Load a table | `df = spark.table("main.geo.parcels")` |
-| 2. Set parallelism | `df = df.repartition(64)` |
+| 2. Set parallelism | `df = df.repartition(64, "id")` &nbsp;*(by a column — see Serverless note above)* |
 | 3. Write sharded | `df.write.format("geojsonl_gbx").mode("overwrite").save("/Volumes/main/geo/exports/parcels")` |
 | 4. Read back | `spark.read.format("geojson_gbx").option("multi","true").load("/Volumes/main/geo/exports/parcels")` |
 
 ```python
 df = spark.table("main.geo.parcels")          # vector data in a (Delta) table
-df.repartition(64).write.format("geojsonl_gbx").mode("overwrite").save(
-    "/Volumes/main/geo/exports/parcels"
+df.repartition(64, "id").write.format("geojsonl_gbx").mode("overwrite").save(
+    "/Volumes/main/geo/exports/parcels"            # hash by a column (Serverless-safe; see note above)
 )
 # -> a directory of 64 part-<uuid>.geojsonl shards, written in parallel, no driver merge
 ```

@@ -213,7 +213,7 @@ repaired = client.repair("band_b02", where="is_out_file_valid = false")
 
 `StacClient` is designed for Serverless (environment version 5, Python 3.12):
 
-- **No `spark.conf.set`.** Parallelism is controlled entirely via `partitions=` in `search` and `download`, and via `DataFrame.repartition()` in your notebook. AQE handles downstream shuffle sizing.
+- **No `spark.conf.set`.** Parallelism is controlled entirely via `partitions=` in `search` and `download`, and via `DataFrame.repartition(N, "col")` in your notebook — **hash by a column**, since on Serverless a number-only `repartition(N)` is coalesced by AQE back toward one partition.
 - **No `.cache()` / `.persist()`.** Materialize search results and downloaded-file metadata to Delta tables — Delta time travel is a more durable alternative to in-memory caching and survives session restarts.
 - **One task per asset.** Each download task is independent; Serverless autoscaling routes tasks across available workers without pinning.
 
