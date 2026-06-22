@@ -176,6 +176,12 @@ def iter_tessellate_h3(ds, resolution: int, mode: str = "covering"):
         except ValueError:
             # rasterio.mask raises ValueError when the shape does not overlap.
             continue
+        # A cell can overlap the raster BBOX yet clip to empty / all-nodata (common on
+        # Sentinel-2 swath edges where nodata=0); clip_to_geom returns None there. Skip
+        # it -- matches this function's contract ("empty / all-nodata cells are skipped")
+        # and avoids handing None to build_tile downstream.
+        if clipped is None:
+            continue
         yield (_h3_str_to_signed_int64(cell), clipped)
 
 

@@ -86,6 +86,8 @@ class RasterGbxReader(DataSourceReader):
 
     def read(self, partition: "_FilePartition") -> Iterator[Tuple]:
         import os
+        import shutil
+        import tempfile
 
         import rasterio
 
@@ -103,16 +105,21 @@ class RasterGbxReader(DataSourceReader):
         # which for an on-disk source is the file's encoded byte size. Reuse the
         # shared, tested split math in core.tiling rather than re-deriving it.
         size_bytes = os.path.getsize(partition.file_path)
+        # Phase 1 (FUSE-safe): open the source to read metadata + compute the split, and
+        # serve the whole-image GTiff fast path (sequential byte read). Reading the header
+        # is small/sequential, so it is fine directly on a UC Volume.
         with rasterio.open(partition.file_path) as ds:
+            width, height, driver = ds.width, ds.height, ds.driver
             tile_x, tile_y = core_tiling._get_tile_size(
-                ds.width, ds.height, size_bytes, partition.size_mib
+                width, height, size_bytes, partition.size_mib
             )
+            whole = tile_x >= width and tile_y >= height
             # Large-raster safety: a single whole-image tile that would exceed
             # Spark's ~2 GiB BinaryType cell limit must fail with an actionable
             # message rather than producing a giant (or unmaterializable) cell.
-            if tile_x >= ds.width and tile_y >= ds.height:
+            if whole:
                 est = _estimate_tile_bytes(
-                    ds.width, ds.height, ds.count, ds.dtypes[0], size_bytes
+                    width, height, ds.count, ds.dtypes[0], size_bytes
                 )
                 if est > _MAX_TILE_BYTES:
                     raise ValueError(
@@ -121,17 +128,15 @@ class RasterGbxReader(DataSourceReader):
                         f"set the reader option sizeInMB=<n> (a positive MB value) to "
                         f"tile it into smaller pieces."
                     )
-            # Fast path: when the split is a single tile spanning the whole raster
-            # AND the source is already a GTiff, emit the original file bytes
-            # instead of decoding + re-encoding (the re-encode is ~95% of per-tile
-            # cost). Pixels are identical, so this is parity-safe (decoded-pixel,
-            # not byte). Sub-tiles or non-GTiff sources fall through to encode_tile.
-            if tile_x >= ds.width and tile_y >= ds.height and ds.driver == "GTiff":
+            # Fast path: a single tile spanning the whole raster AND a GTiff source ->
+            # emit the original file bytes (sequential read, no decode/re-encode). Pixels
+            # are identical (parity-safe). Sub-tiles / non-GTiff fall through to phase 2.
+            if whole and driver == "GTiff":
                 compression = str(ds.profile.get("compress") or "DEFLATE").upper()
                 cellid, raster_bytes, meta = _encode.passthrough_tile(
                     partition.file_path,
-                    ds.width,
-                    ds.height,
+                    width,
+                    height,
                     source_path=partition.file_path,
                     all_parents="",
                     compression=compression,
@@ -139,21 +144,43 @@ class RasterGbxReader(DataSourceReader):
                 yield (source, (cellid, raster_bytes, meta))
                 return
 
-            row_off = 0
-            while row_off < ds.height:
-                win_h = min(tile_y, ds.height - row_off)
-                col_off = 0
-                while col_off < ds.width:
-                    win_w = min(tile_x, ds.width - col_off)
-                    cellid, raster_bytes, meta = _encode.encode_tile(
-                        ds,
-                        window=(col_off, row_off, win_w, win_h),
-                        source_path=partition.file_path,
-                        all_parents="",
-                    )
-                    yield (source, (cellid, raster_bytes, meta))
-                    col_off += tile_x
-                row_off += tile_y
+        # Phase 2 (windowed split): per-window ds.read() SEEKS, which UC Volume FUSE can't
+        # serve, and holding the whole file in RAM (MemoryFile) OOMs the worker under
+        # concurrency for large scenes (Sentinel-2 10 m bands reach ~230 MB). So stage the
+        # source to worker-local disk with a SEQUENTIAL copy (FUSE-safe), then window from
+        # local disk: each ds.read(window) loads only that window's blocks, so per-task RAM
+        # stays ~tile-sized regardless of source size. The staged file is created, fully
+        # consumed (all windows yielded), and removed -- all within this generator (in-block,
+        # one executor task); only encoded tile BYTES (never a path) cross into the columnar
+        # output, so nothing local leaks downstream.
+        staged_dir = tempfile.mkdtemp(prefix="gbx_raster_")
+        try:
+            local_path = os.path.join(
+                staged_dir, os.path.basename(partition.file_path) or "raster.tif"
+            )
+            with (
+                open(partition.file_path, "rb") as _src,
+                open(local_path, "wb") as _dst,
+            ):
+                shutil.copyfileobj(_src, _dst, length=8 * 1024 * 1024)
+            with rasterio.open(local_path) as ds:
+                row_off = 0
+                while row_off < height:
+                    win_h = min(tile_y, height - row_off)
+                    col_off = 0
+                    while col_off < width:
+                        win_w = min(tile_x, width - col_off)
+                        cellid, raster_bytes, meta = _encode.encode_tile(
+                            ds,
+                            window=(col_off, row_off, win_w, win_h),
+                            source_path=partition.file_path,
+                            all_parents="",
+                        )
+                        yield (source, (cellid, raster_bytes, meta))
+                        col_off += tile_x
+                    row_off += tile_y
+        finally:
+            shutil.rmtree(staged_dir, ignore_errors=True)
 
 
 class RasterGbxDataSource(DataSource):
