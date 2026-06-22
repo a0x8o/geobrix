@@ -798,7 +798,9 @@ def _explain_spark_path(
                 _parts = _n if _k == "tile_array" else max(1, math.ceil(_n / _ps))
                 # _n == max(row_counts) == the cap df_all is already built at, so the cached
                 # set IS the input -- no limit (which would funnel through one partition).
-                _edf = df_all.repartition(max(1, _parts), F.col("tile"))
+                # repartition by F.rand() not the tile struct: tile is the only column and
+                # carries the raster bytes -- hashing it would hash megabytes/row and skew timings.
+                _edf = df_all.repartition(max(1, _parts), F.rand())
                 _ecol = _fs.col_fn(input_col(_fs.name, _k, _edf), _fs.args)
                 _emit_explain(
                     f"{_fs.name} (kind={_k}, n={_n}, parts={_parts})",
@@ -924,7 +926,9 @@ def run_spark_path(
     _nparts = max(1, spark.sparkContext.defaultParallelism)
     df_all = (
         raw.select(_to_tile(F.col("path"), F.col("content")).alias("tile"))
-        .repartition(_nparts, F.col("tile"))
+        # repartition by F.rand() not the tile struct (hashing the raster payload would
+        # hash megabytes/row and skew timings); tile is the only column here.
+        .repartition(_nparts, F.rand())
         .cache()
     )
     df_all.count()  # materialize the cache so it isn't part of timing
@@ -1066,7 +1070,8 @@ def run_spark_path(
             # zero benefit when n already == the cached size. Only sub-max ladder points
             # (n < max_rows) still need a limit; that one funnels a smaller (cheaper) subset.
             _src = df_all if n >= max_rows else df_all.limit(n)
-            df = _src.repartition(max(1, _parts), F.col("tile"))
+            # repartition by F.rand() not the tile struct (avoid hashing the raster payload).
+            df = _src.repartition(max(1, _parts), F.rand())
             try:
 
                 def job(_df=df, _fs=fs, _k=_kind):
