@@ -156,7 +156,9 @@ class StacClient:
         from pyspark.sql.types import ArrayType, StringType
 
         _ASSET_SCHEMA, _ITEM_SCHEMA = _spark_types()
-        catalog_url, sign = self.catalog, self.sign
+        catalog_url = (
+            self.catalog
+        )  # search stores raw hrefs (no modifier); signing is at download
 
         @F.udf(ArrayType(StringType()))
         def _items(geojson):
@@ -312,7 +314,9 @@ class StacClient:
         # Fail loudly with an actionable message: repair re-downloads, which needs the raw
         # href to re-sign. A band table (band_name, no asset_name/href) can't be repaired —
         # rebuild it from cell_assets instead. (Previously this raised a bare UNRESOLVED_COLUMN.)
-        missing = [c for c in ("item_id", "asset_name", "href") if c not in invalid.columns]
+        missing = [
+            c for c in ("item_id", "asset_name", "href") if c not in invalid.columns
+        ]
         if missing:
             raise ValueError(
                 f"repair() target is missing required column(s) {missing}; it needs "

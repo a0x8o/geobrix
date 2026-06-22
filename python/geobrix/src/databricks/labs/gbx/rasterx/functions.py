@@ -53,10 +53,14 @@ def register(_spark: SparkSession) -> None:
     # with it when pyrx ([light]) is importable. If it is NOT present, skip gracefully and leave the
     # Scala gbx_rst_fromfile in place (it still reads local / DBFS / Workspace, just not /Volumes).
     try:
-        from databricks.labs.gbx.pyrx.functions import _fromfile_udf as _pyrx_fromfile_udf
+        from databricks.labs.gbx.pyrx.functions import (
+            _fromfile_udf as _pyrx_fromfile_udf,
+        )
 
         _spark.udf.register("gbx_rst_fromfile", _pyrx_fromfile_udf)
-    except Exception:  # noqa: BLE001 - pyrx/[light] not installed: keep the Scala fallback
+    except (
+        Exception
+    ):  # noqa: BLE001 - pyrx/[light] not installed: keep the Scala fallback
         pass
 
 

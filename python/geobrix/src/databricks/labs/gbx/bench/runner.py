@@ -768,6 +768,8 @@ def _explain_spark_path(
     """
     import math
 
+    from pyspark.sql import functions as F
+
     for _fs in fnspecs:
         if "spark-path" not in _fs.modes:
             continue
@@ -928,8 +930,7 @@ def run_spark_path(
         raw.select(_to_tile(F.col("path"), F.col("content")).alias("tile"))
         # repartition by F.rand() not the tile struct (hashing the raster payload would
         # hash megabytes/row and skew timings); tile is the only column here.
-        .repartition(_nparts, F.rand())
-        .cache()
+        .repartition(_nparts, F.rand()).cache()
     )
     df_all.count()  # materialize the cache so it isn't part of timing
 

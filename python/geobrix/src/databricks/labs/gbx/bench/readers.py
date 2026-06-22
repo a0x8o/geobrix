@@ -285,10 +285,11 @@ def run_format_read(
         except Exception:  # noqa: BLE001
             actual_rows = 0
         actual_rows = int(actual_rows)
+        # basename computed outside the f-string: a backslash in an f-string expression
+        # is a SyntaxError before Python 3.12, which trips flake8/linters on older hosts.
+        _src_name = os.path.basename(path.rstrip("/\\"))
         _note = (
-            f"{fmt} -> {ingest_table}"
-            if ingest_table
-            else f"{fmt} over {os.path.basename(path.rstrip('/\\'))}"
+            f"{fmt} -> {ingest_table}" if ingest_table else f"{fmt} over {_src_name}"
         )
         return ResultRow(
             run_id=run_id,

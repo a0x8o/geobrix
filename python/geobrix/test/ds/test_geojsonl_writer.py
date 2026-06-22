@@ -95,7 +95,9 @@ def test_wkt_input_roundtrips(spark, tmp_path):
         rows,
         schema="name string, geom_0 string, geom_0_srid string, geom_0_srid_proj string",
     )
-    df.repartition(2, F.col("geom_0")).write.format("geojsonl_gbx").mode("overwrite").save(out)
+    df.repartition(2, F.col("geom_0")).write.format("geojsonl_gbx").mode(
+        "overwrite"
+    ).save(out)
     back = spark.read.format("geojson_gbx").option("multi", "true").load(out)
     assert back.count() == 2
     assert {r["name"] for r in back.collect()} == {"a", "b"}
