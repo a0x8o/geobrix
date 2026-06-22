@@ -21,7 +21,17 @@ def resolve_signer(sign) -> Callable[[str], str]:
     if sign == "planetary_computer":
         import planetary_computer
 
-        return planetary_computer.sign
+        def _pc_sign(href: str) -> str:
+            # planetary_computer.sign is a NO-OP on an already-tokened URL: it returns an
+            # existing SAS query unchanged rather than refreshing it. A search-time-signed
+            # href stored in a table therefore keeps its EXPIRED token and 403s at download.
+            # Strip any existing query string so PC always mints a FRESH token. A raw href
+            # (no query) is unchanged by the split, so this is safe for both raw and signed.
+            if not href:
+                return href
+            return planetary_computer.sign(href.split("?", 1)[0])
+
+        return _pc_sign
     raise ValueError(
         f"sign must be 'planetary_computer', None, or a callable; got {sign!r}"
     )
