@@ -14,7 +14,7 @@ def _format_ok(spark, fmt):
         return True
     except Exception as e:  # noqa: BLE001
         msg = str(e).lower()
-        if "unable to find" in msg or "data source" in msg and "not" in msg:
+        if "unable to find" in msg or ("data source" in msg and "not" in msg):
             return False
         return True  # some other error => the format WAS resolved
 
