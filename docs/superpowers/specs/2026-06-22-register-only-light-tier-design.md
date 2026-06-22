@@ -2,16 +2,19 @@
 
 **Date:** 2026-06-22
 **Status:** Approved (design)
-**Scope:** Lightweight tiers only — `pyrx`, `pygx`, `pyvx`. Heavyweight `only=` is a documented future follow-up (out of scope here).
+**Scope:** Lightweight tiers only — the SQL-function registrars `pyrx`/`pygx`/`pyvx` **and** the light DataSource registrar `ds.register` (readers/writers). Heavyweight `only=` is a documented future follow-up (out of scope here).
 
 ## Goal
 
-Add an optional `only` parameter to the lightweight `register()` functions so a session can register a **subset** of a tier's SQL functions instead of the full set:
+Add an optional `only` parameter to the lightweight `register()` functions so a session can register a **subset** of a tier's surface instead of the full set:
 
 ```python
 from databricks.labs.gbx.pyrx import functions as rx
-rx.register(spark, only=["rst_slope", "gbx_rst_clip"])   # just these two
+rx.register(spark, only=["rst_slope", "gbx_rst_clip"])   # just these two SQL functions
 rx.register(spark)                                        # all (unchanged)
+
+from databricks.labs.gbx.ds import register as ds_register
+ds_register.register(spark, only=["raster_gbx", "gtiff_gbx"])  # just these readers/writers
 ```
 
 ## Motivation
@@ -24,9 +27,12 @@ rx.register(spark)                                        # all (unchanged)
 ## API
 
 Add `only: Optional[List[str]] = None` to `register()` in:
-- `databricks.labs.gbx.pyrx.functions`
-- `databricks.labs.gbx.pygx.functions`
-- `databricks.labs.gbx.pyvx.functions`
+- `databricks.labs.gbx.pyrx.functions` (SQL functions — `gbx_rst_*`)
+- `databricks.labs.gbx.pygx.functions` (SQL functions — `gbx_quadbin_*`, `gbx_bng_*`, `gbx_custom_*`)
+- `databricks.labs.gbx.pyvx.functions` (SQL functions — `gbx_st_*`, `gbx_pmtiles_agg`)
+- `databricks.labs.gbx.ds.register` (DataSource **readers/writers** — selected by **format name**: `raster_gbx`, `gtiff_gbx`, `pmtiles_gbx`, `vector_gbx`, `shapefile_gbx`, `geojson_gbx`, `geojsonl_gbx`, `gpkg_gbx`, `file_gdb_gbx`)
+
+The SQL-function `register()` and the DataSource `register()` are **separate entry points** today (the function registrars do not register readers/writers, and vice-versa); `only=` is added to both so the "register only what this session uses" story is uniform across the light tier.
 
 Semantics:
 - `only=None` (default) → register **everything** — identical to today's behavior, in today's order.
@@ -47,6 +53,8 @@ Accept **both** the SQL name and the short Python name, **case-insensitively**. 
 | `GBX_RST_Slope` | `gbx_rst_slope` |
 
 Lowercasing relaxes only the case dimension — a name that still doesn't match a registerable function after lowercasing is treated as unknown and raises (the typo guard below). Leading/trailing whitespace is stripped before normalizing.
+
+**DataSource (readers/writers) names** use a different convention — a `_gbx` **suffix** rather than a `gbx_` prefix (`raster_gbx`, `shapefile_gbx`, …). For `ds.register`, normalization strips + lowercases, then appends `_gbx` if absent: `raster` / `RASTER` / `raster_gbx` all resolve to `raster_gbx`. This is a second normalizer (`normalize_datasource_name`); the validation + close-match behavior is identical.
 
 ### Validation
 
@@ -82,7 +90,11 @@ Refactor each `register()` to build an **ordered list of groups**, each a pair:
 
 Key property: with `only=None`, every group runs its guard and registers every name **in the same order as today** — a behavior-preserving refactor. A guard for a sub-module with no selected functions is **not** invoked (so `pygx` `only=['gbx_quadbin_polyfill']` never asserts bng/custom availability).
 
-A small shared helper module (e.g. `databricks/labs/gbx/_register.py`) holds `normalize_only(names) -> set[str]` and `resolve_only(names, valid) -> set[str]` (validation + close-match error) so the three packages don't duplicate the logic. The grouped registrar structures stay per-package (they reference package-local UDF/UDTF objects).
+A small shared helper module (`databricks/labs/gbx/_register.py`) holds `normalize_name(name)`, `normalize_datasource_name(name)`, `resolve_only(names, valid, normalizer=normalize_name)` (validation + close-match error), and `run_groups(groups, spark, only)` so the packages don't duplicate the logic. The grouped registrar structures stay per-package (they reference package-local UDF/UDTF objects).
+
+### Readers/writers (`ds.register`)
+
+`ds.register.register` is a flat list of 9 `spark.dataSource.register(source)` calls — no availability guards, no `run_groups` needed. It builds a `{format_name: source_class}` map from the existing `_SOURCES` tuple via each class's `name()` classmethod, then: `only=None` → register all (today's behavior); `only=[...]` → `resolve_only(only, names, normalizer=normalize_datasource_name)` then register just the selected source classes. Unknown format name raises `ValueError` (same as SQL).
 
 ## Testing (TDD)
 
@@ -95,6 +107,8 @@ Per package (`pyrx`, `pygx`, `pyvx`), using the existing Python test session fix
 6. `pygx` `only=['gbx_quadbin_polyfill']` does **not** raise from the bng/custom availability guards (sub-module isolation). Where practical, assert the guard isn't tripped (e.g. monkeypatch the bng/custom `assert_*` to raise and confirm it is not called).
 7. `only=[]` registers nothing and does not error.
 
+For `ds.register`: `only` with a subset registers exactly those formats (e.g. `spark.read.format("raster_gbx")` resolves) and an omitted format does not; format name accepted with and without the `_gbx` suffix (`raster` ≡ `raster_gbx`); unknown format raises `ValueError`; `only=None` registers all 9.
+
 Tests are pure-Python (no Docker/JAR) and run via `gbx:test:python --path python/geobrix/test/<pkg>/`.
 
 ## Out of scope (future follow-up)
@@ -103,4 +117,4 @@ Heavyweight `only=`. It is feasible but requires a JAR change + cluster re-valid
 
 ## Docs
 
-Add a short **"Registering a subset"** subsection to `docs/docs/api/execution-tiers.mdx`: the `only=` signature, both-name-forms note, the light-over-heavy mixing pattern, and a note that heavy `only=` is not yet available (use whole-tier registration order for heavy).
+Add a short **"Registering a subset"** subsection to `docs/docs/api/execution-tiers.mdx`: the `only=` signature for both SQL functions (`<pkg>.functions.register`) and readers/writers (`ds.register.register`, by format name), the both-name-forms note, the light-over-heavy mixing pattern, and a note that heavy `only=` is not yet available (use whole-tier registration order for heavy).
