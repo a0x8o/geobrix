@@ -24,6 +24,41 @@ After an explicit `rx.register(spark)`, the SQL names are identical too (`gbx_rs
 The one-line *import* swap is symmetric, but the *install* is not. The **lightweight** tier is just the `[light]` wheel (`%pip`, no JAR, no init script). The **heavyweight** tier additionally requires the **GeoBrix JAR as a cluster library and the GDAL init script** on a **classic x86 cluster** — the wheel alone will not resolve the import or the JVM expressions. See [Installation](../installation) for the heavyweight setup.
 :::
 
+## Registering a subset (`only=`)
+
+`register()` installs every `gbx_*` SQL name for the tier. To register just the functions a session uses, pass `only=` (lightweight tiers — `pyrx`, `pygx`, `pyvx`):
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx
+
+rx.register(spark, only=["rst_slope", "rst_clip"])   # just these two
+rx.register(spark)                                   # all (default)
+```
+
+Names are case-insensitive and accept either the SQL name (`gbx_rst_slope`) or the short form (`rst_slope`). An unrecognized name raises `ValueError` (typo guard). `only=[]` registers nothing.
+
+**Readers and writers** register through a separate entry point and take `only=` too — selected by **format name** (with or without the `_gbx` suffix):
+
+```python
+from databricks.labs.gbx.ds import register as ds_register
+
+ds_register.register(spark, only=["raster_gbx", "gtiff_gbx"])  # just these formats
+ds_register.register(spark, only=["shapefile"])               # 'shapefile' -> 'shapefile_gbx'
+ds_register.register(spark)                                    # all readers/writers (default)
+```
+
+**Mixing tiers per function.** Because both tiers share the `gbx_*` names (last registration wins), you can register the heavyweight set and then override individual functions with the lightweight implementation:
+
+```python
+from databricks.labs.gbx.rasterx import functions as heavy
+from databricks.labs.gbx.pyrx    import functions as light
+
+heavy.register(spark)                       # all heavy gbx_rst_*
+light.register(spark, only=["rst_slope"])   # gbx_rst_slope now lightweight
+```
+
+The reverse — re-registering a few **heavy** functions over a lightweight session — is not yet available; `only=` is currently a lightweight-tier feature (heavy registers its full set). Mixing works because both tiers use the same tile struct and GTiff payload, so a tile produced by one tier flows into a function from the other.
+
 ## Tradeoffs
 
 | Aspect | Heavyweight (rasterx) | Lightweight (pyrx) |
