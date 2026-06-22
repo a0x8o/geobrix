@@ -7,10 +7,11 @@ gdal / gtiff_gdal, so both tiers coexist.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from pyspark.sql import SparkSession
 
+from databricks.labs.gbx import _register
 from databricks.labs.gbx.ds.gtiff import GTiffGbxDataSource
 from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 from databricks.labs.gbx.ds.raster import RasterGbxDataSource
@@ -36,11 +37,31 @@ _SOURCES = (
 )
 
 
-def register(spark: Optional[SparkSession] = None) -> None:
-    """Register raster_gbx + gtiff_gbx + pmtiles_gbx. Uses the active session if not given."""
+def register(
+    spark: Optional[SparkSession] = None, only: Optional[List[str]] = None
+) -> None:
+    """Register the light DataSources (raster_gbx, gtiff_gbx, pmtiles_gbx, and the
+    vector readers/writers). Uses the active session if not given.
+
+    Args:
+        spark: Spark session (active session if not provided).
+        only: Optional list of format names to register (instead of all 9).
+            Accepts the format name with or without the ``_gbx`` suffix
+            (``raster`` or ``raster_gbx``), case-insensitively. ``None`` registers
+            everything; ``[]`` registers nothing. An unrecognized format raises
+            ``ValueError``.
+    """
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
-    for source in _SOURCES:
+    by_name = {src.name(): src for src in _SOURCES}
+    if only is None:
+        selected = list(_SOURCES)
+    else:
+        wanted = _register.resolve_only(
+            only, by_name.keys(), normalizer=_register.normalize_datasource_name
+        )
+        selected = [by_name[n] for n in wanted]
+    for source in selected:
         spark.dataSource.register(source)
 
 
