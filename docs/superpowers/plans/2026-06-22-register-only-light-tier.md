@@ -847,10 +847,12 @@ git commit -m "feat(ds): register(only=[...]) selective reader/writer registrati
 
 ---
 
-### Task 6: Docs — "Registering a subset" in execution-tiers.mdx
+### Task 6: Docs — "Registering a subset" (execution-tiers + readers/writers overview)
 
 **Files:**
 - Modify: `docs/docs/api/execution-tiers.mdx` (add a subsection after "The one-line swap", ~line 25)
+- Modify: `docs/docs/readers/overview.mdx` (extend the "Register first" note, ~line 26-35)
+- Modify: `docs/docs/writers/overview.mdx` (extend the "Register first" note, ~line 27-36)
 
 **Interfaces:** none (docs only).
 
@@ -895,16 +897,37 @@ light.register(spark, only=["rst_slope"])   # gbx_rst_slope now lightweight
 The reverse — re-registering a few **heavy** functions over a lightweight session — is not yet available; `only=` is currently a lightweight-tier feature (heavy registers its full set). Mixing works because both tiers use the same tile struct and GTiff payload, so a tile produced by one tier flows into a function from the other.
 ````
 
-- [ ] **Step 2: Verify the docs build references resolve**
+- [ ] **Step 2: Extend the "Register first" note in readers/writers overview**
 
-Run: `grep -n "Registering a subset" docs/docs/api/execution-tiers.mdx`
-Expected: the new heading is present. (No doc-test executes this MDX prose; the code blocks are illustrative, consistent with the page's existing `## The one-line swap` block.)
+In BOTH `docs/docs/readers/overview.mdx` and `docs/docs/writers/overview.mdx`, the `:::note Register first` admonition ends with:
 
-- [ ] **Step 3: Commit**
+```python
+from databricks.labs.gbx.ds.register import register
+register(spark)
+```
+
+Add a sentence immediately after that code block (inside the `:::note`), in each file:
+
+```markdown
+To register only the formats this session uses, pass `only=` (by format name, with or without the `_gbx` suffix):
+
+```python
+register(spark, only=["raster_gbx", "gtiff_gbx"])
+```
+```
+
+(In `writers/overview.mdx` use writer-appropriate example formats, e.g. `register(spark, only=["raster_gbx", "geojson_gbx"])`.) An unrecognized format raises `ValueError`.
+
+- [ ] **Step 3: Verify the docs edits landed**
+
+Run: `grep -n "Registering a subset" docs/docs/api/execution-tiers.mdx && grep -n "only=" docs/docs/readers/overview.mdx docs/docs/writers/overview.mdx`
+Expected: the new heading in execution-tiers and the `only=` note in both overview pages. (No doc-test executes this MDX prose; the code blocks are illustrative, consistent with each page's existing register block.)
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add docs/docs/api/execution-tiers.mdx
-git commit -m "docs(tiers): document register(only=[...]) and per-function tier mixing"
+git add docs/docs/api/execution-tiers.mdx docs/docs/readers/overview.mdx docs/docs/writers/overview.mdx
+git commit -m "docs: document register(only=[...]) for functions and readers/writers"
 ```
 
 ---
