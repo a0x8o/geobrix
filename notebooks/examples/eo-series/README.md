@@ -105,6 +105,17 @@ gtiff writer → stacked TIFs + rst_clip
 
 ---
 
+## Serverless execution strategy
+
+This series defaults to the lightweight tier so it runs on **Serverless** — set the notebook **Environment to version 5+** (Python 3.12) so the `[light]` dependencies resolve. Serverless changes a few habits vs. a classic cluster, and the notebooks lean on these patterns on purpose:
+
+- **No runtime `spark.conf` tuning.** Serverless disallows `spark.conf.set(...)`, so the old "raise `spark.sql.shuffle.partitions`" trick is a no-op (the `set_conf_safe(...)` helper swallows it). To control parallelism we call **`DataFrame.repartition(N, col)`** instead — a number-only `repartition(N)` (round-robin) **is** AQE-coalesced back toward ~1 partition on small data (= serial), but a **hash repartition by a column** is respected. So the explicit `repartition(N, key)` before each expensive UDF (downloads, tiling, tessellation) is deliberate, not redundant.
+- **No `.cache()` / `persist()`.** Not available on Serverless; where we'd cache, we **write to a managed table** instead (also the production-friendly choice) and read it back.
+- **~1 GB per-UDF (Arrow) memory cap.** Each Python/pandas UDF task is capped near 1 GB. Two levers keep tasks under it: (1) **read less** — the `bbox` pushdown on the shapefile reader parses only the AOI, and the `gtiff` reader's `sizeInMB` splits big scenes into sub-tiles; and (2) **one item/tile per task** via `repartition`. Full-resolution rasters (10 m Sentinel-2 ≈ 240 MB/scene) are the case to watch — notebook 3 reads **per band** and tiles each scene so the `rst_*` UDFs stay under the cap.
+- **Volume I/O is sequential-only.** UC Volume FUSE can't serve random/seeked reads, so the `gtiff` reader **stages each scene to worker-local disk** before windowing, and writes to Volumes use sequential copies. Downloads are **read-validated** (open + decode a window) before being published, so throttled/truncated files are rejected and retried rather than silently accepted.
+
+---
+
 ## Key GeoBrix / Databricks functions shown
 
 - **GeoBrix RasterX** (`rx.rst_*`): `rst_h3_tessellate`, `rst_h3_tessellateexplode`, `rst_memsize`, `rst_initnodata`, `rst_boundingbox`, `rst_srid`, `rst_tryopen`, `rst_summary`, `rst_metadata`, `rst_numbands`, `rst_frombands`, `rst_fromcontent`, `rst_merge_agg` (aggregator), `rst_clip`, `rst_isempty`.
@@ -118,6 +129,6 @@ gtiff writer → stacked TIFs + rst_clip
 - **Antimeridian**: Alaska straddles the 180° meridian, so folium renderings can show results on both sides of the map.
 - **SRID awareness**: Sentinel-2 tiles arrive in UTM zones (e.g. `32608`, `32609`), not EPSG:4326 — reproject bboxes before plotting on a web map.
 - **Free-tier auth-failure payloads**: Planetary Computer returns a ~550-byte XML error body when SAS tokens expire or rate limits hit. `StacClient.download` validates each file with a rasterio window read, so these truncated/error responses are caught and marked `is_out_file_valid = false`. Call `stac_client.repair("band_b02")` to re-download and merge the repaired rows.
-- **Shuffle partitioning (Serverless-guarded)**: `StacClient.search` and `StacClient.download` control parallelism via `partitions=` and `DataFrame.repartition()`, which work on both Serverless and classic clusters. Any Spark-conf tuning in the notebooks goes through `set_conf_safe()`, which **no-ops on Serverless** (runtime Spark-conf mutation is disallowed there — AQE handles partitioning) and applies on classic clusters.
+- **Shuffle partitioning**: `StacClient.search` / `download` set their own parallelism via `partitions=`; for your own steps repartition by a column (`DataFrame.repartition(N, col)`). See **[Serverless execution strategy](#serverless-execution-strategy)** above for why a number-only `repartition(N)` is coalesced on Serverless.
 - **Prefer EWKB for `rst_clip` cutlines**: notebook 04 uses `DBF.st_asewkb(DBF.st_envelope("buffer"))` so the cutline's SRID travels with the bytes into `rst_clip`. Plain WKB (no SRID) is assumed to already be in the raster's CRS and is **not** reprojected; EWKB (or EWKT) with a valid SRID triggers reprojection when it differs from the raster CRS. Use `st_asewkb` / `st_asewkt` for robust, CRS-agnostic clipping.
 - **Scalar booleans pass through directly**: `rx.rst_clip("tile", "clip_wkb", True)` accepts a bare Python `True` for the `cutToCutline` flag — no `F.lit(True)` wrapping needed.
