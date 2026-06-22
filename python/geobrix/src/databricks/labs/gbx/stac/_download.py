@@ -8,6 +8,7 @@ Volume I/O is sequential-only, so we download to local disk, validate locally, t
 publish with a sequential copy.
 """
 
+import logging
 import os
 import shutil
 import tempfile
@@ -15,6 +16,8 @@ import time
 from typing import Callable, Optional
 
 import requests
+
+_log = logging.getLogger(__name__)
 
 _EXIST_FLOOR_BYTES = 1024  # validate=False idempotency floor (non-empty check)
 
@@ -99,6 +102,7 @@ def fetch_validate_publish(
             if os.path.getsize(outpath) >= _EXIST_FLOOR_BYTES:
                 return outpath
 
+    _last_exc: Optional[BaseException] = None
     for attempt in range(max_tries):
         tmpd = tempfile.mkdtemp(prefix="gbx_stac_dl_")
         try:
@@ -112,13 +116,19 @@ def fetch_validate_publish(
                 # I1 — no-validate path: publish without rasterio decode
                 shutil.copyfile(local, outpath)
                 return outpath
-        except Exception:
-            pass
+        except Exception as exc:
+            _last_exc = exc
         finally:
             shutil.rmtree(tmpd, ignore_errors=True)
         if attempt < max_tries - 1:
             sleep(min(60, 4 * (2**attempt)))
 
+    _log.warning(
+        "fetch_validate_publish: all %d attempts exhausted for %r; last error: %r",
+        max_tries,
+        filename,
+        _last_exc,
+    )
     try:
         if os.path.exists(outpath):
             os.remove(outpath)

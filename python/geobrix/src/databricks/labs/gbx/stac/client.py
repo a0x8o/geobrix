@@ -1,7 +1,9 @@
 """StacClient — catalog-agnostic, Serverless-safe STAC search/download/repair.
 
-Parallelism is via DataFrame.repartition(N) (NOT spark.conf, which is a no-op on
-Serverless). No caching or persistence calls — Serverless-safe. Asset download is
+Parallelism is via DataFrame.repartition(N, col) — hash by a column, since a
+number-only repartition(N) is AQE-coalesced toward 1 partition on Serverless (NOT
+spark.conf, which is a no-op there). No caching or persistence calls — Serverless-safe.
+Asset download is
 resilient (read-validated + retried). The catalog opener is injectable
 (_catalog_opener) for unit tests.
 
@@ -161,11 +163,10 @@ class StacClient:
             import pystac_client
 
             from databricks.labs.gbx.stac._search import search_one
-            from databricks.labs.gbx.stac._sign import resolve_modifier
 
-            cat = pystac_client.Client.open(
-                catalog_url, modifier=resolve_modifier(sign)
-            )
+            # Open without modifier so asset hrefs are stored raw (unsigned).
+            # Signing happens once in _fetch at download time via resolve_signer.
+            cat = pystac_client.Client.open(catalog_url)
             return search_one(cat, list(collections), datetime, geojson)
 
         @F.udf(_ASSET_SCHEMA)
@@ -184,7 +185,10 @@ class StacClient:
 
         carried = [c for c in df.columns if c != geojson_col]
         return (
-            df.repartition(partitions)
+            # Hash-by-column repartition (NOT number-only): on Serverless a round-robin
+            # repartition(N) is AQE-coalesced back toward 1 partition (serial); repartition by
+            # the AOI geometry column is respected and spreads ~one search task per AOI.
+            df.repartition(partitions, F.col(geojson_col))
             .withColumn("_item", F.explode(_items(F.col(geojson_col))))
             .withColumn("_f", _item_fields("_item"))
             .withColumn("_a", F.explode(_assets("_item")))
@@ -229,27 +233,29 @@ class StacClient:
 
         if asset_names:
             df = df.filter(F.col("asset_name").isin(list(asset_names)))
-        targets = df.select("item_id", "asset_name").distinct()
+        # Carry raw href so _fetch can sign it once (avoids get_item which requires
+        # a collection parameter on the PC STAC API).
+        if "href" not in df.columns:
+            df = df.withColumn("href", F.lit(None).cast(StringType()))
+        targets = df.select("item_id", "asset_name", "href").distinct()
         n = partitions if partitions is not None else max(1, targets.count())
-        catalog_url, sign = self.catalog, self.sign
+        sign = self.sign
         _validate = validate
         _injected_get = _get_fn  # None in production; injectable for tests
 
         @F.udf(StringType())
-        def _fetch(item_id, asset_name):
-            import pystac_client
-
+        def _fetch(item_id, asset_name, href):
             from databricks.labs.gbx.stac._download import fetch_validate_publish
-            from databricks.labs.gbx.stac._sign import resolve_modifier, resolve_signer
+            from databricks.labs.gbx.stac._sign import resolve_signer
 
-            cat = pystac_client.Client.open(
-                catalog_url, modifier=resolve_modifier(sign)
-            )
             signer = resolve_signer(sign)
 
             def href_fn():
-                item = cat.get_item(item_id)
-                return signer(item.assets[asset_name].href)
+                if not href:
+                    raise ValueError(
+                        f"no href available for item_id={item_id!r} asset={asset_name!r}"
+                    )
+                return signer(href)
 
             filename = name.format(asset_name=asset_name, item_id=item_id)
             kwargs = {} if _injected_get is None else {"get": _injected_get}
@@ -269,8 +275,12 @@ class StacClient:
             return os.path.getsize(path) if path and os.path.exists(path) else None
 
         return (
-            targets.repartition(n)
-            .withColumn("out_file_path", _fetch("item_id", "asset_name"))
+            # Hash-by-column repartition (NOT number-only): on Serverless a round-robin
+            # repartition(N) is AQE-coalesced back toward 1 partition (serial download).
+            # (item_id, asset_name) is unique per target, so hashing by it spreads
+            # downloads evenly across n.
+            targets.repartition(n, F.col("item_id"), F.col("asset_name"))
+            .withColumn("out_file_path", _fetch("item_id", "asset_name", "href"))
             .withColumn("out_file_sz", _size("out_file_path"))
             .withColumn("is_out_file_valid", F.col("out_file_path").isNotNull())
             .withColumn("last_update", F.current_timestamp())
@@ -289,8 +299,11 @@ class StacClient:
         is_table = isinstance(target, str)
         df = spark.table(target) if is_table else target
         invalid = df.filter(where)
+        repair_cols = ["item_id", "asset_name"] + (
+            ["href"] if "href" in invalid.columns else []
+        )
         repaired = self.download(
-            invalid.select("item_id", "asset_name"),
+            invalid.select(*repair_cols),
             out_dir or _common_dir(invalid),
         )
         if is_table:
