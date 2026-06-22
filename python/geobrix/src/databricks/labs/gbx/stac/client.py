@@ -234,9 +234,19 @@ class StacClient:
         if asset_names:
             df = df.filter(F.col("asset_name").isin(list(asset_names)))
         # Carry raw href so _fetch can sign it once (avoids get_item which requires
-        # a collection parameter on the PC STAC API).
-        if "href" not in df.columns:
-            df = df.withColumn("href", F.lit(None).cast(StringType()))
+        # a collection parameter on the PC STAC API). Fail LOUDLY if it's missing —
+        # silently null-filling it makes every download invalid with no explanation
+        # (the exact symptom that hid this in eo-series nb02). The href comes from
+        # StacClient.search output; band tables drop it, so download/repair off a band
+        # table won't work — feed a cell_assets-derived df instead.
+        missing = [c for c in ("item_id", "asset_name", "href") if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"download() input is missing required column(s) {missing}; it needs "
+                f"item_id, asset_name, href (the StacClient.search output). Got {df.columns}. "
+                "Note: band tables carry band_name and no href — pass a cell_assets-derived "
+                "DataFrame (or use build_band_table(force_rebuild=True))."
+            )
         targets = df.select("item_id", "asset_name", "href").distinct()
         n = partitions if partitions is not None else max(1, targets.count())
         sign = self.sign
@@ -299,11 +309,20 @@ class StacClient:
         is_table = isinstance(target, str)
         df = spark.table(target) if is_table else target
         invalid = df.filter(where)
-        repair_cols = ["item_id", "asset_name"] + (
-            ["href"] if "href" in invalid.columns else []
-        )
+        # Fail loudly with an actionable message: repair re-downloads, which needs the raw
+        # href to re-sign. A band table (band_name, no asset_name/href) can't be repaired —
+        # rebuild it from cell_assets instead. (Previously this raised a bare UNRESOLVED_COLUMN.)
+        missing = [c for c in ("item_id", "asset_name", "href") if c not in invalid.columns]
+        if missing:
+            raise ValueError(
+                f"repair() target is missing required column(s) {missing}; it needs "
+                f"item_id, asset_name, href to re-download. Got {invalid.columns}. A band table "
+                "carries band_name and no href and cannot be repaired directly — re-run "
+                "build_band_table(force_rebuild=True) (which reads cell_assets), or call repair() "
+                "on a cell_assets-derived table/DataFrame."
+            )
         repaired = self.download(
-            invalid.select(*repair_cols),
+            invalid.select("item_id", "asset_name", "href"),
             out_dir or _common_dir(invalid),
         )
         if is_table:
