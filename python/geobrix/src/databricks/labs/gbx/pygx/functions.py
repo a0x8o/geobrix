@@ -10,7 +10,7 @@ gx.register(spark), then use on columns. Serverless-safe: spark.udf.register
 plus Column expressions only — no _jvm / spark.conf / RDD access.
 """
 
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,8 @@ from pyspark.sql.types import (
     LongType,
     StringType,
 )
+
+from databricks.labs.gbx import _register
 
 from . import _bng, _custom, _env, _quadbin
 from ._geom import parse_geom
@@ -618,71 +620,149 @@ def _custom_kring(cell, grid, k):
     return _custom.k_ring(_custom.conf_from_row(grid), int(cell), int(k))
 
 
-def register(spark: SparkSession = None) -> None:
-    """Register the pygx quadbin SQL functions (Serverless-safe: udf only)."""
-    _env.assert_quadbin_available()
+def _registrar_groups() -> List[_register.Group]:
+    quadbin = {
+        "gbx_quadbin_pointascell": lambda s: s.udf.register(
+            "gbx_quadbin_pointascell", _pointascell_udf
+        ),
+        "gbx_quadbin_resolution": lambda s: s.udf.register(
+            "gbx_quadbin_resolution", _resolution_udf
+        ),
+        "gbx_quadbin_distance": lambda s: s.udf.register(
+            "gbx_quadbin_distance", _distance_udf
+        ),
+        "gbx_quadbin_aswkb": lambda s: s.udf.register("gbx_quadbin_aswkb", _aswkb_udf),
+        "gbx_quadbin_centroid": lambda s: s.udf.register(
+            "gbx_quadbin_centroid", _centroid_udf
+        ),
+        "gbx_quadbin_cellunion": lambda s: s.udf.register(
+            "gbx_quadbin_cellunion", _cellunion_udf
+        ),
+        "gbx_quadbin_kring": lambda s: s.udf.register(
+            "gbx_quadbin_kring", _kring, ArrayType(LongType())
+        ),
+        "gbx_quadbin_polyfill": lambda s: s.udf.register(
+            "gbx_quadbin_polyfill", _polyfill, ArrayType(LongType())
+        ),
+        "gbx_quadbin_tessellate": lambda s: s.udf.register(
+            "gbx_quadbin_tessellate", _tessellate, ArrayType(QUADBIN_CELL_SCHEMA)
+        ),
+        "gbx_quadbin_cellunion_agg": lambda s: s.udf.register(
+            "gbx_quadbin_cellunion_agg", _cellunion_agg_udf
+        ),
+    }
+    bng = {
+        "gbx_bng_pointascell": lambda s: s.udf.register(
+            "gbx_bng_pointascell", _bng_pointascell_udf
+        ),
+        "gbx_bng_eastnorthasbng": lambda s: s.udf.register(
+            "gbx_bng_eastnorthasbng", _bng_eastnorthasbng_udf
+        ),
+        "gbx_bng_cellarea": lambda s: s.udf.register(
+            "gbx_bng_cellarea", _bng_cellarea_udf
+        ),
+        "gbx_bng_distance": lambda s: s.udf.register(
+            "gbx_bng_distance", _bng_distance_udf
+        ),
+        "gbx_bng_euclideandistance": lambda s: s.udf.register(
+            "gbx_bng_euclideandistance", _bng_euclideandistance_udf
+        ),
+        "gbx_bng_aswkb": lambda s: s.udf.register("gbx_bng_aswkb", _bng_aswkb_udf),
+        "gbx_bng_aswkt": lambda s: s.udf.register("gbx_bng_aswkt", _bng_aswkt_udf),
+        "gbx_bng_centroid": lambda s: s.udf.register(
+            "gbx_bng_centroid", _bng_centroid_udf
+        ),
+        "gbx_bng_cellintersection": lambda s: s.udf.register(
+            "gbx_bng_cellintersection", _bng_cellintersection_udf
+        ),
+        "gbx_bng_cellunion": lambda s: s.udf.register(
+            "gbx_bng_cellunion", _bng_cellunion_udf
+        ),
+        "gbx_bng_kring": lambda s: s.udf.register(
+            "gbx_bng_kring", _bng_kring, ArrayType(StringType())
+        ),
+        "gbx_bng_kloop": lambda s: s.udf.register(
+            "gbx_bng_kloop", _bng_kloop, ArrayType(StringType())
+        ),
+        "gbx_bng_polyfill": lambda s: s.udf.register(
+            "gbx_bng_polyfill", _bng_polyfill, ArrayType(StringType())
+        ),
+        "gbx_bng_geomkring": lambda s: s.udf.register(
+            "gbx_bng_geomkring", _bng_geomkring, ArrayType(StringType())
+        ),
+        "gbx_bng_geomkloop": lambda s: s.udf.register(
+            "gbx_bng_geomkloop", _bng_geomkloop, ArrayType(StringType())
+        ),
+        "gbx_bng_tessellate": lambda s: s.udf.register(
+            "gbx_bng_tessellate", _bng_tessellate, ArrayType(BNG_CHIP_SCHEMA)
+        ),
+        "gbx_bng_kringexplode": lambda s: s.udtf.register(
+            "gbx_bng_kringexplode", _BngKRingExplode
+        ),
+        "gbx_bng_kloopexplode": lambda s: s.udtf.register(
+            "gbx_bng_kloopexplode", _BngKLoopExplode
+        ),
+        "gbx_bng_geomkringexplode": lambda s: s.udtf.register(
+            "gbx_bng_geomkringexplode", _BngGeomKRingExplode
+        ),
+        "gbx_bng_geomkloopexplode": lambda s: s.udtf.register(
+            "gbx_bng_geomkloopexplode", _BngGeomKLoopExplode
+        ),
+        "gbx_bng_tessellateexplode": lambda s: s.udtf.register(
+            "gbx_bng_tessellateexplode", _BngTessellateExplode
+        ),
+        "gbx_bng_cellunion_agg": lambda s: s.udf.register(
+            "gbx_bng_cellunion_agg", _bng_cellunion_agg_udf
+        ),
+        "gbx_bng_cellintersection_agg": lambda s: s.udf.register(
+            "gbx_bng_cellintersection_agg", _bng_cellintersection_agg_udf
+        ),
+    }
+    custom = {
+        "gbx_custom_grid": lambda s: s.udf.register(
+            "gbx_custom_grid", _custom_grid_udf
+        ),
+        "gbx_custom_pointascell": lambda s: s.udf.register(
+            "gbx_custom_pointascell", _custom_pointascell_udf
+        ),
+        "gbx_custom_cellaswkb": lambda s: s.udf.register(
+            "gbx_custom_cellaswkb", _custom_cellaswkb_udf
+        ),
+        "gbx_custom_cellaswkt": lambda s: s.udf.register(
+            "gbx_custom_cellaswkt", _custom_cellaswkt_udf
+        ),
+        "gbx_custom_centroid": lambda s: s.udf.register(
+            "gbx_custom_centroid", _custom_centroid_udf
+        ),
+        "gbx_custom_polyfill": lambda s: s.udf.register(
+            "gbx_custom_polyfill", _custom_polyfill, ArrayType(LongType())
+        ),
+        "gbx_custom_kring": lambda s: s.udf.register(
+            "gbx_custom_kring", _custom_kring, ArrayType(LongType())
+        ),
+    }
+    return [
+        (lambda: _env.assert_quadbin_available(), quadbin),
+        (lambda: _env.assert_bng_available(), bng),
+        (lambda: _env.assert_custom_available(), custom),
+    ]
+
+
+def register(spark: SparkSession = None, only: Optional[List[str]] = None) -> None:
+    """Register the pygx grid SQL functions (Serverless-safe: udf/udtf only).
+
+    Args:
+        spark: Spark session (uses the active session if not provided).
+        only: Optional list of function names to register (instead of all).
+            Accepts SQL names (``gbx_bng_polyfill``) or short names
+            (``bng_polyfill``), case-insensitively. ``None`` registers everything;
+            ``[]`` registers nothing. An unrecognized name raises ``ValueError``.
+            A sub-module's availability guard runs only when >=1 of its functions
+            is selected.
+    """
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
-    # scalar-output -> pandas_udf (vectorized / bounded batch)
-    spark.udf.register("gbx_quadbin_pointascell", _pointascell_udf)
-    spark.udf.register("gbx_quadbin_resolution", _resolution_udf)
-    spark.udf.register("gbx_quadbin_distance", _distance_udf)
-    spark.udf.register("gbx_quadbin_aswkb", _aswkb_udf)
-    spark.udf.register("gbx_quadbin_centroid", _centroid_udf)
-    spark.udf.register("gbx_quadbin_cellunion", _cellunion_udf)
-    # array-output -> plain @udf (row-by-row, scale-safe)
-    spark.udf.register("gbx_quadbin_kring", _kring, ArrayType(LongType()))
-    spark.udf.register("gbx_quadbin_polyfill", _polyfill, ArrayType(LongType()))
-    spark.udf.register(
-        "gbx_quadbin_tessellate", _tessellate, ArrayType(QUADBIN_CELL_SCHEMA)
-    )
-    # grouped aggregate
-    spark.udf.register("gbx_quadbin_cellunion_agg", _cellunion_agg_udf)
-
-    # --- BNG (gridx.bng) — all 23 gbx_bng_* names ---------------------------
-    _env.assert_bng_available()
-    # scalar / bounded-output -> pandas_udf
-    spark.udf.register("gbx_bng_pointascell", _bng_pointascell_udf)
-    spark.udf.register("gbx_bng_eastnorthasbng", _bng_eastnorthasbng_udf)
-    spark.udf.register("gbx_bng_cellarea", _bng_cellarea_udf)
-    spark.udf.register("gbx_bng_distance", _bng_distance_udf)
-    spark.udf.register("gbx_bng_euclideandistance", _bng_euclideandistance_udf)
-    spark.udf.register("gbx_bng_aswkb", _bng_aswkb_udf)
-    spark.udf.register("gbx_bng_aswkt", _bng_aswkt_udf)
-    spark.udf.register("gbx_bng_centroid", _bng_centroid_udf)
-    spark.udf.register("gbx_bng_cellintersection", _bng_cellintersection_udf)
-    spark.udf.register("gbx_bng_cellunion", _bng_cellunion_udf)
-    # array-output -> plain @udf (row-by-row, scale-safe)
-    spark.udf.register("gbx_bng_kring", _bng_kring, ArrayType(StringType()))
-    spark.udf.register("gbx_bng_kloop", _bng_kloop, ArrayType(StringType()))
-    spark.udf.register("gbx_bng_polyfill", _bng_polyfill, ArrayType(StringType()))
-    spark.udf.register("gbx_bng_geomkring", _bng_geomkring, ArrayType(StringType()))
-    spark.udf.register("gbx_bng_geomkloop", _bng_geomkloop, ArrayType(StringType()))
-    spark.udf.register(
-        "gbx_bng_tessellate", _bng_tessellate, ArrayType(BNG_CHIP_SCHEMA)
-    )
-    # explode -> UDTF (SQL-LATERAL only)
-    spark.udtf.register("gbx_bng_kringexplode", _BngKRingExplode)
-    spark.udtf.register("gbx_bng_kloopexplode", _BngKLoopExplode)
-    spark.udtf.register("gbx_bng_geomkringexplode", _BngGeomKRingExplode)
-    spark.udtf.register("gbx_bng_geomkloopexplode", _BngGeomKLoopExplode)
-    spark.udtf.register("gbx_bng_tessellateexplode", _BngTessellateExplode)
-    # grouped aggregate
-    spark.udf.register("gbx_bng_cellunion_agg", _bng_cellunion_agg_udf)
-    spark.udf.register("gbx_bng_cellintersection_agg", _bng_cellintersection_agg_udf)
-
-    # --- custom gridding (gridx.custom) — all 7 gbx_custom_* names ----------
-    _env.assert_custom_available()
-    # validating grid-spec builder -> @udf returning CUSTOM_GRID_SCHEMA
-    spark.udf.register("gbx_custom_grid", _custom_grid_udf)
-    # scalar / bounded-output -> pandas_udf
-    spark.udf.register("gbx_custom_pointascell", _custom_pointascell_udf)
-    spark.udf.register("gbx_custom_cellaswkb", _custom_cellaswkb_udf)
-    spark.udf.register("gbx_custom_cellaswkt", _custom_cellaswkt_udf)
-    spark.udf.register("gbx_custom_centroid", _custom_centroid_udf)
-    # array-output -> plain @udf (row-by-row, scale-safe)
-    spark.udf.register("gbx_custom_polyfill", _custom_polyfill, ArrayType(LongType()))
-    spark.udf.register("gbx_custom_kring", _custom_kring, ArrayType(LongType()))
+    _register.run_groups(_registrar_groups(), spark, only)
 
 
 # --- Column wrappers (mirror heavy gridx.grid.functions) ------------------------------------
