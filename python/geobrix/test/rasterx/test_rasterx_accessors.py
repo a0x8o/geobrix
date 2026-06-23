@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from test.rasterx._helpers import tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -44,9 +45,7 @@ def test_rst_avg(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_avg(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))).alias(
-            "avg_value"
-        )
+        rx.rst_avg(tile_from_path(rx, f, str(MODIS_B01), "GTiff")).alias("avg_value")
     )
 
     result = df.collect()
@@ -62,7 +61,7 @@ def test_rst_min_max(spark):
     """Test getting min and max pixel values."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(
         rx.rst_min(tile_col).alias("min_value"), rx.rst_max(tile_col).alias("max_value")
@@ -85,7 +84,7 @@ def test_rst_median(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_median(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))).alias(
+        rx.rst_median(tile_from_path(rx, f, str(MODIS_B01), "GTiff")).alias(
             "median_value"
         )
     )
@@ -102,7 +101,7 @@ def test_rst_dimensions(spark):
     """Test getting raster dimensions."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(
         rx.rst_width(tile_col).alias("width"),
@@ -128,7 +127,7 @@ def test_rst_georeference(spark):
     """Test getting georeference information."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(
         rx.rst_georeference(tile_col).alias("georeference"),
@@ -158,7 +157,7 @@ def test_rst_metadata(spark):
     """Test getting raster metadata."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(
         rx.rst_metadata(tile_col).alias("metadata"),
@@ -181,7 +180,7 @@ def test_rst_bands(spark):
     """Test getting band information."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(rx.rst_numbands(tile_col).alias("num_bands"))
 
@@ -195,7 +194,7 @@ def test_rst_nodata(spark):
     """Test getting NoData values."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(rx.rst_getnodata(tile_col).alias("nodata_values"))
 
@@ -209,7 +208,7 @@ def test_rst_boundingbox(spark):
     """Test getting bounding box."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(rx.rst_boundingbox(tile_col).alias("bbox"))
 
@@ -222,7 +221,7 @@ def test_rst_memsize(spark):
     """Test getting memory size."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(rx.rst_memsize(tile_col).alias("mem_size"))
 
@@ -236,7 +235,7 @@ def test_rst_summary(spark):
     """Test getting raster summary."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(rx.rst_summary(tile_col).alias("summary"))
 
@@ -249,7 +248,7 @@ def test_rst_subdatasets(spark):
     """Test getting subdatasets from NetCDF."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(NETCDF)), f.lit("NetCDF"))
+    tile_col = tile_from_path(rx, f, str(NETCDF), "NetCDF")
 
     df = spark.range(1).select(rx.rst_subdatasets(tile_col).alias("subdatasets"))
 
@@ -262,7 +261,7 @@ def test_rst_getsubdataset(spark):
     """Test extracting subdataset from NetCDF."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(NETCDF)), f.lit("NetCDF"))
+    tile_col = tile_from_path(rx, f, str(NETCDF), "NetCDF")
 
     df = spark.range(1).select(
         rx.rst_getsubdataset(tile_col, f.lit("prAdjust")).alias("subdataset")
@@ -277,7 +276,7 @@ def test_all_accessors_together(spark):
     """Test all accessor functions together to ensure they work in combination."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     # Test that we can call multiple accessors in one select
     df = spark.range(1).select(

@@ -6,6 +6,7 @@ the Long-overload eval entry points accept PySpark int inputs (LongType).
 
 import logging
 from pathlib import Path
+from test.rasterx._helpers import tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -46,9 +47,7 @@ def test_rst_to_webmercator_roundtrip(spark):
 
     df = spark.range(1).select(
         rx.rst_srid(
-            rx.rst_to_webmercator(
-                rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
-            )
+            rx.rst_to_webmercator(tile_from_path(rx, f, str(MODIS_B01), "GTiff"))
         ).alias("srid")
     )
     row = df.collect()[0]
@@ -62,7 +61,7 @@ def test_rst_tilexyz_returns_png_bytes(spark):
     # z=10, x=0, y=0 is the upper-left corner of the world — way outside MODIS h10v07.
     df = spark.range(1).select(
         rx.rst_tilexyz(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             10,
             0,
             0,
@@ -82,7 +81,7 @@ def test_rst_xyzpyramid_emits_rows(spark):
     # Generators are top-level in Spark 4.0 — invoke directly in select(), no f.explode wrap.
     df = spark.range(1).select(
         rx.rst_xyzpyramid(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             4,
             4,
         ).alias("t")

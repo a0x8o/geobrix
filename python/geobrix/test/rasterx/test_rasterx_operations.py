@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from test.rasterx._helpers import read_bytes, tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -53,7 +54,7 @@ def test_rst_clip(spark):
 
     df = spark.range(1).select(
         rx.rst_clip(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(wkt_geom),
             f.lit(True),  # cutline_all_touched
         ).alias("clipped_tile")
@@ -80,7 +81,7 @@ def test_rst_filter(spark):
     # Test with median filter
     df = spark.range(1).select(
         rx.rst_filter(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(3),  # kernel_size
             f.lit("median"),  # operation
         ).alias("filtered_tile")
@@ -101,7 +102,7 @@ def test_rst_filter_operations(spark):
     for op in operations:
         df = spark.range(1).select(
             rx.rst_filter(
-                rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+                tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
                 f.lit(3),
                 f.lit(op),
             ).alias("result")
@@ -118,7 +119,7 @@ def test_rst_transform(spark):
     # Transform to EPSG:4326 (WGS84)
     df = spark.range(1).select(
         rx.rst_transform(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(4326),  # target SRID
         ).alias("transformed_tile")
     )
@@ -141,9 +142,9 @@ def test_rst_convolve(spark):
     )
 
     df = spark.range(1).select(
-        rx.rst_convolve(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")), kernel
-        ).alias("convolved_tile")
+        rx.rst_convolve(tile_from_path(rx, f, str(MODIS_B01), "GTiff"), kernel).alias(
+            "convolved_tile"
+        )
     )
 
     result = df.collect()
@@ -156,11 +157,18 @@ def test_rst_merge(spark):
     """Test merging multiple rasters."""
     from databricks.labs.gbx.rasterx import functions as rx
 
+    # rst_fromfile is lightweight-only (issue #34); load each local tile's bytes
+    # and decode via the heavy-native gbx_rst_fromcontent.
     df = spark.createDataFrame(
-        [(1, str(MODIS_B01)), (2, str(MODIS_B02)), (3, str(MODIS_B03))], ["id", "path"]
+        [
+            (1, read_bytes(MODIS_B01)),
+            (2, read_bytes(MODIS_B02)),
+            (3, read_bytes(MODIS_B03)),
+        ],
+        ["id", "content"],
     )
 
-    df = df.withColumn("tile", rx.rst_fromfile(f.col("path"), f.lit("GTiff")))
+    df = df.withColumn("tile", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")))
 
     result_df = df.select(rx.rst_merge(f.collect_list("tile")).alias("merged_tile"))
 
@@ -174,11 +182,13 @@ def test_rst_combineavg(spark):
     """Test combining rasters using average."""
     from databricks.labs.gbx.rasterx import functions as rx
 
+    # rst_fromfile is lightweight-only (issue #34); load each local tile's bytes
+    # and decode via the heavy-native gbx_rst_fromcontent.
     df = spark.createDataFrame(
-        [(1, str(MODIS_B01)), (2, str(MODIS_B02))], ["id", "path"]
+        [(1, read_bytes(MODIS_B01)), (2, read_bytes(MODIS_B02))], ["id", "content"]
     )
 
-    df = df.withColumn("tile", rx.rst_fromfile(f.col("path"), f.lit("GTiff")))
+    df = df.withColumn("tile", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")))
 
     result_df = df.select(
         rx.rst_combineavg(f.collect_list("tile")).alias("combined_tile")
@@ -198,7 +208,7 @@ def test_rst_ndvi(spark):
     # For this test, we'll use bands from the same tile
     df = spark.range(1).select(
         rx.rst_ndvi(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(1),  # red band
             f.lit(1),  # NIR band (using same for test purposes)
         ).alias("ndvi_tile")
@@ -221,7 +231,7 @@ def test_rst_asformat(spark):
     # Convert from GTiff to Zarr format
     df = spark.range(1).select(
         rx.rst_asformat(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")), f.lit("Zarr")
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"), f.lit("Zarr")
         ).alias("zarr_tile")
     )
 
@@ -236,7 +246,7 @@ def test_rst_initnodata(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_initnodata(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))).alias(
+        rx.rst_initnodata(tile_from_path(rx, f, str(MODIS_B01), "GTiff")).alias(
             "nodata_tile"
         )
     )
@@ -252,9 +262,7 @@ def test_rst_isempty(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_isempty(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))).alias(
-            "is_empty"
-        )
+        rx.rst_isempty(tile_from_path(rx, f, str(MODIS_B01), "GTiff")).alias("is_empty")
     )
 
     result = df.collect()
@@ -269,7 +277,7 @@ def test_rst_tryopen(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_tryopen(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))).alias(
+        rx.rst_tryopen(tile_from_path(rx, f, str(MODIS_B01), "GTiff")).alias(
             "opened_tile"
         )
     )
@@ -286,7 +294,7 @@ def test_rst_updatetype(spark):
 
     df = spark.range(1).select(
         rx.rst_updatetype(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")), f.lit("Float32")
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"), f.lit("Float32")
         ).alias("updated_tile")
     )
 
@@ -300,7 +308,7 @@ def test_rst_coordinate_conversions(spark):
     """Test raster/world coordinate conversions."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     # Test world to raster coordinate conversion
     df = spark.range(1).select(
@@ -327,7 +335,7 @@ def test_rst_raster_to_world_conversions(spark):
     """Test raster to world coordinate conversions."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    tile_col = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile_col = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     # Test raster to world coordinate conversion
     df = spark.range(1).select(
@@ -384,7 +392,7 @@ def test_rst_scalar_literal_args(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     wkt = "POLYGON((-8900000 2220000, -8900000 2200000, -8880000 2200000, -8880000 2220000, -8900000 2220000))"
-    tile = rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff"))
+    tile = tile_from_path(rx, f, str(MODIS_B01), "GTiff")
 
     df = spark.range(1).select(
         rx.rst_clip(tile, f.lit(wkt), True).alias("clipped"),  # bool scalar

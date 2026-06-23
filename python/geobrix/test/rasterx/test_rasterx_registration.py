@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from test.rasterx._helpers import tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -38,12 +39,7 @@ def test_rasterx_functions_registration(spark):
         / "src/test/resources/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"
     ).resolve()
     df = spark.range(1).select(
-        rx.rst_avg(
-            rx.rst_fromfile(
-                f.lit(str(path)),
-                f.lit("GTiff"),
-            )
-        ).alias("avg")
+        rx.rst_avg(tile_from_path(rx, f, str(path), "GTiff")).alias("avg")
     )
     row = df.collect()[0]
     assert row["avg"] is not None

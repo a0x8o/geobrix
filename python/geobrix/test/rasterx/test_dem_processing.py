@@ -73,7 +73,7 @@ def color_table_path():
 def test_dem_processing_roundtrip(spark, color_table_path, expression, extra_args):
     """Each DEM-processing function: SQL invocation returns a non-empty tile.
 
-    Loads the SRTM tile via gbx_rst_fromfile, applies the terrain function,
+    Loads the SRTM tile via gbx_rst_fromcontent, applies the terrain function,
     then asserts the resulting tile struct has non-empty raster bytes / path
     and a metadata map stamped by RST_DEMProcessingHelper.
     """
@@ -81,9 +81,15 @@ def test_dem_processing_roundtrip(spark, color_table_path, expression, extra_arg
         pytest.skip(f"sample DEM not present: {SRTM_PATH}")
 
     sql_expr = expression.replace("__COLOR_TABLE__", color_table_path)
+    # gbx_rst_fromfile is lightweight-only (issue #34, pyrx UDF). The heavy tier
+    # loads the local DEM by reading its bytes via the binaryFile reader and
+    # decoding with the Scala/GDAL gbx_rst_fromcontent -- no pandas/rasterio.
+    spark.read.format("binaryFile").load(str(SRTM_PATH)).createOrReplaceTempView(
+        "_rasterx_src"
+    )
     df = spark.sql(
         f"SELECT {sql_expr} AS out "
-        f"FROM (SELECT gbx_rst_fromfile('{SRTM_PATH}', 'GTiff') AS t)"
+        f"FROM (SELECT gbx_rst_fromcontent(content, 'GTiff') AS t FROM _rasterx_src)"
     )
     rows = df.collect()
     assert len(rows) == 1

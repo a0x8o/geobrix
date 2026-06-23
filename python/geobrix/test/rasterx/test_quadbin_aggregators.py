@@ -7,6 +7,7 @@ PySpark sends Python ints as LongType.
 
 import logging
 from pathlib import Path
+from test.rasterx._helpers import tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -47,7 +48,7 @@ def _collect_first(spark, fn):
 
     df = spark.range(1).select(
         fn(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(4),
         ).alias("grid")
     )

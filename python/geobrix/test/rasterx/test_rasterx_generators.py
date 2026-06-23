@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from test.rasterx._helpers import read_bytes, tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -49,7 +50,7 @@ def test_rst_retile(spark):
 
     df = spark.range(1).select(
         rx.rst_retile(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(256),  # tile_width
             f.lit(256),  # tile_height
         ).alias("tiles")
@@ -70,7 +71,7 @@ def test_rst_maketiles(spark):
 
     df = spark.range(1).select(
         rx.rst_maketiles(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(1),  # size_in_mb
         ).alias("tiles")
     )
@@ -88,7 +89,7 @@ def test_rst_tooverlappingtiles(spark):
 
     df = spark.range(1).select(
         rx.rst_tooverlappingtiles(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(256),  # tile_width
             f.lit(256),  # tile_height
             f.lit(10),  # overlap in pixels
@@ -107,12 +108,18 @@ def test_rst_separatebands(spark):
     """Test separating bands into individual rasters."""
     from databricks.labs.gbx.rasterx import functions as rx
 
-    # First create a multi-band raster by combining single bands
+    # First create a multi-band raster by combining single bands.
+    # rst_fromfile is lightweight-only (issue #34); load bytes + gbx_rst_fromcontent.
     df = spark.createDataFrame(
-        [(1, str(MODIS_B01)), (2, str(MODIS_B02)), (3, str(MODIS_B03))], ["id", "path"]
+        [
+            (1, read_bytes(MODIS_B01)),
+            (2, read_bytes(MODIS_B02)),
+            (3, read_bytes(MODIS_B03)),
+        ],
+        ["id", "content"],
     )
 
-    df = df.withColumn("tile", rx.rst_fromfile(f.col("path"), f.lit("GTiff")))
+    df = df.withColumn("tile", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")))
 
     # Merge them into a multi-band raster
     multiband_df = df.select(rx.rst_merge(f.collect_list("tile")).alias("multiband"))
@@ -137,7 +144,7 @@ def test_rst_h3_tessellate(spark):
 
     df = spark.range(1).select(
         rx.rst_h3_tessellate(
-            rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")),
+            tile_from_path(rx, f, str(MODIS_B01), "GTiff"),
             f.lit(4),  # H3 resolution (reduced for performance)
         ).alias("h3_tiles")
     )
@@ -154,11 +161,17 @@ def test_rst_frombands(spark):
     """Test creating raster from multiple bands."""
     from databricks.labs.gbx.rasterx import functions as rx
 
+    # rst_fromfile is lightweight-only (issue #34); load bytes + gbx_rst_fromcontent.
     df = spark.createDataFrame(
-        [(1, str(MODIS_B01)), (2, str(MODIS_B02)), (3, str(MODIS_B03))], ["id", "path"]
+        [
+            (1, read_bytes(MODIS_B01)),
+            (2, read_bytes(MODIS_B02)),
+            (3, read_bytes(MODIS_B03)),
+        ],
+        ["id", "content"],
     )
 
-    df = df.withColumn("tile", rx.rst_fromfile(f.col("path"), f.lit("GTiff")))
+    df = df.withColumn("tile", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")))
 
     result_df = df.select(
         rx.rst_frombands(f.collect_list("tile")).alias("multiband_raster")
@@ -187,12 +200,16 @@ def test_rst_fromcontent(spark):
     assert result[0]["raster"] is not None
 
 
-def test_rst_fromfile(spark):
-    """Test creating raster from file path."""
+def test_rst_from_local_path(spark):
+    """Test creating a raster tile from a local file path (heavy-native bytes path).
+
+    rst_fromfile is lightweight-only (issue #34); the heavy tier loads the local
+    tile's bytes and decodes via gbx_rst_fromcontent (see tile_from_path helper).
+    """
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("raster")
+        tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("raster")
     )
 
     result = df.collect()
@@ -207,7 +224,7 @@ def test_generators_workflow(spark):
 
     # Load raster
     df = spark.range(1).select(
-        rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("original")
+        tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("original")
     )
 
     # Retile it

@@ -9,6 +9,7 @@ A tile in GeoBrix is a struct with three fields:
 
 import logging
 from pathlib import Path
+from test.rasterx._helpers import read_bytes, tile_from_path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -51,7 +52,7 @@ def test_tile_structure_has_required_fields(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile")
+        tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile")
     )
 
     # Access tile fields directly
@@ -83,12 +84,12 @@ def test_tile_structure_has_required_fields(spark):
 
 
 def test_tile_from_file_contains_binary(spark):
-    """rst_fromfile loads the file bytes into the raster field (BinaryType)."""
+    """Loading a tile populates the raster field with the file bytes (BinaryType)."""
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = (
         spark.range(1)
-        .select(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile"))
+        .select(tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile"))
         .select(
             f.col("tile.raster").alias("raster_binary"),
             f.col("tile.metadata.size").alias("size"),
@@ -130,7 +131,7 @@ def test_tile_metadata_contains_driver_info(spark):
 
     df = (
         spark.range(1)
-        .select(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile"))
+        .select(tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile"))
         .select(
             f.col("tile.metadata").alias("metadata"),
             f.col("tile.metadata.driver").alias("driver"),
@@ -161,7 +162,7 @@ def test_tessellated_tiles_have_cellid(spark):
     # Use resolution 1 (coarse) to avoid generating too many cells
     df = (
         spark.range(1)
-        .select(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile"))
+        .select(tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile"))
         .select(rx.rst_h3_tessellate(f.col("tile"), f.lit(1)).alias("tess_tile"))
         .select(f.col("tess_tile.cellid").alias("cellid"))
         .limit(10)
@@ -182,7 +183,7 @@ def test_tile_compatible_with_accessor_functions(spark):
 
     df = (
         spark.range(1)
-        .select(rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile"))
+        .select(tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile"))
         .select(
             f.col("tile.metadata").alias("metadata_direct"),
             rx.rst_metadata(f.col("tile")).alias("metadata_function"),
@@ -214,13 +215,17 @@ def test_filter_tiles_by_metadata(spark):
     """Test filtering tiles by metadata fields"""
     from databricks.labs.gbx.rasterx import functions as rx
 
+    # rst_fromfile is lightweight-only (issue #34); carry the file bytes alongside
+    # the path column and decode via the heavy-native gbx_rst_fromcontent.
+    b01 = MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"
+    b02 = MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"
     modis_files = [
-        (1, str(MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")),
-        (2, str(MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")),
+        (1, str(b01), read_bytes(b01)),
+        (2, str(b02), read_bytes(b02)),
     ]
 
-    df = spark.createDataFrame(modis_files, ["id", "path"]).select(
-        "id", "path", rx.rst_fromfile(f.col("path"), f.lit("GTiff")).alias("tile")
+    df = spark.createDataFrame(modis_files, ["id", "path", "content"]).select(
+        "id", "path", rx.rst_fromcontent(f.col("content"), f.lit("GTiff")).alias("tile")
     )
 
     # Filter by metadata
@@ -234,17 +239,21 @@ def test_extract_raster_bytes_for_conditional_processing(spark):
     """Conditional processing should key off metadata / input path columns, not the binary raster field."""
     from databricks.labs.gbx.rasterx import functions as rx
 
+    # rst_fromfile is lightweight-only (issue #34); carry the file bytes alongside
+    # the path column and decode via the heavy-native gbx_rst_fromcontent.
+    b01 = MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"
+    b02 = MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"
     modis_files = [
-        (1, str(MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")),
-        (2, str(MODIS_DIR / "MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF")),
+        (1, str(b01), read_bytes(b01)),
+        (2, str(b02), read_bytes(b02)),
     ]
 
     df = (
-        spark.createDataFrame(modis_files, ["id", "path"])
+        spark.createDataFrame(modis_files, ["id", "path", "content"])
         .select(
             "id",
             "path",
-            rx.rst_fromfile(f.col("path"), f.lit("GTiff")).alias("tile"),
+            rx.rst_fromcontent(f.col("content"), f.lit("GTiff")).alias("tile"),
         )
         .select(
             "id",
@@ -295,7 +304,7 @@ def test_tile_schema_documentation(spark):
     from databricks.labs.gbx.rasterx import functions as rx
 
     df = spark.range(1).select(
-        rx.rst_fromfile(f.lit(str(MODIS_B01)), f.lit("GTiff")).alias("tile")
+        tile_from_path(rx, f, str(MODIS_B01), "GTiff").alias("tile")
     )
 
     # Print schema for documentation
