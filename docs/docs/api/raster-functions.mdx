@@ -1898,6 +1898,37 @@ GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTH
 
 ---
 
+## Escape hatches
+
+When a raster operation isn't in the `rst_*` surface, drop down to rasterio/NumPy per tile (lightweight tier). These are **Python-only** helpers on `databricks.labs.gbx.pyrx.functions` — not SQL functions, and not registered as `gbx_rst_*`.
+
+### tile_to_numpy
+
+```python
+from databricks.labs.gbx.pyrx.functions import tile_to_numpy
+
+arr = tile_to_numpy(tile_or_bytes)   # -> np.ndarray, shape (bands, rows, cols)
+```
+
+Read a tile's raster into a NumPy array (all bands). Accepts either a tile struct (a `Row`/dict with a `raster` field) or raw `bytes`. Useful when you've collected a tile to the driver, or inside your own UDF.
+
+### rst_apply
+
+```python
+from pyspark.sql.types import DoubleType
+from databricks.labs.gbx.pyrx.functions import rst_apply
+
+df.select(
+    rst_apply("tile", lambda ds: float(ds.read(1).mean()), returnType=DoubleType()).alias("band1_mean")
+)
+```
+
+Apply your own function to each tile's open rasterio dataset, returning one scalar per row. `fn` receives a rasterio `DatasetReader`; the return value must match `returnType` (default `DoubleType()`; any Spark `DataType`). A null/empty tile yields null. This is the "GeoBrix doesn't have function X — run my own rasterio per tile" path; it returns a scalar (raster→raster transforms are the domain of `rst_mapalgebra` / `rst_derivedband`).
+
+For rendering tiles and building maps from results, see the [Visualization (`gbx.viz`)](./viz) page.
+
+---
+
 ## Next Steps
 
 - [GridX Function Reference](./gridx-functions)

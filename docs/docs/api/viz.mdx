@@ -1,0 +1,109 @@
+---
+sidebar_position: 11
+title: Visualization (gbx.viz)
+---
+
+# Visualization (`gbx.viz`)
+
+`databricks.labs.gbx.viz` renders rasters and turns Spark DataFrames into GeoDataFrames for interactive maps. It is **tier-agnostic** — the raster plotters take tile bytes (use them with `pyrx` *or* `rasterx` tiles), and the vector adapters take any Spark DataFrame.
+
+These are driver-side, single-node helpers for inspecting results in a notebook — not distributed operations. They collect to the driver, so the vector adapters guard the collect with `max_rows`.
+
+:::note Opt-in extra
+`gbx.viz` requires `geobrix[viz]`, which pulls in `matplotlib`, `geopandas`, `folium`, and `mapclassify`. The package itself imports only `matplotlib` (raster rendering) and `geopandas` (the GeoDataFrame adapters); `folium` + `mapclassify` are used by `GeoDataFrame.explore()` for interactive maps.
+:::
+
+## Installation
+
+```bash
+pip install "geobrix[viz]"
+```
+
+From a Databricks notebook (commonly alongside the lightweight tier):
+
+```python
+%pip install --quiet "geobrix[light,viz] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix-0.4.0-py3-none-any.whl"
+```
+
+## Import
+
+```python
+from databricks.labs.gbx.viz import plot_raster, plot_file, as_gdf, cells_as_gdf
+```
+
+## Raster rendering
+
+Both plotters auto-decimate rasters larger than `max_pixels` on either axis, and apply a per-band 2nd–98th percentile stretch to integer rasters whose values exceed 255 (typical for EO data — Sentinel-2 UInt16 reflectance, Landsat, etc.) so the visible range isn't clipped. Single-band rasters render with the `viridis` colormap; multi-band render as RGB. NoData is honored (masked) and excluded from the stretch statistics.
+
+### `plot_raster`
+
+```python
+plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000)
+```
+
+Render a raster from its in-memory bytes — e.g. a tile's `raster` field collected from a GeoBrix DataFrame:
+
+```python
+from databricks.labs.gbx.viz import plot_raster
+
+row = df.select("tile").first()
+plot_raster(row["tile"]["raster"])
+```
+
+### `plot_file`
+
+```python
+plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000)
+```
+
+Render a raster from disk (GeoTIFF, VRT, …) with the same decimation + stretch pipeline:
+
+```python
+from databricks.labs.gbx.viz import plot_file
+
+plot_file("/Volumes/main/geobrix_samples/geobrix-examples/nyc/dem.tif")
+```
+
+## Vector adapters
+
+The vector adapters collect to the driver for interactive mapping. By default they cap the collect at `max_rows=10_000` and emit a warning if the input has more rows (pass `max_rows=None` to collect everything — at your own risk on large frames). The returned `GeoDataFrame` is in EPSG:4326, ready for `.explore()` (folium) or `.plot()` (matplotlib).
+
+### `as_gdf`
+
+```python
+as_gdf(df, wkt_col="wkt", *, max_rows=10_000)
+```
+
+Convert a Spark DataFrame with a WKT geometry column into a `geopandas.GeoDataFrame`. Non-geometry columns are preserved; the WKT column is replaced by the geometry:
+
+```python
+from databricks.labs.gbx.viz import as_gdf
+
+gdf = as_gdf(df_with_wkt, wkt_col="wkt")
+gdf.explore()   # interactive folium map (needs the [viz] extra)
+```
+
+### `cells_as_gdf`
+
+```python
+cells_as_gdf(df, cell_col="cellid", extra_cols=(), *, max_rows=10_000)
+```
+
+Convert a DataFrame of H3 cell ids into a `GeoDataFrame` of cell-boundary polygons (boundaries computed with the `h3` library). Carry through attribute columns with `extra_cols`:
+
+```python
+from databricks.labs.gbx.viz import cells_as_gdf
+
+gdf = cells_as_gdf(df_cells, cell_col="cellid", extra_cols=["count"])
+gdf.explore(column="count")   # choropleth (needs mapclassify, bundled in [viz])
+```
+
+## Escape hatches
+
+When you need raster math that isn't in the `rst_*` surface, drop down to NumPy / rasterio per tile with the [pyrx escape hatches](./raster-functions#escape-hatches) (`tile_to_numpy`, `rst_apply`).
+
+## Next steps
+
+- [RasterX Function Reference](./raster-functions)
+- [RasterX Readers](../readers/raster)
+- [STAC Client](./stac)
