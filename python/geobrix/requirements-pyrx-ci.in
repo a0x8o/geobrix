@@ -62,5 +62,11 @@ quadbin==0.2.2
 scikit-image==0.26.0
 xarray-spatial==0.9.9
 
+# --- STAC light client: resilient asset download (stac/_download.py imports
+# requests at module top). pystac-client / planetary-computer are NOT needed for
+# the test/stac suite -- it stubs them (test/stac/_fake_catalog.py + an addPyFile
+# pystac_client stub + monkeypatch). Matches requirements-dev-container.in. ---
+requests==2.32.3
+
 # --- test runner ---
 pytest==8.4.2
