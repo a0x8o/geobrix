@@ -5,6 +5,8 @@ lazy-imported inside the public plotters (Task 3); the numeric helpers here use
 only numpy and the rasterio dataset passed in.
 """
 
+import os
+
 import numpy as np
 
 
@@ -63,12 +65,17 @@ def _percentile_stretch(data, lo_pct=2, hi_pct=98):
 
 def _render(data, transform, *, title, fig_w, fig_h, scale):
     """Stretch when needed, then plot via rasterio.plot.show (Agg-safe)."""
+    import sys
+
     import matplotlib
 
-    if matplotlib.get_backend().lower() != "agg":
-        try:
-            matplotlib.get_current_fig_manager()
-        except Exception:
+    # Select Agg before pyplot is imported only when: (a) no explicit backend has
+    # been requested via MPLBACKEND or a prior matplotlib.use() call (detected by
+    # pyplot not yet imported), and (b) there is no display available (headless
+    # cluster/CI).  Databricks notebooks set their own inline/Agg backend before
+    # this point, so pyplot will already be in sys.modules and we skip the override.
+    if "matplotlib.pyplot" not in sys.modules and "MPLBACKEND" not in os.environ:
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
             matplotlib.use("Agg")
     from matplotlib import pyplot
     from rasterio.plot import show
