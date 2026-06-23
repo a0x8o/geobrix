@@ -62,11 +62,14 @@ quadbin==0.2.2
 scikit-image==0.26.0
 xarray-spatial==0.9.9
 
-# --- STAC light client: resilient asset download (stac/_download.py imports
-# requests at module top). pystac-client / planetary-computer are NOT needed for
-# the test/stac suite -- it stubs them (test/stac/_fake_catalog.py + an addPyFile
-# pystac_client stub + monkeypatch). Matches requirements-dev-container.in. ---
+# --- STAC light client deps the test/stac suite actually imports: requests
+# (stac/_download.py, module top) + tenacity (stac/_search.py search_one retry,
+# exercised by test_search). pystac-client / planetary-computer are NOT needed --
+# the suite stubs them (test/stac/_fake_catalog.py + an addPyFile pystac_client
+# stub + monkeypatch), which is why they stay out of this light lock. Versions
+# match requirements-dev-container.in. ---
 requests==2.32.3
+tenacity==9.1.4
 
 # --- test runner ---
 pytest==8.4.2
