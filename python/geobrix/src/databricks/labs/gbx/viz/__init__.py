@@ -4,3 +4,7 @@ Raster rendering (plot_raster / plot_file) and Spark DataFrame -> GeoDataFrame
 adapters (as_gdf / cells_as_gdf) for interactive maps. Install with
 ``pip install 'geobrix[viz]'``.
 """
+
+from databricks.labs.gbx.viz._raster import plot_file, plot_raster
+
+__all__ = ["plot_raster", "plot_file"]

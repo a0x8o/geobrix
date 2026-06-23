@@ -59,3 +59,71 @@ def _percentile_stretch(data, lo_pct=2, hi_pct=98):
         rng = max(float(hi - lo), 1e-9)
         out[b] = np.clip((np.asarray(band, dtype=np.float32) - lo) / rng, 0.0, 1.0)
     return np.ma.MaskedArray(out, mask=data.mask) if is_masked else out
+
+
+def _render(data, transform, *, title, fig_w, fig_h, scale):
+    """Stretch when needed, then plot via rasterio.plot.show (Agg-safe)."""
+    import matplotlib
+
+    if matplotlib.get_backend().lower() != "agg":
+        try:
+            matplotlib.get_current_fig_manager()
+        except Exception:
+            matplotlib.use("Agg")
+    from matplotlib import pyplot
+    from rasterio.plot import show
+
+    if _needs_percentile_stretch(data):
+        data = _percentile_stretch(data)
+    fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
+    if data.shape[0] == 1:
+        show(data, ax=ax, transform=transform, cmap="viridis")
+    else:
+        show(data, ax=ax, transform=transform)
+    full_title = f"{title} (scale 1/{round(scale, 1)}x)" if scale > 1 else title
+    ax.set_title(full_title)
+    pyplot.show()
+
+
+def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000):
+    """Render a raster from in-memory bytes (e.g. a tile's `raster` field).
+
+    Auto-decimates above max_pixels; integer rasters whose values exceed 255
+    (typical EO UInt16) get a per-band 2-98% percentile stretch. Single-band ->
+    viridis; multi-band -> RGB. Requires the [viz] extra.
+    """
+    from databricks.labs.gbx.viz._env import assert_viz_available
+
+    assert_viz_available()
+    from rasterio.io import MemoryFile
+
+    with MemoryFile(bytes(raster_bytes)) as mf:
+        with mf.open() as src:
+            data, transform, scale = _decimated_read(src, max_pixels)
+            _render(
+                data,
+                transform,
+                title="tile.raster",
+                fig_w=fig_w,
+                fig_h=fig_h,
+                scale=scale,
+            )
+
+
+def plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000):
+    """Render a raster from disk (TIF, VRT, ...) with the plot_raster pipeline."""
+    from databricks.labs.gbx.viz._env import assert_viz_available
+
+    assert_viz_available()
+    import rasterio
+
+    with rasterio.open(path) as src:
+        data, transform, scale = _decimated_read(src, max_pixels)
+        _render(
+            data,
+            transform,
+            title=f"File: {str(path).split('/')[-1]}",
+            fig_w=fig_w,
+            fig_h=fig_h,
+            scale=scale,
+        )
