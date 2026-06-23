@@ -106,9 +106,15 @@ def test_pixel_ops_roundtrip(spark, label, sql_expr, expected_col, validator):
     if not Path(SRTM_PATH).exists():
         pytest.skip(f"sample DEM not present: {SRTM_PATH}")
 
+    # gbx_rst_fromfile is lightweight-only (issue #34, pyrx UDF). The heavy tier
+    # loads the local DEM by reading its bytes via the binaryFile reader and
+    # decoding with the Scala/GDAL gbx_rst_fromcontent -- no pandas/rasterio.
+    spark.read.format("binaryFile").load(str(SRTM_PATH)).createOrReplaceTempView(
+        "_rasterx_src"
+    )
     df = spark.sql(
         f"SELECT {sql_expr} AS {expected_col} "
-        f"FROM (SELECT gbx_rst_fromfile('{SRTM_PATH}', 'GTiff') AS t)"
+        f"FROM (SELECT gbx_rst_fromcontent(content, 'GTiff') AS t FROM _rasterx_src)"
     )
     rows = df.collect()
     assert len(rows) == 1, f"{label}: expected 1 row"

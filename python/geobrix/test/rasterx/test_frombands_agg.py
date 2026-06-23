@@ -1,12 +1,13 @@
 """End-to-end Python tests for rst_frombands_agg.
 
 Streams (tile, band_index) rows into the aggregator, asserts a non-null
-multi-band tile is returned. Uses rst_fromfile on a known test TIF to
+multi-band tile is returned. Uses gbx_rst_fromcontent on a known test TIF to
 produce real single-band input tiles (two copies = band 1 and band 2).
 """
 
 import logging
 from pathlib import Path
+from test.rasterx._helpers import read_bytes
 
 import pytest
 from pyspark.sql import SparkSession
@@ -49,17 +50,19 @@ def test_rst_frombands_agg_returns_tile(spark):
 
     # Load the same single-band MODIS TIF twice with different band indices.
     # The aggregator sorts by band_index and stacks, so the result should have >= 1 band.
-    modis_path = str(MODIS_B01)
+    # rst_fromfile is lightweight-only (issue #34); carry the tile bytes and decode
+    # via the heavy-native gbx_rst_fromcontent.
+    modis_content = read_bytes(MODIS_B01)
     rows = [
-        (1, modis_path, 1),
-        (1, modis_path, 2),
+        (1, modis_content, 1),
+        (1, modis_content, 2),
     ]
-    df = spark.createDataFrame(rows, ["key", "path", "band_index"])
+    df = spark.createDataFrame(rows, ["key", "content", "band_index"])
 
-    # Materialise tile column via rst_fromfile, then aggregate.
+    # Materialise tile column via rst_fromcontent, then aggregate.
     df_tiles = df.select(
         f.col("key"),
-        F.rst_fromfile(f.col("path"), f.lit("GTiff")).alias("tile"),
+        F.rst_fromcontent(f.col("content"), f.lit("GTiff")).alias("tile"),
         f.col("band_index"),
     )
 

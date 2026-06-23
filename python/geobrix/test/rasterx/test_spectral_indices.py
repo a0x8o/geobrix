@@ -66,15 +66,21 @@ def spark():
 def test_spectral_indices_roundtrip(spark, expression):
     """Each spectral-index function: SQL invocation returns a non-empty tile.
 
-    Loads the sample multi-band tile via ``gbx_rst_fromfile``, applies the
+    Loads the sample multi-band tile via ``gbx_rst_fromcontent``, applies the
     spectral-index expression, then asserts the resulting tile struct has
     non-empty raster bytes / path and a metadata map stamped by gdal_calc.
     """
     if not Path(SAMPLE_TILE_PATH).exists():
         pytest.skip(f"sample raster not present: {SAMPLE_TILE_PATH}")
+    # gbx_rst_fromfile is lightweight-only (issue #34, pyrx UDF). The heavy tier
+    # loads the local multi-band raster by reading its bytes via the binaryFile
+    # reader and decoding with the Scala/GDAL gbx_rst_fromcontent -- no pandas/rasterio.
+    spark.read.format("binaryFile").load(str(SAMPLE_TILE_PATH)).createOrReplaceTempView(
+        "_rasterx_src"
+    )
     df = spark.sql(
         f"SELECT {expression} AS out "
-        f"FROM (SELECT gbx_rst_fromfile('{SAMPLE_TILE_PATH}', 'GTiff') AS t)"
+        f"FROM (SELECT gbx_rst_fromcontent(content, 'GTiff') AS t FROM _rasterx_src)"
     )
     rows = df.collect()
     assert len(rows) == 1

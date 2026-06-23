@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions._
@@ -58,7 +59,7 @@ class RST_AccessorsEvalTest extends PlanTest with SilentSparkSession {
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"),
           (3, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
 
         noException should be thrownBy runQuery(df1)
 
@@ -74,7 +75,7 @@ class RST_AccessorsEvalTest extends PlanTest with SilentSparkSession {
         val df3: DataFrame = Seq(
           (1, s"$netCDFPath/prAdjust_day_HadGEM2-CC_SMHI-DBSrev930-GFD-1981-2010-postproc_rcp45_r1i1p1_20201201-20201231.nc")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("NetCDF")))
+            .withColumn("raster", udfs.rasterFromPath(col("path"), "NetCDF"))
             .withColumn("subds", rst_getsubdataset(col("raster"), lit("prAdjust")))
 
         noException should be thrownBy df3.collect()

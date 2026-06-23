@@ -19,25 +19,42 @@ object HadoopUtils {
         hadoopConf = hconf
     }
 
-    /** Normalizes path for Hadoop (e.g. /dbfs/ -> dbfs:/, /tmp/ -> file:/tmp/, /Volumes/ unchanged). */
+    /** Normalizes a path to a Hadoop-resolvable URI on the local (FUSE-backed) `file:` connector.
+      *
+      * The supported storage fabric on current DBRs is FUSE-mounted under `/Volumes/...` (Unity
+      * Catalog Volumes) and `/Workspace/...` (Workspace files); their URI forms `dbfs:/Volumes/...`
+      * and `file:/...` are accepted too. A scheme-less `/Volumes/...` would otherwise resolve
+      * against `fs.defaultFS` (`dbfs:` on classic UC compute), which does NOT reach the FUSE mount
+      * and silently returns a null tile — so everything is routed to `file:`.
+      *
+      * Legacy pre-Volumes DBFS (`/dbfs/...`, `dbfs:/...`) is NOT a supported target: the retired
+      * `/dbfs/` FUSE mount and the `dbfs:` connector are never emitted. A `/dbfs/Volumes/` or
+      * `dbfs:/Volumes/` alias is coerced to the supported `file:/Volumes/...`; any other legacy DBFS
+      * path is coerced off the `/dbfs` prefix (best-effort `file:` — such reads are expected to fail
+      * rather than silently use the retired mount).
+      *
+      *  - `/Volumes/...`, `dbfs:/Volumes/...`, `/dbfs/Volumes/...` -> `file:/Volumes/...`
+      *  - `/Workspace/...` -> `file:/Workspace/...`; `file:/...` kept as-is
+      *  - `/tmp/...` and other OS-absolute paths -> `file:...`
+      */
     def cleanPath(inPath: String): String = {
         inPath match {
-            // Handle Unity Catalog Volumes path
-            case _ if inPath.startsWith("/Volumes/")     => inPath
-            case _ if inPath.startsWith("/dbfs/Volume/") => inPath.replace("/dbfs/Volume/", "/Volume/")
-            // If it isn't a volumes path but starts with /dbfs/ then it is a DBFS path
-            // Hadoop will not work with this path so we need to replace it with dbfs:/
-            case _ if inPath.startsWith("/dbfs/")        => inPath.replace("/dbfs/", "dbfs:/")
-            // If it is a local path, we need to replace the /tmp/ with file:/tmp/
-            // This is because Hadoop will interpret any path as /dbfs/ location unless it is prefixed with file:/
-            case _ if inPath.startsWith("/tmp/")         => inPath.replace("/tmp/", "file:/tmp/")
-            // If the path is starting with file:/ keep it that way, it is the local file system
-            case _ if inPath.startsWith("file:/")        => inPath
-            // If the path is starting with dbfs:/ keep it that way, it is the DBFS file system
-            case _ if inPath.startsWith("dbfs:/")        => inPath
-            // All other paths are considered as local paths
-            case _ if inPath.startsWith("/")             => s"file:$inPath"
-            case _                                       => s"file:/$inPath"
+            // Unity Catalog Volumes (FUSE OS path, the dbfs:/Volumes URI, or the legacy /dbfs/Volumes
+            // alias) -> the supported local connector at file:/Volumes/...
+            case _ if inPath.startsWith("/Volumes/")       => s"file:$inPath"
+            case _ if inPath.startsWith("dbfs:/Volumes/")  => s"file:${inPath.stripPrefix("dbfs:")}"
+            case _ if inPath.startsWith("/dbfs/Volumes/")  => s"file:${inPath.stripPrefix("/dbfs")}"
+            // Workspace files FUSE -> file:/Workspace/...
+            case _ if inPath.startsWith("/Workspace/")     => s"file:$inPath"
+            // Already a local/FUSE connector URI (file:/Volumes/, file:/Workspace/, file:/tmp/, ...).
+            case _ if inPath.startsWith("file:/")          => inPath
+            // Legacy pre-Volumes DBFS is unsupported: coerce AWAY from /dbfs and the dbfs: connector
+            // (neither is used on supported DBRs). No automatic mapping to /Volumes or /Workspace.
+            case _ if inPath.startsWith("/dbfs/")          => s"file:${inPath.stripPrefix("/dbfs")}"
+            case _ if inPath.startsWith("dbfs:/")          => s"file:/${inPath.stripPrefix("dbfs:/")}"
+            // OS-absolute local paths (incl. /tmp/).
+            case _ if inPath.startsWith("/")               => s"file:$inPath"
+            case _                                         => s"file:/$inPath"
         }
     }
 
@@ -59,10 +76,12 @@ object HadoopUtils {
       * (marker/hidden files like `_SUCCESS` are skipped). */
     def listHadoopFiles(inPath: String, hconf: SerializableConfiguration): Seq[String] = {
         val path = new Path(new URI(cleanPath(inPath)))
-        val fs = path.getFileSystem(hconf.value)
-        fs.listStatus(path)
-            .filter(st => !st.isDirectory && isDataFile(st.getPath))
-            .map(_.getPath.toString)
+        withFileSystem(path, hconf) { fs =>
+            fs.listStatus(path)
+                .filter(st => !st.isDirectory && isDataFile(st.getPath))
+                .map(_.getPath.toString)
+                .toSeq
+        }
     }
 
     /** Returns the first data file (by listing order) under inPath; used for schema inference
@@ -70,33 +89,36 @@ object HadoopUtils {
       * directory of writer output infers schema from a real shard, not the `_SUCCESS` marker. */
     def getFirstFile(inPath: String, hconf: SerializableConfiguration): String = {
         val path = new Path(new URI(cleanPath(inPath)))
-        val fs = path.getFileSystem(hconf.value)
-        val status = fs.getFileStatus(path)
-        if (status.isDirectory) {
-            val it = fs.listFiles(path, false)
-            var first: String = null
-            while (first == null && it.hasNext) {
-                val st = it.next()
-                if (isDataFile(st.getPath)) first = st.getPath.toString
+        withFileSystem(path, hconf) { fs =>
+            val status = fs.getFileStatus(path)
+            if (status.isDirectory) {
+                val it = fs.listFiles(path, false)
+                var first: String = null
+                while (first == null && it.hasNext) {
+                    val st = it.next()
+                    if (isDataFile(st.getPath)) first = st.getPath.toString
+                }
+                if (first == null) {
+                    throw new IllegalArgumentException(s"No data files found under directory: $inPath")
+                }
+                first
+            } else {
+                path.toString
             }
-            if (first == null) {
-                throw new IllegalArgumentException(s"No data files found under directory: $inPath")
-            }
-            first
-        } else {
-            path.toString
         }
     }
 
     /** Lists immediate subdirectories under inPath (non-recursive). */
     def listHadoopDirs(inPath: String, hconf: SerializableConfiguration): Seq[String] = {
         val path = new Path(new URI(cleanPath(inPath)))
-        val fs = path.getFileSystem(hconf.value)
-        if (!fs.exists(path)) Seq.empty[String]
-        else fs
-            .listStatus(path)
-            .filter(_.isDirectory)
-            .map(_.getPath.toString)
+        withFileSystem(path, hconf) { fs =>
+            if (!fs.exists(path)) Seq.empty[String]
+            else fs
+                .listStatus(path)
+                .filter(_.isDirectory)
+                .map(_.getPath.toString)
+                .toSeq
+        }
     }
 
     /** Recursively lists files under inPath, optionally filtered by regex and excluding empty files. */
@@ -108,20 +130,21 @@ object HadoopUtils {
     ): mutable.Seq[String] = {
         val filter = if (regexFilter == "") ".*" else s".*$regexFilter.*"
         val path = new Path(new URI(cleanPath(inPath)))
-        val fs = path.getFileSystem(hconf.value)
-        val it = fs.listFiles(path, true) // recursive
-        val files = scala.collection.mutable.ArrayBuffer[String]()
-        while (it.hasNext) {
-            val fileStatus = it.next()
-            if (!dropEmpty || fileStatus.getLen > 0) {
-                if (regexFilter == "" || filter == ".*") {
-                    files += fileStatus.getPath.toString
-                } else if (fileStatus.getPath.toString.matches(filter)) {
-                    files += fileStatus.getPath.toString
+        withFileSystem(path, hconf) { fs =>
+            val it = fs.listFiles(path, true) // recursive
+            val files = scala.collection.mutable.ArrayBuffer[String]()
+            while (it.hasNext) {
+                val fileStatus = it.next()
+                if (!dropEmpty || fileStatus.getLen > 0) {
+                    if (regexFilter == "" || filter == ".*") {
+                        files += fileStatus.getPath.toString
+                    } else if (fileStatus.getPath.toString.matches(filter)) {
+                        files += fileStatus.getPath.toString
+                    }
                 }
             }
+            files
         }
-        files
     }
 
     /** Copies a file or directory from inPath to outPath; returns path to copied item in outDir. */
@@ -131,14 +154,13 @@ object HadoopUtils {
         hconf: SerializableConfiguration
     ): String = {
         val copyFromPath = new Path(cleanPath(inPath))
-        val srcFS = copyFromPath.getFileSystem(hconf.value)
-        val srcStatus = srcFS.getFileStatus(copyFromPath)
-        val outputDir =
-            if (srcStatus.isDirectory) {
+        val outputDir = withFileSystem(copyFromPath, hconf) { srcFS =>
+            if (srcFS.getFileStatus(copyFromPath).isDirectory) {
                 new Path(cleanPath(outPath)).toString
             } else {
                 new Path(cleanPath(outPath)).getParent.toString
             }
+        }
         copyToLocalDir(copyFromPath.toString, outputDir, hconf)
     }
 
@@ -171,20 +193,21 @@ object HadoopUtils {
     def copyToLocalDir(inPath: String, outDir: String, hConf: SerializableConfiguration): String = {
         val copyFromPath = new Path(cleanPath(inPath))
         val outDirPath = new Path(cleanPath(outDir))
-        val srcFS = copyFromPath.getFileSystem(hConf.value)
-        val dstFS = outDirPath.getFileSystem(hConf.value)
+        withFileSystem(copyFromPath, hConf) { srcFS =>
+            withFileSystem(outDirPath, hConf) { dstFS =>
+                if (!dstFS.exists(outDirPath)) dstFS.mkdirs(outDirPath)
 
-        if (!dstFS.exists(outDirPath)) dstFS.mkdirs(outDirPath)
-
-        if (srcFS.getFileStatus(copyFromPath).isDirectory) {
-            val dst = new Path(outDirPath, copyFromPath.getName)
-            AtomicDistributedCopy.copyIfNeeded(srcFS, dstFS, copyFromPath, dst)
-            dst.toString
-        } else {
-            if (!dstFS.exists(outDirPath)) dstFS.mkdirs(outDirPath)
-            copyRelativeFiles(srcFS, dstFS, copyFromPath, outDirPath)
-            val fileName = copyFromPath.getName
-            s"$outDirPath/$fileName"
+                if (srcFS.getFileStatus(copyFromPath).isDirectory) {
+                    val dst = new Path(outDirPath, copyFromPath.getName)
+                    AtomicDistributedCopy.copyIfNeeded(srcFS, dstFS, copyFromPath, dst)
+                    dst.toString
+                } else {
+                    if (!dstFS.exists(outDirPath)) dstFS.mkdirs(outDirPath)
+                    copyRelativeFiles(srcFS, dstFS, copyFromPath, outDirPath)
+                    val fileName = copyFromPath.getName
+                    s"$outDirPath/$fileName"
+                }
+            }
         }
     }
 
@@ -198,25 +221,45 @@ object HadoopUtils {
         }
     }
 
+    /** Runs `body` with the Hadoop FileSystem for `path` (resolved from the caller's config).
+      *
+      * NOTE (issue #34): this reads local / DBFS / Workspace paths. It does NOT read UC Volume
+      * (`/Volumes/...`) paths from the JVM in the Spark execution context — the UC FUSE credential
+      * is held only by Spark's managed Python worker, so `/Volumes` reads go through the Python
+      * implementation (`gbx_rst_fromfile` is registered as the `pyrx` UDF; or use `binaryFile` +
+      * `gbx_rst_fromcontent`). The Scala readers/`rst_fromfile` here serve non-Volume paths. */
+    private def withFileSystem[T](path: Path, hconf: SerializableConfiguration)(body: FileSystem => T): T = {
+        body(path.getFileSystem(hconf.value))
+    }
+
+    /** Reads the bytes at `rawPath` through the Hadoop FileSystem (local / DBFS / Workspace).
+      * Not for UC Volume (`/Volumes/...`) paths from the JVM — see `withFileSystem` (issue #34). */
+    def readBytes(rawPath: String, hConf: SerializableConfiguration): Array[Byte] = {
+        val p = new Path(cleanPath(rawPath))
+        withFileSystem(p, hConf) { fs => readContent(fs, fs.getFileStatus(p)) }
+    }
+
     /** Deletes the path recursively if it exists. */
     def deleteIfExists(tmpPath: String, hconf: SerializableConfiguration): Unit = {
         val cleanPath = HadoopUtils.cleanPath(tmpPath)
         val path = new Path(cleanPath)
-        val fs = path.getFileSystem(hconf.value)
-        if (fs.exists(path)) {
-            fs.delete(path, true)
+        withFileSystem(path, hconf) { fs =>
+            if (fs.exists(path)) {
+                fs.delete(path, true)
+            }
         }
     }
 
     /** Returns total size in bytes (file length or directory content summary). */
     def getSize(path: String, hConf: SerializableConfiguration): Long = {
         val cleanPath = new Path(HadoopUtils.cleanPath(path))
-        val fs = cleanPath.getFileSystem(hConf.value)
-        val status = fs.getFileStatus(cleanPath)
-        if (status.isDirectory) {
-            fs.getContentSummary(cleanPath).getLength
-        } else {
-            status.getLen
+        withFileSystem(cleanPath, hConf) { fs =>
+            val status = fs.getFileStatus(cleanPath)
+            if (status.isDirectory) {
+                fs.getContentSummary(cleanPath).getLength
+            } else {
+                status.getLen
+            }
         }
     }
 

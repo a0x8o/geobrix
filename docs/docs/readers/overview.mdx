@@ -32,6 +32,14 @@ using any `*_gbx` format:
 from databricks.labs.gbx.ds.register import register
 register(spark)
 ```
+
+To register only the formats this session uses, pass `only=` (by format name, with or without the `_gbx` suffix):
+
+```python
+register(spark, only=["raster_gbx", "gtiff_gbx"])
+```
+
+An unrecognized format raises `ValueError`.
 :::
 
 ### Available Readers

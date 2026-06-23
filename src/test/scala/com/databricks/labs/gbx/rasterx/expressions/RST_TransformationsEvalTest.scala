@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.{ErrorTokenListener, ProjErrorFilter, functions}
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions.{not => _, _}
@@ -24,7 +25,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn(
               "clipped",
               rst_clip(
@@ -52,7 +53,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn(
               "wkt",
               lit("POLYGON((-8900000 2220000, -8900000 2200000, -8880000 2200000, -8880000 2220000, -8900000 2220000))")
@@ -78,7 +79,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("clip_true", rst_clip(col("raster"), lit(geom), lit(true)))
             .withColumn("clip_false", rst_clip(col("raster"), lit(geom), lit(false)))
 
@@ -98,7 +99,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn(
               "clipped",
               rst_clip(
@@ -127,7 +128,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("filtered", rst_filter(col("raster"), lit(3), lit("median")))
 
         noException should be thrownBy df.collect()
@@ -150,7 +151,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
             val df: DataFrame = Seq(
               (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
             ).toDF("id", "path")
-                .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+                .withColumn("raster", udfs.rasterFromPath(col("path")))
                 .withColumn("filtered", rst_filter(col("raster"), lit(3), lit(op)))
 
             noException should be thrownBy df.collect()
@@ -171,7 +172,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
             val df: DataFrame = Seq(
               (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
             ).toDF("id", "path")
-                .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+                .withColumn("raster", udfs.rasterFromPath(col("path")))
                 .withColumn("filtered", rst_filter(col("raster"), lit(size), lit("avg")))
 
             noException should be thrownBy df.collect()
@@ -189,7 +190,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("filtered", rst_filter(col("raster"), lit(3), lit("avg")))
             .withColumn("original_width", rst_width(col("raster")))
             .withColumn("filtered_width", rst_width(col("filtered")))
@@ -214,7 +215,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("transformed", rst_transform(col("raster"), lit(4326)))
 
         noException should be thrownBy df.collect()
@@ -234,7 +235,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("transformed", rst_transform(col("raster"), lit(4326)))
             .withColumn("original_bands", rst_numbands(col("raster")))
             .withColumn("transformed_bands", rst_numbands(col("transformed")))
@@ -256,7 +257,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("transformed", rst_transform(col("raster"), lit(4326)))
             .withColumn("original_srid", rst_srid(col("raster")))
             .withColumn("transformed_srid", rst_srid(col("transformed")))
@@ -281,7 +282,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
             val df: DataFrame = Seq(
               (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
             ).toDF("id", "path")
-                .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+                .withColumn("raster", udfs.rasterFromPath(col("path")))
                 .withColumn("transformed", rst_transform(col("raster"), lit(srid)))
 
             noException should be thrownBy df.collect()
@@ -299,7 +300,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn(
               "clipped",
               rst_clip(
@@ -349,7 +350,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("clipped", rst_clip(col("raster"), lit(ewkt), lit(true)))
             .withColumn("clipped_size", rst_memsize(col("clipped")))
 
@@ -376,7 +377,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF", ewkb)
         ).toDF("id", "path", "clip_wkb")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("clipped", rst_clip(col("raster"), col("clip_wkb"), lit(true)))
             .withColumn("clipped_size", rst_memsize(col("clipped")))
 
@@ -398,7 +399,7 @@ class RST_TransformationsEvalTest extends PlanTest with SilentSparkSession {
         val df: DataFrame = Seq(
           (1, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
             .withColumn("transformed", rst_transform(col("raster"), lit(0)))
             .withColumn("err", col("transformed.metadata")("error_message"))
 

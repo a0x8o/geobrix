@@ -1,0 +1,253 @@
+---
+sidebar_position: 10
+title: STAC Client
+---
+
+# STAC Client
+
+`databricks.labs.gbx.stac.StacClient` is a lightweight, Serverless-safe client for **distributed STAC search**, **resilient asset download**, and **repair** of invalid files — against any STAC catalog (default: [Planetary Computer](https://planetarycomputer.microsoft.com/)).
+
+Where a single-node STAC script serializes search requests and downloads, `StacClient` fans both operations out across the Spark cluster — one task per AOI row (search) and one task per asset (download). On Serverless, parallelism is controlled via `partitions=` and `DataFrame.repartition()`, with no `spark.conf.set` calls.
+
+:::info Opt-in extra
+`StacClient` requires `geobrix[light,stac]`. The `[stac]` extra pulls in `pystac-client`, `planetary-computer`, `tenacity`, and `requests`. Serverless environment version 5 (Python 3.12) is required.
+:::
+
+## Installation
+
+```bash
+pip install "geobrix[light,stac]"
+```
+
+From a Databricks notebook (Serverless or classic):
+
+```python
+%pip install --quiet "geobrix[light,stac] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix-0.4.0-py3-none-any.whl"
+```
+
+## Import
+
+```python
+from databricks.labs.gbx.stac import StacClient
+```
+
+## Constructor
+
+```python
+StacClient(
+    catalog="https://planetarycomputer.microsoft.com/api/stac/v1",  # default
+    sign="planetary_computer",   # 'planetary_computer' | None | callable(href)->href
+)
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `catalog` | Planetary Computer | URL of any STAC API endpoint. |
+| `sign` | `"planetary_computer"` | Signing strategy. `"planetary_computer"` uses `planetary_computer.sign_inplace`; `None` skips signing (public catalogs); or pass any `callable(href: str) -> str`. |
+
+---
+
+## Methods
+
+### `search`
+
+Fan out AOI rows to the STAC catalog and return one row per `(input-row, item, asset)`.
+
+```python
+assets_df = client.search(
+    df,                              # DataFrame with a GeoJSON-geometry column
+    geojson_col="geojson",           # column name holding the GeoJSON geometry string
+    collections=["sentinel-2-l2a"],  # list of STAC collection IDs
+    datetime="2022-06-01/2022-09-01",# ISO datetime or range (STAC datetime syntax)
+    partitions=512,                  # repartition fan-out; no spark.conf
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `df` | `DataFrame` | — | Input rows. Each row is one AOI. |
+| `geojson_col` | `str` | — | Column containing GeoJSON geometry strings (intersects filter). |
+| `collections` | `List[str]` | — | STAC collection IDs to search. |
+| `datetime` | `str` | — | ISO datetime or range (`"YYYY-MM-DD"` or `"start/end"`). |
+| `partitions` | `int` | `512` | Target partition count for the fan-out repartition. |
+
+**Output columns** (in addition to all input columns, carried through):
+
+| Column | Type | Description |
+|---|---|---|
+| `item_id` | string | STAC item identifier. |
+| `date` | string | Acquisition date from `properties.datetime`. |
+| `item_bbox` | string | Item bounding box (GeoJSON). |
+| `asset_name` | string | Asset key (e.g. `"B02"`, `"B03"`). |
+| `href` | string | Asset download URL at search time (may expire; re-signed per attempt in `download`). |
+| `item_properties` | string | Full item properties JSON. |
+
+One row is emitted per `(input-row, item, asset)`. The same STAC item reached via multiple AOI rows produces multiple rows — `download` deduplicates internally to unique `(item_id, asset_name)`.
+
+---
+
+### `download`
+
+Resilient, validated asset download — one Spark task per asset. Deduplicates to unique `(item_id, asset_name)` so the same item reached via multiple AOIs is fetched exactly once.
+
+```python
+files_df = client.download(
+    assets_df,
+    out_dir,                                    # UC Volume path (FUSE-mounted)
+    asset_names=["B02", "B03", "B04", "B08"],   # None = all assets present in df
+    name="{asset_name}_{item_id}.tif",          # filename template
+    validate=True,                              # rasterio read-validation per file
+    max_tries=5,
+    partitions=None,                            # default: one task per asset
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `df` | `DataFrame` | — | Must contain `item_id` and `asset_name` columns. (`href` from `search` output is accepted but not required — the href is re-signed per attempt from `item_id` + `asset_name`.) |
+| `out_dir` | `str` | — | Destination directory (e.g. a UC Volume FUSE path). |
+| `asset_names` | `List[str]` or `None` | `None` | Filter to these asset keys. `None` downloads all assets present in the DataFrame. |
+| `name` | `str` | `"{asset_name}_{item_id}.tif"` | Filename template. Supports `{asset_name}` and `{item_id}` placeholders. |
+| `validate` | `bool` | `True` | Open and decode a raster window after download to reject throttled error bodies and truncated files that a size check would pass. |
+| `max_tries` | `int` | `5` | Maximum download attempts per asset (exponential backoff between attempts). |
+| `partitions` | `int` or `None` | `None` | Explicit repartition before download. `None` sets one partition per unique asset. |
+
+**Output columns:**
+
+| Column | Type | Description |
+|---|---|---|
+| `item_id` | string | STAC item identifier. |
+| `asset_name` | string | Asset key. |
+| `out_file_path` | string | Absolute path of the written file on the Volume. |
+| `out_file_sz` | long | File size in bytes (`0` if the download failed). |
+| `is_out_file_valid` | boolean | `true` if the file passed read-validation; `false` otherwise. |
+| `last_update` | timestamp | Time of the download attempt. |
+
+**Resilience behavior:**
+
+- The href is **re-signed on every attempt** — signed URLs from `search` may expire before a retry; `download` always re-derives a fresh URL from `item_id` + `asset_name`.
+- HTTP errors (`4xx`/`5xx`, including throttle responses) trigger `tenacity` exponential backoff and retry up to `max_tries`.
+- Each file is staged to **worker-local disk first**; it is copied to the Volume only after passing read-validation. No partial or corrupt file is written to the Volume.
+- Files that already exist and are valid (`is_out_file_valid = true`) are **skipped** — the operation is idempotent.
+- A failed asset (exhausted retries, or read-validation failure) sets `is_out_file_valid = false` and `out_file_sz = 0`; use `repair` to retry those rows.
+
+---
+
+### `repair`
+
+Re-download invalid files and merge the results back to the Delta table.
+
+```python
+repaired = client.repair(
+    "band_b02",                         # Delta table name or DataFrame
+    where="is_out_file_valid = false",  # SQL filter over the table
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `table_or_df` | `str` or `DataFrame` | — | Delta table name or a DataFrame with `item_id`, `asset_name`, `out_file_path`, `is_out_file_valid`. |
+| `where` | `str` | `"is_out_file_valid = false"` | SQL predicate selecting rows to re-download. |
+
+**Behavior:** reads the table, filters to matching rows, re-runs the resilient download on that subset, then merges updated `out_file_path`, `out_file_sz`, `is_out_file_valid`, and `last_update` back into the Delta table. Returns the repaired subset as a DataFrame.
+
+---
+
+## End-to-end example
+
+This illustrates the full search → download → repair flow. The EO-series notebooks are the fully-executed, worked example — see [EO Series](../notebooks/eo-series).
+
+```python
+from databricks.labs.gbx.stac import StacClient
+from pyspark.sql import functions as F
+
+client = StacClient()   # default: Planetary Computer, sign=planetary_computer
+
+# 1 — Search: one row per (AOI cell, STAC item, asset)
+#     df_cells has a "geojson" column with one GeoJSON geometry per H3 cell
+assets_df = client.search(
+    df_cells,
+    geojson_col="geojson",
+    collections=["sentinel-2-l2a"],
+    datetime="2022-06-01/2022-06-30",
+    partitions=512,
+)
+# Write to Delta for an auditable handoff
+assets_df.write.mode("overwrite").saveAsTable("cell_assets")
+
+# 2 — Download: resilient, validated; one task per unique (item_id, asset_name)
+assets = spark.read.table("cell_assets")
+files_df = client.download(
+    assets,
+    out_dir="/Volumes/my_catalog/my_schema/data/alaska/B02",
+    asset_names=["B02"],
+    name="{asset_name}_{item_id}.tif",
+    validate=True,
+    max_tries=5,
+)
+
+# Join back per-item metadata (date) from the search output
+item_meta = assets.select("item_id", "date").distinct()
+band_df = (
+    files_df
+    .join(item_meta, on="item_id", how="left")
+    .withColumn("band_name", F.lit("B02"))
+    .select("item_id", "band_name", "date",
+            "out_file_path", "out_file_sz", "is_out_file_valid", "last_update")
+)
+band_df.write.mode("overwrite").saveAsTable("band_b02")
+
+# 3 — Repair: re-download any files that failed read-validation
+repaired = client.repair("band_b02", where="is_out_file_valid = false")
+```
+
+---
+
+## Serverless usage
+
+`StacClient` is designed for Serverless (environment version 5, Python 3.12):
+
+- **No `spark.conf.set`.** Parallelism is controlled entirely via `partitions=` in `search` and `download`, and via `DataFrame.repartition(N, "col")` in your notebook — **hash by a column**, since on Serverless a number-only `repartition(N)` is coalesced by AQE back toward one partition.
+- **No `.cache()` / `.persist()`.** Materialize search results and downloaded-file metadata to Delta tables — Delta time travel is a more durable alternative to in-memory caching and survives session restarts.
+- **One task per asset.** Each download task is independent; Serverless autoscaling routes tasks across available workers without pinning.
+
+```python
+# Serverless: write search results to Delta immediately (no caching)
+client.search(df_cells, geojson_col="geojson",
+              collections=["sentinel-2-l2a"], datetime="2022-06-01").write \
+      .mode("overwrite").saveAsTable("cell_assets")
+
+# Serverless: read back from Delta for the download step
+assets = spark.read.table("cell_assets")
+files_df = client.download(assets, out_dir="/Volumes/...", asset_names=["B02"])
+files_df.write.mode("overwrite").saveAsTable("band_b02")
+```
+
+:::note No doc-test backing for this page
+`StacClient` is a network integration client — it requires live STAC catalog access and real asset URLs. The illustrative code blocks above show the API surface; the [EO Series notebooks](../notebooks/eo-series) are the fully-executed, end-to-end example with real data.
+:::
+
+---
+
+## Non-goals
+
+The following are explicitly out of scope for the initial `StacClient`:
+
+- **No async / concurrent-within-task fetching.** Parallelism comes from Spark tasks, not `asyncio`/threads inside a UDF.
+- **No non-raster asset validation.** `validate=True` open-and-decodes a raster window; JSON, thumbnails, and vector sidecars are downloaded but not validated.
+- **No catalog or item publishing.** `StacClient` is a read/consume client.
+- **No credential management.** Auth is expressed through the `sign` parameter; token storage and refresh are the caller's responsibility.
+
+---
+
+## See also
+
+- [EO Series notebooks](../notebooks/eo-series) — the worked end-to-end example (search → download → repair → tessellate → stack).
+- [Execution Tiers](./execution-tiers) — lightweight vs heavyweight comparison.
+- [RasterX Function Reference](./raster-functions) — `rst_h3_tessellate`, `rst_fromcontent`, `rst_merge_agg`, and the rest of the raster processing functions used downstream of STAC downloads.

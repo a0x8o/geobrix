@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions._
@@ -22,8 +23,8 @@ class RST_ConstructorsEvalTest extends PlanTest with SilentSparkSession {
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"),
           (3, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF")
         ).toDF("id", "path")
-            .withColumn("rst_1", rst_fromfile(col("path"), lit("GTiff")))
-            .withColumn("rst_2", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("rst_1", udfs.rasterFromPath(col("path")))
+            .withColumn("rst_2", udfs.rasterFromPath(col("path")))
             .withColumn("rst_3", rst_frombands(array(col("rst_1"), col("rst_2"))))
 
         noException should be thrownBy {

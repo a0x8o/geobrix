@@ -5,6 +5,8 @@ Swap-compatible with ``databricks.labs.gbx.rasterx.functions``:
     df.select(prx.rst_width("tile"))
 """
 
+from typing import List, Optional
+
 import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
@@ -22,6 +24,7 @@ from pyspark.sql.types import (
     StructType,
 )
 
+from databricks.labs.gbx import _register
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx._udf import (
     ColLike,
@@ -47,62 +50,72 @@ from databricks.labs.gbx.pyrx.core import tin as tin_core
 from databricks.labs.gbx.pyrx.core import warp, xyz
 
 
-def register(spark: SparkSession = None) -> None:
+def _registrar_groups() -> List[_register.Group]:
+    """One group for pyrx (rasterio guard): scalar/agg UDFs (from SQL_REGISTRY),
+    UDTFs, and the format-agnostic pmtiles aggregate. Insertion order matches the
+    pre-only register() ordering so only=None is behavior-identical."""
+    entries = {}
+    for name, udf_obj in SQL_REGISTRY.items():
+        entries[name] = lambda s, n=name, u=udf_obj: s.udf.register(n, u)
+
+    udtfs = [
+        ("gbx_rst_polygonize", _RstPolygonizeUDTF),
+        ("gbx_rst_h3_rastertogridavg", _RstH3RasterToGridAvgUDTF),
+        ("gbx_rst_h3_rastertogridcount", _RstH3RasterToGridCountUDTF),
+        ("gbx_rst_h3_rastertogridmax", _RstH3RasterToGridMaxUDTF),
+        ("gbx_rst_h3_rastertogridmin", _RstH3RasterToGridMinUDTF),
+        ("gbx_rst_h3_rastertogridmedian", _RstH3RasterToGridMedianUDTF),
+        ("gbx_rst_quadbin_rastertogridavg", _RstQuadbinRasterToGridAvgUDTF),
+        ("gbx_rst_quadbin_rastertogridcount", _RstQuadbinRasterToGridCountUDTF),
+        ("gbx_rst_quadbin_rastertogridmax", _RstQuadbinRasterToGridMaxUDTF),
+        ("gbx_rst_quadbin_rastertogridmin", _RstQuadbinRasterToGridMinUDTF),
+        ("gbx_rst_quadbin_rastertogridmedian", _RstQuadbinRasterToGridMedianUDTF),
+        ("gbx_rst_separatebands", _RstSeparateBandsUDTF),
+        ("gbx_rst_retile", _RstRetileUDTF),
+        ("gbx_rst_tooverlappingtiles", _RstToOverlappingTilesUDTF),
+        ("gbx_rst_maketiles", _RstMakeTilesUDTF),
+        ("gbx_rst_h3_tessellate", _RstH3TessellateUDTF),
+        ("gbx_rst_xyzpyramid", _RstXyzPyramidUDTF),
+    ]
+    for name, cls in udtfs:
+        entries[name] = lambda s, n=name, c=cls: s.udtf.register(n, c)
+
+    def _reg_pmtiles(s):
+        from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+        register_pmtiles_agg(s)
+
+    entries["gbx_pmtiles_agg"] = _reg_pmtiles
+
+    def _guard():
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.assert_rasterio_available()
+
+    return [(_guard, entries)]
+
+
+def register(spark: SparkSession = None, only: Optional[List[str]] = None) -> None:
     """Explicitly register the pyrx functions as Spark SQL functions.
 
     Installs the same ``gbx_rst_*`` SQL names the heavyweight rasterx package
-    uses, but powered by the pyspark/rasterio implementation (no JAR). Call
-    this once, consciously, when you want to use the functions from SQL —
-    exactly like heavyweight ``rasterx.functions.register``. The Python Column
-    API (``prx.rst_width(col)``) works WITHOUT this call.
+    uses, but powered by the pyspark/rasterio implementation (no JAR). Call this
+    once when you want the functions from SQL. The Python Column API
+    (``prx.rst_width(col)``) works WITHOUT this call.
 
     You register the lightweight OR the heavyweight package in a given session;
     they share the ``gbx_rst_*`` names, so the last registration wins.
 
     Args:
         spark: Spark session (uses the active session if not provided).
+        only: Optional list of function names to register (instead of all).
+            Accepts SQL names (``gbx_rst_slope``) or short names (``rst_slope``),
+            case-insensitively. ``None`` registers everything; ``[]`` registers
+            nothing. An unrecognized name raises ``ValueError``.
     """
-    from databricks.labs.gbx.pyrx import _env
-
-    _env.assert_rasterio_available()
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
-    for name, udf_obj in SQL_REGISTRY.items():
-        spark.udf.register(name, udf_obj)
-    # UDTFs must use spark.udtf.register (not spark.udf.register).
-    spark.udtf.register("gbx_rst_polygonize", _RstPolygonizeUDTF)
-    spark.udtf.register("gbx_rst_h3_rastertogridavg", _RstH3RasterToGridAvgUDTF)
-    spark.udtf.register("gbx_rst_h3_rastertogridcount", _RstH3RasterToGridCountUDTF)
-    spark.udtf.register("gbx_rst_h3_rastertogridmax", _RstH3RasterToGridMaxUDTF)
-    spark.udtf.register("gbx_rst_h3_rastertogridmin", _RstH3RasterToGridMinUDTF)
-    spark.udtf.register("gbx_rst_h3_rastertogridmedian", _RstH3RasterToGridMedianUDTF)
-    spark.udtf.register(
-        "gbx_rst_quadbin_rastertogridavg", _RstQuadbinRasterToGridAvgUDTF
-    )
-    spark.udtf.register(
-        "gbx_rst_quadbin_rastertogridcount", _RstQuadbinRasterToGridCountUDTF
-    )
-    spark.udtf.register(
-        "gbx_rst_quadbin_rastertogridmax", _RstQuadbinRasterToGridMaxUDTF
-    )
-    spark.udtf.register(
-        "gbx_rst_quadbin_rastertogridmin", _RstQuadbinRasterToGridMinUDTF
-    )
-    spark.udtf.register(
-        "gbx_rst_quadbin_rastertogridmedian", _RstQuadbinRasterToGridMedianUDTF
-    )
-    # Fan-out tiling / tessellation / pyramid UDTFs (one tile/row per output).
-    spark.udtf.register("gbx_rst_separatebands", _RstSeparateBandsUDTF)
-    spark.udtf.register("gbx_rst_retile", _RstRetileUDTF)
-    spark.udtf.register("gbx_rst_tooverlappingtiles", _RstToOverlappingTilesUDTF)
-    spark.udtf.register("gbx_rst_maketiles", _RstMakeTilesUDTF)
-    spark.udtf.register("gbx_rst_h3_tessellate", _RstH3TessellateUDTF)
-    spark.udtf.register("gbx_rst_xyzpyramid", _RstXyzPyramidUDTF)
-    # PMTiles archive aggregate is format-agnostic (raster or vector tiles);
-    # register it from the light raster tier too.
-    from databricks.labs.gbx.pmtiles import register_pmtiles_agg
-
-    register_pmtiles_agg(spark)
+    _register.run_groups(_registrar_groups(), spark, only)
 
 
 # --- Module-level UDF singletons (built once at import) ---------------------
@@ -303,7 +316,7 @@ def rst_fromcontent(content: ColLike, driver: ColLike) -> Column:
 def _fromfile_udf(path, driver):
     if path is None:
         return None
-    import rasterio
+    from rasterio.io import MemoryFile
 
     from databricks.labs.gbx.ds._listing import to_local_path
     from databricks.labs.gbx.pyrx import _env
@@ -311,14 +324,16 @@ def _fromfile_udf(path, driver):
     _env.configure_gdal_env()
     drv = "GTiff" if driver is None else str(driver)
     try:
-        # Columns carry dbfs:-qualified paths (to_spark_uri); rasterio opens the
-        # bare FUSE path, so strip the scheme right before the open.
-        with rasterio.open(to_local_path(str(path))) as src:
+        # Read the source bytes SEQUENTIALLY (FUSE-safe) and open from an in-memory
+        # MemoryFile, rather than rasterio.open() on the path: a tiled/COG GTiff over a
+        # UC Volume seeks to block offsets on read, which Volume FUSE can't serve. Columns
+        # carry dbfs:-qualified paths (to_spark_uri); strip the scheme for the open().
+        with open(to_local_path(str(path)), "rb") as _fh:
+            _src_bytes = _fh.read()
+        with MemoryFile(_src_bytes) as _src_mf, _src_mf.open() as src:
             data = src.read()
             profile = src.profile.copy()
             profile.update(driver="GTiff")
-            from rasterio.io import MemoryFile
-
             with MemoryFile() as mf:
                 with mf.open(**profile) as dst:
                     dst.write(data)
@@ -1804,6 +1819,8 @@ class _RstH3TessellateUDTF:
             for cellid, raster in tessellate_core.iter_tessellate_h3(
                 ds, int(resolution), mode=effective_mode
             ):
+                if raster is None:  # defensive: never emit a null-raster tile row
+                    continue
                 yield _serde.build_tile(raster, "GTiff", cellid)
 
 

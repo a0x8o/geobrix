@@ -175,13 +175,15 @@ def _writer_col_roles(schema):
 class _ChunkPartition(InputPartition):
     """One contiguous feature slice of one layer (picklable)."""
 
-    def __init__(self, path, driver, layer, as_wkb, skip, count):
+    def __init__(self, path, driver, layer, as_wkb, skip, count, bbox=None, where=None):
         self.path = path
         self.driver = driver
         self.layer = layer
         self.as_wkb = as_wkb
         self.skip = skip
         self.count = count
+        self.bbox = bbox
+        self.where = where
 
 
 class VectorGbxReader(DataSourceReader):
@@ -220,6 +222,23 @@ class VectorGbxReader(DataSourceReader):
         self.chunk_size = max(1, int(options.get("chunkSize", "10000")))
         self.layer_number = int(options.get("layerNumber", "0"))
         self.layer_name = options.get("layerName", "")
+        # Optional pushdown filters (memory + speed): `bbox` ("xmin,ymin,xmax,ymax"
+        # in the layer CRS) and an OGR SQL `where` clause. Passed to pyogrio so only
+        # matching features are parsed/materialized -- important on Serverless, where
+        # reading a whole large shapefile in one UDF can exceed the 1 GB per-function
+        # memory cap. Default None = read all features (prior behavior).
+        bbox_opt = options.get("bbox")
+        if bbox_opt:
+            parts = [float(v) for v in str(bbox_opt).split(",")]
+            if len(parts) != 4:
+                raise ValueError(
+                    "vector bbox option must be 'xmin,ymin,xmax,ymax'; got "
+                    f"'{bbox_opt}'"
+                )
+            self.bbox = tuple(parts)
+        else:
+            self.bbox = None
+        self.where = options.get("where") or None
 
     def _layer(self):
         return self.layer_name if self.layer_name else self.layer_number
@@ -308,7 +327,16 @@ class VectorGbxReader(DataSourceReader):
         # within a single read, chunk_size only bounds the Arrow batch size on the yield, not
         # the parse. Random-access formats (GPKG/FileGDB) are staged to local temp + read whole.
         return [
-            _ChunkPartition(member, self.driver, self._layer(), self.as_wkb, 0, 0)
+            _ChunkPartition(
+                member,
+                self.driver,
+                self._layer(),
+                self.as_wkb,
+                0,
+                0,
+                bbox=self.bbox,
+                where=self.where,
+            )
             for member in self._members()
         ]
 
@@ -339,6 +367,11 @@ class VectorGbxReader(DataSourceReader):
             kw["max_features"] = partition.count
         if partition.driver:
             kw["driver"] = partition.driver
+        # Pushdown filters -> only matching features are parsed (Serverless memory).
+        if partition.bbox:
+            kw["bbox"] = partition.bbox
+        if partition.where:
+            kw["where"] = partition.where
         with self._staged(partition.path) as _p:
             meta, tbl = pyogrio.read_arrow(_zip_vsi(_p), **kw)
 

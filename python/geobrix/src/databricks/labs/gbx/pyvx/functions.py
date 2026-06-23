@@ -8,13 +8,15 @@ Signatures mirror databricks.labs.gbx.vectorx.functions so light <-> heavy is a
 one-line import swap. Register once with vx.register(spark), then use on columns.
 """
 
-from typing import Union
+from typing import List, Optional, Union
 
 import pandas as pd
 from pyspark.sql import Column, SparkSession
 from pyspark.sql import functions as f
 from pyspark.sql.functions import pandas_udf, udtf
 from pyspark.sql.types import BinaryType
+
+from databricks.labs.gbx import _register
 
 from . import _env, _legacy, _mvt, _tin
 
@@ -264,22 +266,58 @@ class _InterpElevGeomUDTF:
         )
 
 
-def register(spark: SparkSession = None) -> None:
-    """Register the pyvx MVT SQL functions (Serverless-safe: udf/udtf only)."""
-    _env.assert_mvt_available()
+def _registrar_groups() -> List[_register.Group]:
+    mvt = {
+        "gbx_st_asmvt": lambda s: s.udf.register("gbx_st_asmvt", _asmvt_udf),
+        "gbx_st_asmvt_pyramid": lambda s: s.udtf.register(
+            "gbx_st_asmvt_pyramid", _AsMvtPyramidUDTF
+        ),
+    }
+    legacy = {
+        "gbx_st_legacyaswkb": lambda s: s.udf.register(
+            "gbx_st_legacyaswkb", _legacyaswkb_impl, BinaryType()
+        ),
+    }
+    tin = {
+        "gbx_st_triangulate": lambda s: s.udtf.register(
+            "gbx_st_triangulate", _TriangulateUDTF
+        ),
+        "gbx_st_interpolateelevationbbox": lambda s: s.udtf.register(
+            "gbx_st_interpolateelevationbbox", _InterpElevBBoxUDTF
+        ),
+        "gbx_st_interpolateelevationgeom": lambda s: s.udtf.register(
+            "gbx_st_interpolateelevationgeom", _InterpElevGeomUDTF
+        ),
+    }
+
+    def _reg_pmtiles(s):
+        from databricks.labs.gbx.pmtiles import register_pmtiles_agg
+
+        register_pmtiles_agg(s)
+
+    pmtiles = {"gbx_pmtiles_agg": _reg_pmtiles}
+    return [
+        (lambda: _env.assert_mvt_available(), mvt),
+        (lambda: _env.assert_legacy_available(), legacy),
+        (lambda: _env.assert_tin_available(), tin),
+        (lambda: None, pmtiles),
+    ]
+
+
+def register(spark: SparkSession = None, only: Optional[List[str]] = None) -> None:
+    """Register the pyvx VectorX SQL functions (Serverless-safe: udf/udtf only).
+
+    Args:
+        spark: Spark session (uses the active session if not provided).
+        only: Optional list of function names to register (instead of all).
+            Accepts SQL names (``gbx_st_asmvt``) or short names (``st_asmvt``),
+            case-insensitively. ``None`` registers everything; ``[]`` registers
+            nothing. An unrecognized name raises ``ValueError``. A sub-module's
+            availability guard runs only when >=1 of its functions is selected.
+    """
     if spark is None:
         spark = SparkSession.builder.getOrCreate()
-    spark.udf.register("gbx_st_asmvt", _asmvt_udf)
-    spark.udtf.register("gbx_st_asmvt_pyramid", _AsMvtPyramidUDTF)
-    _env.assert_legacy_available()
-    spark.udf.register("gbx_st_legacyaswkb", _legacyaswkb_impl, BinaryType())
-    _env.assert_tin_available()
-    spark.udtf.register("gbx_st_triangulate", _TriangulateUDTF)
-    spark.udtf.register("gbx_st_interpolateelevationbbox", _InterpElevBBoxUDTF)
-    spark.udtf.register("gbx_st_interpolateelevationgeom", _InterpElevGeomUDTF)
-    from databricks.labs.gbx.pmtiles import register_pmtiles_agg
-
-    register_pmtiles_agg(spark)
+    _register.run_groups(_registrar_groups(), spark, only)
 
 
 def st_asmvt_pyramid(

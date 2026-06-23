@@ -9,6 +9,7 @@ shards. Round-trips with the geojson_gbx (multi=true) directory reader.
 import os
 
 import pytest
+from pyspark.sql import functions as F
 from shapely import Point
 from shapely import from_wkb as _from_wkb
 from shapely import to_wkb
@@ -35,7 +36,7 @@ def _shards(out):
 def test_multi_file_one_shard_per_partition(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "shards")
-    df = _wkb_df(spark, 6).repartition(3)
+    df = _wkb_df(spark, 6).repartition(3, F.col("geom_0"))
     nparts = df.rdd.getNumPartitions()
     df.write.format("geojsonl_gbx").mode("overwrite").save(out)
 
@@ -58,7 +59,7 @@ def test_max_records_per_file_splits_partition(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "split")
     n, k = 10, 3  # ceil(10/3) == 4 shards
-    _wkb_df(spark, n).repartition(1).write.format("geojsonl_gbx").mode(
+    _wkb_df(spark, n).repartition(1, F.col("geom_0")).write.format("geojsonl_gbx").mode(
         "overwrite"
     ).option("maxRecordsPerFile", str(k)).save(out)
 
@@ -73,7 +74,7 @@ def test_max_records_per_file_splits_partition(spark, tmp_path):
 def test_output_is_directory_not_single_file(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "dir")
-    _wkb_df(spark, 4).repartition(2).write.format("geojsonl_gbx").mode(
+    _wkb_df(spark, 4).repartition(2, F.col("geom_0")).write.format("geojsonl_gbx").mode(
         "overwrite"
     ).save(out)
     assert os.path.isdir(out)
@@ -94,7 +95,9 @@ def test_wkt_input_roundtrips(spark, tmp_path):
         rows,
         schema="name string, geom_0 string, geom_0_srid string, geom_0_srid_proj string",
     )
-    df.repartition(2).write.format("geojsonl_gbx").mode("overwrite").save(out)
+    df.repartition(2, F.col("geom_0")).write.format("geojsonl_gbx").mode(
+        "overwrite"
+    ).save(out)
     back = spark.read.format("geojson_gbx").option("multi", "true").load(out)
     assert back.count() == 2
     assert {r["name"] for r in back.collect()} == {"a", "b"}
@@ -103,12 +106,12 @@ def test_wkt_input_roundtrips(spark, tmp_path):
 def test_overwrite_clears_previous_shards(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "ow")
-    _wkb_df(spark, 8).repartition(4).write.format("geojsonl_gbx").mode(
+    _wkb_df(spark, 8).repartition(4, F.col("geom_0")).write.format("geojsonl_gbx").mode(
         "overwrite"
     ).save(out)
     first = set(_shards(out))
     # rewrite with fewer rows/partitions -> stale shards must be gone
-    _wkb_df(spark, 2).repartition(1).write.format("geojsonl_gbx").mode(
+    _wkb_df(spark, 2).repartition(1, F.col("geom_0")).write.format("geojsonl_gbx").mode(
         "overwrite"
     ).save(out)
     second = set(_shards(out))
@@ -120,7 +123,7 @@ def test_overwrite_clears_previous_shards(spark, tmp_path):
 def test_append_mode_rejected(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "exists")
-    _wkb_df(spark, 4).repartition(2).write.format("geojsonl_gbx").mode(
+    _wkb_df(spark, 4).repartition(2, F.col("geom_0")).write.format("geojsonl_gbx").mode(
         "overwrite"
     ).save(out)
     with pytest.raises(Exception) as ei:

@@ -60,64 +60,9 @@ class ConstructorExpressionsTest extends AnyFunSuite {
         expr shouldBe a[RST_FromContent]
     }
 
-    // ====== RST_FromFile Expression ======
-
-    test("RST_FromFile should be an Expression") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        expr shouldBe a[Expression]
-    }
-
-    test("RST_FromFile should have three children") {
-        val path = Literal("path")
-        val driver = Literal("GTiff")
-        val expr = RST_FromFile(path, driver)
-        expr.children should have length 3
-    }
-
-    test("RST_FromFile should have tile dataType") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        expr.dataType shouldBe a[StructType]
-    }
-
-    test("RST_FromFile raster field should be BinaryType") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        val tile = expr.dataType.asInstanceOf[StructType]
-        tile("raster").dataType shouldBe BinaryType
-    }
-
-    test("RST_FromFile should be nullable") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        expr.nullable shouldBe true
-    }
-
-    test("RST_FromFile should have correct prettyName") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        expr.prettyName shouldBe "gbx_rst_fromfile"
-    }
-
-    test("RST_FromFile should create replacement") {
-        val expr = RST_FromFile(Literal("path"), Literal("GTiff"))
-        val replacement = expr.replacement
-        replacement should not be null
-    }
-
-
-    // ====== RST_FromFile Object ======
-
-    test("RST_FromFile object should have correct name") {
-        RST_FromFile.name shouldBe "gbx_rst_fromfile"
-    }
-
-    test("RST_FromFile object should provide builder") {
-        val builder = RST_FromFile.builder()
-        builder should not be null
-    }
-
-    test("RST_FromFile builder should create expression") {
-        val builder = RST_FromFile.builder()
-        val expr = builder(Seq(Literal("path"), Literal("GTiff")))
-        expr shouldBe a[RST_FromFile]
-    }
+    // NOTE: gbx_rst_fromfile has no Scala expression (RST_FromFile was removed) -- it is a
+    // lightweight-only Python UDF (the JVM can't read UC Volumes; see register/#34). Its tests
+    // live in the pyrx Python test suite.
 
     // ====== RST_FromBands Expression ======
 

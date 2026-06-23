@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.udfs
 import com.databricks.labs.gbx.udfs.st_buffer
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
@@ -56,7 +57,7 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"),
           (3, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
 
         noException should be thrownBy runQuery(df)
 
@@ -86,7 +87,7 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
         val tifPath = this.getClass.getResource("/modis/").toString
         val df = Seq(
           s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF"
-        ).toDF("path").withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+        ).toDF("path").withColumn("tile", udfs.rasterFromPath(col("path")))
 
         val thrown = intercept[Throwable] {
             df.selectExpr("gbx_rst_combineavg(tile) AS tile").collect()
@@ -142,7 +143,7 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
 
         try {
             val agg = paths.toDF("path")
-                .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+                .withColumn("tile", udfs.rasterFromPath(col("path")))
                 .groupBy(lit(1).alias("g"))
                 .agg(rst_derivedband_agg(col("tile"), doublePyFunc, "myfunc").alias("out"))
                 .select(col("out.raster").alias("raster"))
@@ -199,7 +200,7 @@ class RST_AggEvalTest extends PlanTest with SilentSparkSession {
 
         def mergeMean(order: Seq[String]): Double = {
             val bytes = order.toDF("path")
-                .withColumn("tile", rst_fromfile(col("path"), lit("GTiff")))
+                .withColumn("tile", udfs.rasterFromPath(col("path")))
                 .groupBy(lit(1).alias("g"))
                 .agg(rst_merge_agg(col("tile")).alias("out"))
                 .select(col("out.raster").alias("raster"))

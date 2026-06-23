@@ -55,6 +55,60 @@ def _close_all(memfiles, datasets):
         mf.close()
 
 
+def _reproject_dataset(src, dst_crs):
+    """Reproject an open rasterio dataset to ``dst_crs``; return (memfile, dataset).
+
+    Used by merge_tiles to reconcile a group whose tiles span multiple CRSs (e.g. a
+    UTM zone boundary) before rasterio.merge, which requires a single CRS. Nearest
+    resampling preserves the source values; the source NoData is carried through.
+    Caller MUST close the returned dataset then memfile.
+    """
+    import rasterio
+    from rasterio.warp import Resampling, calculate_default_transform, reproject
+
+    transform, width, height = calculate_default_transform(
+        src.crs, dst_crs, src.width, src.height, *src.bounds
+    )
+    profile = src.profile.copy()
+    profile.update(
+        driver="GTiff", crs=dst_crs, transform=transform, width=width, height=height
+    )
+    mf = MemoryFile()
+    dst = mf.open(**profile)
+    for b in range(1, src.count + 1):
+        reproject(
+            source=rasterio.band(src, b),
+            destination=rasterio.band(dst, b),
+            src_transform=src.transform,
+            src_crs=src.crs,
+            dst_transform=transform,
+            dst_crs=dst_crs,
+            src_nodata=src.nodata,
+            dst_nodata=src.nodata,
+            resampling=Resampling.nearest,
+        )
+    return mf, dst
+
+
+def _pick_ref_crs(datasets):
+    """Deterministic target CRS for a (possibly multi-CRS) group: the smallest EPSG
+    code present. This makes every band's merge of the SAME cell agree on one CRS, so a
+    later frombands can np.stack them. Same-CRS groups return that single CRS unchanged
+    (fast path, no reprojection). Falls back to the first dataset's CRS."""
+    best, best_epsg = None, None
+    for ds in datasets:
+        c = ds.crs
+        if c is None:
+            continue
+        e = c.to_epsg()
+        if e is None:
+            best = best or c
+            continue
+        if best_epsg is None or e < best_epsg:
+            best, best_epsg = c, e
+    return best if best is not None else datasets[0].crs
+
+
 def merge_tiles(rasters: List[bytes]) -> bytes:
     """Merge the group's tile rasters into one spatial mosaic (GTiff bytes).
 
@@ -86,9 +140,23 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
     # (and tier-agreeing) regardless of caller/row-arrival order.
     rasters = sorted((bytes(r) for r in rasters))
     memfiles, datasets = _open_all(rasters)
+    extra = []  # (memfile, dataset) pairs for reprojected sources, closed in finally
     try:
-        ref = datasets[0]
-        mosaic, out_transform = _rio_merge(datasets, method="last")
+        ref_crs = _pick_ref_crs(datasets)
+        # Reconcile CRS before merging: real AOIs that straddle a UTM zone boundary
+        # (e.g. Sentinel-2 over SE Alaska -> EPSG:32608 + 32609) yield groups whose
+        # tiles span multiple CRSs, but rasterio.merge requires one. Reproject any
+        # mismatched source to the reference (first) CRS; same-CRS groups are untouched.
+        merge_ds = []
+        for ds in datasets:
+            if ref_crs is None or ds.crs == ref_crs:
+                merge_ds.append(ds)
+            else:
+                mf, rds = _reproject_dataset(ds, ref_crs)
+                extra.append((mf, rds))
+                merge_ds.append(rds)
+        ref = merge_ds[0]
+        mosaic, out_transform = _rio_merge(merge_ds, method="last")
         profile = ref.profile.copy()
         profile.update(
             driver="GTiff",
@@ -102,6 +170,9 @@ def merge_tiles(rasters: List[bytes]) -> bytes:
                 dst.write(mosaic)
             return out_mf.read()
     finally:
+        for mf, rds in extra:
+            rds.close()
+            mf.close()
         _close_all(memfiles, datasets)
 
 
@@ -196,11 +267,40 @@ def frombands_tiles(indexed: List[Tuple[int, bytes]]) -> bytes:
     rasters = [b for _, b in ordered]
     memfiles, datasets = _open_all(rasters)
     try:
+        import rasterio
+        from rasterio.warp import Resampling, reproject
+
         ref = datasets[0]
+        # Align every band onto the reference (lowest band-index) grid before stacking.
+        # In an agg/grid context the per-band source tiles can have slightly different
+        # extents/shapes (e.g. uneven scene coverage across bands, or a UTM-zone-boundary
+        # cell), so a bare np.stack would fail. This mirrors the heavyweight RST_FromBands,
+        # which builds a VRT and gdal_translate-resamples (bilinear) the bands to one grid.
         bands = []
         for ds in datasets:
+            aligned = (
+                ds.width == ref.width
+                and ds.height == ref.height
+                and ds.transform == ref.transform
+                and ds.crs == ref.crs
+            )
             for i in range(1, ds.count + 1):
-                bands.append(ds.read(i))
+                if aligned:
+                    bands.append(ds.read(i))
+                else:
+                    dest = np.empty((ref.height, ref.width), dtype=ds.dtypes[i - 1])
+                    reproject(
+                        source=rasterio.band(ds, i),
+                        destination=dest,
+                        src_transform=ds.transform,
+                        src_crs=ds.crs,
+                        dst_transform=ref.transform,
+                        dst_crs=ref.crs,
+                        src_nodata=ds.nodata,
+                        dst_nodata=ds.nodata,
+                        resampling=Resampling.bilinear,
+                    )
+                    bands.append(dest)
         data = np.stack(bands)
         profile = ref.profile.copy()
         profile.update(driver="GTiff", count=data.shape[0])

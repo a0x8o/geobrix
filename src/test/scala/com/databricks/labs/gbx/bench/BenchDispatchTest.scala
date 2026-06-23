@@ -22,7 +22,8 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(BenchDispatch.all.toSet.contains("rst_width"))
     // 19 representative + 15 Task 2 scalar + 7 Task 3 coord + 6 Task 4 map/struct
     // + 13 Task 5 tile-out scalar-args + 10 Task 6 tile-out complex-args
-    // + 6 bucket-C C1/C2 (readers + buildoverviews + subdataset fns)
+    // + 5 bucket-C C1/C2 (readers + buildoverviews + subdataset fns; rst_fromfile
+    //   dropped here — lightweight-only now, the JVM cannot read UC Volumes, issue #34)
     // + 3 bucket-C C3 (multi-tile: frombands/combineavg/merge)
     // + 5 bucket-C C4 (tiling: maketiles/retile/tooverlappingtiles/
     //   separatebands/xyzpyramid -> raster_collection fingerprint)
@@ -31,7 +32,7 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     // + 2 bucket-B B-vec (contour, polygonize -> vector fingerprint)
     // + 3 bucket-D geometry-in (rasterize/gridfrompoints/dtmfromgeoms -> raster fp)
     // + 7 bucket-A aggregators (the 7 *_agg, Spark groupBy aggregate harness)
-    assert(BenchDispatch.all.size == 107)
+    assert(BenchDispatch.all.size == 106)
     // bucket A: tile vs geometry aggregate input kinds + agg synth recipes.
     assert(BenchDispatch.inputKind("rst_combineavg_agg") == "tile_aggregate")
     assert(BenchDispatch.inputKind("rst_frombands_agg") == "tile_aggregate")

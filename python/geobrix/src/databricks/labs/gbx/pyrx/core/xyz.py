@@ -17,9 +17,13 @@ rio-tiler handles on-the-fly reprojection: the source raster may be in any CRS;
 import morecantile
 import numpy as np
 from rasterio.warp import transform_bounds
-from rio_tiler.errors import TileOutsideBounds
-from rio_tiler.io import Reader
-from rio_tiler.models import ImageData
+
+# NOTE: rio_tiler is imported LAZILY (inside transparent_png / render_tile), not at
+# module top. rio-tiler 9.x defines TypedDict(extra_items=...) (PEP 728), which fails
+# to import under Databricks Serverless %pip (its immutable constraints hold
+# typing_extensions back). Keeping the import lazy means `import pyrx` — and every
+# rst_* function that does NOT use XYZ tiling — works on Serverless; only rst_tilexyz
+# / rst_xyzpyramid require rio-tiler at call time. See pyproject [light] rio-tiler pin.
 
 # --- constants (mirror heavyweight) -----------------------------------------
 MAX_ZOOM = 20
@@ -48,6 +52,8 @@ _TMS = morecantile.tms.get("WebMercatorQuad")
 
 def transparent_png(size: int) -> bytes:
     """Return a fully transparent RGBA PNG of ``size`` x ``size`` (alpha=0)."""
+    from rio_tiler.models import ImageData  # lazy: see module-top note
+
     s = int(size)
     arr = np.zeros((4, s, s), dtype="uint8")
     return ImageData(arr).render(add_mask=False, img_format="PNG")
@@ -80,6 +86,9 @@ def render_tile(ds, z, x, y, fmt="PNG", size=256, resampling="bilinear") -> byte
     extent / empty tiles, or any hard render failure, return a transparent PNG
     of ``size`` x ``size`` (mirrors heavyweight: PNG regardless of ``fmt``).
     """
+    from rio_tiler.errors import TileOutsideBounds  # lazy: see module-top note
+    from rio_tiler.io import Reader
+
     fmt_u, s, resamp_name = _validate(fmt, size, resampling)
     try:
         with Reader(None, dataset=ds) as cog:

@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.rasterx.functions
+import com.databricks.labs.gbx.udfs
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.plans.PlanTest
 import org.apache.spark.sql.functions._
@@ -21,7 +22,7 @@ class RST_GeneratorsEvalTest extends PlanTest with SilentSparkSession {
           (2, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B02.TIF"),
           (3, s"$tifPath/MCD43A4.A2018185.h10v07.006.2018194033728_B03.TIF")
         ).toDF("id", "path")
-            .withColumn("raster", rst_fromfile(col("path"), lit("GTiff")))
+            .withColumn("raster", udfs.rasterFromPath(col("path")))
 
         // Generators should be kept separately to avoid long execution times
         // as each generates rows it is a multiplier on the number of input rows
