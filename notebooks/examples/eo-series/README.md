@@ -34,7 +34,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 - **One-step raster ingestion** — the `gtiff` reader (and the `binaryFile` → `rst_fromcontent` pattern) materializes a typed `tile` column with bytes, bbox, SRID, and standardized nodata in a single pass.
 - **Spatial-indexed raster tables** — `rst_h3_tessellate` shreds each Sentinel-2 scene into H3 resolution-7 cells, producing `band_b0X_h3` Delta tables that join cleanly across bands and dates.
-- **Raster analytics from SQL/PySpark** — `rst_summary` for per-tile stats, `h3_kring` + `rst_merge_agg` for spatial neighborhoods, and `rasterio_lambda` for raster-to-timeseries projection — no driver-side rasterio loops.
+- **Raster analytics from SQL/PySpark** — `rst_summary` for per-tile stats, `h3_kring` + `rst_merge_agg` for spatial neighborhoods, and the `rst_apply` escape-hatch for raster-to-timeseries projection — no driver-side rasterio loops.
 
 ### 04 — Band Stacking + Clipping
 
