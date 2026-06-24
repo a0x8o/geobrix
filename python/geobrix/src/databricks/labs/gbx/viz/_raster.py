@@ -214,6 +214,72 @@ def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite=
             )
 
 
+def plot_mask_layers(
+    layers, *, fig_w=10, fig_h=8, max_pixels=2000, colors=None, title="coverage layers"
+):
+    """Overlay several single-band presence-mask tiles on one axes, with a legend.
+
+    Each layer is drawn as a single solid colour where it is covered (any
+    non-NoData pixel); NoData is transparent, so layers stack and a legend maps
+    colour → label. Tiles must share the same grid/extent (e.g. produced on a shared
+    canvas via ``rst_h3_gridspec``). Layers are drawn in order, so pass the largest
+    footprint first and the smallest last to keep nested coverage visible. Requires
+    the [viz] extra.
+
+    Args:
+        layers:     list of ``(label, raster_bytes)`` — each a single-band mask.
+        fig_w/fig_h: figure size in inches.
+        max_pixels: decimate above this longest-edge pixel count.
+        colors:     optional list of matplotlib colours, one per layer (defaults to
+                    the ``tab10`` qualitative cycle).
+        title:      axes title.
+    """
+    from databricks.labs.gbx.viz._env import assert_viz_available
+
+    assert_viz_available()
+    import sys
+
+    import matplotlib
+
+    if "matplotlib.pyplot" not in sys.modules and "MPLBACKEND" not in os.environ:
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            matplotlib.use("Agg")
+    from matplotlib import pyplot
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Patch
+    from rasterio.io import MemoryFile
+    from rasterio.plot import plotting_extent
+
+    if colors is None:
+        cmap = pyplot.get_cmap("tab10")
+        colors = [cmap(i % 10) for i in range(len(layers))]
+
+    fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
+    ax.set_facecolor("whitesmoke")
+    handles = []
+    for (label, raster_bytes), color in zip(layers, colors):
+        with MemoryFile(bytes(raster_bytes)) as mf:
+            with mf.open() as src:
+                data, transform, _ = _decimated_read(src, max_pixels)
+        band = data[0]
+        if isinstance(band, np.ma.MaskedArray):
+            covered = ~np.ma.getmaskarray(band)
+        else:
+            covered = np.ones(band.shape, dtype=bool)
+        overlay = np.ma.MaskedArray(np.ones(band.shape, dtype="float32"), mask=~covered)
+        ax.imshow(
+            overlay,
+            cmap=ListedColormap([color]),
+            extent=plotting_extent(band, transform),
+            vmin=0,
+            vmax=1,
+        )
+        handles.append(Patch(facecolor=color, label=str(label)))
+    ax.legend(handles=handles, loc="upper right", framealpha=0.9)
+    ax.set_title(title)
+    pyplot.show()
+
+
 def plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto"):
     """Render a raster from disk (TIF, VRT, ...) with the plot_raster pipeline.
 

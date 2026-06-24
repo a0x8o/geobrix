@@ -236,6 +236,62 @@ def _make_presence_mask_gtiff():
     return buf.getvalue()
 
 
+def test_plot_mask_layers_overlays_distinct_colours_with_legend():
+    """plot_mask_layers draws each mask as its own colour on one axes, with a legend.
+
+    Asserts real drawn content: two AxesImages, a 2-entry legend, and both requested
+    colours present in the rasterized buffer (not a single blended/blank layer).
+    """
+    from databricks.labs.gbx.viz import plot_mask_layers
+
+    # Two nested masks on the SAME 16x16 grid: big (12x12) and small (6x6).
+    transform = from_origin(0.0, 16.0, 1.0, 1.0)
+    profile = dict(
+        driver="GTiff",
+        width=16,
+        height=16,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=transform,
+        nodata=NODATA,
+    )
+
+    def mask(lo, hi):
+        a = np.full((16, 16), NODATA, dtype="float32")
+        a[lo:hi, lo:hi] = 1.0
+        b = io.BytesIO()
+        with rasterio.open(b, "w", **profile) as ds:
+            ds.write(a, 1)
+        return b.getvalue()
+
+    plt.close("all")
+    plot_mask_layers(
+        [("big", mask(2, 14)), ("small", mask(5, 11))],
+        colors=["#1f77b4", "#ff7f0e"],  # blue, orange
+        fig_w=5,
+        fig_h=5,
+    )
+    fig = plt.gcf()
+    ax = fig.axes[0]
+    assert len(ax.get_images()) == 2, "expected two overlaid layers"
+    legend = ax.get_legend()
+    assert (
+        legend is not None and len(legend.get_texts()) == 2
+    ), "expected a 2-entry legend"
+
+    fig.canvas.draw()
+    buf = np.asarray(fig.canvas.buffer_rgba())[..., :3].astype(int)
+
+    def count_near(rgb):
+        d = np.abs(buf - np.array(rgb)).sum(axis=2)
+        return int((d < 40).sum())
+
+    assert count_near([31, 119, 180]) > 100, "blue layer not drawn"
+    assert count_near([255, 127, 14]) > 100, "orange layer not drawn"
+    plt.close("all")
+
+
 def test_plot_raster_presence_mask_actually_draws_footprint():
     """A constant-value presence mask must DRAW its footprint, not render blank.
 
