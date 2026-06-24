@@ -37,7 +37,16 @@ import importlib.util
 
 # Every test dir whose modules import light-tier-only deps. Ignored in the
 # heavyweight CI env (no rasterio); collected + run in the light env.
-_LIGHT_TEST_DIRS = ["bench", "ds", "pyrx", "pyvx", "pygx", "pmtiles_light", "stac", "viz"]
+_LIGHT_TEST_DIRS = [
+    "bench",
+    "ds",
+    "pyrx",
+    "pyvx",
+    "pygx",
+    "pmtiles_light",
+    "stac",
+    "viz",
+]
 
 # Skip the light-tier suites when their dependencies are not installed.
 if importlib.util.find_spec("rasterio") is None:
