@@ -133,9 +133,10 @@ STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE,
 ```
 
 **Bounds mode + padding.**
-- `mode='centroids'` (default) — bounds = bbox of the cell **centroids**, then
-  ±half-pixel so the extreme centroids land on corner pixel *centers*. Compact;
-  ≈1 pixel per cell at the default pixel size.
+- `mode='centroids'` (default) — bounds = bbox of the cell **centroids**, snapped
+  outward to the pixel lattice via `floor(xmin/ps)*ps` and `ceil(ymax/ps)*ps` so
+  every centroid falls within a full pixel. Compact; ≈1 pixel per cell at the
+  default pixel size.
 - `mode='spatial_envelope'` — bounds = OGC **envelope** of the cell geometries
   (full hexagon footprints). Use with sub-cell pixels when you want complete cell
   shapes rendered.

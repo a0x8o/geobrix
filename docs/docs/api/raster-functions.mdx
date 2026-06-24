@@ -1105,27 +1105,48 @@ Scalar function — returns the bounding box `STRUCT<xmin, ymin, xmax, ymax>` fo
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="h3_cell_bbox_sql_example" outputConstant="h3_cell_bbox_sql_example_output" code={rasterxSqlCode} />
 
-### rst_h3_gridspec (Python helper)
+### rst_h3_gridspec (Python / DataFrame helper)
 
-:::note Python / DataFrame API only
-`rst_h3_gridspec` is **not registered as a SQL function**. It is a Python helper available in both execution tiers as `rx.rst_h3_gridspec(cellids, srid, mode, kring_pad)`.
+:::note Lightweight (pyrx) Python helper only
+`rst_h3_gridspec` is **not registered as a SQL function** and is **not available in the heavyweight tier**. It is a pure-Python / PySpark DataFrame helper in the `pyrx` package.
+
+For the heavyweight tier, compose the equivalent shared canvas using the registered scalar `gbx_h3_cell_bbox(cellid, srid, mode, kring_pad)` with native Spark `min`/`max` aggregates and the same floor/ceil snap arithmetic:
+```sql
+SELECT min(cell_bbox.xmin), min(cell_bbox.ymin),
+       max(cell_bbox.xmax), max(cell_bbox.ymax)
+FROM   (SELECT gbx_h3_cell_bbox(cellid, 4326, 'centroids', 1) AS cell_bbox FROM cells)
+```
 :::
 
-`rst_h3_gridspec` computes the shared, snapped canvas (extent + pixel size) that a collection of H3 cells should use so that per-threshold rasters align on a common grid and can be stacked via `rst_frombands_agg` or mosaicked via `rst_merge_agg`.
+`rst_h3_gridspec` computes the shared, snapped canvas (extent + pixel size) that a group of H3 cells should use so that per-threshold rasters align on a common grid and can be stacked via `rst_frombands_agg` or mosaicked via `rst_merge_agg`.
+
+**Signature:**
+```python
+rx.rst_h3_gridspec(df, cell_col="cellid", *group_cols,
+                   srid=4326, pixel_size=None,
+                   mode="centroids", kring_pad=1)
+```
 
 **Typical multi-threshold workflow:**
 
-1. Call `rx.rst_h3_gridspec(cellids, srid=4326, mode='centroids', kring_pad=1)` once on the distinct cell set to get a single `(xmin, ymin, xmax, ymax, width, height)` grid spec.
+1. Call `rx.rst_h3_gridspec(df, cell_col="cellid", srid=4326, mode='centroids', kring_pad=1)` once on the distinct cell set. It returns the grouped DataFrame with a `grid` struct column — one row per group containing the shared canvas.
 2. For each threshold band, run `rst_h3_rasterize_agg` with those fixed bounds — all output tiles share the same origin and pixel grid.
 3. Stack aligned bands with `rst_frombands_agg` (ordered by `band_index`), or mosaic per-cell tiles with `rst_merge_agg`.
 
 **Parameters:**
-- `cellids` — iterable of H3 cell IDs (BIGINT or STRING) that define the canvas
-- `srid` — EPSG code; `4326` for WGS 84 (default)
+- `df` — input Spark DataFrame containing H3 cell IDs
+- `cell_col` — column name holding H3 cell IDs (integer or string); default `"cellid"`
+- `*group_cols` — additional grouping columns (e.g. a transmitter ID, year, month); one grid spec row is produced per group
+- `srid` — EPSG code for the output CRS; `4326` for WGS 84 (default)
+- `pixel_size` — ground resolution in CRS units; `None` = auto-derived from the H3 resolution via an edge-length heuristic (default)
 - `mode` — `'centroids'` (default) or `'spatial_envelope'`
-- `kring_pad` — ring count by which to expand the canvas boundary (default `1`)
+- `kring_pad` — k-ring expansion applied per cell before computing its bounding box (default `1`)
 
-**Returns:** `dict` with keys `xmin`, `ymin`, `xmax`, `ymax`, `width_px`, `height_px`, `pixel_size`
+**Returns:** the grouped DataFrame with a `grid` column of type:
+```
+STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE,
+       pixel_size DOUBLE, width INT, height INT, srid INT>
+```
 
 ---
 
