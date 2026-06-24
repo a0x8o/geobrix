@@ -74,14 +74,25 @@ def test_roundtrip_rastertogrid_then_rasterize(spark):
         covered = arr[arr != ds.nodata]
         assert covered.size > 0, "no covered pixels in round-trip raster"
 
-        measures = np.array(sorted(cv.values()))
-        # Every burned value should match the nearest cell measure within float tolerance.
-        # searchsorted finds the insertion point; we clip to valid range and check closeness.
-        nearest_idx = np.searchsorted(measures, covered).clip(0, len(measures) - 1)
-        close_frac = np.isclose(covered, measures[nearest_idx], atol=1e-6).mean()
-        assert close_frac > 0.99, (
-            f"only {close_frac:.1%} of covered pixels match a cell measure "
-            "(expected >99%)"
+        measures = np.array(sorted(cv.values()), dtype="float64")
+        covered_f64 = covered.astype("float64")
+        assert covered_f64.size > 0, "no covered pixels in round-trip raster"
+        # True nearest-value check: for each covered pixel find the minimum
+        # distance to any cell measure.  GeoTIFF float32 quantizes ~1e-3, so
+        # use that as the per-pixel tolerance instead of 1e-6.
+        # To avoid a large broadcast for big rasters, use a sorted searchsorted
+        # approach: for each pixel check both its left and right neighbours.
+        ins = np.searchsorted(measures, covered_f64)
+        left_idx = (ins - 1).clip(0, len(measures) - 1)
+        right_idx = ins.clip(0, len(measures) - 1)
+        diffs = np.minimum(
+            np.abs(covered_f64 - measures[left_idx]),
+            np.abs(covered_f64 - measures[right_idx]),
+        )
+        off_count = int((diffs >= 1e-3).sum())
+        assert off_count / covered_f64.size <= 0.01, (
+            f"burned values not matching any cell measure: "
+            f"{off_count}/{covered_f64.size} off"
         )
 
 
@@ -116,3 +127,14 @@ def test_partition_property_via_agg(spark):
                     f"pixel ({row},{col}) lat={lat:.6f} lon={lon:.6f}: "
                     f"burned={burned} but cell {pixel_cell} in_cellset={in_set}"
                 )
+        # Guard against vacuous pass: an all-NoData or all-burned output would
+        # trivially satisfy the biconditional above if cellset happened to cover
+        # everything or nothing.
+        burned_count = int((arr != ds.nodata).sum())
+        assert burned_count >= len(
+            cells
+        ), f"fewer burned pixels ({burned_count}) than input cells ({len(cells)})"
+        assert burned_count < arr.size, (
+            f"expected some NoData pixels outside the polygon "
+            f"(burned_count={burned_count}, arr.size={arr.size})"
+        )
