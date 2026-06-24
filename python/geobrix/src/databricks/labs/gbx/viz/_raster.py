@@ -63,8 +63,42 @@ def _percentile_stretch(data, lo_pct=2, hi_pct=98):
     return np.ma.MaskedArray(out, mask=data.mask) if is_masked else out
 
 
-def _render(data, transform, *, title, fig_w, fig_h, scale):
-    """Stretch when needed, then plot via rasterio.plot.show (Agg-safe)."""
+def _coverage_depth(data, nodata):
+    """Per-pixel count of bands that cover the pixel (valid / not-NoData).
+
+    Args:
+        data:   3-D array of shape (bands, height, width).  May be a
+                ``numpy.ma.MaskedArray`` (masked pixels = not covered) or a
+                plain ndarray where ``nodata`` marks missing values.
+        nodata: Scalar nodata sentinel used when *data* is not masked.
+
+    Returns:
+        2-D ``float32`` array of shape (height, width) with values in
+        ``[0, bands]``.  A value of 0 means no band covers that pixel.
+    """
+    if isinstance(data, np.ma.MaskedArray):
+        covered = (~data.mask).astype(np.float32)
+    else:
+        arr = np.asarray(data, dtype=np.float32)
+        if nodata is not None and np.isnan(nodata):
+            covered = (~np.isnan(arr)).astype(np.float32)
+        elif nodata is not None:
+            covered = (arr != float(nodata)).astype(np.float32)
+        else:
+            covered = np.ones(arr.shape, dtype=np.float32)
+    return covered.sum(axis=0)
+
+
+def _render(
+    data, transform, *, title, fig_w, fig_h, scale, composite="auto", nodata=None
+):
+    """Stretch when needed, then plot via rasterio.plot.show (Agg-safe).
+
+    Args:
+        composite: ``"auto"`` — 1 band → viridis; 3+ → RGB (default).
+                   ``"depth"`` — render per-pixel band coverage count as viridis;
+                   depth==0 (no band covers the pixel) is masked transparent.
+    """
     import sys
 
     import matplotlib
@@ -80,6 +114,23 @@ def _render(data, transform, *, title, fig_w, fig_h, scale):
     from matplotlib import pyplot
     from rasterio.plot import show
 
+    if composite == "depth":
+        depth = _coverage_depth(data, nodata)
+        # Mask pixels where no band covers — render as transparent.
+        depth_masked = np.ma.MaskedArray(
+            depth[np.newaxis, ...], mask=(depth == 0)[np.newaxis, ...]
+        )
+        full_title = (
+            f"coverage depth (bands) (scale 1/{round(scale, 1)}x)"
+            if scale > 1
+            else "coverage depth (bands)"
+        )
+        fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
+        show(depth_masked, ax=ax, transform=transform, cmap="viridis")
+        ax.set_title(full_title)
+        pyplot.show()
+        return
+
     if _needs_percentile_stretch(data):
         data = _percentile_stretch(data)
     fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
@@ -92,12 +143,19 @@ def _render(data, transform, *, title, fig_w, fig_h, scale):
     pyplot.show()
 
 
-def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000):
+def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto"):
     """Render a raster from in-memory bytes (e.g. a tile's `raster` field).
 
     Auto-decimates above max_pixels; integer rasters whose values exceed 255
     (typical EO UInt16) get a per-band 2-98% percentile stretch. Single-band ->
     viridis; multi-band -> RGB. Requires the [viz] extra.
+
+    Args:
+        composite: ``"auto"`` (default) — 1 band → viridis; 3+ → RGB.
+                   ``"depth"`` — render per-pixel coverage depth (count of bands
+                   covering each pixel) as a viridis gradient; uncovered pixels
+                   are masked transparent.  Useful for multi-band presence masks
+                   where an RGB composite would appear mostly black.
     """
     from databricks.labs.gbx.viz._env import assert_viz_available
 
@@ -114,11 +172,18 @@ def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000):
                 fig_w=fig_w,
                 fig_h=fig_h,
                 scale=scale,
+                composite=composite,
+                nodata=src.nodata,
             )
 
 
-def plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000):
-    """Render a raster from disk (TIF, VRT, ...) with the plot_raster pipeline."""
+def plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto"):
+    """Render a raster from disk (TIF, VRT, ...) with the plot_raster pipeline.
+
+    Args:
+        composite: ``"auto"`` (default) — 1 band → viridis; 3+ → RGB.
+                   ``"depth"`` — per-pixel coverage depth rendered as viridis.
+    """
     from databricks.labs.gbx.viz._env import assert_viz_available
 
     assert_viz_available()
@@ -133,4 +198,6 @@ def plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000):
             fig_w=fig_w,
             fig_h=fig_h,
             scale=scale,
+            composite=composite,
+            nodata=src.nodata,
         )
