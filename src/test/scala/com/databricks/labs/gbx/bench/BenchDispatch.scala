@@ -1042,15 +1042,15 @@ object BenchDispatch {
       // the SAME constants the pyrx tier passes (PARITY CONTRACT, see h3Ragg*
       // above). value is NULL on every row -> presence-mask burn (1.0). pixel_size
       // is supplied too (unused once the explicit extent is given, but keeps the
-      // 12-arg signature). The grouped-agg UDF returns BINARY; the runner wraps it
-      // with gbx_rst_fromcontent so the consistency collect yields a tile struct
-      // whose `raster` bytes fingerprint cross-tier.
+      // 12-arg signature). The HEAVY UDAF returns a tile STRUCT directly (dataType =
+      // tileDataType(BinaryType); only the lightweight SQL form returns BINARY), so --
+      // exactly like rst_rasterize_agg -- it is NOT wrapped in gbx_rst_fromcontent;
+      // the consistency collect reads `raster` straight off the struct to fingerprint.
       case "rst_h3_rasterize_agg" =>
         expr(
-          s"gbx_rst_fromcontent(" +
-            s"gbx_rst_h3_rasterize_agg(cellid, value, $h3RaggSrid, $h3RaggPixelSize, " +
+          s"gbx_rst_h3_rasterize_agg(cellid, value, $h3RaggSrid, $h3RaggPixelSize, " +
             s"$h3RaggXmin, $h3RaggYmin, $h3RaggXmax, $h3RaggYmax, " +
-            s"$h3RaggWidth, $h3RaggHeight, '$h3RaggMode', $h3RaggKringPad), 'GTiff')")
+            s"$h3RaggWidth, $h3RaggHeight, '$h3RaggMode', $h3RaggKringPad)")
       case other => throw new IllegalArgumentException(s"not an aggregator: $other")
     }
   }
