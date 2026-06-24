@@ -11,7 +11,7 @@
 
 <rect x="0" y="0" width="2100" height="1200" fill="url(#bg)"/>
 <text x="36" y="64" font-size="30" font-weight="800" fill="#0F1B2A">GeoBrix &#183; RasterX</text>
-<text x="36" y="92" font-size="15" fill="#3F4D5E">107 SQL functions for raster data on Spark &#8212; registered as <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan> &#183; also available in Python &amp; Scala as <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#0F1B2A">rst_*</tspan></text>
+<text x="36" y="92" font-size="15" fill="#3F4D5E">108 SQL functions for raster data on Spark &#8212; registered as <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan> &#183; also available in Python &amp; Scala as <tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="700" fill="#0F1B2A">rst_*</tspan></text>
 <rect x="1938" y="44" rx="13" ry="13" width="126" height="26" fill="#0F1B2A"/><text x="2001.0" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">v0.4.0  *  Beta</text>
 <rect x="36" y="146" rx="14" ry="14" width="660" height="136" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" filter="url(#card-shadow)"/>
 <path d="M 36 160 A 14 14 0 0 1 50 146 H 682 A 14 14 0 0 1 696 160 V 151 H 36 Z" fill="#E04E2A"/>
@@ -123,7 +123,7 @@
 <rect x="1038.0" y="1010.0" rx="13" ry="13" width="136" height="28" fill="#FAECE3" stroke="#D44E12" stroke-opacity="0.35" stroke-width="1"/><text x="1106.0" y="1028.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#D44E12" font-weight="600">rst_xyzpyramid</text>
 <rect x="1404" y="146" rx="14" ry="14" width="660" height="208" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" filter="url(#card-shadow)"/>
 <path d="M 1404 160 A 14 14 0 0 1 1418 146 H 2050 A 14 14 0 0 1 2064 160 V 151 H 1404 Z" fill="#7A4FD3"/>
-<rect x="1985" y="172" rx="11" ry="11" width="57" height="22" fill="#7A4FD3"/><text x="2013.5" y="187.5" text-anchor="middle" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">7 fns</text>
+<rect x="1985" y="172" rx="11" ry="11" width="57" height="22" fill="#7A4FD3"/><text x="2013.5" y="187.5" text-anchor="middle" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">8 fns</text>
 <text x="1426" y="186" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="20" font-weight="800" fill="#1B3139">Aggregators</text>
 <text x="1426" y="206" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" fill="#5A6878">Combine tiles in GROUP BY</text>
 <rect x="1426.0" y="228.0" rx="13" ry="13" width="168" height="28" fill="#ECE6FA" stroke="#7A4FD3" stroke-opacity="0.35" stroke-width="1"/><text x="1510.0" y="246.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7A4FD3" font-weight="600">rst_combineavg_agg</text>
@@ -133,6 +133,7 @@
 <rect x="1594.0" y="264.0" rx="13" ry="13" width="160" height="28" fill="#ECE6FA" stroke="#7A4FD3" stroke-opacity="0.35" stroke-width="1"/><text x="1674.0" y="282.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7A4FD3" font-weight="600">rst_rasterize_agg</text>
 <rect x="1762.0" y="264.0" rx="13" ry="13" width="184" height="28" fill="#ECE6FA" stroke="#7A4FD3" stroke-opacity="0.35" stroke-width="1"/><text x="1854.0" y="282.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7A4FD3" font-weight="600">rst_dtmfromgeoms_agg</text>
 <rect x="1426.0" y="300.0" rx="13" ry="13" width="200" height="28" fill="#ECE6FA" stroke="#7A4FD3" stroke-opacity="0.35" stroke-width="1"/><text x="1526.0" y="318.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7A4FD3" font-weight="600">rst_gridfrompoints_agg</text>
+<rect x="1634.0" y="300.0" rx="13" ry="13" width="184" height="28" fill="#ECE6FA" stroke="#7A4FD3" stroke-opacity="0.35" stroke-width="1"/><text x="1726.0" y="318.0" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#7A4FD3" font-weight="600">rst_h3_rasterize_agg</text>
 <rect x="1404" y="376" rx="14" ry="14" width="660" height="136" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1" filter="url(#card-shadow)"/>
 <path d="M 1404 390 A 14 14 0 0 1 1418 376 H 2050 A 14 14 0 0 1 2064 390 V 381 H 1404 Z" fill="#2E8B57"/>
 <rect x="1985" y="402" rx="11" ry="11" width="57" height="22" fill="#2E8B57"/><text x="2013.5" y="417.5" text-anchor="middle" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">6 fns</text>
