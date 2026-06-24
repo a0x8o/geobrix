@@ -2,7 +2,7 @@ package com.databricks.labs.gbx.rasterx
 
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, RegistryDelegate}
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
-import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_MergeAgg, RST_RasterizeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_H3_RasterizeAgg, RST_MergeAgg, RST_RasterizeAgg}
 import com.databricks.labs.gbx.rasterx.expressions.analysis._
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent}
 import com.databricks.labs.gbx.rasterx.expressions.dem._
@@ -81,6 +81,7 @@ object functions extends Serializable {
         rd.register(RST_FromBandsAgg)
         rd.register(RST_MergeAgg)
         rd.register(RST_RasterizeAgg)
+        rd.register(RST_H3_RasterizeAgg)
 
         // Constructors
         rd.register(RST_FromBands)
@@ -108,6 +109,7 @@ object functions extends Serializable {
         rd.register(RST_Quadbin_RasterToGridMax)
         rd.register(RST_Quadbin_RasterToGridMin)
         rd.register(RST_Quadbin_RasterToGridMedian)
+        rd.register(RST_H3_CellBBox)
 
         // Operations
         rd.register(RST_AsFormat)
@@ -219,6 +221,33 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
       ColumnAdapter(RST_DerivedBandAgg.name, Seq(tileExpr, lit(pyfunc), lit(funcName)))
     def rst_merge_agg(tileExpr: Column): Column = ColumnAdapter(RST_MergeAgg.name, Seq(tileExpr))
 
+    /** UDAF: rasterize a group's H3 cells into one tile (pixel-centroid burn).
+     *  Auto-derives the grid from the cell set; value omitted -> presence mask (1.0). */
+    def rst_h3_rasterize_agg(cellid: Column): Column =
+        ColumnAdapter(RST_H3_RasterizeAgg.name, Seq(
+            cellid, lit(null).cast("double"), lit(4326), lit(null).cast("double"),
+            lit(null).cast("double"), lit(null).cast("double"),
+            lit(null).cast("double"), lit(null).cast("double"),
+            lit(null).cast("int"), lit(null).cast("int"),
+            lit("centroids"), lit(1)
+        ))
+    def rst_h3_rasterize_agg(cellid: Column, value: Column): Column =
+        ColumnAdapter(RST_H3_RasterizeAgg.name, Seq(
+            cellid, value, lit(4326), lit(null).cast("double"),
+            lit(null).cast("double"), lit(null).cast("double"),
+            lit(null).cast("double"), lit(null).cast("double"),
+            lit(null).cast("int"), lit(null).cast("int"),
+            lit("centroids"), lit(1)
+        ))
+    def rst_h3_rasterize_agg(
+        cellid: Column, value: Column, srid: Column, pixelSize: Column,
+        xmin: Column, ymin: Column, xmax: Column, ymax: Column,
+        width: Column, height: Column, mode: Column, kringPad: Column
+    ): Column =
+        ColumnAdapter(RST_H3_RasterizeAgg.name, Seq(
+            cellid, value, srid, pixelSize, xmin, ymin, xmax, ymax, width, height, mode, kringPad
+        ))
+
     // Constructors
     def rst_fromcontent(content: Column, driver: Column): Column = ColumnAdapter(RST_FromContent.name, Seq(content, driver))
     // rst_fromfile is lightweight-only (Python UDF); no Scala/JVM column helper (see register/#34).
@@ -257,6 +286,14 @@ def rst_combineavg_agg(tileExpr: Column): Column = ColumnAdapter(RST_CombineAvgA
         ColumnAdapter(RST_Quadbin_RasterToGridMin.name, Seq(tileExpr, resolution))
     def rst_quadbin_rastertogridmedian(tileExpr: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridMedian.name, Seq(tileExpr, resolution))
+
+    /** Bounding box STRUCT<xmin,ymin,xmax,ymax> of one H3 cell in `srid`. */
+    def gbx_h3_cell_bbox(cellid: Column): Column =
+        ColumnAdapter(RST_H3_CellBBox.name, Seq(cellid, lit(4326), lit("centroids"), lit(0)))
+    def gbx_h3_cell_bbox(cellid: Column, srid: Column, mode: Column, kringPad: Column): Column =
+        ColumnAdapter(RST_H3_CellBBox.name, Seq(cellid, srid, mode, kringPad))
+    def gbx_h3_cell_bbox(cellid: Column, srid: Int, mode: String, kringPad: Int): Column =
+        gbx_h3_cell_bbox(cellid, lit(srid), lit(mode), lit(kringPad))
 
     // Operations
     def rst_asformat(tileExpr: Column, newFormat: Column): Column = ColumnAdapter(RST_AsFormat.name, Seq(tileExpr, newFormat))
