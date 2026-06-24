@@ -3421,15 +3421,17 @@ def rst_h3_gridspec(
     import math as _math
 
     # Sample one cell on the driver to obtain the H3 resolution for auto pixel_size.
+    # An empty input is always an error: there is nothing to rasterize onto.
     _res = None
     _pixel_size = pixel_size
     if _pixel_size is None:
         first_row = df.select(cell_col).first()
-        if first_row is not None and first_row[0] is not None:
-            sample_str = cellraster_core._h3_str(int(first_row[0]))
-            import h3 as _h3_driver
+        if first_row is None or first_row[0] is None:
+            raise ValueError("empty cell set")
+        sample_str = cellraster_core._h3_str(int(first_row[0]))
+        import h3 as _h3_driver
 
-            _res = _h3_driver.get_resolution(sample_str)
+        _res = _h3_driver.get_resolution(sample_str)
 
     # Per-cell expanded bbox (kring_pad applied inside the scalar UDF).
     b = _h3_cell_bbox_udf(_col(cell_col), f.lit(srid), f.lit(mode), f.lit(kring_pad))
