@@ -3150,7 +3150,9 @@ def _rst_h3_rasterize_agg_udf(
     cells = [int(c) for c in cellid if c is not None]
     if not cells:
         return None
-    vals = [float(v) if v is not None else 1.0 for v in value]
+    # Null value -> presence mask (1.0). A null in a typed (Double) value column
+    # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
+    vals = [1.0 if v is None or pd.isna(v) else float(v) for v in value]
     cell_values = {}
     for c, v in zip(cells, vals):
         cell_values[c] = v  # last-wins (cells of one res don't overlap)
