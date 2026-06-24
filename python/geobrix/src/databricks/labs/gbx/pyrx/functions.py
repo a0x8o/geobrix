@@ -3440,10 +3440,7 @@ def _h3_cell_bbox_udf(cellid, srid, mode, kring_pad):
     """
     if cellid is None:
         return None
-    import math as _math
-
     import h3 as _h3
-    import numpy as _np
 
     from databricks.labs.gbx.pyrx.core import cellraster as _cr
 
@@ -3526,8 +3523,6 @@ def rst_h3_gridspec(
     Returns:
         DataFrame grouped by *group_cols* with a ``grid`` struct column added.
     """
-    import math as _math
-
     # Sample one cell on the driver to obtain the H3 resolution for auto pixel_size.
     # An empty input is always an error: there is nothing to rasterize onto.
     _res = None
@@ -3555,7 +3550,6 @@ def rst_h3_gridspec(
 
     # Capture closure values for the snap UDF (driver-side constants).
     _srid_val = srid
-    _mode_val = mode
 
     @f.udf(_GRID_SCHEMA)
     def _snap_to_grid(bxmin, bymin, bxmax, bymax):

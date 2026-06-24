@@ -1,5 +1,4 @@
 import h3
-import numpy as np
 
 from databricks.labs.gbx.pyrx import _serde
 from databricks.labs.gbx.pyrx.core import cellraster as cr
