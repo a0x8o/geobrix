@@ -499,10 +499,10 @@ def test_coverage_block_reports_coverage_parity_gap_and_uncovered():
         _cmp("rst_clip", "pure-core", 20.0, 10.0, 2.0, "na", ""),
     ]
     md = c.coverage_block(cells)
-    # Coverage: distinct fn count across all cells = 5, out of 107
+    # Coverage: distinct fn count across all cells = 5, out of 108
     assert "Benchmark coverage:" in md
-    assert "/ 107" in md
-    assert "5 / 107" in md
+    assert "/ 108" in md
+    assert "5 / 108" in md
     # Parity counts among non-na cells (4 compared: exact 2, within_tol 1, divergent 1)
     assert "exact" in md
     assert "within_tol" in md
@@ -525,7 +525,7 @@ def test_summarize_compare_includes_coverage_block():
     ]
     md = c.summarize_compare(cells, [], [], [])
     assert "Coverage & parity" in md
-    assert "/ 107" in md
+    assert "/ 108" in md
     assert "Functional parity gap:** 0" in md
     assert "No comparison cell in this run:" in md
     # ordering: Insights before Coverage before the per-mode tables

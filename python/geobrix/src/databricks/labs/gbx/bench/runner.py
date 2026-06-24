@@ -529,6 +529,31 @@ def _geometry_aggregate_df(spark, root, corpus, fs):
     return df, extent
 
 
+def _h3_aggregate_df(spark, fs):
+    """Build the (cellid LONG, value DOUBLE) DataFrame for the H3 rasterize agg group.
+
+    The fixed CONSISTENCY group is the deterministic H3 cell set from
+    ``spec.h3_rasterize_cells()`` (the res-9 NYC cell grid-disk'd to k=10 -- the
+    SAME recipe the Scala BenchDispatch h3Aggregate branch generates, so both
+    tiers burn an identical cell set). ``value`` is NULL on every row -> the
+    presence-mask burn (1.0). The explicit grid rides in ``fs.args`` (passed to
+    both tiers identically), not in this DataFrame. Returns a df with columns
+    (cellid LONG, value DOUBLE).
+    """
+    from pyspark.sql.types import DoubleType, LongType, StructField, StructType
+
+    cells = _spec.h3_rasterize_cells()
+    # value=None on every row -> presence mask (heavy + light both burn 1.0).
+    rows = [(int(c), None) for c in cells]
+    schema = StructType(
+        [
+            StructField("cellid", LongType(), False),
+            StructField("value", DoubleType(), True),
+        ]
+    )
+    return spark.createDataFrame(rows, schema=schema)
+
+
 def _emit_explain(label: str, df, explain_dir: str = "") -> None:
     """Print a DataFrame's formatted physical plan under a labeled header and, when
     explain_dir is set, also persist it to {explain_dir}/{label}.explain.txt so a run's
@@ -584,6 +609,24 @@ def _explain_aggregate(spark, fs, group_df, agg_col, n, parts, explain_dir):
     )
 
 
+def _build_agg_group_df(spark, root, corpus, fs, kind):
+    """Build a *_agg aggregator's fixed CONSISTENCY group DataFrame.
+
+    Returns ``(group_df, has_band_index, extent)``. ``has_band_index`` is True only
+    for rst_frombands_agg (its per-row ascending-sort key); ``extent`` is the
+    per-group (xmin..height, srid) constants for geometry aggregators, else None.
+    h3_aggregate streams (cellid, value) rows from the fixed deterministic cell set
+    (the explicit grid rides in fs.args, so no extent).
+    """
+    if kind == "tile_aggregate":
+        group_df, has_band_index = _tile_aggregate_df(spark, root, corpus, fs)
+        return group_df, has_band_index, None
+    if kind == "h3_aggregate":
+        return _h3_aggregate_df(spark, fs), False, None
+    group_df, extent = _geometry_aggregate_df(spark, root, corpus, fs)
+    return group_df, False, extent
+
+
 def _run_aggregate(
     spark,
     root,
@@ -611,12 +654,9 @@ def _run_aggregate(
     pool = corpus.row_pool
     kind = fs.input_kind
     try:
-        if kind == "tile_aggregate":
-            group_df, has_band_index = _tile_aggregate_df(spark, root, corpus, fs)
-            extent = None
-        else:
-            has_band_index = False
-            group_df, extent = _geometry_aggregate_df(spark, root, corpus, fs)
+        group_df, has_band_index, extent = _build_agg_group_df(
+            spark, root, corpus, fs, kind
+        )
     except Exception as e:  # noqa: BLE001 — surface a clean error row, don't crash
         return [
             _agg_result_row(fs, run_id, pool, n, env, None, "", "error", str(e)[:300])
@@ -629,6 +669,9 @@ def _run_aggregate(
             if has_band_index:
                 return fs.col_fn(df["tile"], fs.args, df["band_index"])
             return fs.col_fn(df["tile"], fs.args)
+        if kind == "h3_aggregate":
+            # h3 aggregate: (cellid, value, args); the explicit grid rides in args.
+            return fs.col_fn(df["cellid"], df["value"], fs.args)
         # geometry aggregate: (geom_wkb, value, extent_tuple, args)
         return fs.col_fn(df["geom_wkb"], df["value"], extent, fs.args)
 
@@ -776,7 +819,7 @@ def _explain_spark_path(
         _k = getattr(_fs, "input_kind", "tile")
         _n = max(row_counts)
         try:
-            if _k in ("tile_aggregate", "geometry_aggregate"):
+            if _k in ("tile_aggregate", "geometry_aggregate", "h3_aggregate"):
                 _run_aggregate(
                     spark,
                     root,
@@ -824,7 +867,7 @@ def _spark_path_warmup(spark, fnspecs, pool, df_all, input_col):
         for f in fnspecs
         if "spark-path" in f.modes
         and getattr(f, "input_kind", "tile")
-        not in ("tile_aggregate", "geometry_aggregate")
+        not in ("tile_aggregate", "geometry_aggregate", "h3_aggregate")
     ]
     _warm = next(
         (f for f in _spark_fns if getattr(f, "min_bands", 1) <= pool.bands), None
@@ -1025,7 +1068,7 @@ def run_spark_path(
     # "geometry_aggregate"} and are handled by a dedicated aggregate harness (below)
     # that emits BOTH a consistency fingerprint (a fixed deterministic single group
     # -> one out tile -> raster fingerprint) and the perf timing (scaled groupBy).
-    _agg_kinds = ("tile_aggregate", "geometry_aggregate")
+    _agg_kinds = ("tile_aggregate", "geometry_aggregate", "h3_aggregate")
     for fs in fnspecs:
         if "spark-path" not in fs.modes:
             continue

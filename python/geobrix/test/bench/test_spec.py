@@ -94,7 +94,7 @@ def test_select_defaults_to_core():
 def test_full_has_only_registered_names():
     reg = s.registered_rst()
     assert {f.name for f in s.select(set="full")} <= reg
-    assert len(reg) == 107  # canonical registered rst_ set
+    assert len(reg) == 108  # canonical registered rst_ set
 
 
 def test_every_full_spec_is_wellformed():
@@ -457,7 +457,8 @@ def test_full_set_running_tally():
     # + 2 bucket-B group B-vec (contour, polygonize -> vector fingerprint)
     # + 3 bucket-D geometry-in (rasterize/gridfrompoints/dtmfromgeoms)  = 100
     # + 7 bucket-A aggregators (the 7 *_agg)                            = 107
-    assert len(s.select(set="full")) == 107
+    # + 1 H3 rasterize aggregator (rst_h3_rasterize_agg, h3_aggregate)  = 108
+    assert len(s.select(set="full")) == 108
 
 
 # --- bucket C, group C1/C2: readers + buildoverviews + subdataset fns (6) ----
@@ -1040,9 +1041,10 @@ def test_bucket_a_derivedband_func_name_present():
     assert fs.args["func_name"] == "mean_bands"
 
 
-def test_full_set_count_is_one_hundred_seven():
-    # 100 (P4.2) + 7 bucket-A aggregators -> 107 == the canonical registered rst_ set
-    assert len(s.select(set="full")) == 107
+def test_full_set_count_is_one_hundred_eight():
+    # 100 (P4.2) + 7 bucket-A aggregators + 1 H3 rasterize aggregator
+    # (rst_h3_rasterize_agg) -> 108 == the canonical registered rst_ set
+    assert len(s.select(set="full")) == 108
 
 
 def test_every_fnspec_declares_existing_sources():

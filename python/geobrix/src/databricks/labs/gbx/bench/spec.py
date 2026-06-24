@@ -310,6 +310,76 @@ _AGG_LIGHT = (_PYRX + "agg.py",)
 _GRIDX = "src/main/scala/com/databricks/labs/gbx/gridx/grid/"
 _GRIDAGG_LIGHT = (_PYRX + "gridagg.py",)
 _TESSELLATE_LIGHT = (_PYRX + "tessellate.py", _PYRX + "edit.py")
+# H3 rasterize aggregator (cellid,value rows -> one tile, pixel-centroid burn).
+# Light burn math + gridspec port live in core/cellraster.py.
+_CELLRASTER_LIGHT = (_PYRX + "cellraster.py",)
+
+# --- rst_h3_rasterize_agg: fixed deterministic cell set + EXPLICIT grid --------
+# PARITY CONTRACT (must stay byte-for-byte in sync with the Scala BenchDispatch
+# h3Aggregate branch -- see BenchDispatch.scala "H3 rasterize aggregate"):
+#   1. CELL SET RECIPE: the res-9 H3 cell at (lat, lng) = (40.7128, -74.0060)
+#      (NYC), grid-disk'd to k=10 -> 331 cells. The Python `h3` lib and the Scala
+#      `com.uber.h3core` lib share the H3 C spec, so latlng_to_cell/geoToH3 +
+#      grid_disk/kRing yield the IDENTICAL cell-id set (order-independent). The
+#      bench runner ASSERTS this cross-tier sameness is plausible by checking the
+#      cell count + the center cell id (test_runner exercises the builder).
+#   2. EXPLICIT GRID: derived ONCE via cellraster.compute_gridspec(cells,
+#      srid=4326, pixel_size=0.0025, kring_pad=1) and HARDCODED below. Both tiers
+#      receive these exact grid constants (NOT auto-derived per tier), so the
+#      burn lands on the identical canvas and the masks/fingerprints compare.
+# A FIXED pixel_size (0.0025, an exact decimal) is used instead of the auto-
+# derived hexagon-edge pixel so the grid constants are unambiguous literals with
+# no float-formatting drift between Python and Scala.
+_H3RAGG_RES = 9
+_H3RAGG_CENTER_LAT = 40.7128
+_H3RAGG_CENTER_LNG = -74.0060
+_H3RAGG_K = 10
+_H3RAGG_SRID = 4326
+_H3RAGG_PIXEL_SIZE = 0.0025
+_H3RAGG_KRING_PAD = 1
+_H3RAGG_MODE = "centroids"
+# Hardcoded explicit grid (== compute_gridspec(cells, 4326, 0.0025, kring_pad=1)).
+# Mirrored EXACTLY in BenchDispatch.scala. If the recipe above changes, recompute
+# (see docs/scripts or just re-run compute_gridspec) and update BOTH files.
+_H3RAGG_XMIN = -74.055
+_H3RAGG_YMIN = 40.6825
+_H3RAGG_XMAX = -73.9575
+_H3RAGG_YMAX = 40.7425
+_H3RAGG_WIDTH = 39
+_H3RAGG_HEIGHT = 24
+_H3RAGG_N_CELLS = 331  # grid_disk(center, k=10) count -- a cross-tier sanity check.
+
+
+def h3_rasterize_cells() -> List[int]:
+    """The fixed deterministic H3 cell-id set the bench rasterizes (both tiers).
+
+    The res-9 cell at the fixed NYC lat/lng, grid-disk'd to k=10. Returns signed
+    Spark-Long cell ids (h3.str_to_int gives the unsigned 64-bit id; values >
+    2^63 wrap negative, which is exactly what the Spark LONG column carries and
+    the heavy tier sign-extends back). Deterministic + order-stable (sorted).
+    """
+    import h3
+
+    center = h3.latlng_to_cell(_H3RAGG_CENTER_LAT, _H3RAGG_CENTER_LNG, _H3RAGG_RES)
+    cells = sorted(h3.grid_disk(center, _H3RAGG_K))
+    out = []
+    for c in cells:
+        v = h3.str_to_int(c)
+        # Map unsigned 64-bit -> signed Spark Long (two's complement).
+        out.append(v - (1 << 64) if v >= (1 << 63) else v)
+    return out
+
+
+# The explicit grid 8-tuple passed identically to both tiers (xmin..height, srid).
+_H3RAGG_GRID = (
+    _H3RAGG_XMIN,
+    _H3RAGG_YMIN,
+    _H3RAGG_XMAX,
+    _H3RAGG_YMAX,
+    _H3RAGG_WIDTH,
+    _H3RAGG_HEIGHT,
+    _H3RAGG_SRID,
+)
 
 REGISTRY: Dict[str, FnSpec] = {
     "rst_width": FnSpec(
@@ -2222,6 +2292,59 @@ REGISTRY: Dict[str, FnSpec] = {
             _PYRX_SERDE,
             _HEAVY + "RST_DTMFromGeoms.scala",
             _HEAVY + "RST_DTMFromGeomsAgg.scala",
+        ),
+        core=False,
+    ),
+    # rst_h3_rasterize_agg: a GRID aggregator -- rows of (cellid LONG, value
+    # DOUBLE) grouped -> one GTiff tile per group, burning each H3 cell's centroid
+    # pixel onto an EXPLICIT, hardcoded grid. Rides input_kind == "h3_aggregate":
+    # the harness builds rows of (cellid, value) from the fixed deterministic cell
+    # set (h3_rasterize_cells) and supplies the explicit grid constants
+    # (_H3RAGG_GRID) baked into args. The light + heavy tiers burn the SAME cell
+    # set onto the SAME canvas, so the consistency fingerprint is cross-tier
+    # comparable (the masks match exactly -- see test_h3_rasterize_parity.py). The
+    # cell recipe + grid constants are mirrored EXACTLY in BenchDispatch.scala.
+    # value=None -> presence mask (burns 1.0); mode "centroids"; kring_pad 1 (the
+    # grid was snapped with kring_pad=1, so the explicit extent already covers it).
+    "rst_h3_rasterize_agg": FnSpec(
+        "rst_h3_rasterize_agg",
+        "gbx_rst_h3_rasterize_agg",
+        "dggs",
+        ("spark-path",),
+        {
+            "grid": _H3RAGG_GRID,  # (xmin, ymin, xmax, ymax, width, height, srid)
+            "pixel_size": _H3RAGG_PIXEL_SIZE,
+            "mode": _H3RAGG_MODE,
+            "kring_pad": _H3RAGG_KRING_PAD,
+        },
+        # col_fn takes (cellid_col, value_col, args); the harness streams the
+        # (cellid, value) rows and the explicit grid rides in args. value=None ->
+        # presence mask (1.0). Grid passed explicitly (NOT auto-derived per tier).
+        col_fn=lambda cid, v, a: prx.rst_h3_rasterize_agg(
+            cid,
+            value=v,
+            srid=F.lit(a["grid"][6]),
+            pixel_size=F.lit(a["pixel_size"]),
+            xmin=F.lit(a["grid"][0]),
+            ymin=F.lit(a["grid"][1]),
+            xmax=F.lit(a["grid"][2]),
+            ymax=F.lit(a["grid"][3]),
+            width=F.lit(a["grid"][4]),
+            height=F.lit(a["grid"][5]),
+            mode=F.lit(a["mode"]),
+            kring_pad=F.lit(a["kring_pad"]),
+        ),
+        core_fn=lambda t, a: t,  # spark-path-only; no pure-core analogue
+        input_kind="h3_aggregate",
+        # Float burn order can differ across tiers, but the burn is a discrete LUT
+        # lookup (last-wins on a canonical (cellId, value) sort, identical both
+        # tiers), so the masks/values are exact -- keep the global tol. Loosen only
+        # if the cluster run shows a near-miss.
+        sources=_CELLRASTER_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "agg/RST_H3_RasterizeAgg.scala",
+            _GRIDX + "H3.scala",
         ),
         core=False,
     ),
