@@ -27,6 +27,7 @@ const sidebars = {
       items: [
         'notebooks/eo-series',
         'notebooks/xview',
+        'notebooks/h3-rasterize',
       ],
     },
     {

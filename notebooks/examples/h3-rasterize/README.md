@@ -1,73 +1,149 @@
-# H3 Cell Rasterize + Band Stacking Demo
+# H3 Cell Rasterize + Band Stacking
 
-This example notebook (`h3_rasterize_isobands.ipynb`) demonstrates the complete
-H3-cell rasterization pipeline on real elevation data, starting from a DEM and
-producing a multi-band GeoTIFF stack.
+A single self-contained notebook that runs the full H3-cell rasterization pipeline
+on a real DEM — loading elevation data, extracting isobands, filling them with H3
+hexagons, burning each band onto a shared aligned canvas, and assembling a multi-band
+GeoTIFF stack. Visualized with the `gbx.viz` helpers throughout.
 
-## What the notebook demonstrates
+> **Lightweight tier (Serverless) by default.** The notebook uses the lightweight
+> tier — `geobrix[light,viz]` — pure Python/PySpark bindings with no JAR or GDAL
+> init script required. It runs on Serverless compute or a standard cluster. See
+> [Execution Tiers](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers).
 
-1. **DEM isobands** — the SRTM tile `srtm_n40w073.tif` (New York area,
-   EPSG:4326) is read with rasterio and quantized into elevation isobands
-   (every 100 m).  Each isoband produces a filled polygon — analogous to a
-   signal-strength contour in a wireless-coverage pipeline.
+> **Data source: San Francisco Bay Area SRTM DEM.** The notebook reads
+> `srtm_n37w123.tif` (EPSG:4326, public AWS Terrain Tiles). The DEM is auto-staged
+> from AWS to the sample-data Unity Catalog Volume on first run (idempotent — skipped
+> if the file already exists). No manual download is required.
 
-2. **H3 polyfill** — each band polygon is converted to H3 hexagonal cells at
-   resolution 8 via `h3.polygon_to_cells`.  Cell IDs are stored as 64-bit
-   integers for PySpark compatibility.
+---
 
-3. **Shared canvas** — `rx.rst_h3_gridspec` computes a single pixel-snapped
-   bounding box that covers all H3 cells across all band levels.  Using a
-   shared canvas ensures every per-band tile is pixel-aligned before stacking.
+## Notebooks at a glance
 
-4. **Per-band rasterize** — `rx.rst_h3_rasterize_agg` burns each band's cells
-   onto the shared canvas, producing one presence-mask tile per elevation
-   threshold.
+### h3\_rasterize\_isobands.ipynb
 
-5. **Stack** — `rx.rst_frombands_agg` assembles the per-band tiles into a
-   single multi-band GeoTIFF ordered by band level (lowest threshold = band 1).
+Five pipeline steps — driver-side DEM load and H3 polyfill, then three distributed
+Spark aggregations — producing a multi-band GeoTIFF that stacks eight 100 m
+elevation bands (0–800 m) over the SF Bay Area. Visualization appears after each
+major step: the raw DEM, the per-cell H3 footprints overlaid on the shared canvas,
+overlapping mid-coverage band shapes, and a final coverage-depth composite of the
+full stack.
 
-6. **Visualization** — `plot_raster` renders the stacked raster as a
-   false-colour composite, confirming the pipeline reconstructs the terrain.
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `h3_rasterize_isobands.ipynb` | Complete pipeline notebook: DEM load → isoband extraction → H3 polyfill → shared grid spec → per-band rasterize → band stack → visualization. |
+
+---
+
+## Prerequisites
+
+- **Databricks Runtime 17.3 LTS / 18 LTS, or Serverless** (Python 3.12). The
+  lightweight default runs on Serverless. The `CREATE TEMP TABLE` materialization
+  used in Step 4 requires Serverless or DBR 18.1+ — it is **not** supported on
+  dedicated/single-user clusters.
+- **GeoBrix 0.4.0.** Update the `%pip install` cell to point at your staged
+  `geobrix-0.4.0-py3-none-any.whl`. The `[light,viz]` extras install rasterio,
+  geopandas, folium, matplotlib, and mapclassify — no other dependencies assumed
+  pre-staged.
+- **Unity Catalog Volume.** The DEM staging cell writes to
+  `/Volumes/geospatial_docs/geobrix/sample-data/geobrix-examples/sf/elevation/`.
+  The Volume root must already exist; sub-directories are created automatically.
+  Point `DEM_PATH` at your own SRTM tile to skip the AWS download entirely.
+
+---
+
+## Run order
+
+This is a single notebook; run all cells top to bottom. The `%pip install` + `%restart_python` pair at the top restarts the Python kernel — subsequent cells import from the freshly installed wheel. Cells after the restart are safe to re-run individually once the wheel is installed.
+
+---
+
+## Data flow
+
+```text
+SRTM tile  srtm_n37w123.tif  (AWS Terrain Tiles → Volume, auto-staged)
+        │
+        ▼  rasterio read + quantize (driver)
+Elevation isobands: one polygon per 100 m band  [Step 1]
+        │
+        ▼  h3.polygon_to_cells at resolution 8 (driver)
+(band_level, cellid) rows                       [Step 2]
+        │
+        ▼  rx.rst_h3_gridspec  (Spark)
+Shared pixel-aligned canvas: width=499 height=505 SRID=4326  [Step 3]
+        │
+        ▼  rx.rst_h3_rasterize_agg groupBy band_level  (Spark)
+Per-band presence-mask tiles → CREATE TEMP TABLE band_tiles  [Step 4]
+        │
+        ▼  rx.rst_frombands_agg  (Spark)
+Multi-band GeoTIFF tile: 8 bands × 499×505 px               [Step 5]
+        │
+        ▼  plot_raster(composite="depth")
+Coverage-depth figure: pixel = count of bands covering that location
+```
+
+---
+
+## Key GeoBrix / Databricks functions shown
+
+- **GeoBrix RasterX** (`rx.*`): `rst_h3_gridspec`, `rst_h3_rasterize_agg`, `rst_frombands_agg`.
+- **GeoBrix viz** (`gbx.viz`): `plot_file` (raw DEM render), `cells_as_gdf` (per-cell H3 footprints; pass `dissolve_by="band_level"` for larger sets to merge each band into one footprint polygon), `grid_as_gdf` (shared-canvas rectangle on a folium map), `plot_mask_layers` (overlay two mid-coverage bands with distinct colours and a legend), `plot_raster` (stacked raster rendered as `composite="depth"` coverage map).
+- **Databricks built-in H3** (used indirectly): `h3.polygon_to_cells`, `h3.str_to_int`.
+- **Full API reference**: [RasterX functions](https://databrickslabs.github.io/geobrix/docs/api/raster-functions) · [Viz helpers](https://databrickslabs.github.io/geobrix/docs/api/viz).
+
+---
+
+## Gotchas
+
+- **Temp table vs cache.** Step 4 materializes the per-band tiles into a session-scoped
+  temp table (`CREATE TEMP TABLE band_tiles`) because `.cache()` / `.persist()` are
+  unavailable on Serverless. The temp table is dropped automatically when the session
+  ends. If you are on a dedicated/single-user cluster (which does not support temp
+  tables), replace the `CREATE TEMP TABLE` block with a managed Delta table write and
+  a subsequent `spark.table(...)` read.
+- **Driver-side polyfill scope.** Steps 1 and 2 run on the driver and are appropriate
+  for a single DEM tile. For production pipelines ingesting many tiles, move isoband
+  extraction and `h3.polygon_to_cells` inside a pandas UDF or UDTF so the full prep
+  step fans out across executors — only the downstream Spark aggregations
+  (`rst_h3_gridspec`, `rst_h3_rasterize_agg`, `rst_frombands_agg`) are distributed
+  in this demo.
+- **`cells_as_gdf` at scale.** With tens of thousands of cells the default per-cell
+  rendering is slow. Pass `dissolve_by="band_level"` to merge each band into a single
+  footprint geometry before passing to folium — far fewer geometries to render.
+- **SRTM elevation range.** The N37W123 tile covers the SF Bay area; the raw DEM
+  reports values down to −1967 m (ocean bathymetry artefact) and up to 986 m.
+  `MIN_ELEV_M=0` clips the sub-sea-level artefacts; `MAX_ELEV_M=800` caps the
+  isoband sweep below the coastal peaks, giving eight clean 100 m bands over
+  inhabited terrain.
+- **Volume I/O is sequential.** The DEM staging cell writes via `shutil.copy` from a
+  node-local temp directory — FUSE-safe. Do not use `seek` on Volume paths.
+
+---
 
 ## Telco / coverage-analysis analogy
+
+San Francisco is a natural stand-in for a wireless-coverage scenario: a dense, hilly
+coastal city where terrain directly shadows RF propagation. Replace *elevation* with
+*signal strength* and the pipeline is identical.
 
 | DEM demo | Coverage-analysis equivalent |
 |---|---|
 | Elevation isoband polygon | Signal contour polygon (e.g. −80 dBm zone) |
-| `band_level` (integer) | Threshold index (tier 1 / tier 2 / …) |
+| `band_level` (integer) | Threshold index (e.g. tier 1 / tier 2 / …) |
 | H3 polyfill at res 8 | H3 coverage cells per threshold |
 | Multi-band stacked tile | Multi-threshold stacked coverage raster |
 
-The stacked tile is ready for downstream analysis — for example, joining against
-subscriber locations or exporting as PMTiles for web visualization.
+The stacked tile is ready for downstream analysis — joining against subscriber
+locations or exporting as PMTiles for web visualization.
 
-## Requirements
-
-- **Databricks cluster or Serverless compute** — the notebook targets the
-  GeoBrix lightweight tier (`geobrix[light,viz]`) and runs on Serverless.
-  No JAR or GDAL init script is required.
-
-- **Sample DEM (auto-staged)** — the DEM is read from
-  `/Volumes/geospatial_docs/geobrix/sample-data/geobrix-examples/nyc/elevation/srtm_n40w073.tif`.
-  The **"Stage the sample DEM"** cell downloads the SRTM tile from the public AWS
-  Terrain Tiles dataset and writes it there on first run (idempotent; Serverless-safe).
-  Point `DEM_PATH` at your own SRTM tile to skip the download. (The Volume root must
-  already exist — only sub-directories are created.)
-
-- **Wheel** — update the `%pip install` cell to point at your staged
-  `geobrix-0.4.0-py3-none-any.whl` if the path differs from the default
-  `/Volumes/geospatial_docs/geobrix/sample-data/`.
-
-## Running the notebook
-
-1. Open the notebook in Databricks.
-2. Attach to a Serverless or single-node cluster (no GPU, no GDAL init script).
-3. Run all cells in order.  The `%pip install` cell restarts the Python kernel;
-   subsequent cells import from the freshly installed wheel.
-4. Outputs are empty until executed on a cluster — cell outputs in the committed
-   file are intentionally blank.
+---
 
 ## Related resources
 
-- [GeoBrix RasterX API](https://databrickslabs.github.io/geobrix/docs/api/rasterx)
-- [EO-Series notebooks](../eo-series/) — STAC download, band stacking, clipping
+- [H3 Rasterize example page](https://databrickslabs.github.io/geobrix/docs/notebooks/h3-rasterize)
+- [GeoBrix RasterX API](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)
+- [GeoBrix Viz API](https://databrickslabs.github.io/geobrix/docs/api/viz)
+- [EO-Series notebooks](../eo-series/) — STAC download, band stacking, clipping pipeline
