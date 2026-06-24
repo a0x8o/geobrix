@@ -784,6 +784,10 @@ GROUP BY region_id
 
 Streaming aggregator that burns H3 cell centroid pixels (or spatial-envelope pixels) into one raster tile per group. This is the **inverse** of [`rst_h3_rastertogrid*`](#rst_h3_rastertogridavg): where those functions reduce raster pixels to per-cell statistics, `rst_h3_rasterize_agg` reconstructs a raster from per-cell values. Use [`rst_frombands_agg`](#rst_frombands_agg) to stack per-threshold rasters (each produced by one `rst_h3_rasterize_agg` call) into a single multi-band output.
 
+:::tip Worked example
+The [H3 Rasterize notebook](../notebooks/h3-rasterize) walks this through end to end on a San Francisco Bay Area DEM: elevation isobands → H3 polyfill → a shared canvas from [`rst_h3_gridspec`](#h3-grid) → per-band `rst_h3_rasterize_agg` → multi-band stack via [`rst_frombands_agg`](#rst_frombands_agg), visualized with the [`gbx.viz`](./viz) helpers. The same pattern maps directly to a telco multi-threshold signal-coverage stack.
+:::
+
 **Signature:** `rst_h3_rasterize_agg(cellid: Column, value: Column, srid: Column, pixel_size: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, mode: Column, kring_pad: Column): Column`
 
 **Parameters:**
