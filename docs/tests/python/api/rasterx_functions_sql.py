@@ -2208,3 +2208,62 @@ rst_dtmfromgeoms_agg_sql_example_output = """
 |R-01     |{null, <raster bytes>, {driver -> GTiff, ...}}|
 +---------+----------------------------------------------+
 """
+
+
+# ============================================================================
+# H3 Cell Rasterizer Functions
+# ============================================================================
+
+def rst_h3_rasterize_agg_sql_example():
+    """Aggregator: rasterize a group of H3 cells into one tile (pixel-centroid burn)."""
+    return """
+-- Rasterize H3 cells into one raster tile per region. Each cell's value is
+-- burned at the cell centroid pixel. The output BINARY is a GTiff-encoded tile;
+-- wrap with gbx_rst_fromcontent(..., 'GTiff') to recover a tile struct.
+SELECT region_id,
+    gbx_rst_h3_rasterize_agg(
+        cellid, burn_value,
+        4326, cast(null as double),
+        cast(null as double), cast(null as double),
+        cast(null as double), cast(null as double),
+        cast(null as int), cast(null as int),
+        'centroids', cast(1 as int)
+    ) AS tile
+FROM h3_cell_values
+GROUP BY region_id;
+"""
+
+
+rst_h3_rasterize_agg_sql_example_output = """
++---------+----------------------------------------------+
+|region_id|tile                                          |
++---------+----------------------------------------------+
+|R-01     |{null, <raster bytes>, {driver -> GTiff, ...}}|
++---------+----------------------------------------------+
+"""
+
+
+def h3_cell_bbox_sql_example():
+    """Get bounding box of H3 cells in a given CRS."""
+    return """
+-- Bounding box (STRUCT<xmin, ymin, xmax, ymax>) for each H3 cell in EPSG:4326.
+-- Uses 'centroids' mode with no k-ring padding (kring_pad=0).
+SELECT
+    cellid,
+    gbx_h3_cell_bbox(cellid, 4326, 'centroids', 0) AS bbox
+FROM (
+    VALUES
+        (617733151020810239),
+        (617733151085035519),
+        (617733151021334527)
+) AS t(cellid);
+"""
+
+
+h3_cell_bbox_sql_example_output = """
++------------------+------------------------------+
+|cellid            |bbox                          |
++------------------+------------------------------+
+|617733151020810239|{-74.02, 40.70, -74.01, 40.71}|
++------------------+------------------------------+
+"""

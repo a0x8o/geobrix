@@ -30,6 +30,7 @@ import com.databricks.labs.gbx.rasterx.expressions.vector.RST_Polygonize
 import com.databricks.labs.gbx.rasterx.expressions.vector.RST_Rasterize
 import com.databricks.labs.gbx.rasterx.expressions.grid.RST_GridFromPoints
 import com.databricks.labs.gbx.rasterx.expressions.RST_DTMFromGeoms
+import com.databricks.labs.gbx.gridx.grid.H3
 import com.databricks.labs.gbx.rasterx.expressions.dem._
 import com.databricks.labs.gbx.rasterx.expressions.spectral._
 import com.databricks.labs.gbx.rasterx.expressions.pixel.RST_Band
@@ -184,7 +185,10 @@ object BenchDispatch {
     "rst_combineavg_agg" -> FMT, "rst_merge_agg" -> FMT,
     "rst_frombands_agg" -> FMT, "rst_derivedband_agg" -> FMT,
     "rst_rasterize_agg" -> VECTOR, "rst_gridfrompoints_agg" -> VECTOR,
-    "rst_dtmfromgeoms_agg" -> VECTOR
+    "rst_dtmfromgeoms_agg" -> VECTOR,
+    // rst_h3_rasterize_agg: a GRID aggregator (cellid,value rows -> one tile,
+    // pixel-centroid burn). dggs, like the other H3 fns.
+    "rst_h3_rasterize_agg" -> DGGS
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -215,6 +219,11 @@ object BenchDispatch {
     Set("rst_combineavg_agg", "rst_merge_agg", "rst_frombands_agg", "rst_derivedband_agg")
   private val geometryAggregate: Set[String] =
     Set("rst_rasterize_agg", "rst_gridfrompoints_agg", "rst_dtmfromgeoms_agg")
+  // rst_h3_rasterize_agg reduces a GROUP of (cellid LONG, value DOUBLE) rows to
+  // ONE tile, burning each H3 cell's centroid pixel onto an EXPLICIT, hardcoded
+  // grid. Its fixed consistency group is a deterministic H3 cell set generated
+  // here (NOT from synth tiles or geometry.json), mirroring the pyrx tier.
+  private val h3Aggregate: Set[String] = Set("rst_h3_rasterize_agg")
   def inputKind(fn: String): String =
     if (byteInput.contains(fn)) "bytes"
     else if (pathInput.contains(fn)) "path"
@@ -222,7 +231,46 @@ object BenchDispatch {
     else if (geometryInput.contains(fn)) "geometry"
     else if (tileAggregate.contains(fn)) "tile_aggregate"
     else if (geometryAggregate.contains(fn)) "geometry_aggregate"
+    else if (h3Aggregate.contains(fn)) "h3_aggregate"
     else "tile"
+
+  // --- rst_h3_rasterize_agg: fixed cell set + EXPLICIT grid (PARITY CONTRACT) ---
+  // These MUST stay byte-for-byte in sync with the Python bench/spec.py block
+  // (search "rst_h3_rasterize_agg: fixed deterministic cell set"):
+  //   1. CELL SET RECIPE: the res-9 H3 cell at (lat, lng) = (40.7128, -74.0060)
+  //      grid-disk'd (kRing) to k=10 -> 331 cells. The Scala com.uber.h3core lib
+  //      and the Python h3 lib share the H3 C spec, so geoToH3 / latlng_to_cell
+  //      + kRing / grid_disk yield the IDENTICAL cell-id set (order-independent).
+  //   2. EXPLICIT GRID: hardcoded below (== compute_gridspec(cells, 4326,
+  //      pixel_size=0.0025, kring_pad=1)). Both tiers receive these exact grid
+  //      constants, so the burn lands on the identical canvas (masks compare).
+  // If the recipe changes, recompute the grid (run cellraster.compute_gridspec)
+  // and update BOTH this block and spec.py.
+  private val h3RaggRes = 9
+  private val h3RaggCenterLat = 40.7128
+  private val h3RaggCenterLng = -74.0060
+  private val h3RaggK = 10
+  private val h3RaggSrid = 4326
+  private val h3RaggPixelSize = 0.0025
+  private val h3RaggKringPad = 1
+  private val h3RaggMode = "centroids"
+  private val h3RaggXmin = -74.055
+  private val h3RaggYmin = 40.6825
+  private val h3RaggXmax = -73.9575
+  private val h3RaggYmax = 40.7425
+  private val h3RaggWidth = 39
+  private val h3RaggHeight = 24
+  // Cross-tier sanity-check count (grid_disk(center, k=10)); asserted in tests.
+  val h3RaggNCells: Int = 331
+
+  /** The fixed deterministic H3 cell-id set the bench rasterizes (both tiers).
+    * The res-9 NYC cell, kRing'd to k=10. com.uber.h3core returns signed Longs
+    * (the unsigned 64-bit ids wrap negative past 2^63), which is exactly what the
+    * Spark LONG column carries -- identical to the pyrx tier's signed ids. */
+  def h3RasterizeCells(): Seq[Long] = {
+    val center = H3.pointToCellID(h3RaggCenterLng, h3RaggCenterLat, h3RaggRes)
+    H3.kRing(center, h3RaggK).toSeq.sorted
+  }
 
   // bench.synth recipe name for a tile_array fn (mirrors spec.synth_recipe).
   def synthRecipe(fn: String): String = fn match {
@@ -941,7 +989,7 @@ object BenchDispatch {
       // bucket A aggregators have no scalar column form; they are aggregate
       // expressions handled by aggregateColumn (the spark-path runner routes them
       // through the aggregate branch, not column()).
-      case f if inputKind(f) == "tile_aggregate" || inputKind(f) == "geometry_aggregate" =>
+      case f if inputKind(f).endsWith("aggregate") =>
         throw new IllegalArgumentException(
           s"$f is an aggregator; use aggregateColumn, not column")
       case other            => throw new IllegalArgumentException(s"unknown bench fn: $other")
@@ -989,6 +1037,20 @@ object BenchDispatch {
         expr(s"gbx_rst_dtmfromgeoms_agg(geom_wkb, CAST(NULL AS ARRAY<BINARY>), " +
           s"${argD(a, "merge_tolerance", 0.0)}, ${argD(a, "snap_tolerance", 0.0)}, " +
           s"$xmin, $ymin, $xmax, $ymax, $w, $h, $srid, ${argD(a, "no_data", -9999.0)})")
+      // rst_h3_rasterize_agg: stream (cellid, value) per row; the EXPLICIT grid
+      // (xmin..height, srid, mode, kring_pad) rides as hardcoded SQL literals --
+      // the SAME constants the pyrx tier passes (PARITY CONTRACT, see h3Ragg*
+      // above). value is NULL on every row -> presence-mask burn (1.0). pixel_size
+      // is supplied too (unused once the explicit extent is given, but keeps the
+      // 12-arg signature). The HEAVY UDAF returns a tile STRUCT directly (dataType =
+      // tileDataType(BinaryType); only the lightweight SQL form returns BINARY), so --
+      // exactly like rst_rasterize_agg -- it is NOT wrapped in gbx_rst_fromcontent;
+      // the consistency collect reads `raster` straight off the struct to fingerprint.
+      case "rst_h3_rasterize_agg" =>
+        expr(
+          s"gbx_rst_h3_rasterize_agg(cellid, value, $h3RaggSrid, $h3RaggPixelSize, " +
+            s"$h3RaggXmin, $h3RaggYmin, $h3RaggXmax, $h3RaggYmax, " +
+            s"$h3RaggWidth, $h3RaggHeight, '$h3RaggMode', $h3RaggKringPad)")
       case other => throw new IllegalArgumentException(s"not an aggregator: $other")
     }
   }

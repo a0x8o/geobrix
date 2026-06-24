@@ -38,6 +38,7 @@ from databricks.labs.gbx.pyrx._udf import (
 from databricks.labs.gbx.pyrx.core import accessors
 from databricks.labs.gbx.pyrx.core import agg as agg_core
 from databricks.labs.gbx.pyrx.core import analysis as analysis_core
+from databricks.labs.gbx.pyrx.core import cellraster as cellraster_core
 from databricks.labs.gbx.pyrx.core import coords
 from databricks.labs.gbx.pyrx.core import derivedband as derivedband_core
 from databricks.labs.gbx.pyrx.core import edit, features, focal, gridagg, indices
@@ -48,6 +49,7 @@ from databricks.labs.gbx.pyrx.core import tessellate as tessellate_core
 from databricks.labs.gbx.pyrx.core import tiling
 from databricks.labs.gbx.pyrx.core import tin as tin_core
 from databricks.labs.gbx.pyrx.core import warp, xyz
+from databricks.labs.gbx.pyrx.core.escape import rst_apply, tile_to_numpy  # noqa: F401
 
 
 def _registrar_groups() -> List[_register.Group]:
@@ -268,6 +270,28 @@ _W2R_COORD_SCHEMA = StructType(
     [
         StructField("x", IntegerType(), True),
         StructField("y", IntegerType(), True),
+    ]
+)
+
+_GRID_SCHEMA = StructType(
+    [
+        StructField("xmin", DoubleType()),
+        StructField("ymin", DoubleType()),
+        StructField("xmax", DoubleType()),
+        StructField("ymax", DoubleType()),
+        StructField("pixel_size", DoubleType()),
+        StructField("width", IntegerType()),
+        StructField("height", IntegerType()),
+        StructField("srid", IntegerType()),
+    ]
+)
+
+_BBOX_SCHEMA = StructType(
+    [
+        StructField("xmin", DoubleType()),
+        StructField("ymin", DoubleType()),
+        StructField("xmax", DoubleType()),
+        StructField("ymax", DoubleType()),
     ]
 )
 
@@ -3104,6 +3128,68 @@ def _dtmfromgeoms_agg_udf(
     )
 
 
+@pandas_udf(BinaryType())
+def _rst_h3_rasterize_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    srid: pd.Series,
+    pixel_size: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width: pd.Series,
+    height: pd.Series,
+    mode: pd.Series,
+    kring_pad: pd.Series,
+) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    _env.configure_gdal_env()
+    cells = [int(c) for c in cellid if c is not None]
+    if not cells:
+        return None
+    # Null value -> presence mask (1.0). A null in a typed (Double) value column
+    # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
+    vals = [1.0 if v is None or pd.isna(v) else float(v) for v in value]
+    cell_values = {}
+    for c, v in zip(cells, vals):
+        cell_values[c] = v  # last-wins (cells of one res don't overlap)
+
+    res = cr._resolution([cr._h3_str(c) for c in cells])
+    _srid = int(srid.iloc[0]) if srid is not None and srid.iloc[0] is not None else 4326
+    _mode = (
+        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    )
+    _kp = (
+        int(kring_pad.iloc[0])
+        if kring_pad is not None and kring_pad.iloc[0] is not None
+        else 1
+    )
+
+    def _has(s):
+        return s is not None and s.iloc[0] is not None
+
+    if _has(xmin) and _has(width):
+        grid = (
+            float(xmin.iloc[0]),
+            float(ymin.iloc[0]),
+            float(xmax.iloc[0]),
+            float(ymax.iloc[0]),
+            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
+            int(width.iloc[0]),
+            int(height.iloc[0]),
+            _srid,
+        )
+    else:
+        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
+        grid = cr.compute_gridspec(
+            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp
+        )
+    return cr.cells_to_raster(cell_values, *grid, resolution=res)
+
+
 # --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
 def rst_merge_agg(tile: ColLike) -> Column:
     """Merge a group's tile rasters into one spatial mosaic tile.
@@ -3293,6 +3379,220 @@ def rst_dtmfromgeoms_agg(
     )
 
 
+def rst_h3_rasterize_agg(
+    cellid: ColLike,
+    value: ColLike = None,
+    srid: ColLike = None,
+    pixel_size: ColLike = None,
+    xmin: ColLike = None,
+    ymin: ColLike = None,
+    xmax: ColLike = None,
+    ymax: ColLike = None,
+    width: ColLike = None,
+    height: ColLike = None,
+    mode: ColLike = None,
+    kring_pad: ColLike = None,
+) -> Column:
+    """Rasterize a group's H3 cells into one tile (pixel-centroid burn).
+
+    ``value`` omitted -> presence mask (1.0/NoData). Supply an explicit extent
+    (xmin..height, e.g. from ``rst_h3_gridspec``) for aligned band stacking;
+    else the grid is auto-derived per ``mode``/``kring_pad``. Use inside
+    ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_h3_rasterize_agg("cellid").alias("tile"))
+
+    SQL returns BINARY (the raw grouped-agg UDF); Python returns a tile struct
+    (wrapped by ``_as_tile_udf``).
+    """
+
+    def _c(x, default):
+        return _col(x) if x is not None else f.lit(default)
+
+    return _as_tile_udf(
+        _rst_h3_rasterize_agg_udf(
+            _col(cellid),
+            _c(value, None),
+            _c(srid, 4326),
+            _c(pixel_size, None),
+            _c(xmin, None),
+            _c(ymin, None),
+            _c(xmax, None),
+            _c(ymax, None),
+            _c(width, None),
+            _c(height, None),
+            _c(mode, "centroids"),
+            _c(kring_pad, 1),
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# H3 cell bbox + gridspec helpers
+# ---------------------------------------------------------------------------
+
+
+@f.udf(_BBOX_SCHEMA)
+def _h3_cell_bbox_udf(cellid, srid, mode, kring_pad):
+    """Return STRUCT<xmin,ymin,xmax,ymax> for one H3 cell in *srid*.
+
+    When *kring_pad* > 0 the cell is expanded to its k-ring neighbourhood
+    before computing the bounding box, so the returned bbox covers the full
+    padded neighbourhood of that cell.
+    """
+    if cellid is None:
+        return None
+    import h3 as _h3
+
+    from databricks.labs.gbx.pyrx.core import cellraster as _cr
+
+    cstr = _cr._h3_str(int(cellid))
+    pad = int(kring_pad) if kring_pad is not None else 0
+    if pad > 0:
+        cells = list(_h3.grid_disk(cstr, pad))
+    else:
+        cells = [cstr]
+
+    _srid = int(srid) if srid is not None else 4326
+    _mode = mode or "centroids"
+
+    lons, lats = [], []
+    for c in cells:
+        if _mode == "centroids":
+            la, lo = _h3.cell_to_latlng(c)
+            lons.append(lo)
+            lats.append(la)
+        else:
+            for la, lo in _h3.cell_to_boundary(c):
+                lons.append(lo)
+                lats.append(la)
+
+    xs, ys = _cr._reproject(lons, lats, 4326, _srid)
+    return (float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()))
+
+
+def gbx_h3_cell_bbox(
+    cellid: ColLike, srid: ColLike = None, mode: ColLike = None
+) -> Column:
+    """Bounding box of one H3 cell in *srid* (centroid point or hexagon envelope).
+
+    Returns a ``STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE>``.
+
+    Args:
+        cellid: Column holding the H3 cell id (integer).
+        srid:   Output CRS EPSG code. Defaults to 4326.
+        mode:   ``"centroids"`` (default) or ``"spatial_envelope"``.
+    """
+    return _h3_cell_bbox_udf(
+        _col(cellid),
+        _col(srid) if srid is not None else f.lit(4326),
+        _col(mode) if mode is not None else f.lit("centroids"),
+        f.lit(0),
+    )
+
+
+def rst_h3_gridspec(
+    df,
+    cell_col="cellid",
+    *group_cols,
+    srid=4326,
+    pixel_size=None,
+    mode="centroids",
+    kring_pad=1,
+):
+    """Snapped shared-canvas grid spec per group of H3 cells.
+
+    Returns the grouped DataFrame with a ``grid`` column of type
+    ``STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE,
+    pixel_size DOUBLE, width INT, height INT, srid INT>``.
+
+    Implemented as per-cell bbox expansion (via a scalar UDF) + native Spark
+    min/max aggregation + snap arithmetic from ``cellraster.snap_bounds``,
+    so it is Serverless-safe (no ``spark.conf.set``, no JVM access).
+
+    Args:
+        df:          Input DataFrame.
+        cell_col:    Column name holding H3 cell IDs (integer).
+        *group_cols: Additional grouping columns (e.g. a tile/region key).
+        srid:        Output CRS EPSG code. Defaults to 4326.
+        pixel_size:  Ground resolution in CRS units. ``None`` = auto from H3
+                     resolution (edge-length heuristic, same as
+                     ``cellraster.compute_gridspec``).
+        mode:        ``"centroids"`` (default) or ``"spatial_envelope"``.
+        kring_pad:   k-ring padding applied per cell before computing its bbox.
+                     Defaults to 1 (matches ``compute_gridspec`` default).
+
+    Returns:
+        DataFrame grouped by *group_cols* with a ``grid`` struct column added.
+    """
+    # Sample one cell on the driver to obtain the H3 resolution for auto pixel_size.
+    # An empty input is always an error: there is nothing to rasterize onto.
+    _res = None
+    _pixel_size = pixel_size
+    if _pixel_size is None:
+        first_row = df.select(cell_col).first()
+        if first_row is None or first_row[0] is None:
+            raise ValueError("empty cell set")
+        sample_str = cellraster_core._h3_str(int(first_row[0]))
+        import h3 as _h3_driver
+
+        _res = _h3_driver.get_resolution(sample_str)
+
+    # Per-cell expanded bbox (kring_pad applied inside the scalar UDF).
+    b = _h3_cell_bbox_udf(_col(cell_col), f.lit(srid), f.lit(mode), f.lit(kring_pad))
+    gcols = list(group_cols)
+    enriched = df.withColumn("_bb", b)
+    agg_expr = enriched.groupBy(*gcols) if gcols else enriched.groupBy()
+    bounds = agg_expr.agg(
+        f.min("_bb.xmin").alias("_xmin"),
+        f.min("_bb.ymin").alias("_ymin"),
+        f.max("_bb.xmax").alias("_xmax"),
+        f.max("_bb.ymax").alias("_ymax"),
+    )
+
+    # Capture closure values for the snap UDF (driver-side constants).
+    _srid_val = srid
+
+    @f.udf(_GRID_SCHEMA)
+    def _snap_to_grid(bxmin, bymin, bxmax, bymax):
+        if bxmin is None:
+            return None
+        import math as _math
+
+        import h3 as _h3
+
+        ps = _pixel_size
+        if ps is None:
+            mid_lat = (float(bymin) + float(bymax)) / 2.0
+            edge_m = (
+                _h3.average_hexagon_edge_length(_res, unit="m")
+                if _res is not None
+                else 1.0
+            )
+            if _srid_val == 4326:
+                ps = edge_m / (111320.0 * max(_math.cos(_math.radians(mid_lat)), 1e-6))
+            else:
+                ps = edge_m
+
+        bxmin_f = float(bxmin)
+        bymin_f = float(bymin)
+        bxmax_f = float(bxmax)
+        bymax_f = float(bymax)
+
+        xmin = _math.floor(bxmin_f / ps) * ps
+        ymax = _math.ceil(bymax_f / ps) * ps
+        width = max(1, int(_math.ceil((bxmax_f - xmin) / ps)))
+        height = max(1, int(_math.ceil((ymax - bymin_f) / ps)))
+        xmax = xmin + width * ps
+        ymin = ymax - height * ps
+        return (xmin, ymin, xmax, ymax, ps, width, height, _srid_val)
+
+    return bounds.withColumn(
+        "grid",
+        _snap_to_grid(f.col("_xmin"), f.col("_ymin"), f.col("_xmax"), f.col("_ymax")),
+    ).drop("_xmin", "_ymin", "_xmax", "_ymax")
+
+
 # ---------------------------------------------------------------------------
 # SQL registration registry
 # ---------------------------------------------------------------------------
@@ -3351,6 +3651,7 @@ _sql_accessors = {
     "gbx_rst_histogram": _histogram_udf,
     "gbx_rst_rastertoworldcoord": _rastertoworldcoord_udf,
     "gbx_rst_worldtorastercoord": _worldtorastercoord_udf,
+    "gbx_h3_cell_bbox": _h3_cell_bbox_udf,
 }
 
 # Tile-returning / constructor / array UDFs already accept the tile struct
@@ -3425,6 +3726,7 @@ _sql_aggregators = {
     "gbx_rst_derivedband_agg": _derivedband_agg_udf,
     "gbx_rst_gridfrompoints_agg": _gridfrompoints_agg_udf,
     "gbx_rst_dtmfromgeoms_agg": _dtmfromgeoms_agg_udf,
+    "gbx_rst_h3_rasterize_agg": _rst_h3_rasterize_agg_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}

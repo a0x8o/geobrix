@@ -509,6 +509,76 @@ def test_run_spark_path_geometry_aggregators_produce_raster_fingerprints(
         assert parsed["kind"] == "raster", (name, parsed.get("kind"))
 
 
+def test_h3_rasterize_cells_is_deterministic_331():
+    # The fixed cell-set recipe (res-9 NYC cell grid-disk'd k=10) must yield a
+    # stable 331-cell set -- the cross-tier sanity count the Scala BenchDispatch
+    # also asserts (h3RaggNCells). Order-stable + unique.
+    cells = s.h3_rasterize_cells()
+    assert len(cells) == s._H3RAGG_N_CELLS == 331
+    assert len(set(cells)) == 331
+    # Re-running gives the identical ordered list (deterministic).
+    assert s.h3_rasterize_cells() == cells
+    # Signed Spark-Long range (h3 ids past 2^63 wrap negative).
+    assert all(-(1 << 63) <= c < (1 << 63) for c in cells)
+
+
+def test_h3_aggregate_df_builds_cellid_value_rows(spark):
+    # The h3_aggregate group builder yields (cellid LONG, value DOUBLE) rows for
+    # the fixed cell set, with value NULL on every row (presence-mask burn).
+    fs = s.select(functions=["rst_h3_rasterize_agg"])[0]
+    assert fs.input_kind == "h3_aggregate"
+    df = rn._h3_aggregate_df(spark, fs)
+    assert [f.name for f in df.schema.fields] == ["cellid", "value"]
+    rows = df.collect()
+    assert len(rows) == 331
+    assert all(r["value"] is None for r in rows)
+    assert {r["cellid"] for r in rows} == set(s.h3_rasterize_cells())
+
+
+def test_run_spark_path_h3_rasterize_agg_produces_raster_fingerprint(tmp_path, spark):
+    # bucket A (H3 rasterize aggregator): rst_h3_rasterize_agg reduces a group of
+    # (cellid, value) rows -> ONE tile via df.groupBy(key).agg(col_fn(...)),
+    # burning each H3 cell's centroid pixel onto the EXPLICIT hardcoded grid.
+    # Consistency = the single out tile's raster fingerprint; perf = scaled groupBy.
+    corpus = dg.generate_corpus(
+        out_dir=tmp_path,
+        seed=8,
+        tile_px=[32],
+        bands=[1],
+        dtypes=["float32"],
+        srids=[4326],
+        nodata_fracs=[0.0],
+        row_rows=4,
+        row_tile_px=32,
+        row_bands=1,
+        row_dtype="float32",
+    )
+    fns = s.select(functions=["rst_h3_rasterize_agg"])
+    rows = rn.run_spark_path(
+        spark=spark,
+        corpus_root=tmp_path,
+        corpus=corpus,
+        fnspecs=fns,
+        run_id="t",
+        row_counts=[2, 4],
+        warmup=1,
+        measured=1,
+        where="venv",
+    )
+    assert rows, "expected aggregate rows"
+    assert all(r.status == "ok" for r in rows), [
+        (r.fn, r.status, r.note) for r in rows if r.status != "ok"
+    ]
+    assert {r.fn for r in rows} == {"rst_h3_rasterize_agg"}
+    assert all(r.mode == "spark-path" for r in rows)
+    import json
+
+    fp = {r.rows: r.output_fingerprint for r in rows if r.fn == "rst_h3_rasterize_agg"}
+    assert fp.get(2), "no consistency fingerprint at N=2"
+    parsed = json.loads(fp[2])
+    assert parsed["kind"] == "raster", parsed.get("kind")
+
+
 def test_pure_core_emits_na_by_design_for_low_band_count(tmp_path):
     corpus = dg.generate_corpus(
         out_dir=tmp_path,

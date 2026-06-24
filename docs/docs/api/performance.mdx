@@ -138,6 +138,7 @@ These functions are Arrow-backed `pandas_udf(BinaryType())` aggregators used ins
 | `gbx_rst_derivedband_agg` | `rst_derivedband_agg` | Apply a user-supplied Python expression across a tile group |
 | `gbx_rst_gridfrompoints_agg` | `rst_gridfrompoints_agg` | Interpolate a raster from point observations |
 | `gbx_rst_dtmfromgeoms_agg` | `rst_dtmfromgeoms_agg` | Build a DTM raster from elevation geometries |
+| `gbx_rst_h3_rasterize_agg` | `rst_h3_rasterize_agg` | Burn a group of H3 cells onto one raster (presence mask, or per-cell value) |
 
 **VectorX (pyvx)**
 
@@ -326,6 +327,20 @@ Same per-shape split as quadbin. **Scalar/bounded-output** functions (`pointasce
 | `gbx_bng_geomkring` | `bng_geomkring` | geometry → array of k-ring cell IDs |
 | `gbx_bng_geomkloop` | `bng_geomkloop` | geometry → array of k-loop cell IDs |
 | `gbx_bng_tessellate` | `bng_tessellate` | geometry → array of `STRUCT<cellid, core, chip>` |
+
+**GridX (pygx) — custom grid**
+
+Same per-shape split as quadbin and BNG. **Scalar/bounded-output** functions (`grid`, `pointascell`, `cellaswkb`, `cellaswkt`, `centroid`) register as **`pandas_udf`s** — a pure-Python grid codec (extent + split factor + root cell size → integer row/col cell index, and the inverse cell→polygon), exact-parity with the heavyweight tier. **Array-returning** functions (`polyfill`, `kring`) register as **plain `@udf`s** so variable-length outputs stream row-by-row rather than buffering a whole Arrow batch. All stay Serverless-safe (`spark.udf.register` only, no Spark-config or JVM access). Custom grids index against an arbitrary projected grid (extent + resolution + SRID) — for a project- or nation-specific tiling that H3, quadbin, or BNG cells don't match.
+
+| SQL name | Python name | Operation |
+|---|---|---|
+| `gbx_custom_grid` | `custom_grid` | extent + split factor + root cell size + SRID → grid spec |
+| `gbx_custom_pointascell` | `custom_pointascell` | point → cell ID on the custom grid |
+| `gbx_custom_cellaswkb` | `custom_cellaswkb` | cell ID → footprint polygon (WKB) |
+| `gbx_custom_cellaswkt` | `custom_cellaswkt` | cell ID → footprint polygon (WKT) |
+| `gbx_custom_centroid` | `custom_centroid` | cell ID → centroid point |
+| `gbx_custom_polyfill` | `custom_polyfill` | geometry → array of covering cell IDs |
+| `gbx_custom_kring` | `custom_kring` | cell ID → array of cells within distance `k` |
 
 </TabItem>
 

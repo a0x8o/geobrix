@@ -545,6 +545,7 @@ Pure-core measures the algorithm; **spark-path measures the job**. Each function
 | `rst_h3_rastertogridmin` | 56.51 | 79.28 | 0.71× | timing-only |
 | `rst_h3_rastertogridcount` | 55.34 | 79.39 | 0.70× | timing-only |
 | `rst_fromcontent` | 4.03 | 5.90 | 0.68× | timing-only |
+| `rst_h3_rasterize_agg`¹ | 1.50 | 2.26 | 0.66× | exact |
 | `rst_asformat` | 4.00 | 6.04 | 0.66× | timing-only |
 | `rst_frombands` | 2.31 | 4.94 | 0.47× | timing-only |
 | `rst_cog_convert` | 4.23 | 11.13 | 0.38× | timing-only |
@@ -555,6 +556,8 @@ Pure-core measures the algorithm; **spark-path measures the job**. Each function
 | `rst_contour` | 13.91 | 127.62 | 0.11× | timing-only |
 | `rst_gridfrompoints_agg` | 2.66 | 33.75 | 0.08× | within_tol |
 | `rst_proximity` | 0.52 | 8.12 | 0.06× | timing-only |
+
+¹ `rst_h3_rasterize_agg` is a cell→raster aggregator with a different workload than the 1024² rows: each of the 1,000 groups burns a fixed 331-cell H3 set (resolution 9, presence mask) onto one small 39×24 canvas, so its per-tile figure reflects that small output rather than a 1024² tile. Read the **cross-tier ratio** (heavyweight ~1.5× faster) and **exact** parity as the comparable result, not the absolute ms against the 1024² rows. Measured on DBR 18.x at the same fixed 20-worker cluster (the 1024² rows above are DBR 17.3 LTS).
 
 #### Repartition strategy
 

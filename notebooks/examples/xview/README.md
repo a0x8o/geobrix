@@ -1,5 +1,7 @@
 # Clipping - xView — Per-Object Raster Clipping with GeoBrix
 
+![xView — clip aerial rasters to labeled objects](../../../resources/images/xview-clipping.png)
+
 An end-to-end example showing how to load high-resolution aerial GeoTIFFs from the [xView Detection Challenge](https://challenge.xviewdataset.org/) dataset into Lakehouse tables and clip rasters to labeled objects in the accompanying GeoJSON, using GeoBrix RasterX together with Databricks built-in Spatial SQL functions.
 
 The single notebook moves from raw xView TGZ archives → a raster table loaded by the built-in `gtiff` reader → GeoJSON-derived object table (EWKT with SRID) → per-object clipped tiles, written back to a Unity Catalog Volume as individual TIFs by the built-in `gtiff` writer.

@@ -30,14 +30,23 @@ CONDITION TO MAINTAIN (every light-tier addition must do BOTH):
   2. Add the new light test dir to the explicit pytest dir list in the LIGHT CI
      phase (``.github/actions/pyrx_build/action.yml``), so it is actually RUN.
      The light tier is exercised ONLY in the light phase; the heavy phase skips it.
-Light test dirs so far: pyrx, pyvx, pygx, pmtiles_light, stac, plus bench + ds.
+Light test dirs so far: pyrx, pyvx, pygx, pmtiles_light, stac, plus bench + ds, viz.
 """
 
 import importlib.util
 
 # Every test dir whose modules import light-tier-only deps. Ignored in the
 # heavyweight CI env (no rasterio); collected + run in the light env.
-_LIGHT_TEST_DIRS = ["bench", "ds", "pyrx", "pyvx", "pygx", "pmtiles_light", "stac"]
+_LIGHT_TEST_DIRS = [
+    "bench",
+    "ds",
+    "pyrx",
+    "pyvx",
+    "pygx",
+    "pmtiles_light",
+    "stac",
+    "viz",
+]
 
 # Skip the light-tier suites when their dependencies are not installed.
 if importlib.util.find_spec("rasterio") is None:

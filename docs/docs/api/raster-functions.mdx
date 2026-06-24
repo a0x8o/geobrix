@@ -46,7 +46,7 @@ RasterX exposes 87+ SQL functions (registered as `gbx_rst_*`; available in Pytho
 ![RasterX function categories — Constructors, Accessors, Aggregators, Generators, Operations, H3 Grid](../../../resources/images/rasterx-function-categories.png)
 
 - **Accessor Functions**: Read raster properties and metadata (bounds, dimensions, CRS, bands, pixel size, georeference, format, type, NoData, subdatasets, summary, etc.)
-- **Aggregator Functions**: Combine or merge rasters in group-by (combineavg_agg, derivedband_agg, merge_agg)
+- **Aggregator Functions**: Combine or merge rasters in group-by (combineavg_agg, derivedband_agg, merge_agg, h3_rasterize_agg)
 - **Constructor Functions**: Create or load rasters from paths, binary content, or bands
 - **Generator Functions**: Produce multiple tiles or bands (h3_tessellate, maketiles, retile, separatebands, tooverlappingtiles)
 - **Grid Functions (H3)**: Aggregate raster values to H3 cells (rastertogrid avg/count/max/min/median)
@@ -542,7 +542,7 @@ Powered by **rasterio**.
 
 ## Aggregator Functions
 
-Combine or merge rasters in group-by (6 total).
+Combine or merge rasters in group-by (7 total).
 
 ### rst_combineavg_agg
 
@@ -758,6 +758,52 @@ Streaming IDW-interpolation aggregator that accepts one point geometry and one s
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_gridfrompoints_agg_sql_example" outputConstant="rst_gridfrompoints_agg_sql_example_output" code={rasterxSqlCode} />
 
+### rst_h3_rasterize_agg
+
+<Tier both/> <Impl groupedAgg/>
+
+:::note Lightweight tier (pyrx)
+Powered by **rasterio** + **h3**. Aggregate — `groupBy(...).agg(rx.rst_h3_rasterize_agg("cellid", "value", ...))` burns each H3 cell's centroid pixel (or spatial-envelope pixels with `mode='spatial_envelope'`) into one raster tile per group. When `value` is omitted or null, all burned pixels carry `1.0` (presence mask). The extent and pixel size are derived automatically from the H3 resolution unless explicit bounds are supplied; `kring_pad` (default 1) expands the canvas by that many rings to avoid clipping edge cells.
+:::
+
+:::warning Lightweight SQL returns BINARY (not the tile struct)
+Heavyweight `gbx_rst_h3_rasterize_agg` returns a tile **`STRUCT<cellid, raster, metadata>`**; the lightweight **SQL** function returns **`BINARY`** (the raster bytes). A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight SQL aggregate returns the raster payload as BINARY. The lightweight **Python** wrapper `rx.rst_h3_rasterize_agg(...)` returns the full tile struct (it composes the aggregate with a tile-wrapping step), so only raw SQL differs. To rebuild the tile-struct equivalent in SQL, select the group key as `cellid` and wrap the BINARY with `gbx_rst_fromcontent`:
+
+```sql
+-- Lightweight SQL: rebuild the (cellid, raster) the heavyweight struct would carry
+SELECT
+  region_id AS cellid,
+  gbx_rst_fromcontent(
+    gbx_rst_h3_rasterize_agg(cellid, burn_value, 4326, null, null,null,null,null, null,null, 'centroids', 1),
+    'GTiff'
+  ) AS tile
+FROM h3_cell_values
+GROUP BY region_id
+```
+:::
+
+Streaming aggregator that burns H3 cell centroid pixels (or spatial-envelope pixels) into one raster tile per group. This is the **inverse** of [`rst_h3_rastertogrid*`](#rst_h3_rastertogridavg): where those functions reduce raster pixels to per-cell statistics, `rst_h3_rasterize_agg` reconstructs a raster from per-cell values. Use [`rst_frombands_agg`](#rst_frombands_agg) to stack per-threshold rasters (each produced by one `rst_h3_rasterize_agg` call) into a single multi-band output.
+
+:::tip Worked example
+The [H3 Rasterize notebook](../notebooks/h3-rasterize) walks this through end to end on a San Francisco Bay Area DEM: elevation isobands → H3 polyfill → a shared canvas from [`rst_h3_gridspec`](#h3-grid) → per-band `rst_h3_rasterize_agg` → multi-band stack via [`rst_frombands_agg`](#rst_frombands_agg), visualized with the [`gbx.viz`](./viz) helpers. The same pattern maps directly to a telco multi-threshold signal-coverage stack.
+:::
+
+**Signature:** `rst_h3_rasterize_agg(cellid: Column, value: Column, srid: Column, pixel_size: Column, xmin: Column, ymin: Column, xmax: Column, ymax: Column, width: Column, height: Column, mode: Column, kring_pad: Column): Column`
+
+**Parameters:**
+- `cellid` — H3 cell ID (BIGINT or STRING) to burn (one per row)
+- `value` — numeric burn value; pass `null` for a presence mask (all pixels → `1.0`)
+- `srid` — EPSG code for the output CRS; defaults to `4326` (WGS 84)
+- `pixel_size` — ground resolution in CRS units (derives from H3 resolution when `null`)
+- `xmin/ymin/xmax/ymax` — output canvas extent; auto-computed from cell bounds + `kring_pad` when `null`
+- `width/height` — output raster dimensions in pixels; auto-derived from extent + pixel_size when `null`
+- `mode` — `'centroids'` (default, burns the cell-centroid pixel only) or `'spatial_envelope'` (burns all pixels inside the hexagon envelope)
+- `kring_pad` — ring count by which to expand the auto-computed canvas (default `1`)
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rasterize_agg_sql_example" outputConstant="rst_h3_rasterize_agg_sql_example_output" code={rasterxSqlCode} />
+
 ---
 
 ## Constructor Functions
@@ -965,9 +1011,9 @@ Powered by **rasterio**. Streams one tile row per overlapping region via streami
 
 ---
 
-## Grid Functions (H3)
+## Grid Functions (H3) {#h3-grid}
 
-Aggregate raster values to H3 grid cells (5 total).
+Aggregate raster values to H3 grid cells, and utility functions for H3-based canvas setup (7 total).
 
 ### rst_h3_rastertogridavg
 
@@ -1038,6 +1084,73 @@ Powered by **rasterio** + **h3**. Returns an `ARRAY` (one element per band) of `
 **SQL:**
 
 <CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="rst_h3_rastertogridmedian_sql_example" outputConstant="rst_h3_rastertogridmedian_sql_example_output" code={rasterxSqlCode} />
+
+### gbx_h3_cell_bbox
+
+<Tier both/>
+
+:::note Lightweight tier (pyrx)
+Powered by **h3**. Returns a `STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE>` bounding box for the given H3 cell in the requested `srid`. In `'centroids'` mode the box tightly wraps the centroid point; in `'spatial_envelope'` mode it wraps the full hexagon outline. When `kring_pad > 0` the k-ring of that radius is computed first and the bounding box covers all cells in the ring. The lightweight SQL function requires all four arguments explicitly; the Python API (`rx.h3_cell_bbox(cellid, srid, mode, kring_pad)`) honors the same defaults as the Scala implementation.
+:::
+
+Scalar function — returns the bounding box `STRUCT<xmin, ymin, xmax, ymax>` for one H3 cell in the given CRS. Use this to drive the `xmin/ymin/xmax/ymax` and grid-size parameters of [`rst_h3_rasterize_agg`](#rst_h3_rasterize_agg) when you need a consistent per-cell canvas, or to clip and inspect cell extents in downstream queries.
+
+**Signature:** `h3_cell_bbox(cellid: Column, srid: Column, mode: Column, kring_pad: Column): Column`
+
+**Parameters:**
+- `cellid` — H3 cell ID (BIGINT or STRING)
+- `srid` — EPSG code; `4326` for WGS 84 lon/lat
+- `mode` — `'centroids'` (centroid point envelope) or `'spatial_envelope'` (hexagon boundary envelope)
+- `kring_pad` — expand by this many k-rings before computing the bounding box; `0` = no expansion
+
+**Returns:** `STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE>`
+
+**SQL:**
+
+<CodeFromTest language="sql" source="docs/tests/python/api/rasterx_functions_sql.py" testFile="docs/tests/python/api/test_rasterx_functions_sql.py" functionName="h3_cell_bbox_sql_example" outputConstant="h3_cell_bbox_sql_example_output" code={rasterxSqlCode} />
+
+### rst_h3_gridspec (Python / DataFrame helper)
+
+:::note Lightweight (pyrx) Python helper only
+`rst_h3_gridspec` is **not registered as a SQL function** and is **not available in the heavyweight tier**. It is a pure-Python / PySpark DataFrame helper in the `pyrx` package.
+
+For the heavyweight tier, compose the equivalent shared canvas using the registered scalar `gbx_h3_cell_bbox(cellid, srid, mode, kring_pad)` with native Spark `min`/`max` aggregates and the same floor/ceil snap arithmetic:
+```sql
+SELECT min(cell_bbox.xmin), min(cell_bbox.ymin),
+       max(cell_bbox.xmax), max(cell_bbox.ymax)
+FROM   (SELECT gbx_h3_cell_bbox(cellid, 4326, 'centroids', 1) AS cell_bbox FROM cells)
+```
+:::
+
+`rst_h3_gridspec` computes the shared, snapped canvas (extent + pixel size) that a group of H3 cells should use so that per-threshold rasters align on a common grid and can be stacked via `rst_frombands_agg` or mosaicked via `rst_merge_agg`.
+
+**Signature:**
+```python
+rx.rst_h3_gridspec(df, cell_col="cellid", *group_cols,
+                   srid=4326, pixel_size=None,
+                   mode="centroids", kring_pad=1)
+```
+
+**Typical multi-threshold workflow:**
+
+1. Call `rx.rst_h3_gridspec(df, cell_col="cellid", srid=4326, mode='centroids', kring_pad=1)` once on the distinct cell set. It returns the grouped DataFrame with a `grid` struct column — one row per group containing the shared canvas.
+2. For each threshold band, run `rst_h3_rasterize_agg` with those fixed bounds — all output tiles share the same origin and pixel grid.
+3. Stack aligned bands with `rst_frombands_agg` (ordered by `band_index`), or mosaic per-cell tiles with `rst_merge_agg`.
+
+**Parameters:**
+- `df` — input Spark DataFrame containing H3 cell IDs
+- `cell_col` — column name holding H3 cell IDs (integer or string); default `"cellid"`
+- `*group_cols` — additional grouping columns (e.g. a transmitter ID, year, month); one grid spec row is produced per group
+- `srid` — EPSG code for the output CRS; `4326` for WGS 84 (default)
+- `pixel_size` — ground resolution in CRS units; `None` = auto-derived from the H3 resolution via an edge-length heuristic (default)
+- `mode` — `'centroids'` (default) or `'spatial_envelope'`
+- `kring_pad` — k-ring expansion applied per cell before computing its bounding box (default `1`)
+
+**Returns:** the grouped DataFrame with a `grid` column of type:
+```
+STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE,
+       pixel_size DOUBLE, width INT, height INT, srid INT>
+```
 
 ---
 
@@ -1895,6 +2008,37 @@ val result = GDALManager.withVrtPython {
 #### Trusted-modules variant
 
 GDAL also accepts `GDAL_VRT_ENABLE_PYTHON=TRUSTED_MODULES` plus a `GDAL_VRT_PYTHON_TRUSTED_MODULES` allowlist if you want pixel-function code restricted to specific Python module prefixes. GeoBrix uses the plain `YES` form because the pixel-function source is constructed in-process from trusted (geobrix-generated) strings, never from user-supplied VRT XML on disk. If your custom code path reads VRTs whose `<PixelFunctionCode>` originates from less-trusted sources, switch to the `TRUSTED_MODULES` form and allowlist only what you intend to load.
+
+---
+
+## Escape hatches
+
+When a raster operation isn't in the `rst_*` surface, drop down to rasterio/NumPy per tile (lightweight tier). These are **Python-only** helpers on `databricks.labs.gbx.pyrx.functions` — not SQL functions, and not registered as `gbx_rst_*`.
+
+### tile_to_numpy
+
+```python
+from databricks.labs.gbx.pyrx.functions import tile_to_numpy
+
+arr = tile_to_numpy(tile_or_bytes)   # -> np.ndarray, shape (bands, rows, cols)
+```
+
+Read a tile's raster into a NumPy array (all bands). Accepts either a tile struct (a `Row`/dict with a `raster` field) or raw `bytes`. Useful when you've collected a tile to the driver, or inside your own UDF.
+
+### rst_apply
+
+```python
+from pyspark.sql.types import DoubleType
+from databricks.labs.gbx.pyrx.functions import rst_apply
+
+df.select(
+    rst_apply("tile", lambda ds: float(ds.read(1).mean()), returnType=DoubleType()).alias("band1_mean")
+)
+```
+
+Apply your own function to each tile's open rasterio dataset, returning one scalar per row. `fn` receives a rasterio `DatasetReader`; the return value must match `returnType` (default `DoubleType()`; any Spark `DataType`). A null/empty tile yields null. This is the "GeoBrix doesn't have function X — run my own rasterio per tile" path; it returns a scalar (raster→raster transforms are the domain of `rst_mapalgebra` / `rst_derivedband`).
+
+For rendering tiles and building maps from results, see the [Visualization (`gbx.viz`)](./viz) page.
 
 ---
 
