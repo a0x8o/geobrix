@@ -2247,15 +2247,15 @@ def h3_cell_bbox_sql_example():
     """Get bounding box of H3 cells in a given CRS."""
     return """
 -- Bounding box (STRUCT<xmin, ymin, xmax, ymax>) for each H3 cell in EPSG:4326.
--- Uses 'centroids' mode: bbox derived from the cell centroid point.
+-- Uses 'centroids' mode with no k-ring padding (kring_pad=0).
 SELECT
     cellid,
-    gbx_h3_cell_bbox(cellid, 4326, 'centroids') AS bbox
+    gbx_h3_cell_bbox(cellid, 4326, 'centroids', 0) AS bbox
 FROM (
     VALUES
-        (617733151020810239L),
-        (617733151085035519L),
-        (617733151021334527L)
+        (617733151020810239),
+        (617733151085035519),
+        (617733151021334527)
 ) AS t(cellid);
 """
 

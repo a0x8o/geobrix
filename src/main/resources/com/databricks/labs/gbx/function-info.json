@@ -327,7 +327,7 @@
     },
     "_package_rasterx_h3": "--- rasterx_h3 ---",
     "gbx_h3_cell_bbox": {
-      "examples": "Examples:\n      > SELECT cellid, gbx_h3_cell_bbox(cellid, 4326, 'centroids') AS bbox FROM ( VALUES (617733151020810239L), (617733151085035519L), (617733151021334527L) ) AS t(cellid);"
+      "examples": "Examples:\n      > SELECT cellid, gbx_h3_cell_bbox(cellid, 4326, 'centroids', 0) AS bbox FROM ( VALUES (617733151020810239), (617733151085035519), (617733151021334527) ) AS t(cellid);"
     },
     "_package_gridx": "--- gridx ---",
     "gbx_bng_aswkb": {
