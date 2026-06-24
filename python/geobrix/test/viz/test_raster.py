@@ -179,3 +179,69 @@ def test_plot_raster_composite_auto_unchanged_for_single_band():
     plot_raster(make_geotiff_bytes(width=8, height=8, count=1))
     assert len(plt.get_fignums()) == 1
     plt.close("all")
+
+
+# ---------------------------------------------------------------------------
+# _single_band_clim unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_single_band_clim_constant_ones():
+    """Constant array of 1.0 -> (0.0, 1.0) non-degenerate range."""
+    result = _raster._single_band_clim(np.array([1.0, 1.0, 1.0]))
+    assert result == (0.0, 1.0)
+
+
+def test_single_band_clim_varying():
+    """Varying data -> None (let matplotlib auto-scale)."""
+    result = _raster._single_band_clim(np.array([10.0, 50.0]))
+    assert result is None
+
+
+def test_single_band_clim_empty():
+    """Empty array -> None."""
+    result = _raster._single_band_clim(np.array([]))
+    assert result is None
+
+
+def test_single_band_clim_constant_zeros():
+    """Constant zeros -> (0.0, 1.0)."""
+    result = _raster._single_band_clim(np.array([0.0, 0.0]))
+    assert result == (0.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Presence mask render test
+# ---------------------------------------------------------------------------
+
+
+def _make_presence_mask_gtiff():
+    """Single-band 8x8 GTiff: 1.0 in center 4x4, NoData=-9999 on border."""
+    transform = from_origin(0.0, 8.0, 1.0, 1.0)
+    data = np.full((8, 8), NODATA, dtype="float32")
+    data[2:6, 2:6] = 1.0
+    profile = dict(
+        driver="GTiff",
+        width=8,
+        height=8,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=transform,
+        nodata=NODATA,
+    )
+    buf = io.BytesIO()
+    with rasterio.open(buf, "w", **profile) as ds:
+        ds.write(data, 1)
+    return buf.getvalue()
+
+
+def test_plot_raster_presence_mask_renders_figure():
+    """Single-band constant-value presence mask must produce a non-empty figure.
+
+    Before the fix, vmin==vmax caused a degenerate normalizer and a blank plot.
+    """
+    plt.close("all")
+    plot_raster(_make_presence_mask_gtiff())
+    assert len(plt.get_fignums()) >= 1, "Expected a figure for presence-mask raster"
+    plt.close("all")

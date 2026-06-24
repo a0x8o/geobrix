@@ -89,6 +89,26 @@ def _coverage_depth(data, nodata):
     return covered.sum(axis=0)
 
 
+def _single_band_clim(valid):
+    """(vmin, vmax) override for a single band, or None to let matplotlib auto-scale.
+
+    valid: 1-D array of the band's unmasked values. Returns an explicit
+    (vmin, vmax) only when the band is constant (vmax <= vmin), which would
+    otherwise make matplotlib's normalizer degenerate and render blank — e.g. a
+    presence mask of all 1.0. Maps the constant onto a non-degenerate range so it
+    gets a distinct color. Returns None for normal (varying) data.
+    """
+    if valid.size == 0:
+        return None
+    vmin = float(valid.min())
+    vmax = float(valid.max())
+    if vmax > vmin:
+        return None
+    lo = min(0.0, vmin)
+    hi = vmin if vmin > lo else lo + 1.0
+    return (lo, hi)
+
+
 def _render(
     data, transform, *, title, fig_w, fig_h, scale, composite="auto", nodata=None
 ):
@@ -135,7 +155,18 @@ def _render(
         data = _percentile_stretch(data)
     fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
     if data.shape[0] == 1:
-        show(data, ax=ax, transform=transform, cmap="viridis")
+        band = data[0]
+        valid = (
+            band.compressed()
+            if isinstance(band, np.ma.MaskedArray)
+            else np.asarray(band).ravel()
+        )
+        ax.set_facecolor("whitesmoke")
+        clim = _single_band_clim(valid)
+        kw = {"cmap": "viridis"}
+        if clim is not None:
+            kw["vmin"], kw["vmax"] = clim
+        show(data, ax=ax, transform=transform, **kw)
     else:
         show(data, ax=ax, transform=transform)
     full_title = f"{title} (scale 1/{round(scale, 1)}x)" if scale > 1 else title
