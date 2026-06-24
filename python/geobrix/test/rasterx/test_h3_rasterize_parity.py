@@ -12,11 +12,20 @@ this directory.
 import logging
 from pathlib import Path
 
-import h3
-import numpy as np
 import pytest
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as f
+
+# Cross-tier parity test: needs BOTH the heavy JAR (gated below) AND the light-tier
+# deps (h3 / rasterio / pandas, pulled in via pyrx). The heavyweight CI env has the
+# JAR but not the light deps and still COLLECTS test/rasterx, so skip cleanly here —
+# a module-top import of a light-only dep would otherwise error at collection.
+pytest.importorskip("h3")
+pytest.importorskip("rasterio")
+pytest.importorskip("pandas")
+
+import h3  # noqa: E402
+import numpy as np  # noqa: E402
+from pyspark.sql import SparkSession  # noqa: E402
+from pyspark.sql import functions as f  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # JAR discovery — skip the whole module if absent (same as other rasterx tests)
