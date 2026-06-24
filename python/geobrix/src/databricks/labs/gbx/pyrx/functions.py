@@ -3128,6 +3128,70 @@ def _dtmfromgeoms_agg_udf(
     )
 
 
+@pandas_udf(BinaryType())
+def _rst_h3_rasterize_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    srid: pd.Series,
+    pixel_size: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width: pd.Series,
+    height: pd.Series,
+    mode: pd.Series,
+    kring_pad: pd.Series,
+) -> bytes:
+    from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    _env.configure_gdal_env()
+    cells = [int(c) for c in cellid if c is not None]
+    if not cells:
+        return None
+    vals = (
+        [float(v) if v is not None else 1.0 for v in value]
+        if value is not None
+        else [1.0] * len(cells)
+    )
+    cell_values = {}
+    for c, v in zip(cells, vals):
+        cell_values[c] = v  # last-wins (cells of one res don't overlap)
+
+    res = cr._resolution([cr._h3_str(c) for c in cells])
+    _srid = int(srid.iloc[0]) if srid is not None and srid.iloc[0] is not None else 4326
+    _mode = (
+        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    )
+    _kp = (
+        int(kring_pad.iloc[0])
+        if kring_pad is not None and kring_pad.iloc[0] is not None
+        else 1
+    )
+
+    def _has(s):
+        return s is not None and s.iloc[0] is not None
+
+    if _has(xmin) and _has(width):
+        grid = (
+            float(xmin.iloc[0]),
+            float(ymin.iloc[0]),
+            float(xmax.iloc[0]),
+            float(ymax.iloc[0]),
+            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
+            int(width.iloc[0]),
+            int(height.iloc[0]),
+            _srid,
+        )
+    else:
+        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
+        grid = cr.compute_gridspec(
+            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp
+        )
+    return cr.cells_to_raster(cell_values, *grid, resolution=res)
+
+
 # --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
 def rst_merge_agg(tile: ColLike) -> Column:
     """Merge a group's tile rasters into one spatial mosaic tile.
@@ -3313,6 +3377,54 @@ def rst_dtmfromgeoms_agg(
             _col(height_px),
             _col(srid),
             nd,
+        )
+    )
+
+
+def rst_h3_rasterize_agg(
+    cellid: ColLike,
+    value: ColLike = None,
+    srid: ColLike = None,
+    pixel_size: ColLike = None,
+    xmin: ColLike = None,
+    ymin: ColLike = None,
+    xmax: ColLike = None,
+    ymax: ColLike = None,
+    width: ColLike = None,
+    height: ColLike = None,
+    mode: ColLike = None,
+    kring_pad: ColLike = None,
+) -> Column:
+    """Rasterize a group's H3 cells into one tile (pixel-centroid burn).
+
+    ``value`` omitted -> presence mask (1.0/NoData). Supply an explicit extent
+    (xmin..height, e.g. from ``rst_h3_gridspec``) for aligned band stacking;
+    else the grid is auto-derived per ``mode``/``kring_pad``. Use inside
+    ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_h3_rasterize_agg("cellid").alias("tile"))
+
+    SQL returns BINARY (the raw grouped-agg UDF); Python returns a tile struct
+    (wrapped by ``_as_tile_udf``).
+    """
+
+    def _c(x, default):
+        return _col(x) if x is not None else f.lit(default)
+
+    return _as_tile_udf(
+        _rst_h3_rasterize_agg_udf(
+            _col(cellid),
+            _c(value, None),
+            _c(srid, 4326),
+            _c(pixel_size, None),
+            _c(xmin, None),
+            _c(ymin, None),
+            _c(xmax, None),
+            _c(ymax, None),
+            _c(width, None),
+            _c(height, None),
+            _c(mode, "centroids"),
+            _c(kring_pad, 1),
         )
     )
 
@@ -3622,6 +3734,7 @@ _sql_aggregators = {
     "gbx_rst_derivedband_agg": _derivedband_agg_udf,
     "gbx_rst_gridfrompoints_agg": _gridfrompoints_agg_udf,
     "gbx_rst_dtmfromgeoms_agg": _dtmfromgeoms_agg_udf,
+    "gbx_rst_h3_rasterize_agg": _rst_h3_rasterize_agg_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}
