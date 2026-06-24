@@ -65,6 +65,8 @@ def snap_bounds(bxmin, bymin, bxmax, bymax, pixel_size):
     Returns (xmin, ymin, xmax, ymax, width, height) where xmin and ymax are
     integer multiples of pixel_size, and the grid is at least 1x1. Independent
     grids built with the same pixel_size and these snapped origins will align.
+    Note: pixel_size is NOT included in the return tuple; callers must thread
+    it separately (e.g. compute_gridspec inserts it into the returned gridspec).
     """
     xmin = math.floor(bxmin / pixel_size) * pixel_size
     ymax = math.ceil(bymax / pixel_size) * pixel_size
@@ -146,13 +148,7 @@ def cells_to_raster(
     # padded bbox, so this is O(pixels-in-footprint). PERF FOLLOW-UP: restrict to
     # pixels within each cell's local window instead of the whole grid.
     for i in range(lon.size):
-        v = lut.get(
-            h3.int_to_str(
-                h3.str_to_int(
-                    h3.latlng_to_cell(float(lat[i]), float(lon[i]), resolution)
-                )
-            )
-        )
+        v = lut.get(h3.latlng_to_cell(float(lat[i]), float(lon[i]), resolution))
         if v is not None:
             out[i] = v
 
