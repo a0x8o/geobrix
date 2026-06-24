@@ -19,6 +19,13 @@ def test_fcc_rasterize_per_speed_tier(spark):
         )
         for r in rows
     ]
+
+    # fixture must span multiple speed tiers for meaningful per-threshold coverage
+    distinct_speeds = {r["max_advertised_download_speed"] for r in rows}
+    assert (
+        len(distinct_speeds) >= 4
+    ), f"Fixture must have >= 4 distinct speed tiers, got {sorted(distinct_speeds)}"
+
     df = spark.createDataFrame(data, ["cellid", "speed", "provider"])
     # one raster per (provider, speed tier); res-8 cells, presence mask
     tiles = (
@@ -26,7 +33,10 @@ def test_fcc_rasterize_per_speed_tier(spark):
         .agg(rx.rst_h3_rasterize_agg("cellid").alias("tile"))
         .collect()
     )
-    assert len(tiles) >= 1
+    # multiple (provider, speed) groups → multiple coverage rasters
+    assert (
+        len(tiles) >= 4
+    ), f"Expected >= 4 per-(provider,speed) rasters, got {len(tiles)}"
     for t in tiles:
         with _serde.open_tile(bytes(t["tile"]["raster"])) as ds:
             assert (ds.read(1) == 1.0).sum() >= 1  # cells burned
