@@ -527,6 +527,96 @@ def rst_frombands_agg(tile: ColLike, band_index: ColLike) -> Column:
     )
 
 
+def rst_h3_rasterize_agg(
+    cellid: ColLike,
+    value: ColLike,
+    srid: ColLike,
+    pixel_size: ColLike,
+    xmin: ColLike,
+    ymin: ColLike,
+    xmax: ColLike,
+    ymax: ColLike,
+    width: ColLike,
+    height: ColLike,
+    mode: ColLike,
+    kring_pad: ColLike,
+) -> Column:
+    """Rasterize a group's H3 cells into one tile (pixel-centroid burn).
+
+    Use with ``groupBy``; each row contributes one H3 ``cellid`` (and optionally
+    a ``value``). When ``value`` is ``None`` / ``f.lit(None)``, pixels covered by
+    any cell are burned with ``1.0`` (presence mask).  Supply an explicit canvas
+    (``xmin`` … ``height``) from ``rst_h3_gridspec`` for aligned multi-band
+    stacking; otherwise the grid is auto-derived from the cell set.
+
+    Args:
+        cellid:     LONG column of H3 cell ids.
+        value:      DOUBLE burn-value column, or ``f.lit(None).cast("double")``
+                    for a presence mask.
+        srid:       EPSG SRID of the output raster (e.g. ``f.lit(4326)``).
+        pixel_size: Pixel size in CRS units (used when extent is auto-derived).
+        xmin:       Minimum X of the output canvas (CRS units).
+        ymin:       Minimum Y of the output canvas (CRS units).
+        xmax:       Maximum X of the output canvas (CRS units).
+        ymax:       Maximum Y of the output canvas (CRS units).
+        width:      Canvas width in pixels (INTEGER).
+        height:     Canvas height in pixels (INTEGER).
+        mode:       Sampling mode string (e.g. ``f.lit("centroids")``).
+        kring_pad:  K-ring expansion around each cell before rasterizing
+                    (``f.lit(0)`` = no expansion).
+
+    Returns:
+        Column of raster tile (tile struct with ``source``, ``raster``,
+        ``metadata`` fields).
+    """
+    return f.call_function(
+        "gbx_rst_h3_rasterize_agg",
+        _col(cellid),
+        _col(value),
+        _col(srid),
+        _col(pixel_size),
+        _col(xmin),
+        _col(ymin),
+        _col(xmax),
+        _col(ymax),
+        _col(width),
+        _col(height),
+        _col(mode),
+        _col(kring_pad),
+    )
+
+
+def gbx_h3_cell_bbox(
+    cellid: ColLike,
+    srid: ColLike = None,
+    mode: ColLike = None,
+    kring_pad: ColLike = 0,
+) -> Column:
+    """Bounding box of one H3 cell in *srid* (centroid point or hexagon envelope).
+
+    Returns a ``STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE>``.
+
+    Args:
+        cellid:    Column holding the H3 cell id (integer / long).
+        srid:      Output CRS EPSG code.  Defaults to ``4326``.
+        mode:      ``"centroids"`` (default) or ``"spatial_envelope"``.
+        kring_pad: K-ring expansion before computing the bbox (default ``0``).
+                   When > 0 the returned bbox covers the full padded neighbourhood.
+
+    Returns:
+        Column of STRUCT<xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE>.
+    """
+    srid_col = _col(srid) if srid is not None else f.lit(4326)
+    mode_col = _col(mode) if mode is not None else f.lit("centroids")
+    return f.call_function(
+        "gbx_h3_cell_bbox",
+        _col(cellid),
+        srid_col,
+        mode_col,
+        _col(kring_pad),
+    )
+
+
 # Constructors
 
 

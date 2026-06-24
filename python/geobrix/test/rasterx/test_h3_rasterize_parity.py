@@ -131,18 +131,14 @@ def test_h3_rasterize_agg_mask_parity(spark):
     assert light_tile["raster"] is not None, "light tier: raster is None"
 
     # -----------------------------------------------------------------------
-    # Heavy tier: gbx_rst_h3_rasterize_agg via call_function (12-arg form)
-    #
-    # The Python heavy-tier functions.py does not yet expose a Python binding
-    # for rst_h3_rasterize_agg; use call_function directly (same as the SQL
-    # call path). The heavy tier returns a tile struct (cellid, raster,
-    # metadata) identical to the light-tier struct.
+    # Heavy tier: rx.rst_h3_rasterize_agg (Python wrapper, 12-arg form)
     # -----------------------------------------------------------------------
+    from databricks.labs.gbx.rasterx import functions as rx
+
     heavy_out = (
         df.groupBy("tx")
         .agg(
-            f.call_function(
-                "gbx_rst_h3_rasterize_agg",
+            rx.rst_h3_rasterize_agg(
                 f.col("cellid"),  # cellid LONG
                 f.lit(None).cast("double"),  # value  -> presence mask (1.0)
                 f.lit(srid),  # srid
