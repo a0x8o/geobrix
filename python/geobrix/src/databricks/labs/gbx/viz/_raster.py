@@ -155,6 +155,12 @@ def _render(
         data = _percentile_stretch(data)
     fig, ax = pyplot.subplots(1, figsize=(fig_w, fig_h))
     if data.shape[0] == 1:
+        # Render the single band with ax.imshow rather than rasterio.plot.show:
+        # show() renders a constant-valued band (e.g. an H3 presence mask, all 1.0)
+        # as blank and ignores an explicit vmin/vmax, whereas imshow honors both the
+        # clim and the masked array (NoData -> transparent over the facecolor).
+        from rasterio.plot import plotting_extent
+
         band = data[0]
         valid = (
             band.compressed()
@@ -166,7 +172,7 @@ def _render(
         kw = {"cmap": "viridis"}
         if clim is not None:
             kw["vmin"], kw["vmax"] = clim
-        show(data, ax=ax, transform=transform, **kw)
+        ax.imshow(band, extent=plotting_extent(band, transform), **kw)
     else:
         show(data, ax=ax, transform=transform)
     full_title = f"{title} (scale 1/{round(scale, 1)}x)" if scale > 1 else title

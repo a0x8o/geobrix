@@ -236,12 +236,33 @@ def _make_presence_mask_gtiff():
     return buf.getvalue()
 
 
-def test_plot_raster_presence_mask_renders_figure():
-    """Single-band constant-value presence mask must produce a non-empty figure.
+def test_plot_raster_presence_mask_actually_draws_footprint():
+    """A constant-value presence mask must DRAW its footprint, not render blank.
 
-    Before the fix, vmin==vmax caused a degenerate normalizer and a blank plot.
+    rasterio.plot.show() rendered a constant single band as an empty plot (it
+    ignored the explicit vmin/vmax), so the single-band branch uses ax.imshow, which
+    honors both the clim and the masked array. This asserts real drawn pixels — the
+    earlier check (a Figure object merely exists) passed while the plot was blank.
     """
     plt.close("all")
     plot_raster(_make_presence_mask_gtiff())
-    assert len(plt.get_fignums()) >= 1, "Expected a figure for presence-mask raster"
+    fig = plt.gcf()
+    ax = fig.axes[0]
+
+    # An AxesImage with a non-degenerate colour range must exist (vmin==vmax blanks).
+    images = ax.get_images()
+    assert images, "no image drawn on the axes"
+    vmin, vmax = images[0].get_clim()
+    assert vmin < vmax, f"degenerate colour range ({vmin}, {vmax}) -> blank render"
+
+    # And the rasterized figure must contain coloured (non-grey) pixels: the viridis
+    # footprint, as opposed to the grey/white background. A blank render has none.
+    fig.canvas.draw()
+    buf = np.asarray(fig.canvas.buffer_rgba())[..., :3].astype(int)
+    r, g, b = buf[..., 0], buf[..., 1], buf[..., 2]
+    coloured = (np.abs(r - g) > 25) | (np.abs(g - b) > 25) | (np.abs(r - b) > 25)
+    assert coloured.sum() > 200, (
+        f"presence-mask footprint not drawn (only {int(coloured.sum())} coloured "
+        "px) -- render is effectively blank"
+    )
     plt.close("all")
