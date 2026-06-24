@@ -1,6 +1,6 @@
 # H3 Cell Rasterize + Band Stacking Demo
 
-This example notebook (`h3_rasterize_demo.ipynb`) demonstrates the complete
+This example notebook (`h3_rasterize_isobands.ipynb`) demonstrates the complete
 H3-cell rasterization pipeline on real elevation data, starting from a DEM and
 producing a multi-band GeoTIFF stack.
 
@@ -47,14 +47,16 @@ subscriber locations or exporting as PMTiles for web visualization.
   GeoBrix lightweight tier (`geobrix[light,viz]`) and runs on Serverless.
   No JAR or GDAL init script is required.
 
-- **GeoBrix sample-data Volume** — the DEM is read from
-  `/Volumes/main/geobrix_samples/geobrix-examples/nyc/elevation/srtm_n40w073.tif`.
-  Run `gbx:data:download --bundle essential` to populate the Volume if it is
-  empty, or adjust `DEM_PATH` in the notebook to point at your own SRTM tile.
+- **Sample DEM (auto-staged)** — the DEM is read from
+  `/Volumes/geospatial_docs/geobrix/sample-data/geobrix-examples/nyc/elevation/srtm_n40w073.tif`.
+  The **"Stage the sample DEM"** cell downloads the SRTM tile from the public AWS
+  Terrain Tiles dataset and writes it there on first run (idempotent; Serverless-safe).
+  Point `DEM_PATH` at your own SRTM tile to skip the download. (The Volume root must
+  already exist — only sub-directories are created.)
 
 - **Wheel** — update the `%pip install` cell to point at your staged
   `geobrix-0.4.0-py3-none-any.whl` if the path differs from the default
-  `/Volumes/main/geobrix_samples/sample-data/`.
+  `/Volumes/geospatial_docs/geobrix/sample-data/`.
 
 ## Running the notebook
 
