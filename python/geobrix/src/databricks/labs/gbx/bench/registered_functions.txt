@@ -47,6 +47,7 @@ gbx_rst_h3_rastertogridcount
 gbx_rst_h3_rastertogridmax
 gbx_rst_h3_rastertogridmin
 gbx_rst_h3_rastertogridmedian
+gbx_rst_h3_rasterize_agg
 gbx_rst_quadbin_rastertogridavg
 gbx_rst_quadbin_rastertogridcount
 gbx_rst_quadbin_rastertogridmax
@@ -131,6 +132,7 @@ gbx_bng_geomkringexplode
 gbx_bng_kloopexplode
 gbx_bng_kringexplode
 gbx_bng_tessellateexplode
+gbx_h3_cell_bbox
 gbx_quadbin_aswkb
 gbx_quadbin_cellunion_agg
 gbx_quadbin_cellunion

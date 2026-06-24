@@ -637,19 +637,47 @@ def test_all_sql_functions_have_example():
 def test_all_sql_examples_are_valid_sql():
     """Verify all SQL examples have valid SQL syntax"""
     import inspect
-    
-    functions = [name for name, obj in inspect.getmembers(rasterx_functions_sql) 
+
+    functions = [name for name, obj in inspect.getmembers(rasterx_functions_sql)
                  if inspect.isfunction(obj) and not name.startswith('_')]
-    
+
     for func_name in functions:
         func = getattr(rasterx_functions_sql, func_name)
         sql = func()
-        
+
         # Basic checks
         assert "SELECT" in sql.upper() or "WITH" in sql.upper(), \
             f"{func_name}: SQL should contain SELECT or WITH"
-        
+
         # Check for GeoBrix functions (most should have gbx_)
         if "gbx_" not in sql.lower() and "from rasters" in sql.lower():
             # Allow some exceptions like pure Spark SQL examples
             pass
+
+
+# ============================================================================
+# H3 Cell Rasterizer Functions
+# ============================================================================
+
+
+def test_rst_h3_rasterize_agg_sql_example():
+    """rst_h3_rasterize_agg example string exists, returns SQL, and references the function."""
+    sql = rasterx_functions_sql.rst_h3_rasterize_agg_sql_example()
+    assert isinstance(sql, str) and len(sql) > 0
+    assert "gbx_rst_h3_rasterize_agg" in sql
+    assert "SELECT" in sql.upper()
+    assert hasattr(rasterx_functions_sql, "rst_h3_rasterize_agg_sql_example_output")
+
+
+def test_h3_cell_bbox_sql_example(spark):
+    """h3_cell_bbox example string exists and executes to non-null bbox structs."""
+    from databricks.labs.gbx.pyrx import functions as prx
+    prx.register(spark)
+    sql = rasterx_functions_sql.h3_cell_bbox_sql_example()
+    assert isinstance(sql, str) and len(sql) > 0
+    assert "gbx_h3_cell_bbox" in sql
+    result = spark.sql(sql).collect()
+    assert len(result) == 3
+    for row in result:
+        assert row["bbox"] is not None
+    assert hasattr(rasterx_functions_sql, "h3_cell_bbox_sql_example_output")

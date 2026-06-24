@@ -33,6 +33,7 @@ RESOURCE_FILE = os.path.join(RESOURCE_DIR, "function-info.json")
 # e.g. (rasterx_functions_sql, "rst_") -> "gbx_rst_"
 MODULES = [
     ("tests.python.api.rasterx_functions_sql", "rst_", "gbx_rst_"),
+    ("tests.python.api.rasterx_functions_sql", "h3_", "gbx_h3_"),
     ("tests.python.api.gridx_functions_sql", "bng_", "gbx_bng_"),
     ("tests.python.api.gridx_functions_sql", "quadbin_", "gbx_quadbin_"),
     ("tests.python.api.gridx_functions_sql", "custom_", "gbx_custom_"),
@@ -237,6 +238,7 @@ def load_registered_functions_txt() -> list:
 # Package prefixes for grouping (section keys in JSON are _package_<name>; loader skips them)
 PACKAGE_PREFIXES = [
     ("rasterx", "gbx_rst_"),
+    ("rasterx_h3", "gbx_h3_"),
     ("gridx", "gbx_bng_"),
     ("gridx_custom", "gbx_custom_"),
     ("vectorx", "gbx_st_"),
@@ -316,7 +318,7 @@ def main():
         print("Functions missing a doc SQL example (add *_sql_example() in the API function ref):", file=sys.stderr)
         for name in sorted(missing_or_empty):
             pkg = _package_for(name)
-            if pkg == "rasterx":
+            if pkg in ("rasterx", "rasterx_h3"):
                 path = "docs/tests/python/api/rasterx_functions_sql.py"
             elif pkg in ("gridx", "gridx_custom"):
                 path = "docs/tests/python/api/gridx_functions_sql.py"
