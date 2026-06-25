@@ -9,6 +9,34 @@ import TabItem from '@theme/TabItem';
 
 GeoBrix provides Spark writers for geospatial file formats.
 
+## Named Vector Formats
+
+The vector readers and writers share a small column contract for geometry and
+its coordinate reference system (CRS). A vector frame carries one geometry
+column plus up to two CRS-companion columns:
+
+```text
+<geom>            binary (WKB)  or  string (WKT)   # the geometry
+<geom>_srid       string  — REQUIRED              # CRS authority code, e.g. "4326" ("0" if unknown)
+<geom>_srid_proj  string  — optional              # PROJ4 string; CRS fallback when srid is "0"
+```
+
+The geometry encoding is read from the column's type — `binary` is WKB,
+`string` is WKT. The CRS is `EPSG:<srid>` when `<geom>_srid` is set, falling
+back to the PROJ4 string in `<geom>_srid_proj` when the srid is `"0"`. Every
+other column is written as an attribute; `<geom>_srid` / `<geom>_srid_proj` are
+CRS metadata and are **not** written as fields.
+
+What each format expects when written differs — how (and whether) the geometry
+is named, field-name and type limits, and how the CRS is stored:
+
+| Format | Geometry on output | Field-name / type limits | CRS |
+|---|---|---|---|
+| **Shapefile** | The shape record — **no named geometry field**; **one geometry type per file**. | Attribute names truncated to **10 characters** (`.dbf`); limited types. Output is a sidecar set (`.shp/.shx/.dbf/.prj/.cpg`). | `.prj` sidecar. |
+| **GeoJSON** / **GeoJSONL** | Structural GeoJSON `geometry` member — **no named field**. | Properties keep full names; JSON types (string/number/bool/null). | WGS84 (EPSG:4326) per RFC 7946; a `crs` member otherwise. |
+| **GeoPackage** | A **named geometry column**, default `geom`. | Full field names; rich types (int64, real, text, blob, datetime). | Stored per geometry column (`gpkg_spatial_ref_sys`). |
+| **FileGDB** | A **named geometry field**, default `SHAPE`. | Esri limits (≤ 64 chars; reserved names like `OBJECTID` disallowed). | Per feature class. |
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
