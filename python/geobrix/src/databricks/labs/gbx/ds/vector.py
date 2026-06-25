@@ -163,6 +163,23 @@ def _output_geom_name(driver, geom_col):
     return _OUTPUT_GEOM_NAME.get(driver, geom_col)
 
 
+def _should_concat(driver):
+    """Whether the commit merges all fragments into ONE Arrow table before writing
+    (vs. appending per fragment).
+
+    - GeoJSON: its append path re-encodes the growing FeatureCollection
+      (~quadratic in fragment count), so one concatenated write is faster.
+    - ESRI Shapefile: the `.dbf` fixes each string field's width at layer creation
+      (the first fragment), so per-fragment append would silently TRUNCATE a wider
+      value in a later fragment; concat sizes fields to the global max. Shapefile is
+      2 GB-capped, so the concat stays within driver memory anyway.
+    - GPKG / FileGDB: no fixed field widths and no 2 GB cap (the large single-file
+      targets), so append per fragment to bound driver memory -- a single concat of
+      all partitions can OOM the single-node driver on large inputs.
+    """
+    return driver in ("GeoJSON", "ESRI Shapefile")
+
+
 def _writer_col_roles(schema, geom_col=None, srid_col=None, proj_col=None):
     """(geom_col, srid_col, proj_col, attr_cols) for the vector writers.
 
@@ -715,14 +732,9 @@ class VectorGbxWriter(DataSourceWriter):
             import pyarrow as pa
 
             tables = [feather.read_table(f) for f in frags]
-            # Concatenate every partition fragment into ONE Arrow table only for
-            # GeoJSON, whose append path re-encodes the growing FeatureCollection
-            # (~quadratic in fragment count). For the other drivers
-            # (GPKG / Shapefile / FileGDB) `_write_local` appends per fragment,
-            # which bounds driver memory: a single concat of all partitions can OOM
-            # the single-node driver on large inputs (the write happens on the
-            # driver, not the executors).
-            if self.driver == "GeoJSON" and len(tables) > 1:
+            # Merge fragments into one table for drivers that need it (see
+            # _should_concat); others append per fragment in _write_local.
+            if _should_concat(self.driver) and len(tables) > 1:
                 tables = [pa.concat_tables(tables)]
             geom_type, crs = self._infer_geom_crs(tables)
             # Write to driver-local disk first (supports random I/O for SQLite/

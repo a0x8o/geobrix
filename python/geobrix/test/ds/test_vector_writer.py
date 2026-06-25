@@ -73,6 +73,18 @@ def test_non_geojson_commit_streams_without_concat(spark, tmp_path, monkeypatch)
     assert spark.read.format("gpkg_gbx").load(out).count() == 2
 
 
+def test_should_concat_policy():
+    # GeoJSON (quadratic append) and Shapefile (.dbf field widths fixed at layer
+    # creation -> per-fragment append would silently truncate wider later values)
+    # must concat; GPKG/FileGDB stream per fragment to bound driver memory.
+    from databricks.labs.gbx.ds.vector import _should_concat
+
+    assert _should_concat("GeoJSON") is True
+    assert _should_concat("ESRI Shapefile") is True
+    assert _should_concat("GPKG") is False
+    assert _should_concat("OpenFileGDB") is False
+
+
 def test_scratch_dir_unique_per_write(tmp_path):
     # Two concurrent writes to the same parent directory must NOT share a scratch
     # dir, or one write's commit cleanup (rmtree) would delete the other's
