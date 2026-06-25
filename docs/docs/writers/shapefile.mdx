@@ -13,6 +13,15 @@ driver preset to `ESRI Shapefile`. It round-trips with the matching `shapefile_g
 reader; the schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared
 across all lightweight vector readers and writers.
 
+:::tip Writing a large Shapefile? Read this first
+A Shapefile assembles on a single node, and the format hard-caps each
+`.shp`/`.dbf` at **2 GB**. For large outputs, see [**Choosing a writer for large
+datasets**](./overview#choosing-a-writer-for-large-datasets) in the Writers
+Overview — it explains the driver-memory ceiling (use a **classic cluster**;
+high-memory Serverless does *not* help here) and the scalable `geojsonl_gbx` /
+`gpkg_gbx` alternatives.
+:::
+
 :::note Single-file write is lightweight-only
 This format's single-file writer is **lightweight-only** — its GDAL/OGR write path
 isn't implemented in the heavyweight tier. For large/any-scale output, the sharded
