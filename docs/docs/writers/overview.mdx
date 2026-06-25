@@ -77,6 +77,18 @@ For the largest datasets, prefer the writers that spread work across partitions:
 (`file_gdb_gbx` uses the native GDAL path and currently assembles in memory — a
 heavy-tier writer; prefer the above on Serverless.)
 
+:::tip Large single-file writes may need more driver memory
+The single-file writers assemble the output on the **driver**, so a very large
+result (for example, a Shapefile whose `.dbf` runs to ~1 GB+) can exceed the
+**default Serverless driver memory** and fail mid-write (the driver is lost and
+the Spark Connect channel reports a `CancelledKeyException`). If you hit that:
+
+- Switch to **[high-memory Serverless](https://docs.databricks.com/aws/en/compute/serverless/dependencies#use-high-memory-serverless-compute)** (the "High: 32 GB" memory setting in the notebook **Environment** pane — it raises the Python REPL memory the writer assembles in), **or** run on a **classic cluster** with a larger driver.
+- Or avoid single-node assembly entirely: use **`geojsonl_gbx`** (shards per partition) or **`gpkg_gbx`** for large data.
+
+The write itself is correct at scale — this is a driver-memory ceiling, not a writer limit.
+:::
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
