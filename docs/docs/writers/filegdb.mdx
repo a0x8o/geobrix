@@ -15,40 +15,31 @@ by the heavyweight GDAL init script. It round-trips with the `file_gdb_gbx` read
 schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared across the
 lightweight vector readers and writers.
 
-:::warning Hybrid — requires the native GDAL
-Writing a File Geodatabase needs the native GDAL Python bindings (`osgeo`) from the
-heavyweight GDAL init script (see [Installation](/docs/installation)) — pyogrio's bundled
-GDAL ships a read-only OpenFileGDB driver. On compute with those natives, `file_gdb_gbx`
-writes the `.gdb` natively; without them it raises a clear error (use `gpkg_gbx` /
-`geojson_gbx` instead). FileGDB **reading** is lightweight-only (pyogrio reads it). The
-output path must end in `.gdb`.
+:::tip Compute & scale
+- **Large datasets:** this writer assembles the `.gdb` on a single node. For very large
+  outputs, use a **classic cluster** with ample memory or switch to the distributed
+  `geojsonl_gbx` writer. See
+  [**Choosing a writer for large datasets**](./overview#choosing-a-writer-for-large-datasets).
+- **Tier & compute:** `file_gdb_gbx` writing is the **exception** among the `*_gbx` writers —
+  because it encodes via native GDAL (`osgeo`), it requires a **classic x86 cluster** with the
+  heavyweight GDAL init script and does **not** run on Serverless or ARM. (FileGDB
+  **reading** is fully lightweight and runs anywhere.) For vector output on Serverless/ARM, use
+  `gpkg_gbx`, `geojson_gbx`, or `geojsonl_gbx`. See
+  [Benchmarking](../api/benchmarking) for timings and methodology.
 :::
 
-:::note Register first
-Call `register(spark)` once before using any `*_gbx` format (see the
-[Writers Overview](./overview)).
-:::
-
-:::note Input geometry format
-The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
-the same encodings the `*_gbx` readers emit (controlled by the reader's `asWKB` option). The
-SRID/CRS is taken from the companion `*_srid` / `*_srid_proj` columns, so plain WKB or WKT is
-all that is needed. Extended forms (**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not**
-accepted as writer input.
-
-Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column? Convert it to a supported interchange
-format first with an [ST export function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#export):
-use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoid
-`ST_GeomAsEWKB`, `ST_AsEWKT`, and `ST_AsGeoJSON` — those encodings are not accepted as input.
-:::
-
-:::tip Benchmark & tradeoff
-**`file_gdb_gbx` writing is the exception among the lightweight writers.** Because it encodes
-via the native GDAL (`osgeo`), writing a File Geodatabase is **constrained to a classic x86
-cluster carrying the heavyweight GDAL natives** — it does **not** run on Serverless or ARM,
-the same compute limits as the heavyweight tier. (FileGDB **reading** is fully lightweight and
-runs anywhere.) For vector output on Serverless/ARM, reference the other writers. See the
-[Benchmarking](../api/benchmarking) page for timings and methodology.
+:::note Before you write
+- **Register first** — call `register(spark)` once before using any `*_gbx` format (see the
+  [Writers Overview](./overview)).
+- **Hybrid writer** — uses the pure-Python DataSource V2 framework but encodes via **native
+  GDAL** (`osgeo.ogr`), so it requires the heavyweight GDAL init script
+  (see [Installation](/docs/installation)). Without the native GDAL bindings it raises a clear
+  error. The output path must end in `.gdb`.
+- **Input geometry** — provide geometry as **WKB** (binary) or **WKT** (text), with the CRS in
+  the companion `*_srid` / `*_srid_proj` columns. **EWKB**, **EWKT**, and GeoJSON-encoded
+  geometry are **not** accepted. Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column?
+  Export to WKB first with `ST_AsBinary` (or `ST_AsText` for WKT) — see the
+  [Schema](#schema) section below — and avoid `ST_GeomAsEWKB` / `ST_AsEWKT` / `ST_AsGeoJSON`.
 :::
 
 ## Options

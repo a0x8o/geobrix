@@ -22,29 +22,28 @@ that round-trips with the GeoJSON reader's directory mode:
 - **Heavyweight** `geojsonl` — DataSource V2 writer on native GDAL/OGR (JVM); read back via
   `geojson_ogr` with `option("multi","true")`.
 
-:::tip Which tier?
-The lightweight (`*_gbx`) writer needs **no JAR or init script** and is the **only** option on
-Serverless, standard (shared), and ARM clusters. The heavyweight `geojsonl` writer requires a
-**classic x86 cluster** with the GeoBrix JAR + GDAL init script; where available it encodes each
-shard with native GDAL/OGR on the JVM. Your compute usually decides the tier. See the
-[Writers Overview](./overview).
+:::tip Compute & scale
+- **Large datasets:** GeoJSONL is the **recommended writer for large data** — one shard per
+  partition, no driver assembly, write throughput scales with partitions. See
+  [**Choosing a writer for large datasets**](./overview#choosing-a-writer-for-large-datasets)
+  for a comparison with the single-file writers.
+- **Tier & compute:** the lightweight `geojsonl_gbx` writer needs **no JAR or init script** and
+  is the **only** option on Serverless, standard (shared), and ARM clusters. The heavyweight
+  `geojsonl` writer requires a **classic x86 cluster** with the GeoBrix JAR + GDAL init script;
+  it encodes each shard with native GDAL/OGR on the JVM. Your compute usually decides the tier.
+  See [Benchmarking](../api/benchmarking) for timings and methodology.
 :::
 
-:::note Register first
-Call `register(spark)` once before using any `*_gbx` format (see the
-[Writers Overview](./overview)).
-:::
-
-:::note Input geometry format
-The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
-the same encodings the readers emit. The SRID/CRS is taken from the companion
-`*_srid` / `*_srid_proj` columns, so plain WKB or WKT is all that is needed. Extended forms
-(**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not** accepted as writer input.
-
-Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column? Convert it to a supported
-interchange format first with an
-[ST export function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#export):
-use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT.
+:::note Before you write
+- **Register first** — call `register(spark)` once before using any `*_gbx` format (see the
+  [Writers Overview](./overview)).
+- **Both tiers** — `geojsonl_gbx` (lightweight) and `geojsonl` (heavyweight) take the same
+  input shape and produce the same output layout; the format name is the only difference.
+- **Input geometry** — provide geometry as **WKB** (binary) or **WKT** (text), with the CRS in
+  the companion `*_srid` / `*_srid_proj` columns. **EWKB**, **EWKT**, and GeoJSON-encoded
+  geometry are **not** accepted. Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column?
+  Export to WKB first with `ST_AsBinary` (or `ST_AsText` for WKT) — see the
+  [Schema](#schema) section below — and avoid `ST_GeomAsEWKB` / `ST_AsEWKT` / `ST_AsGeoJSON`.
 :::
 
 ## Options
