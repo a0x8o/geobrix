@@ -54,19 +54,45 @@ writers instead:
 
 ## Schema
 
-**Input schema — a geometry column plus its SRID companion:**
+All the vector writers — the named `shapefile_gbx` / `geojson_gbx` / `gpkg_gbx` /
+`file_gdb_gbx` and this generic `vector_gbx` — share **one column contract**: a geometry
+column plus its CRS companions.
 
 ```
 root
  |-- <geom>: binary (WKB)  or  string (WKT)   # the geometry
  |-- <geom>_srid: string        # REQUIRED — CRS authority code, e.g. "4326" ("0" if unknown)
- |-- <geom>_srid_proj: string   # optional — PROJ4 string, used as a CRS fallback when srid is "0"
+ |-- <geom>_srid_proj: string   # optional — PROJ4 string, CRS fallback when srid is "0"
  |-- ...any other columns       # written as feature attributes
 ```
 
-The writer locates the geometry as the column `X` that has a companion `X_srid` column, so the geometry column may be named anything (`geom_0` by convention — what the `*_gbx` readers emit). **`<geom>_srid` is required**: it identifies the geometry column and supplies the CRS. The `_srid` / `_srid_proj` columns are consumed for the CRS and are **not** written as fields. **Every other column is written as a feature attribute.**
+The geometry is the column that has a companion `<geom>_srid`. **`<geom>_srid` is required** —
+it supplies the CRS and identifies the geometry. The `_srid` / `_srid_proj` columns are CRS
+metadata and are **not** written as fields; **every other column becomes a feature attribute.**
 
-Coerce your DataFrame/table to this shape before writing:
+There are three ways to satisfy this contract — pick whichever matches your data. These
+patterns apply to **every** vector writer (just swap the format name and any preset
+`driverName`).
+
+### (a) Point the writer at your columns — `geomCol` / `sridCol` / `projCol`
+
+If your frame already carries geometry + CRS under other names, name them with options — no
+renaming required:
+
+```python
+(df  # e.g. columns: the_geom (WKB), epsg, crs_proj, name, population
+ .write.format("vector_gbx").option("driverName", "GeoJSON")
+ .option("geomCol", "the_geom")   # geometry column (WKB or WKT)
+ .option("sridCol", "epsg")       # REQUIRED — CRS authority-code column
+ .option("projCol", "crs_proj")   # optional — PROJ4 fallback column
+ .mode("overwrite").save("/Volumes/cat/sch/vol/out"))
+```
+
+`sridCol` is required; `projCol` is optional. See [Named Vector Formats](./overview#named-vector-formats).
+
+### (b) Or coerce to the convention column names
+
+Build the `geom_0` / `geom_0_srid` / `geom_0_srid_proj` columns the `*_gbx` readers emit:
 
 ```python
 from pyspark.sql import functions as F
@@ -75,29 +101,32 @@ df.select(
     F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
     F.lit("4326").alias("geom_0_srid"),       # CRS authority code
     F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
-    "name", "population",                      # -> written as feature attributes
+    "name", "population",                      # -> feature attributes
 ).write.format("vector_gbx").option("driverName", "GeoJSON").mode("overwrite").save("/Volumes/cat/sch/vol/out")
 ```
 
-**From a Databricks `GEOMETRY` / `GEOGRAPHY` column.** Databricks native spatial types are not
-a writer input format directly — export them to WKB plus an SRID first. Use `ST_AsWKB` (the
-equivalent of `ST_AsBinary`) for the geometry column and `ST_SRID` for the CRS, casting the
-SRID to a string:
+### (c) From a Databricks `GEOMETRY` / `GEOGRAPHY` column
+
+Native spatial types aren't a writer input directly — export to WKB plus an SRID first with
+`ST_AsWKB` and `ST_SRID`. Avoid `ST_GeomAsEWKB` / `ST_AsEWKT` / `ST_AsGeoJSON` — extended and
+GeoJSON encodings are **not** accepted.
 
 ```python
 df.selectExpr(
-    "ST_AsWKB(my_geom) AS geom_0",                     # GEOMETRY/GEOGRAPHY -> WKB
+    "ST_AsWKB(my_geom) AS geom_0",                      # GEOMETRY/GEOGRAPHY -> WKB
     "CAST(ST_SRID(my_geom) AS STRING) AS geom_0_srid",  # SRID -> string
     "'' AS geom_0_srid_proj",
-    "name", "population",                              # -> feature attributes
+    "name", "population",                               # -> feature attributes
 ).write.format("vector_gbx").option("driverName", "GeoJSON").mode("overwrite").save("/Volumes/cat/sch/vol/out")
 ```
 
 See [Databricks Spatial](/docs/databricks-spatial) for the full ST function reference.
 
-The geometry must be WKB or WKT (see the input-geometry note above; convert a Databricks `GEOMETRY` with `ST_AsBinary`). The written file round-trips with the matching `*_gbx` reader — reading it back yields `(…attributes, geom_0, geom_0_srid, geom_0_srid_proj)`.
+The written file round-trips with the matching `*_gbx` reader — reading it back yields
+`(…attributes, geom_0, geom_0_srid, geom_0_srid_proj)`.
 
-**Output:** the output file is written with the OGR driver you pass via `driverName`; attribute and geometry handling follow that driver's conventions.
+**Output:** the file is written with the OGR driver passed via `driverName`; attribute and
+geometry handling follow that driver's conventions.
 
 ## How it scales
 
