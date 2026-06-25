@@ -163,21 +163,48 @@ def _output_geom_name(driver, geom_col):
     return _OUTPUT_GEOM_NAME.get(driver, geom_col)
 
 
-def _should_concat(driver):
-    """Whether the commit merges all fragments into ONE Arrow table before writing
-    (vs. appending per fragment).
+def _should_stream(driver):
+    """Whether the commit assembles the single output file by STREAMING the
+    partition fragments' record batches into one ``write_arrow`` (bounded driver
+    memory + single pass), vs. reading all fragments at once.
 
-    - GeoJSON: its append path re-encodes the growing FeatureCollection
-      (~quadratic in fragment count), so one concatenated write is faster.
-    - ESRI Shapefile: the `.dbf` fixes each string field's width at layer creation
-      (the first fragment), so per-fragment append would silently TRUNCATE a wider
-      value in a later fragment; concat sizes fields to the global max. Shapefile is
-      2 GB-capped, so the concat stays within driver memory anyway.
-    - GPKG / FileGDB: no fixed field widths and no 2 GB cap (the large single-file
-      targets), so append per fragment to bound driver memory -- a single concat of
-      all partitions can OOM the single-node driver on large inputs.
+    Applies to every pyogrio single-file writer: GeoJSON, ESRI Shapefile, GPKG.
+    Streaming is the union of what the alternatives lack: one pass (no
+    per-fragment file re-opens, and no GeoJSON quadratic re-encode) AND bounded
+    memory (never the whole dataset in driver memory, which OOMs the single-node
+    driver on large inputs). GDAL sizes the shapefile `.dbf` fields safely across
+    the stream (a wider value in a later batch is NOT truncated -- verified).
+    GeoJSON/Shapefile geometry is structural (no rename); GPKG's geometry column
+    is renamed per batch to its format default (see ``_write_streaming``).
+
+    OpenFileGDB is excluded: its write goes through the native ``osgeo`` path
+    (pyogrio's bundled GDAL is read-only for it), so it can't use
+    ``write_arrow``; bounding its memory is a separate follow-up.
     """
-    return driver in ("GeoJSON", "ESRI Shapefile")
+    return driver in ("GeoJSON", "ESRI Shapefile", "GPKG")
+
+
+def _stream_record_batches(frag_paths, drop_cols, rename=None):
+    """Yield record batches from a sequence of Arrow-IPC fragment files, dropping
+    ``drop_cols`` and optionally renaming one column (``rename=(old, new)``, used
+    to give GPKG its format-default geometry column name). Streams one batch at a
+    time -- never holds all fragments in memory."""
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    for fp in frag_paths:
+        with pa.memory_map(fp, "r") as src:
+            reader = ipc.open_file(src)
+            for i in range(reader.num_record_batches):
+                batch = reader.get_batch(i)
+                keep = [c for c in batch.schema.names if c not in drop_cols]
+                arrays = [batch.column(c) for c in keep]
+                if rename:
+                    old, new = rename
+                    names = [new if c == old else c for c in keep]
+                else:
+                    names = keep
+                yield pa.record_batch(arrays, names=names)
 
 
 def _writer_col_roles(schema, geom_col=None, srid_col=None, proj_col=None):
@@ -729,20 +756,22 @@ class VectorGbxWriter(DataSourceWriter):
         try:
             if not frags:
                 return
-            import pyarrow as pa
-
-            tables = [feather.read_table(f) for f in frags]
-            # Merge fragments into one table for drivers that need it (see
-            # _should_concat); others append per fragment in _write_local.
-            if _should_concat(self.driver) and len(tables) > 1:
-                tables = [pa.concat_tables(tables)]
-            geom_type, crs = self._infer_geom_crs(tables)
             # Write to driver-local disk first (supports random I/O for SQLite/
             # FileGDB/Shapefile sidecars), then copy to the Volume target with
             # sequential byte copies (FUSE-safe). Mirrors the PMTiles writer.
             local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
             local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
-            self._write_local(tables, local_out, geom_type, crs)
+            if _should_stream(self.driver):
+                # Infer geom type + CRS from the first fragment only (one
+                # partition, bounded), then stream every fragment into one write.
+                first_tbl = feather.read_table(frags[0])
+                geom_type, crs = self._infer_geom_crs([first_tbl])
+                del first_tbl
+                self._write_streaming(frags, local_out, geom_type, crs)
+            else:
+                tables = [feather.read_table(f) for f in frags]
+                geom_type, crs = self._infer_geom_crs(tables)
+                self._write_local(tables, local_out, geom_type, crs)
             # Clear any Spark-created stub at self.path, then copy everything
             # pyogrio produced in local_dir (file, sidecar set, or .gdb dir).
             self._prepare_target()
@@ -766,6 +795,58 @@ class VectorGbxWriter(DataSourceWriter):
         return tbl.drop_columns(
             [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
         )
+
+    def _write_streaming(self, frags, local_out, geom_type, crs) -> None:
+        """Assemble the output by streaming the fragment batches into ONE
+        write_arrow (bounded driver memory, single pass) for GeoJSON / Shapefile /
+        GPKG. The geometry column is written under the format default
+        (``_output_geom_name``); for GPKG that differs from the input name, so the
+        column is renamed per batch (GeoJSON/Shapefile geometry is structural, no
+        rename). Falls back to a concat write only if the GDAL build cannot consume
+        a RecordBatchReader."""
+        import pyarrow as pa
+        import pyarrow.feather as feather
+        import pyarrow.ipc as ipc
+        import pyogrio
+
+        drop = {c for c in (self.srid_col, self.proj_col) if c}
+        out_geom = _output_geom_name(self.driver, self.geom_col)
+        rename = None if out_geom == self.geom_col else (self.geom_col, out_geom)
+        with pa.memory_map(frags[0], "r") as src0:
+            full_schema = ipc.open_file(src0).schema
+        fields = [
+            (f.with_name(out_geom) if rename and f.name == self.geom_col else f)
+            for f in full_schema
+            if f.name not in drop
+        ]
+        stream_schema = pa.schema(fields)
+        # GPKG: DELETE journal (no WAL/-shm sidecars) so the output reads back from
+        # read-only object storage; harmless for non-SQLite drivers.
+        pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
+        kw = dict(
+            driver=self.driver,
+            geometry_name=out_geom,
+            geometry_type=geom_type,
+            crs=crs,
+        )
+        if self.layer_name:
+            kw["layer"] = self.layer_name
+        elif self.driver == "GPKG":
+            kw["layer"] = _default_gpkg_layer(self.path)
+        try:
+            reader = pa.RecordBatchReader.from_batches(
+                stream_schema, _stream_record_batches(frags, drop, rename)
+            )
+            pyogrio.write_arrow(reader, local_out, **kw)
+        except Exception as e:  # noqa: BLE001
+            # Only fall back if the GDAL build can't consume a streaming reader;
+            # re-raise genuine write errors.
+            if "does not support" not in str(e) and not isinstance(e, TypeError):
+                raise
+            tables = [feather.read_table(f) for f in frags]
+            if len(tables) > 1:
+                tables = [pa.concat_tables(tables)]
+            self._write_local(tables, local_out, geom_type, crs)
 
     def _write_local(self, tables, local_out, geom_type, crs) -> None:
         """Write the merged tables to a local path. Use the fast Arrow path; if the

@@ -73,16 +73,101 @@ def test_non_geojson_commit_streams_without_concat(spark, tmp_path, monkeypatch)
     assert spark.read.format("gpkg_gbx").load(out).count() == 2
 
 
-def test_should_concat_policy():
-    # GeoJSON (quadratic append) and Shapefile (.dbf field widths fixed at layer
-    # creation -> per-fragment append would silently truncate wider later values)
-    # must concat; GPKG/FileGDB stream per fragment to bound driver memory.
-    from databricks.labs.gbx.ds.vector import _should_concat
+def test_should_stream_policy():
+    # All pyogrio single-file writers (GeoJSON, Shapefile, GPKG) stream fragments
+    # into one write (bounded driver memory, single pass). OpenFileGDB uses the
+    # native osgeo path and is excluded.
+    from databricks.labs.gbx.ds.vector import _should_stream
 
-    assert _should_concat("GeoJSON") is True
-    assert _should_concat("ESRI Shapefile") is True
-    assert _should_concat("GPKG") is False
-    assert _should_concat("OpenFileGDB") is False
+    assert _should_stream("GeoJSON") is True
+    assert _should_stream("ESRI Shapefile") is True
+    assert _should_stream("GPKG") is True
+    assert _should_stream("OpenFileGDB") is False
+
+
+def test_stream_record_batches_chains_and_drops_meta(tmp_path):
+    import pyarrow as pa
+    import pyarrow.feather as feather
+
+    from databricks.labs.gbx.ds.vector import _stream_record_batches
+
+    schema = pa.schema(
+        [
+            ("name", pa.string()),
+            ("geom_0", pa.binary()),
+            ("geom_0_srid", pa.string()),
+            ("geom_0_srid_proj", pa.string()),
+        ]
+    )
+    f1 = str(tmp_path / "frag1.arrow")
+    f2 = str(tmp_path / "frag2.arrow")
+    feather.write_feather(
+        pa.table(
+            {
+                "name": ["a"],
+                "geom_0": [b"x"],
+                "geom_0_srid": ["4326"],
+                "geom_0_srid_proj": [""],
+            },
+            schema=schema,
+        ),
+        f1,
+    )
+    feather.write_feather(
+        pa.table(
+            {
+                "name": ["b", "c"],
+                "geom_0": [b"y", b"z"],
+                "geom_0_srid": ["4326", "4326"],
+                "geom_0_srid_proj": ["", ""],
+            },
+            schema=schema,
+        ),
+        f2,
+    )
+    drop = {"geom_0_srid", "geom_0_srid_proj"}
+    batches = list(_stream_record_batches([f1, f2], drop))
+    assert sum(b.num_rows for b in batches) == 3  # chained across fragments
+    for b in batches:
+        assert b.schema.names == ["name", "geom_0"]  # meta cols dropped
+
+
+def _roundtrip_streamed(spark, tmp_path, driver, name):
+    register(spark)
+    out = str(tmp_path / name)
+    rows = [
+        (str(i), None, bytearray(to_wkb(Point(float(i) / 10.0, 40.0))), "4326", "")
+        for i in range(20)
+    ]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, note string, geom_0 binary, "
+        "geom_0_srid string, geom_0_srid_proj string",
+    ).repartition(4, F.col("geom_0"))
+    df.write.format("vector_gbx").mode("overwrite").option("driverName", driver).save(
+        out
+    )
+    back = spark.read.format("vector_gbx").load(out)
+    assert back.count() == 20
+    assert {r["name"] for r in back.collect()} == {str(i) for i in range(20)}
+    gcol = [f.name for f in back.schema.fields if f.name.endswith("_srid")][0][:-5]
+    geoms = {_from_wkb(bytes(r[gcol])).geom_type for r in back.select(gcol).collect()}
+    assert geoms == {"Point"}
+
+
+def test_geojson_streaming_multipartition_roundtrip(spark, tmp_path):
+    # Streamed GeoJSON write round-trips all rows/geoms (incl. an all-null col).
+    _roundtrip_streamed(spark, tmp_path, "GeoJSON", "streamed.geojson")
+
+
+def test_shapefile_streaming_multipartition_roundtrip(spark, tmp_path):
+    # Streamed Shapefile write round-trips all rows/geoms (incl. an all-null col).
+    _roundtrip_streamed(spark, tmp_path, "ESRI Shapefile", "streamed_shp")
+
+
+def test_gpkg_streaming_multipartition_roundtrip(spark, tmp_path):
+    # Streamed GPKG write (geom column renamed to 'geom' per batch) round-trips.
+    _roundtrip_streamed(spark, tmp_path, "GPKG", "streamed.gpkg")
 
 
 def test_scratch_dir_unique_per_write(tmp_path):
