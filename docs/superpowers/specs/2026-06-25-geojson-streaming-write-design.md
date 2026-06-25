@@ -26,11 +26,13 @@ Only the **`GeoJSON`** driver changes. The other writers are deliberately left
 as-is because they're limited by something streaming can't help, or already
 stream:
 
-- **`shapefile_gbx`** — stays **concat**. Its wall is the 2 GB `.shp`/`.dbf`
-  format cap (no memory technique lifts it), and a streamed/batched shapefile
-  write reintroduces silent `.dbf` field-width truncation (GDAL fixes string
-  widths from the first batch). Concat sizes fields to the global max; shapefile
-  is 2 GB-capped so concat stays within memory.
+- **`shapefile_gbx`** — stays **concat**. A streamed/batched shapefile write
+  reintroduces silent `.dbf` field-width truncation (GDAL fixes string widths
+  from the first batch); concat sizes fields to the global max. Making shapefile
+  streaming safe would require a separate **field-width pre-scan** pass (scan all
+  fragments for max widths, create the layer, then stream-append) — a future
+  enhancement, not this spec. (Shapefile also has a 2 GB-per-file cap, but that is
+  a separate hard limit, not the memory concern this spec addresses.)
 - **`gpkg_gbx` / `file_gdb_gbx`** — already append per fragment (bounded memory,
   no 2 GB cap).
 - **`geojsonl_gbx`** — already shards per partition (no driver merge); remains

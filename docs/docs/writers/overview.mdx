@@ -58,9 +58,9 @@ on single-file outputs so the result is recognizable and portable.
 The **single-file** writers assemble the whole output on the **driver** (a single
 node), so they have scale ceilings:
 
-- **`shapefile_gbx`** — the format caps each `.shp`/`.dbf` at **2 GB**. Practical up
-  to roughly a few hundred thousand features with attributes; beyond that the `.dbf`
-  (one fixed-width record per row) is the usual limit.
+- **`shapefile_gbx`** — the whole file is assembled on the driver, and the format
+  hard-caps each `.shp`/`.dbf` at **2 GB**. Large attribute tables (the `.dbf` is
+  one fixed-width record per row) make the single-node write the practical limit.
 - **`geojson_gbx`** — merges every partition into one FeatureCollection on the
   driver, so it is bounded by **driver memory**.
 
