@@ -318,6 +318,28 @@ def test_file_gdb_clear_error_without_osgeo(spark, tmp_path):
     assert "osgeo" in str(ei.value).lower() or "native" in str(ei.value).lower()
 
 
+def test_gpkg_output_uses_format_default_geom_name(spark, tmp_path):
+    # GPKG output should use the format-default geometry column name `geom`,
+    # not the input column name, so an arbitrary input name doesn't leak out.
+    register(spark)
+    out = str(tmp_path / "out.gpkg")
+    rows = [("a", bytearray(to_wkb(Point(1.0, 2.0))), "4326", "")]
+    df = spark.createDataFrame(
+        rows, schema="name string, the_geom binary, epsg string, p4 string"
+    )
+    (
+        df.write.format("gpkg_gbx")
+        .mode("overwrite")
+        .option("geomCol", "the_geom")
+        .option("sridCol", "epsg")
+        .save(out)
+    )
+    import pyogrio
+
+    info = pyogrio.read_info(out)
+    assert info["geometry_name"] == "geom"
+
+
 def test_classic_write_path_roundtrip(spark, tmp_path):
     # Exercise the classic pyogrio.raw.write fallback path directly (write_arrow
     # works locally so the auto-fallback won't trigger here) to prove the

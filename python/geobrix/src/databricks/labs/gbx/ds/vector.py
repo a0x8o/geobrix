@@ -152,6 +152,17 @@ def _srid_to_crs(srid: str, proj4: str):
     return None
 
 
+# Output geometry field name per driver. GeoJSON/GeoJSONSeq/Shapefile geometry
+# is structural (no named field), so the value is inert there; GPKG/FileGDB name
+# the geometry column, so use the format default rather than the input column
+# name (which may be arbitrary once geomCol is in play).
+_OUTPUT_GEOM_NAME = {"GPKG": "geom", "OpenFileGDB": "SHAPE"}
+
+
+def _output_geom_name(driver, geom_col):
+    return _OUTPUT_GEOM_NAME.get(driver, geom_col)
+
+
 def _writer_col_roles(schema, geom_col=None, srid_col=None, proj_col=None):
     """(geom_col, srid_col, proj_col, attr_cols) for the vector writers.
 
@@ -760,7 +771,7 @@ class VectorGbxWriter(DataSourceWriter):
         pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
         kw = dict(
             driver=self.driver,
-            geometry_name=self.geom_col,
+            geometry_name=_output_geom_name(self.driver, self.geom_col),
             geometry_type=geom_type,
             crs=crs,
         )
@@ -770,11 +781,18 @@ class VectorGbxWriter(DataSourceWriter):
             # GDAL would name the GPKG layer after the file stem, which is invalid
             # when it starts with the reserved 'gpkg' prefix; use a safe default.
             kw["layer"] = _default_gpkg_layer(self.path)
+        out_geom = _output_geom_name(self.driver, self.geom_col)
         try:
             for n, tbl in enumerate(tables):
-                pyogrio.write_arrow(
-                    self._drop_meta_cols(tbl), local_out, append=(n > 0), **kw
-                )
+                t = self._drop_meta_cols(tbl)
+                # Rename the input geom column to the format-canonical output name
+                # (e.g. GPKG: geom_0 -> geom) so pyogrio can find the geometry by
+                # the name passed as geometry_name=out_geom.
+                if out_geom != self.geom_col and self.geom_col in t.column_names:
+                    t = t.rename_columns(
+                        [out_geom if c == self.geom_col else c for c in t.column_names]
+                    )
+                pyogrio.write_arrow(t, local_out, append=(n > 0), **kw)
         except Exception as e:  # noqa: BLE001
             if "does not support write functionality" not in str(e):
                 raise
@@ -849,7 +867,12 @@ class VectorGbxWriter(DataSourceWriter):
             )
         try:
             lyr = ds.CreateLayer(
-                self.layer_name or "layer", srs, _WKB.get(geom_type, ogr.wkbUnknown)
+                self.layer_name or "layer",
+                srs,
+                _WKB.get(geom_type, ogr.wkbUnknown),
+                options=[
+                    f"GEOMETRY_NAME={_output_geom_name(self.driver, self.geom_col)}"
+                ],
             )
             for c in attr_cols:
                 lyr.CreateField(ogr.FieldDefn(c, _ogr_type(types[c])))
