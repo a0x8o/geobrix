@@ -29,7 +29,13 @@ class GeoJSONL_Table(schema: StructType, properties: Map[String, String])
     /** Build a write that consumes feature rows and writes a directory of GeoJSONL shards. */
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
         // Validate the schema up front so a bad shape fails fast on the driver.
-        GeoJSONL_DataSource.resolveRoles(info.schema())
+        val o = info.options()
+        GeoJSONL_DataSource.resolveRoles(
+            info.schema(),
+            Option(o.get("geomCol")),
+            Option(o.get("sridCol")),
+            Option(o.get("projCol"))
+        )
         new GeoJSONL_WriteBuilder(info.schema(), properties ++ info.options().asScala)
     }
 

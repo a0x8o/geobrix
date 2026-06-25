@@ -56,28 +56,73 @@ object GeoJSONL_DataSource {
     final case class ColRoles(geomCol: String, sridCol: String, projCol: String, attrCols: Seq[String], geomIsWkb: Boolean)
 
     /**
-      * Validate the write schema and resolve column roles: the column `X` paired with `X_srid` is
-      * the geometry, `X_srid_proj` is its PROJ4 fallback, and everything else is a feature attribute.
+      * Validate the write schema and resolve column roles.
+      *
+      * Convention (no overrides): the column `X` paired with `X_srid` is the geometry,
+      * `X_srid_proj` is its PROJ4 fallback, and everything else is a feature attribute.
+      *
+      * With overrides: `geomColOpt` / `sridColOpt` name explicit geometry / SRID columns (both
+      * required together when the frame does not follow the `*_srid` convention); `projColOpt`
+      * names an explicit PROJ4 column (optional). An explicit override that names a column absent
+      * from the schema raises a friendly error.
+      *
       * The geometry column must be BINARY (WKB) or STRING (WKT). Raises a friendly error otherwise —
       * mirrors how the light `_writer_col_roles` locates the geometry.
       */
-    def resolveRoles(schema: StructType): ColRoles = {
+    def resolveRoles(
+        schema: StructType,
+        geomColOpt: Option[String] = None,
+        sridColOpt: Option[String] = None,
+        projColOpt: Option[String] = None
+    ): ColRoles = {
         val names = schema.fieldNames.toSeq
-        val sridCols = names.filter(_.endsWith("_srid"))
-        if (sridCols.isEmpty) {
-            throw new IllegalArgumentException(
-                "`geojsonl` writer input needs a geometry/'*_srid' column pair (from a *_ogr reader); " +
-                s"got columns ${names.mkString("[", ", ", "]")}."
-            )
+
+        // geometry (required)
+        val geomCol = geomColOpt match {
+            case Some(g) =>
+                if (!names.contains(g))
+                    throw new IllegalArgumentException(
+                        s"`geojsonl` writer geomCol='$g' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                g
+            case None =>
+                val sridCols = names.filter(_.endsWith("_srid"))
+                if (sridCols.isEmpty)
+                    throw new IllegalArgumentException(
+                        "`geojsonl` writer input needs a geometry/'*_srid' column pair (from a *_ogr " +
+                        s"reader) or an explicit geomCol option; got ${names.mkString("[", ", ", "]")}.")
+                val g = sridCols.head.dropRight("_srid".length)
+                if (!names.contains(g))
+                    throw new IllegalArgumentException(
+                        s"`geojsonl` writer found srid column '${sridCols.head}' but no geometry column '$g'.")
+                g
         }
-        val sridCol = sridCols.head
-        val geomCol = sridCol.dropRight("_srid".length)
-        if (!names.contains(geomCol)) {
-            throw new IllegalArgumentException(
-                s"`geojsonl` writer found srid column '$sridCol' but no geometry column '$geomCol'."
-            )
+
+        // srid (required: option, else <geom>_srid)
+        val sridCol = sridColOpt match {
+            case Some(s) =>
+                if (!names.contains(s))
+                    throw new IllegalArgumentException(
+                        s"`geojsonl` writer sridCol='$s' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                s
+            case None =>
+                val s = geomCol + "_srid"
+                if (!names.contains(s))
+                    throw new IllegalArgumentException(
+                        s"`geojsonl` writer needs a SRID column: pass sridCol, or add a '$s' column " +
+                        "(authority code, '0' if unknown).")
+                s
         }
-        val projCol = geomCol + "_srid_proj"
+
+        // proj (optional: explicit must exist; default may be absent)
+        val projCol = projColOpt match {
+            case Some(p) =>
+                if (!names.contains(p))
+                    throw new IllegalArgumentException(
+                        s"`geojsonl` writer projCol='$p' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                p
+            case None => geomCol + "_srid_proj"
+        }
+
         val attrCols = names.filterNot(n => n == geomCol || n == sridCol || n == projCol)
         val geomType = schema(geomCol).dataType
         val geomIsWkb = geomType match {
@@ -85,8 +130,7 @@ object GeoJSONL_DataSource {
             case StringType => false
             case other =>
                 throw new IllegalArgumentException(
-                    s"`geojsonl` writer geometry column '$geomCol' must be BINARY (WKB) or STRING (WKT); got $other."
-                )
+                    s"`geojsonl` writer geometry column '$geomCol' must be BINARY (WKB) or STRING (WKT); got $other.")
         }
         ColRoles(geomCol, sridCol, projCol, attrCols, geomIsWkb)
     }

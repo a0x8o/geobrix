@@ -45,8 +45,11 @@ class GeoJSONL_RowWriter(
     }
     private val geometryTypeOverride: Option[String] = ciOptions.get("geometrytype")
     private val layerNameOpt: Option[String] = ciOptions.get("layername")
+    private val geomColOpt: Option[String] = ciOptions.get("geomcol")
+    private val sridColOpt: Option[String] = ciOptions.get("sridcol")
+    private val projColOpt: Option[String] = ciOptions.get("projcol")
 
-    private val roles = GeoJSONL_DataSource.resolveRoles(schema)
+    private val roles = GeoJSONL_DataSource.resolveRoles(schema, geomColOpt, sridColOpt, projColOpt)
     private val geomIdx = schema.fieldIndex(roles.geomCol)
     private val sridIdx = schema.fieldIndex(roles.sridCol)
     private val projIdx = if (schema.fieldNames.contains(roles.projCol)) schema.fieldIndex(roles.projCol) else -1
