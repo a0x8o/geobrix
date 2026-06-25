@@ -634,7 +634,12 @@ class VectorGbxWriter(DataSourceWriter):
             for f in schema.fields
         )
         parent = os.path.dirname(self.path) or "."
-        self.scratch_dir = os.path.join(parent, "_vec_scratch")
+        # Per-write unique scratch dir: the writer instance is created once on the
+        # driver and serialized to the executors, so every task of THIS write shares
+        # one uuid while a concurrent write to the same parent gets its own. A shared
+        # "_vec_scratch" would let one write's commit cleanup (rmtree) delete
+        # another's in-flight fragments.
+        self.scratch_dir = os.path.join(parent, f"_vec_scratch_{uuid.uuid4().hex}")
         if not self.overwrite and self._target_exists():
             raise ValueError(
                 "vector_gbx does not support append; use .mode('overwrite')."

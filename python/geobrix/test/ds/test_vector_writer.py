@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
@@ -13,10 +15,30 @@ from shapely import to_wkb
 
 from databricks.labs.gbx.ds.register import register
 from databricks.labs.gbx.ds.vector import (
+    VectorGbxWriter,
     _geometry_type_of,
     _srid_to_crs,
     _writer_col_roles,
 )
+
+
+def test_scratch_dir_unique_per_write(tmp_path):
+    # Two concurrent writes to the same parent directory must NOT share a scratch
+    # dir, or one write's commit cleanup (rmtree) would delete the other's
+    # in-flight Arrow fragments.
+    schema = StructType(
+        [
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+    parent = str(tmp_path)
+    w1 = VectorGbxWriter(f"{parent}/a.geojson", schema, "GeoJSON", {}, overwrite=True)
+    w2 = VectorGbxWriter(f"{parent}/b.geojson", schema, "GeoJSON", {}, overwrite=True)
+    assert w1.scratch_dir != w2.scratch_dir
+    assert os.path.dirname(w1.scratch_dir) == parent
+    assert os.path.dirname(w2.scratch_dir) == parent
 
 
 def test_geometry_type_of_point_and_line():
