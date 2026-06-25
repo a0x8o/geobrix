@@ -1,8 +1,18 @@
-# Streaming `geojson_gbx` write (bounded driver memory) — Design
+# Streaming single-file vector writes (bounded driver memory) — Design
 
 **Date:** 2026-06-25
 **Branch:** `beta/0.4.0`
-**File:** `python/geobrix/src/databricks/labs/gbx/ds/vector.py` (`VectorGbxWriter.commit` / `_write_local`)
+**File:** `python/geobrix/src/databricks/labs/gbx/ds/vector.py` (`VectorGbxWriter.commit` / `_write_streaming`)
+
+> **Scope note (generalized in implementation):** this began as a GeoJSON-only
+> streaming write, but during implementation it was generalized to **all the
+> pyogrio single-file writers — `geojson`, `shapefile`, and `gpkg`** (they all
+> benefit identically from bounded-memory streaming; `_should_stream` covers the
+> three). GeoJSON/Shapefile geometry is structural; GPKG renames its geometry
+> column per batch to the format default (`geom`). `file_gdb_gbx` (native osgeo
+> path, pyogrio bundled GDAL is read-only for it) is **not** streamed — a
+> heavy-tier follow-up. The sections below are written GeoJSON-first; read
+> "GeoJSON" as "any structural-geom streamed driver", plus the GPKG rename.
 
 ## Purpose
 

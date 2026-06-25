@@ -55,21 +55,27 @@ on single-file outputs so the result is recognizable and portable.
 
 ### Choosing a writer for large datasets
 
-The **single-file** writers assemble the whole output on the **driver** (a single
-node), so they have scale ceilings:
+The **single-file** writers (`geojson_gbx`, `shapefile_gbx`, `gpkg_gbx`) assemble
+the output on the **driver**, but they **stream** the partitions through one pass
+with **bounded memory** (the whole dataset is never held at once), so they scale
+much further than a naive single-node merge. They are still single-node writes,
+so:
 
-- **`shapefile_gbx`** — the whole file is assembled on the driver, and the format
-  hard-caps each `.shp`/`.dbf` at **2 GB**. Large attribute tables (the `.dbf` is
-  one fixed-width record per row) make the single-node write the practical limit.
-- **`geojson_gbx`** — merges every partition into one FeatureCollection on the
-  driver, so it is bounded by **driver memory**.
+- **`shapefile_gbx`** — streamed, but the format hard-caps each `.shp`/`.dbf` at
+  **2 GB** (the `.dbf` is one fixed-width record per row), so very large
+  attribute tables eventually hit that ceiling.
+- **`geojson_gbx`** / **`gpkg_gbx`** — streamed, single file, no hard size cap;
+  bounded by the single-node write throughput.
 
-For large datasets, prefer the writers that don't assemble on one node:
+For the largest datasets, prefer the writers that spread work across partitions:
 
-- **`geojsonl_gbx`** — writes one shard per partition (no driver merge); throughput
-  scales with partitions. The most scalable option.
-- **`gpkg_gbx`** — a single file with **no 2 GB cap**; features are streamed per
-  partition, so it handles far larger data than shapefile while staying one file.
+- **`geojsonl_gbx`** — one shard per partition (no driver assembly at all);
+  throughput scales with partitions. The most scalable option.
+- **`gpkg_gbx`** — a single file with no 2 GB cap, a good single-file choice when
+  one file is required.
+
+(`file_gdb_gbx` uses the native GDAL path and currently assembles in memory — a
+heavy-tier writer; prefer the above on Serverless.)
 
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
