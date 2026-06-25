@@ -152,24 +152,63 @@ def _srid_to_crs(srid: str, proj4: str):
     return None
 
 
-def _writer_col_roles(schema):
-    """(geom_col, srid_col, proj_col, attr_cols) derived from the reader schema:
-    the column X paired with X_srid is the geometry; X_srid_proj is its proj4;
-    everything else is an attribute. Mirrors how the parity test finds geom."""
+def _writer_col_roles(schema, geom_col=None, srid_col=None, proj_col=None):
+    """(geom_col, srid_col, proj_col, attr_cols) for the vector writers.
+
+    By default the column ``X`` paired with ``X_srid`` is the geometry,
+    ``X_srid_proj`` is its PROJ4 fallback, and everything else is an attribute.
+    The geomCol / sridCol / projCol options override these by name so the frame
+    need not use the convention: each option, when given, must name an existing
+    column; when omitted it falls back to its convention name. geom and srid are
+    required (clear error if unresolvable); proj is optional.
+    """
     names = [f.name for f in schema.fields]
-    srid_cols = [n for n in names if n.endswith("_srid")]
-    if not srid_cols:
-        raise ValueError(
-            "vector writer input needs a geometry/'*_srid' column pair "
-            f"(from a *_gbx reader); got columns {names}"
-        )
-    srid_col = srid_cols[0]
-    geom_col = srid_col[: -len("_srid")]
-    proj_col = geom_col + "_srid_proj"
-    if geom_col not in names:
-        raise ValueError(f"no geometry column '{geom_col}' for srid '{srid_col}'")
-    attr_cols = [n for n in names if n not in (geom_col, srid_col, proj_col)]
-    return geom_col, srid_col, proj_col, attr_cols
+
+    # geometry (required)
+    if geom_col is not None:
+        if geom_col not in names:
+            raise ValueError(
+                f"vector writer geomCol={geom_col!r} is not a column; got {names}"
+            )
+        geom = geom_col
+    else:
+        srid_named = [n for n in names if n.endswith("_srid")]
+        if not srid_named:
+            raise ValueError(
+                "vector writer input needs a geometry/'*_srid' column pair (from a "
+                f"*_gbx reader) or an explicit geomCol option; got columns {names}"
+            )
+        geom = srid_named[0][: -len("_srid")]
+        if geom not in names:
+            raise ValueError(f"no geometry column {geom!r} for srid {srid_named[0]!r}")
+
+    # srid (required: option, else <geom>_srid)
+    if srid_col is not None:
+        if srid_col not in names:
+            raise ValueError(
+                f"vector writer sridCol={srid_col!r} is not a column; got {names}"
+            )
+        srid = srid_col
+    else:
+        srid = geom + "_srid"
+        if srid not in names:
+            raise ValueError(
+                f"vector writer needs a SRID column: pass sridCol, or add a {srid!r} "
+                f"column (authority code, '0' if unknown). Columns: {names}"
+            )
+
+    # proj (optional: an explicit projCol must exist; the default may be absent)
+    if proj_col is not None:
+        if proj_col not in names:
+            raise ValueError(
+                f"vector writer projCol={proj_col!r} is not a column; got {names}"
+            )
+        proj = proj_col
+    else:
+        proj = geom + "_srid_proj"  # optional; may be absent
+
+    attr_cols = [n for n in names if n not in (geom, srid, proj)]
+    return geom, srid, proj, attr_cols
 
 
 def _writer_arrow_table(cols, schema, geom_col):
