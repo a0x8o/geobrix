@@ -44,19 +44,24 @@ The wheel ships as a **GitHub release artifact** for GeoBrix 0.4.0+ — it is **
 %pip install "geobrix[light] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix/geobrix-<version>-py3-none-any.whl"
 ```
 
-:::warning Use the quoted `geobrix[light] @ file://…` form
-Install with the **PEP 508 named form above**, wrapped in quotes as a single
-argument. Do **not** put the extra on the path —
-`%pip install '/Volumes/…/geobrix-<version>-py3-none-any.whl[light]'`. On
-**Serverless**, `%pip` writes the requirement to a file *including the
-surrounding quotes*, so pip reads `[light]` as part of the filename and fails
-with *"Expected package name at the start of dependency specifier."* The named
-`geobrix[light] @ file:///…` form installs cleanly on **Serverless**,
-standard/shared, and ARM.
-:::
-
-:::warning Serverless: use environment version 5+ (Python 3.11+)
-On **Serverless**, set the notebook/job **environment version to 5 or later** (Python 3.12). The lightweight `[light]` dependencies — notably `rio-tiler` (≥ 9) — require **Python ≥ 3.11**, so older default Serverless environments (Python 3.10) cannot resolve them and `%pip install "geobrix[light] @ …"` fails with *"Could not find a version that satisfies the requirement rio-tiler…"*. Set it in the notebook's **Environment** side panel, or with `environment_version: "5"` on a serverless job task. Release notes: [AWS](https://docs.databricks.com/aws/en/release-notes/serverless/environment-version/five) · [Azure](https://learn.microsoft.com/azure/databricks/release-notes/serverless/environment-version/five) · [GCP](https://docs.databricks.com/gcp/en/release-notes/serverless/environment-version/five).
+:::warning Serverless install requirements
+- **Use the quoted `geobrix[light] @ file://…` form.** Install with the **PEP 508
+  named form above**, wrapped in quotes as a single argument. Do **not** put the
+  extra on the path (`'/Volumes/…/geobrix-<version>-py3-none-any.whl[light]'`): on
+  **Serverless**, `%pip` writes the requirement to a file *including the
+  surrounding quotes*, so pip reads `[light]` as part of the filename and fails
+  with *"Expected package name at the start of dependency specifier."* The named
+  form installs cleanly on **Serverless**, standard/shared, and ARM.
+- **Use environment version 5+ (Python 3.11+).** Set the notebook/job
+  **environment version to 5 or later** (Python 3.12). The `[light]` dependencies
+  — notably `rio-tiler` (≥ 9) — require **Python ≥ 3.11**, so older default
+  Serverless environments (Python 3.10) cannot resolve them and the install fails
+  with *"Could not find a version that satisfies the requirement rio-tiler…"*. Set
+  it in the **Environment** side panel, or with `environment_version: "5"` on a
+  serverless job task. Release notes:
+  [AWS](https://docs.databricks.com/aws/en/release-notes/serverless/environment-version/five)
+  · [Azure](https://learn.microsoft.com/azure/databricks/release-notes/serverless/environment-version/five)
+  · [GCP](https://docs.databricks.com/gcp/en/release-notes/serverless/environment-version/five).
 :::
 
 Then import the package(s) you need and (optionally) register their SQL functions. Each light package exposes the same `functions` / `register(spark)` pattern:
