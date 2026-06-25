@@ -470,3 +470,131 @@ def test_classic_write_path_roundtrip(spark, tmp_path):
     w._write_local_classic([tbl], local_out, "Point", "EPSG:4326")
     back = spark.read.format("gpkg_gbx").load(local_out)
     assert back.count() == 2
+
+
+# ---------------------------------------------------------------------------
+# Shapefile zip=true option
+# ---------------------------------------------------------------------------
+
+
+def test_shapefile_zip_output_naming():
+    """zip=true path-normalisation: bare stem, .shp, and .shp.zip all land at .shp.zip."""
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+
+    schema = StructType(
+        [
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+    opts_base = {"driverName": "ESRI Shapefile", "zip": "true"}
+
+    w1 = VectorGbxWriter("/tmp/roads", schema, "ESRI Shapefile", opts_base, True)
+    assert w1.path == "/tmp/roads.shp.zip", w1.path
+
+    w2 = VectorGbxWriter("/tmp/roads.shp", schema, "ESRI Shapefile", opts_base, True)
+    assert w2.path == "/tmp/roads.shp.zip", w2.path
+
+    w3 = VectorGbxWriter(
+        "/tmp/roads.shp.zip", schema, "ESRI Shapefile", opts_base, True
+    )
+    assert w3.path == "/tmp/roads.shp.zip", w3.path
+
+
+def test_shapefile_zip_ignored_for_other_drivers():
+    """zip=true is silently ignored for non-Shapefile drivers."""
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+
+    schema = StructType(
+        [
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+    w = VectorGbxWriter(
+        "/tmp/out.geojson",
+        schema,
+        "GeoJSON",
+        {"driverName": "GeoJSON", "zip": "true"},
+        True,
+    )
+    assert w.path == "/tmp/out.geojson"
+    assert w.zip is False
+
+
+def test_shapefile_zip_produces_single_file(spark, tmp_path):
+    """zip=true writes a single .shp.zip file, not a directory or sidecar set."""
+    register(spark)
+    out = str(tmp_path / "roads")
+    _wkb_df(spark).coalesce(1).write.format("shapefile_gbx").mode("overwrite").option(
+        "zip", "true"
+    ).save(out)
+    expected = str(tmp_path / "roads.shp.zip")
+    assert os.path.isfile(expected), f"Expected {expected} to exist"
+    # No bare sidecar files in the parent dir.
+    names = os.listdir(str(tmp_path))
+    sidecars = [n for n in names if n.startswith("roads.") and not n.endswith(".zip")]
+    assert sidecars == [], f"Unexpected sidecar files: {sidecars}"
+
+
+def test_shapefile_zip_archive_contents(spark, tmp_path):
+    """The .shp.zip archive contains .shp/.shx/.dbf at the archive root (no subdir)."""
+    import zipfile
+
+    register(spark)
+    out = str(tmp_path / "bundle")
+    _wkb_df(spark).coalesce(1).write.format("shapefile_gbx").mode("overwrite").option(
+        "zip", "true"
+    ).save(out)
+    zip_path = str(tmp_path / "bundle.shp.zip")
+    assert os.path.isfile(zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    # Must have .shp, .shx, .dbf at root (no subdirectory prefix)
+    assert any(n.endswith(".shp") and "/" not in n for n in names), names
+    assert any(n.endswith(".shx") and "/" not in n for n in names), names
+    assert any(n.endswith(".dbf") and "/" not in n for n in names), names
+
+
+def test_shapefile_zip_roundtrip(spark, tmp_path):
+    """zip=true multi-partition write round-trips via shapefile_gbx reader."""
+    register(spark)
+    out = str(tmp_path / "roundtrip")
+    rows = [
+        (str(i), bytearray(to_wkb(Point(float(i), 40.0))), "4326", "")
+        for i in range(10)
+    ]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, geom_0 binary, geom_0_srid string, geom_0_srid_proj string",
+    ).repartition(3, F.col("geom_0"))
+    df.write.format("shapefile_gbx").mode("overwrite").option("zip", "true").save(out)
+
+    zip_path = str(tmp_path / "roundtrip.shp.zip")
+    assert os.path.isfile(zip_path)
+    # Read back via shapefile_gbx (uses /vsizip/ internally)
+    back = spark.read.format("shapefile_gbx").load(zip_path)
+    assert back.count() == 10
+    gcol = [f.name for f in back.schema.fields if f.name.endswith("_srid")][0][:-5]
+    geom_types = {
+        _from_wkb(bytes(r[gcol])).geom_type for r in back.select(gcol).collect()
+    }
+    assert geom_types == {"Point"}
+
+
+def test_shapefile_no_zip_no_regression(spark, tmp_path):
+    """zip=false (default) shapefile write still produces sidecar files, not a zip."""
+    register(spark)
+    out = str(tmp_path / "nozip_shp")
+    _wkb_df(spark).coalesce(1).write.format("shapefile_gbx").mode("overwrite").save(out)
+    # The shapefile sidecar files land either in the parent dir (e.g. nozip_shp.shp)
+    # or inside the output directory (nozip_shp/nozip_shp.shp), depending on the path.
+    # Either way, there must be no .zip file anywhere, and the reader must round-trip.
+    import glob
+
+    zip_files = glob.glob(str(tmp_path / "*.zip"))
+    assert zip_files == [], f"Unexpected .zip in {zip_files}"
+    back = spark.read.format("shapefile_gbx").load(out)
+    assert back.count() == 2

@@ -135,6 +135,29 @@ def _zip_vsi(path: str) -> str:
     return path
 
 
+def _zip_shapefile_bundle(shp_path: str, zip_path: str) -> None:
+    """Zip the shapefile sidecar files (written by pyogrio alongside *shp_path*)
+    into a single archive at *zip_path*, flat at the archive root.
+
+    pyogrio writes ``roads.shp``, ``roads.shx``, ``roads.dbf``, ``roads.prj``,
+    and ``roads.cpg`` alongside ``shp_path`` (in the same directory); this
+    function collects every file in that directory that shares the stem (e.g.
+    ``roads``) and packs them into a ZIP archive at ``zip_path``, placing each
+    file at the archive root (no subdirectory). The archive is then the only
+    artifact that the commit loop copies to the Volume target.
+    """
+    import zipfile
+
+    parent = os.path.dirname(shp_path)
+    stem = os.path.splitext(os.path.basename(shp_path))[0]  # e.g. "roads"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in sorted(os.listdir(parent)):
+            # Collect all files with the same stem (roads.shp, roads.shx, …)
+            # but not the zip archive itself.
+            if name.startswith(stem + ".") and not name.endswith(".zip"):
+                zf.write(os.path.join(parent, name), arcname=name)
+
+
 def _geometry_type_of(wkb: bytes) -> str:
     """OGR geometry-type name (e.g. 'Point', 'MultiPolygon') from a WKB blob."""
     from shapely import from_wkb
@@ -688,6 +711,19 @@ class VectorGbxWriter(DataSourceWriter):
             raise ValueError(
                 "vector_gbx writer requires a 'driverName' option (e.g. 'GeoJSON')."
             )
+        # zip=true produces a single <stem>.shp.zip archive (ESRI Shapefile only).
+        self.zip = (
+            opts.get("zip", "false").lower() == "true"
+            and self.driver == "ESRI Shapefile"
+        )
+        if self.zip:
+            p = self.path.rstrip("/")
+            if p.endswith(".shp.zip"):
+                self.path = p  # already correct
+            elif p.endswith(".shp"):
+                self.path = p + ".zip"
+            else:
+                self.path = p + ".shp.zip"
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")
@@ -761,7 +797,30 @@ class VectorGbxWriter(DataSourceWriter):
             # sequential byte copies (FUSE-safe). Mirrors the PMTiles writer.
             local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
             local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
-            if _should_stream(self.driver):
+            if self.zip:
+                # zip=true: write sidecars to <stem>.shp, then zip into
+                # <stem>.shp.zip; only the archive is copied to the target.
+                # local_out ends in ".shp.zip"; strip ".zip" -> the .shp stem
+                # pyogrio writes alongside (roads.shp, roads.shx, …).
+                local_shp_out = local_out[: -len(".zip")]  # e.g. .../roads.shp
+                if _should_stream(self.driver):
+                    first_tbl = feather.read_table(frags[0])
+                    geom_type, crs = self._infer_geom_crs([first_tbl])
+                    del first_tbl
+                    self._write_streaming(frags, local_shp_out, geom_type, crs)
+                else:
+                    tables = [feather.read_table(f) for f in frags]
+                    geom_type, crs = self._infer_geom_crs(tables)
+                    self._write_local(tables, local_shp_out, geom_type, crs)
+                _zip_shapefile_bundle(local_shp_out, local_out)
+                # Remove sidecar files so only .shp.zip remains in local_dir.
+                stem_base = os.path.basename(
+                    os.path.splitext(local_shp_out)[0]
+                )  # e.g. "roads"
+                for name in list(os.listdir(local_dir)):
+                    if name.startswith(stem_base + ".") and not name.endswith(".zip"):
+                        os.remove(os.path.join(local_dir, name))
+            elif _should_stream(self.driver):
                 # Infer geom type + CRS from the first fragment only (one
                 # partition, bounded), then stream every fragment into one write.
                 first_tbl = feather.read_table(frags[0])
