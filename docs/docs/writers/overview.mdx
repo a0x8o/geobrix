@@ -37,6 +37,22 @@ is named, field-name and type limits, and how the CRS is stored:
 | **GeoPackage** | A **named geometry column**, default `geom`. | Full field names; rich types (int64, real, text, blob, datetime). | Stored per geometry column (`gpkg_spatial_ref_sys`). |
 | **FileGDB** | A **named geometry field**, default `SHAPE`. | Esri limits (≤ 64 chars; reserved names like `OBJECTID` disallowed). | Per feature class. |
 
+### What `.save(path)` produces
+
+The format (driver) is chosen by the writer name, **not** the path extension — but
+some formats are a single file and others a directory, so name `path` accordingly:
+
+| Writer | `.save(path)` writes | Recommended `path` |
+|---|---|---|
+| `gpkg_gbx` | a **single file** | `…/merged.gpkg` |
+| `geojson_gbx` | a **single file** | `…/merged.geojson` |
+| `shapefile_gbx` | a **directory** holding the `.shp/.shx/.dbf/.prj/.cpg` bundle | `…/roads` |
+| `geojsonl_gbx` | a **directory** of `part-*.geojsonl` shards | `…/edges` |
+| `file_gdb_gbx` | a **directory** `…/name.gdb` | `…/roads.gdb` |
+
+The extension is cosmetic for writing (the driver decides the format), but include it
+on single-file outputs so the result is recognizable and portable.
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
