@@ -129,18 +129,14 @@ See the [Raster Writer](./raster) page for full usage, options, and the `nameCol
 
 ## Benchmarks
 
-Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
-median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
-1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+Each `*_gbx` lightweight writer is benchmarked against its heavyweight counterpart on the
+same cluster, same corpus, and same row counts, with the median of measured iterations
+reported. Parity is a hard gate — the two tiers' outputs must decode to the same records
+(and, where applicable, byte-identical tile data) or the run fails immediately.
 
-| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
-|--------|------|-------------------------------|-------|
-| `pmtiles_gbx` | Lightweight | 18.4 s | — |
-| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
-
-Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
-tile data. For the full methodology and raster-function results, see the
-[Benchmarking](../api/benchmarking) page.
+Per-format timing results — spanning the vector writers (GeoJSON, Shapefile, GeoPackage,
+GeoJSONL) and the PMTiles writer — are published on the [Benchmarking](../api/benchmarking)
+page. For the full methodology and raster-function results, see the same page.
 
 </TabItem>
 <TabItem value="heavyweight" label="Heavyweight (rasterx)">
@@ -181,18 +177,14 @@ output, use the lightweight vector writers: [Vector](./vector) (`vector_gbx`),
 
 ## Benchmarks
 
-Both tiers are benchmarked on the same cluster, same corpus, same row counts, with the
-median of measured iterations reported. The PMTiles writer is benchmarked end-to-end:
-1,000 tiles written to a single archive per tier, with decoded-tile parity as a hard gate.
+Each heavyweight writer is benchmarked against its `*_gbx` lightweight counterpart on the
+same cluster, same corpus, and same row counts, with the median of measured iterations
+reported. Parity (matching output records, and byte-identical tile data where applicable)
+is a hard gate — a mismatch fails the run immediately.
 
-| Writer | Tier | Whole-job median (1,000 tiles) | Notes |
-|--------|------|-------------------------------|-------|
-| `pmtiles_gbx` | Lightweight | 18.4 s | — |
-| `pmtiles` | Heavyweight | 20.7 s | 1.13× slower than lightweight |
-
-Parity: the two archives decode to the same 1,000 `(z, x, y)` tiles with byte-identical
-tile data. For the full methodology and raster-function results, see the
-[Benchmarking](../api/benchmarking) page.
+Per-format timing results — the PMTiles writer and the sharded GeoJSONL writer — are
+published on the [Benchmarking](../api/benchmarking) page, alongside the full methodology
+and raster-function results.
 
 ## Next Steps
 
