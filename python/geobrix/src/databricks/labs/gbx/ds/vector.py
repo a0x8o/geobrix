@@ -172,6 +172,34 @@ def _writer_col_roles(schema):
     return geom_col, srid_col, proj_col, attr_cols
 
 
+def _writer_arrow_table(cols, schema, geom_col):
+    """Build an Arrow table from per-column value lists using the DECLARED Spark
+    schema for column types.
+
+    Without an explicit schema, ``pa.table`` infers each column's type from its
+    Python values -- so a column that is entirely null in a partition infers
+    Arrow ``null`` type (format code 'n'), which pyogrio/GDAL cannot create an
+    OGR field from ("Type 'n' for field ... is not supported"), and which also
+    makes two partitions disagree on a column's type (all-null vs typed),
+    breaking the cross-partition ``concat_tables`` merge. Typing every column
+    from the reader schema keeps an all-null ``StringType`` column a proper
+    (all-null) Arrow ``string``. The geometry column is always emitted as WKB
+    ``bytes`` here, so it is typed ``binary`` regardless of its declared type.
+    """
+    import pyarrow as pa
+    from pyspark.sql.pandas.types import to_arrow_type
+
+    fields = [
+        pa.field(
+            f.name, pa.binary() if f.name == geom_col else to_arrow_type(f.dataType)
+        )
+        for f in schema.fields
+    ]
+    return pa.table(
+        {f.name: cols[f.name] for f in schema.fields}, schema=pa.schema(fields)
+    )
+
+
 class _ChunkPartition(InputPartition):
     """One contiguous feature slice of one layer (picklable)."""
 
@@ -532,6 +560,7 @@ class VectorGbxWriter(DataSourceWriter):
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
             schema
         )
+        self._schema = schema
         self._col_order = [f.name for f in schema.fields]
         self._geom_is_wkb = any(
             f.name == self.geom_col and isinstance(f.dataType, BinaryType)
@@ -551,7 +580,6 @@ class VectorGbxWriter(DataSourceWriter):
 
     # ---- executor: partition rows -> one Arrow-IPC fragment ----
     def write(self, iterator: Iterator) -> WriterCommitMessage:
-        import pyarrow as pa
         import pyarrow.feather as feather
         from shapely import from_wkt, to_wkb
 
@@ -568,7 +596,7 @@ class VectorGbxWriter(DataSourceWriter):
         if not cols[self.geom_col]:
             return _VectorCommitMessage(frag_path="")  # empty partition
         os.makedirs(self.scratch_dir, exist_ok=True)
-        tbl = pa.table({n: cols[n] for n in self._col_order})
+        tbl = _writer_arrow_table(cols, self._schema, self.geom_col)
         frag = os.path.join(self.scratch_dir, f"frag-{uuid.uuid4().hex}.arrow")
         feather.write_feather(tbl, frag)
         return _VectorCommitMessage(frag_path=frag)
@@ -856,6 +884,7 @@ class GeoJSONLGbxWriter(DataSourceWriter):
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
             schema
         )
+        self._schema = schema
         self._col_order = [f.name for f in schema.fields]
         self._geom_is_wkb = any(
             f.name == self.geom_col and isinstance(f.dataType, BinaryType)
@@ -911,7 +940,6 @@ class GeoJSONLGbxWriter(DataSourceWriter):
 
     # ---- executor: partition rows -> one or more GeoJSONL shards in OUTDIR ----
     def write(self, iterator: Iterator) -> WriterCommitMessage:
-        import pyarrow as pa
         import pyogrio
         from shapely import from_wkt, to_wkb
 
@@ -929,7 +957,7 @@ class GeoJSONLGbxWriter(DataSourceWriter):
         if nrows == 0:
             return _GeoJSONLCommitMessage(shard_paths=())  # empty partition -> nothing
 
-        tbl = pa.table({n: cols[n] for n in self._col_order})
+        tbl = _writer_arrow_table(cols, self._schema, self.geom_col)
         geom_type, crs = self._infer_geom_crs(tbl)
         chunk = self.max_records_per_file or nrows  # split into N-row shards if set
         bounds = list(range(0, nrows, chunk))

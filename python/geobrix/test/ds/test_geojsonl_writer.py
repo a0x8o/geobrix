@@ -10,6 +10,7 @@ import os
 
 import pytest
 from pyspark.sql import functions as F
+from pyspark.sql.types import BinaryType, LongType, StringType, StructField, StructType
 from shapely import Point
 from shapely import from_wkb as _from_wkb
 from shapely import to_wkb
@@ -31,6 +32,56 @@ def _wkb_df(spark, n=6):
 
 def _shards(out):
     return [n for n in os.listdir(out) if n.endswith((".geojsonl", ".geojsons"))]
+
+
+def test_writer_arrow_table_all_null_column_keeps_declared_type():
+    # An attribute column that is entirely null in a partition must keep its
+    # declared type (string), not collapse to Arrow 'null' type -- pyogrio/GDAL
+    # rejects a null-typed field ("Type 'n' for field ... is not supported").
+    import pyarrow as pa
+
+    from databricks.labs.gbx.ds.vector import _writer_arrow_table
+
+    schema = StructType(
+        [
+            StructField("tlid", LongType(), True),
+            StructField("plus4", StringType(), True),  # all null below
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+    cols = {
+        "tlid": [1, 2],
+        "plus4": [None, None],
+        "geom_0": [bytes(to_wkb(Point(1.0, 2.0))), bytes(to_wkb(Point(3.0, 4.0)))],
+        "geom_0_srid": ["4326", "4326"],
+        "geom_0_srid_proj": ["", ""],
+    }
+    tbl = _writer_arrow_table(cols, schema, "geom_0")
+    assert tbl.schema.field("plus4").type == pa.string()  # NOT pa.null()
+    assert tbl.schema.field("geom_0").type == pa.binary()
+    assert tbl.schema.field("tlid").type == pa.int64()
+
+
+def test_all_null_attr_column_writes_and_roundtrips(spark, tmp_path):
+    # End-to-end regression for a TIGER-style column (e.g. PLUS4L) that is null
+    # for every row: the geojsonl write must not raise the pyogrio FieldError.
+    register(spark)
+    out = str(tmp_path / "nullattr")
+    rows = [
+        (str(i), None, bytearray(to_wkb(Point(float(i) / 10.0, 40.0))), "4326", "")
+        for i in range(4)
+    ]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, plus4 string, geom_0 binary, "
+        "geom_0_srid string, geom_0_srid_proj string",
+    ).repartition(2, F.col("geom_0"))
+    df.write.format("geojsonl_gbx").mode("overwrite").save(out)  # must not raise
+
+    back = spark.read.format("geojson_gbx").option("multi", "true").load(out)
+    assert back.count() == 4
 
 
 def test_multi_file_one_shard_per_partition(spark, tmp_path):
