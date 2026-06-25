@@ -84,6 +84,55 @@ def test_all_null_attr_column_writes_and_roundtrips(spark, tmp_path):
     assert back.count() == 4
 
 
+def test_copy_file_to_fuse_never_chmods(tmp_path, monkeypatch):
+    # UC Volumes (FUSE) reject chmod; the byte-only copy must never call it
+    # (shutil.copy/copy2 would, via copymode -> PermissionError on a Volume).
+    import os as _os
+
+    from databricks.labs.gbx.ds.vector import _copy_file_to_fuse
+
+    src = tmp_path / "s.bin"
+    src.write_bytes(b"geojsonl-bytes")
+    dst = tmp_path / "d.bin"
+    monkeypatch.setattr(
+        _os, "chmod", lambda *a, **k: pytest.fail("Volume copy must not chmod")
+    )
+    _copy_file_to_fuse(str(src), str(dst))  # must not raise / chmod
+    assert dst.read_bytes() == b"geojsonl-bytes"
+
+
+def test_copy_tree_to_fuse_never_chmods(tmp_path, monkeypatch):
+    import os as _os
+
+    from databricks.labs.gbx.ds.vector import _copy_tree_to_fuse
+
+    src = tmp_path / "src.gdb"
+    (src / "sub").mkdir(parents=True)
+    (src / "a.bin").write_bytes(b"a")
+    (src / "sub" / "b.bin").write_bytes(b"b")
+    dst = tmp_path / "out.gdb"
+    monkeypatch.setattr(
+        _os, "chmod", lambda *a, **k: pytest.fail("Volume copytree must not chmod")
+    )
+    _copy_tree_to_fuse(str(src), str(dst))
+    assert (dst / "a.bin").read_bytes() == b"a"
+    assert (dst / "sub" / "b.bin").read_bytes() == b"b"
+
+
+def test_writers_copy_to_volume_byte_only():
+    # Guard the call sites: writers must copy to the (FUSE) Volume via the
+    # byte-only helpers, never shutil.copy/copy2/copytree, which chmod the
+    # destination and fail with 'Operation not permitted' on a UC Volume.
+    import inspect
+
+    from databricks.labs.gbx.ds import vector
+
+    for cls in (vector.VectorGbxWriter, vector.GeoJSONLGbxWriter):
+        src = inspect.getsource(cls)
+        for bad in ("shutil.copy(", "shutil.copy2(", "shutil.copytree("):
+            assert bad not in src, f"{bad} in {cls.__name__} is not Volume-safe"
+
+
 def test_multi_file_one_shard_per_partition(spark, tmp_path):
     register(spark)
     out = str(tmp_path / "shards")

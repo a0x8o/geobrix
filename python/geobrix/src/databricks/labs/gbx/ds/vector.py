@@ -200,6 +200,31 @@ def _writer_arrow_table(cols, schema, geom_col):
     )
 
 
+def _copy_file_to_fuse(src, dst):
+    """Copy file BYTES only -- never copy mode/stat. shutil.copy/copy2 run
+    copymode (chmod) on the destination, which a UC Volume (FUSE) rejects with
+    'Operation not permitted'; shutil.copyfile copies content only and is the
+    Volume-safe primitive. (The chmod can succeed intermittently, so a plain
+    shutil.copy fails non-deterministically partway through a multi-shard write.)
+    """
+    shutil.copyfile(src, dst)
+
+
+def _copy_tree_to_fuse(src, dst):
+    """Recursively copy a directory (e.g. a FileGDB .gdb) to a FUSE/Volume target
+    with byte-only file copies and plain makedirs -- no copystat/chmod, which
+    shutil.copytree applies to every file and to the directories themselves and
+    which fails on a UC Volume."""
+    os.makedirs(dst, exist_ok=True)
+    for entry in os.listdir(src):
+        s = os.path.join(src, entry)
+        d = os.path.join(dst, entry)
+        if os.path.isdir(s):
+            _copy_tree_to_fuse(s, d)
+        else:
+            shutil.copyfile(s, d)
+
+
 class _ChunkPartition(InputPartition):
     """One contiguous feature slice of one layer (picklable)."""
 
@@ -642,9 +667,9 @@ class VectorGbxWriter(DataSourceWriter):
                 src = os.path.join(local_dir, name)
                 dst = os.path.join(parent, name)
                 if os.path.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                    _copy_tree_to_fuse(src, dst)
                 else:
-                    shutil.copy(src, dst)  # sequential -> FUSE-safe
+                    _copy_file_to_fuse(src, dst)  # byte-only -> Volume-safe
         finally:
             if local_dir is not None:
                 shutil.rmtree(local_dir, ignore_errors=True)
@@ -981,7 +1006,7 @@ class GeoJSONLGbxWriter(DataSourceWriter):
                     kw["layer"] = self.layer_name
                 pyogrio.write_arrow(slice_tbl, local_path, **kw)
                 dst = os.path.join(self.path, name)
-                shutil.copy(local_path, dst)  # sequential -> FUSE-safe
+                _copy_file_to_fuse(local_path, dst)  # byte-only -> Volume-safe
                 written.append(dst)
         finally:
             shutil.rmtree(local_dir, ignore_errors=True)
