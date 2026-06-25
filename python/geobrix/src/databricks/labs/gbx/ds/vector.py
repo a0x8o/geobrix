@@ -239,6 +239,21 @@ def _writer_arrow_table(cols, schema, geom_col):
     )
 
 
+def _default_gpkg_layer(path):
+    """A GeoPackage layer name derived from the output filename, made valid.
+
+    With no explicit ``layerName``, GDAL names the layer after the output file
+    stem -- but GeoPackage forbids a layer name that starts with the reserved
+    ``gpkg`` prefix (and forbids an empty name), so e.g. saving to ``.../gpkg``
+    errors with "layer name may not begin with 'gpkg'". Fall back to ``layer``
+    in those cases; override with the ``layerName`` option for anything else.
+    """
+    stem = os.path.splitext(os.path.basename(path.rstrip("/")))[0]
+    if not stem or stem.lower().startswith("gpkg"):
+        return "layer"
+    return stem
+
+
 def _copy_file_to_fuse(src, dst):
     """Copy file BYTES only -- never copy mode/stat. shutil.copy/copy2 run
     copymode (chmod) on the destination, which a UC Volume (FUSE) rejects with
@@ -689,12 +704,14 @@ class VectorGbxWriter(DataSourceWriter):
             import pyarrow as pa
 
             tables = [feather.read_table(f) for f in frags]
-            # Merge all partition fragments into ONE Arrow table so the local write is a
-            # single pass. pyogrio's append path (append=True per fragment) re-encodes the
-            # growing file for some drivers -- GeoJSON especially -- which is ~quadratic in
-            # fragment count. One concatenated write keeps single-file export fast (and is
-            # why no coalesce is needed: the writer always emits a single merged file).
-            if len(tables) > 1:
+            # Concatenate every partition fragment into ONE Arrow table only for
+            # GeoJSON, whose append path re-encodes the growing FeatureCollection
+            # (~quadratic in fragment count). For the other drivers
+            # (GPKG / Shapefile / FileGDB) `_write_local` appends per fragment,
+            # which bounds driver memory: a single concat of all partitions can OOM
+            # the single-node driver on large inputs (the write happens on the
+            # driver, not the executors).
+            if self.driver == "GeoJSON" and len(tables) > 1:
                 tables = [pa.concat_tables(tables)]
             geom_type, crs = self._infer_geom_crs(tables)
             # Write to driver-local disk first (supports random I/O for SQLite/
@@ -749,6 +766,10 @@ class VectorGbxWriter(DataSourceWriter):
         )
         if self.layer_name:
             kw["layer"] = self.layer_name
+        elif self.driver == "GPKG":
+            # GDAL would name the GPKG layer after the file stem, which is invalid
+            # when it starts with the reserved 'gpkg' prefix; use a safe default.
+            kw["layer"] = _default_gpkg_layer(self.path)
         try:
             for n, tbl in enumerate(tables):
                 pyogrio.write_arrow(

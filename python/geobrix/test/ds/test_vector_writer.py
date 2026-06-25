@@ -22,6 +22,57 @@ from databricks.labs.gbx.ds.vector import (
 )
 
 
+def test_default_gpkg_layer_avoids_reserved_prefix():
+    from databricks.labs.gbx.ds.vector import _default_gpkg_layer
+
+    assert _default_gpkg_layer("/a/b/roads") == "roads"
+    assert _default_gpkg_layer("/a/b/roads.gpkg") == "roads"
+    assert _default_gpkg_layer("/a/b/gpkg") == "layer"  # reserved prefix
+    assert _default_gpkg_layer("/a/b/gpkgdata") == "layer"
+    assert _default_gpkg_layer("/") == "layer"  # empty stem
+
+
+def test_gpkg_write_to_path_named_gpkg(spark, tmp_path):
+    # Saving to a path whose stem is 'gpkg' must not fail with the GeoPackage
+    # reserved-prefix error (the layer name falls back to 'layer').
+    register(spark)
+    out = str(tmp_path / "gpkg")  # stem == "gpkg"
+    rows = [("a", bytearray(to_wkb(Point(1.0, 2.0))), "4326", "")]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, geom_0 binary, geom_0_srid string, geom_0_srid_proj string",
+    )
+    df.write.format("gpkg_gbx").mode("overwrite").save(out)  # must not raise
+    back = spark.read.format("gpkg_gbx").load(out)
+    assert back.count() == 1
+
+
+def test_non_geojson_commit_streams_without_concat(spark, tmp_path, monkeypatch):
+    # GPKG/Shapefile/FileGDB must append fragments per-partition (bounded driver
+    # memory), NOT concat every partition into one in-memory table (which OOMs a
+    # single-node driver on large inputs). Make concat_tables raise; a 2-partition
+    # GPKG write must still succeed.
+    import pyarrow as pa
+
+    monkeypatch.setattr(
+        pa,
+        "concat_tables",
+        lambda *a, **k: pytest.fail("commit must not concat for GPKG"),
+    )
+    register(spark)
+    out = str(tmp_path / "streamed.gpkg")
+    rows = [
+        ("a", bytearray(to_wkb(Point(1.0, 2.0))), "4326", ""),
+        ("b", bytearray(to_wkb(Point(3.0, 4.0))), "4326", ""),
+    ]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, geom_0 binary, geom_0_srid string, geom_0_srid_proj string",
+    ).repartition(2, F.col("geom_0"))
+    df.write.format("gpkg_gbx").mode("overwrite").save(out)  # must not raise / concat
+    assert spark.read.format("gpkg_gbx").load(out).count() == 2
+
+
 def test_scratch_dir_unique_per_write(tmp_path):
     # Two concurrent writes to the same parent directory must NOT share a scratch
     # dir, or one write's commit cleanup (rmtree) would delete the other's
