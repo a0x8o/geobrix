@@ -60,20 +60,10 @@ that round-trips with the GeoJSON reader's directory mode:
 
 ## Schema
 
-**Input schema — a geometry column plus its SRID companion:**
-
-```
-root
- |-- <geom>: binary (WKB)  or  string (WKT)   # the geometry
- |-- <geom>_srid: string        # REQUIRED — CRS authority code, e.g. "4326" ("0" if unknown)
- |-- <geom>_srid_proj: string   # optional — PROJ4 string, used as a CRS fallback when srid is "0"
- |-- ...any other columns       # written as feature attributes
-```
-
-The writer locates the geometry as the column `X` that has a companion `X_srid` column
-(`geom_0` by convention — what the readers emit). The `_srid` / `_srid_proj` columns
-are consumed for the CRS and are **not** written as fields. **Every other column is written
-as a feature attribute.**
+`geojsonl_gbx` / `geojsonl` use the shared [vector column contract](./vector#schema) — a
+geometry column plus its `*_srid` (required) / `*_srid_proj` (optional) CRS companions; every
+other column becomes a feature attribute. Point the writer at your columns with
+`geomCol` / `sridCol` / `projCol`, or coerce to the `geom_0` convention.
 
 **Output:** a **directory** (`out/`) containing one `part-<uuid>.geojsonl` shard per
 non-empty partition (plus an advisory `_SUCCESS` marker). Each shard is a sequence of
@@ -84,17 +74,16 @@ newline-delimited GeoJSON `Feature` objects; attributes are written as feature `
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · geojsonl_gbx">
 
-Coerce your DataFrame/table to the writer shape, then write:
+Name your geometry/CRS columns with options (or coerce to the `geom_0` convention — see the
+[Vector Writer schema](./vector#schema) for that and for exporting Databricks `GEOMETRY` /
+`GEOGRAPHY` columns), then write:
 
 ```python
-from pyspark.sql import functions as F
-
-df.select(
-    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
-    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
-    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
-    "name", "population",                      # -> written as feature attributes
-).write.format("geojsonl_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+(df  # geometry + CRS under your own column names
+ .write.format("geojsonl_gbx")
+ .option("geomCol", "the_geom")   # WKB or WKT
+ .option("sridCol", "epsg")       # REQUIRED — CRS authority code
+ .mode("overwrite").save("/Volumes/cat/sch/vol/out"))
 ```
 
 **Read it back** with the GeoJSON reader's directory mode — `multi=true` enumerates the
@@ -109,17 +98,14 @@ back = spark.read.format("geojson_gbx").option("multi", "true").load("/Volumes/c
 
 Same input shape and output layout; the format name is `geojsonl` and reads back through the
 heavyweight GeoJSON reader (`geojson_ogr`). Requires a classic x86 cluster with the GeoBrix JAR
-and GDAL init script.
+and GDAL init script. The same column options apply (see the [Vector Writer schema](./vector#schema)):
 
 ```python
-from pyspark.sql import functions as F
-
-df.select(
-    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
-    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
-    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
-    "name", "population",                      # -> written as feature attributes
-).write.format("geojsonl").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+(df  # geometry + CRS under your own column names
+ .write.format("geojsonl")
+ .option("geomCol", "the_geom")   # WKB or WKT
+ .option("sridCol", "epsg")       # REQUIRED — CRS authority code
+ .mode("overwrite").save("/Volumes/cat/sch/vol/out"))
 ```
 
 **Read it back** with the heavyweight GeoJSON reader's directory mode:
