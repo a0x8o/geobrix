@@ -123,7 +123,7 @@ An unrecognized format raises `ValueError`.
 | [GeoJSON Writer](./geojson) | `geojson_gbx` | Pure-Python GeoJSON writer (OGR driver: `GeoJSON`) — single merged file. |
 | [GeoJSONL Writer](./geojsonl) | `geojsonl_gbx` / `geojsonl` | Multi-file newline-delimited GeoJSONL — one shard per partition, no driver merge. Available in **both** tiers. |
 | [GeoPackage Writer](./geopackage) | `gpkg_gbx` | Pure-Python GeoPackage writer (OGR driver: `GPKG`). |
-| [GeoDatabase Writer](./filegdb) | `file_gdb_gbx` | Pure-Python File Geodatabase writer (OGR driver: `OpenFileGDB`). |
+| [GeoDatabase Writer](./filegdb) | `file_gdb_gbx` | **Hybrid** File Geodatabase writer (OGR driver: `OpenFileGDB`) — requires the native GDAL libraries (e.g. as provided by the heavyweight tier), not pure-Python. |
 
 See the [Raster Writer](./raster) page for full usage, options, and the `nameCol` / `ext` controls.
 
@@ -173,6 +173,15 @@ those OGR write paths aren't implemented in the heavyweight tier. For single-fil
 output, use the lightweight vector writers: [Vector](./vector) (`vector_gbx`),
 [Shapefile](./shapefile) (`shapefile_gbx`), [GeoJSON](./geojson) (`geojson_gbx`),
 [GeoPackage](./geopackage) (`gpkg_gbx`), or [GeoDatabase](./filegdb) (`file_gdb_gbx`).
+:::
+
+:::note Hybrid writer: GeoDatabase (`file_gdb_gbx`)
+The [GeoDatabase writer](./filegdb) (`file_gdb_gbx`) is a **hybrid**: it is registered in the
+lightweight tier but, unlike the other `*_gbx` vector writers, it is not pure-Python — it
+drives the **native GDAL libraries** (`osgeo`) to write the File Geodatabase. It therefore
+runs only where those natives are present, such as on a cluster with the **heavyweight tier**
+(the GeoBrix JAR) installed. On a runtime without native GDAL it raises a clear error at write
+time; use another single-file vector writer (GeoPackage, GeoJSON, Shapefile) there.
 :::
 
 ## Benchmarks
