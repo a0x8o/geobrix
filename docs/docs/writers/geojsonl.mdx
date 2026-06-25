@@ -55,7 +55,7 @@ use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT.
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. The target directory is cleared once before the shards land. |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |
-| `geomCol` | `geom_0` (if present) | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). Available in **both** lightweight and heavyweight tiers. |
+| `geomCol` | auto-detected from the `*_srid` column | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). Available in **both** lightweight and heavyweight tiers. |
 | `sridCol` | `<geomCol>_srid` | Override the SRID column name. **Required** — supplies the CRS authority code (e.g. `"4326"`, or `"0"` if unknown). Available in **both** tiers. |
 | `projCol` | `<geomCol>_srid_proj` | Override the PROJ4 column name (optional fallback CRS when `sridCol` is `"0"`). Available in **both** tiers. |
 
