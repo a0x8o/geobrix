@@ -53,6 +53,24 @@ some formats are a single file and others a directory, so name `path` accordingl
 The extension is cosmetic for writing (the driver decides the format), but include it
 on single-file outputs so the result is recognizable and portable.
 
+### Choosing a writer for large datasets
+
+The **single-file** writers assemble the whole output on the **driver** (a single
+node), so they have scale ceilings:
+
+- **`shapefile_gbx`** — the format caps each `.shp`/`.dbf` at **2 GB**. Practical up
+  to roughly a few hundred thousand features with attributes; beyond that the `.dbf`
+  (one fixed-width record per row) is the usual limit.
+- **`geojson_gbx`** — merges every partition into one FeatureCollection on the
+  driver, so it is bounded by **driver memory**.
+
+For large datasets, prefer the writers that don't assemble on one node:
+
+- **`geojsonl_gbx`** — writes one shard per partition (no driver merge); throughput
+  scales with partitions. The most scalable option.
+- **`gpkg_gbx`** — a single file with **no 2 GB cap**; features are streamed per
+  partition, so it handles far larger data than shapefile while staying one file.
+
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight (pyrx)">
 
