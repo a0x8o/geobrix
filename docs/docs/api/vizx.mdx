@@ -254,8 +254,15 @@ cell ids instead:
 | `grid_system` | Behaviour |
 |---|---|
 | `None` (default) | Column is a geometry encoding (WKT/EWKT/WKB/EWKB/`GEOMETRY`/`GEOGRAPHY`). |
-| `'h3'` | Column holds H3 cell ids (string index **or** bigint); rendered as cell-boundary polygons. |
-| `'quadbin'`, `'bng'`, `'custom'` | Planned — currently raise `NotImplementedError`. |
+| `'h3'` | H3 cell ids (string index **or** bigint) → cell-boundary polygons (lon/lat). |
+| `'quadbin'` | Quadbin cell ids (bigint) → tile-boundary polygons (lon/lat). |
+| `'bng'` | British National Grid cell ids (string, e.g. `"TQ38"`) → cell polygons in EPSG:27700. |
+| `'custom'` | Planned — raises `NotImplementedError` (a custom grid needs its grid config). |
+
+Cell boundaries reuse the lightweight GridX cell→geometry implementations, so
+they match `gbx_h3_*`/`gbx_quadbin_aswkb`/`gbx_bng_aswkb` exactly. Each grid's
+native CRS is honoured (BNG is metres in EPSG:27700) and reprojected to Web
+Mercator for the basemap.
 
 ```python
 from databricks.labs.gbx.vizx import plot_static

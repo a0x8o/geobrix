@@ -92,6 +92,25 @@ def _h3_boundaries(values):
     return [_h3_boundary(c) for c in values]
 
 
+def _quadbin_boundaries(values):
+    # Drive the lightweight (pygx) scalar cell->WKB on the driver, per cell,
+    # exactly as the gbx_quadbin_aswkb pandas_udf does. Quadbin cells are bigint
+    # (lon/lat tile bounds, EPSG:4326).
+    from databricks.labs.gbx._geom import parse_geom
+    from databricks.labs.gbx.pygx import _quadbin
+
+    return [parse_geom(_quadbin.as_wkb(int(c))) for c in values]
+
+
+def _bng_boundaries(values):
+    # Mirror gbx_bng_aswkb: _bng.parse() decodes the STRING cellid to its int
+    # form, then cell_aswkb builds the cell polygon in EPSG:27700.
+    from databricks.labs.gbx._geom import parse_geom
+    from databricks.labs.gbx.pygx import _bng
+
+    return [parse_geom(_bng.cell_aswkb(_bng.parse(c))) for c in values]
+
+
 def _nyi(name):
     def _raise(_values):
         raise NotImplementedError(
@@ -102,16 +121,18 @@ def _nyi(name):
     return _raise
 
 
+# grid_system -> (cell-ids -> boundary geometries, source EPSG). h3/quadbin are
+# lon/lat (4326); BNG is British National Grid eastings/northings (27700).
 _GRID_DISPATCH = {
-    "h3": _h3_boundaries,
-    "quadbin": _nyi("quadbin"),
-    "bng": _nyi("bng"),
-    "custom": _nyi("custom"),
+    "h3": (_h3_boundaries, 4326),
+    "quadbin": (_quadbin_boundaries, 4326),
+    "bng": (_bng_boundaries, 27700),
+    "custom": (_nyi("custom"), None),
 }
 
 
 def _resolve_cells(data, col, grid_system, max_rows):
-    """DGGS cell-id column -> boundary-polygon GeoDataFrame (EPSG:4326)."""
+    """DGGS cell-id column -> boundary-polygon GeoDataFrame in the grid's CRS."""
     import geopandas as gpd
 
     if grid_system not in _GRID_DISPATCH:
@@ -119,9 +140,10 @@ def _resolve_cells(data, col, grid_system, max_rows):
             f"plot_static: grid_system={grid_system!r} is not one of "
             f"{sorted(_GRID_DISPATCH)} or None."
         )
+    boundaries, srid = _GRID_DISPATCH[grid_system]
     pdf = _collect_limited(data, max_rows)
-    geometry = _GRID_DISPATCH[grid_system](pdf[col].tolist())
-    return gpd.GeoDataFrame(pdf.drop(columns=[col]), geometry=geometry, crs=4326)
+    geometry = boundaries(pdf[col].tolist())
+    return gpd.GeoDataFrame(pdf.drop(columns=[col]), geometry=geometry, crs=srid)
 
 
 def _resolve_gdf(data, geom_col, grid_system, max_rows, srid):

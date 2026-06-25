@@ -149,13 +149,42 @@ def test_resolve_cells_carries_attribute_columns(spark):
     assert "cellid" not in gdf.columns
 
 
-@pytest.mark.parametrize("gs", ["quadbin", "bng", "custom"])
-def test_resolve_cells_fast_follow_not_implemented(spark, gs):
+def test_resolve_cells_quadbin(spark):
+    # quadbin cell ids are bigint; boundary is a lon/lat box (EPSG:4326).
+    import quadbin
+
+    from databricks.labs.gbx.vizx import _static_map as sm
+
+    cell = quadbin.point_to_cell(-74.0, 40.7, 10)  # int cell over NYC
+    df = spark.createDataFrame([(cell,)], ["cellid"])
+    gdf = sm._resolve_gdf(df, "cellid", "quadbin", 10_000, None)
+    assert gdf.crs.to_epsg() == 4326
+    assert gdf.geometry.iloc[0].geom_type == "Polygon"
+    minx, miny, maxx, maxy = gdf.geometry.iloc[0].bounds
+    assert -75 < minx < maxx < -73 and 40 < miny < maxy < 41  # lon/lat near NYC
+
+
+def test_resolve_cells_bng(spark):
+    # BNG cell ids are STRING; boundary is in EPSG:27700 eastings/northings.
+    from databricks.labs.gbx.pygx import _bng
+    from databricks.labs.gbx.vizx import _static_map as sm
+
+    cellid = _bng.point_as_cell(530000.0, 180000.0, "1km")  # central London, 1km
+    df = spark.createDataFrame([(cellid,)], ["cellid"])
+    gdf = sm._resolve_gdf(df, "cellid", "bng", 10_000, None)
+    assert gdf.crs.to_epsg() == 27700
+    assert gdf.geometry.iloc[0].geom_type == "Polygon"
+    minx, miny, _, _ = gdf.geometry.iloc[0].bounds
+    assert 500_000 < minx < 560_000 and 150_000 < miny < 200_000  # 27700 metres
+
+
+def test_resolve_cells_custom_not_implemented(spark):
+    # 'custom' remains a forward-declared fast-follow (needs a grid config).
     from databricks.labs.gbx.vizx import _static_map as sm
 
     df = spark.createDataFrame([(1,)], ["cellid"])
     with pytest.raises(NotImplementedError):
-        sm._resolve_gdf(df, "cellid", gs, 10_000, None)
+        sm._resolve_gdf(df, "cellid", "custom", 10_000, None)
 
 
 def test_resolve_cells_unknown_grid_system_raises(spark):
