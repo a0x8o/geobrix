@@ -622,7 +622,10 @@ class VectorGbxWriter(DataSourceWriter):
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
-            schema
+            schema,
+            geom_col=opts.get("geomcol"),
+            srid_col=opts.get("sridcol"),
+            proj_col=opts.get("projcol"),
         )
         self._schema = schema
         self._col_order = [f.name for f in schema.fields]
@@ -946,7 +949,10 @@ class GeoJSONLGbxWriter(DataSourceWriter):
         if self.max_records_per_file < 0:
             raise ValueError("maxRecordsPerFile must be a non-negative integer.")
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
-            schema
+            schema,
+            geom_col=opts.get("geomcol"),
+            srid_col=opts.get("sridcol"),
+            proj_col=opts.get("projcol"),
         )
         self._schema = schema
         self._col_order = [f.name for f in schema.fields]

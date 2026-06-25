@@ -240,3 +240,28 @@ def test_serverless_safe_no_jvm_or_conf():
     src = inspect.getsource(vector.GeoJSONLGbxWriter)
     for forbidden in ("_jvm", "sparkContext", "spark.conf.set", ".rdd"):
         assert forbidden not in src, f"{forbidden} found in GeoJSONLGbxWriter"
+
+
+def test_geomcol_sridcol_options_avoid_renaming(spark, tmp_path):
+    # A frame with non-convention column names writes via the geomCol/sridCol
+    # options without the user renaming anything.
+    register(spark)
+    out = str(tmp_path / "renamed")
+    rows = [
+        ("a", bytearray(to_wkb(Point(-73.9, 40.7))), "4326", ""),
+        ("b", bytearray(to_wkb(Point(-0.1, 51.5))), "4326", ""),
+    ]
+    df = spark.createDataFrame(
+        rows, schema="name string, the_geom binary, epsg string, p4 string"
+    ).repartition(2, F.col("the_geom"))
+    (
+        df.write.format("geojsonl_gbx")
+        .mode("overwrite")
+        .option("geomCol", "the_geom")
+        .option("sridCol", "epsg")
+        .option("projCol", "p4")
+        .save(out)
+    )
+    back = spark.read.format("geojson_gbx").option("multi", "true").load(out)
+    assert back.count() == 2
+    assert {r["name"] for r in back.collect()} == {"a", "b"}
