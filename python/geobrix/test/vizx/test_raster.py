@@ -1,6 +1,7 @@
 import io
 
 import matplotlib
+import pytest
 
 matplotlib.use("Agg")  # headless: no display needed
 from test.pyrx.conftest import make_geotiff_bytes  # noqa: E402
@@ -11,7 +12,7 @@ import rasterio  # noqa: E402
 from rasterio.io import MemoryFile  # noqa: E402
 from rasterio.transform import from_origin  # noqa: E402
 
-from databricks.labs.gbx.viz import _raster, plot_file, plot_raster  # noqa: E402
+from databricks.labs.gbx.vizx import _raster, plot_file, plot_raster  # noqa: E402
 
 NODATA = -9999.0
 
@@ -92,6 +93,19 @@ def test_plot_file_produces_a_figure(tmp_path):
     p.write_bytes(make_geotiff_bytes(width=8, height=8, count=3))
     plt.close("all")
     plot_file(str(p))
+    assert len(plt.get_fignums()) == 1
+    plt.close("all")
+
+
+@pytest.mark.parametrize("scheme", ["dbfs:", "file:", "file://"])
+def test_plot_file_strips_uri_scheme(tmp_path, scheme):
+    # Databricks paths are often scheme-qualified (dbfs:/..., file:///...);
+    # plot_file should read the FUSE-mount path by stripping the scheme rather
+    # than failing in rasterio.
+    p = tmp_path / "t.tif"
+    p.write_bytes(make_geotiff_bytes(width=8, height=8, count=1))
+    plt.close("all")
+    plot_file(f"{scheme}{p}")
     assert len(plt.get_fignums()) == 1
     plt.close("all")
 
@@ -242,7 +256,7 @@ def test_plot_mask_layers_overlays_distinct_colours_with_legend():
     Asserts real drawn content: two AxesImages, a 2-entry legend, and both requested
     colours present in the rasterized buffer (not a single blended/blank layer).
     """
-    from databricks.labs.gbx.viz import plot_mask_layers
+    from databricks.labs.gbx.vizx import plot_mask_layers
 
     # Two nested masks on the SAME 16x16 grid: big (12x12) and small (6x6).
     transform = from_origin(0.0, 16.0, 1.0, 1.0)
