@@ -178,13 +178,55 @@ def test_resolve_cells_bng(spark):
     assert 500_000 < minx < 560_000 and 150_000 < miny < 200_000  # 27700 metres
 
 
-def test_resolve_cells_custom_not_implemented(spark):
-    # 'custom' remains a forward-declared fast-follow (needs a grid config).
+def _custom_grid(srid=27700):
+    # Minimal custom-grid spec (the struct conf_from_row consumes).
+    return {
+        "bound_x_min": 0,
+        "bound_x_max": 1000,
+        "bound_y_min": 0,
+        "bound_y_max": 1000,
+        "cell_splits": 2,
+        "root_cell_size_x": 100,
+        "root_cell_size_y": 100,
+        "srid": srid,
+    }
+
+
+def test_resolve_cells_custom_with_grid_conf(spark):
+    # custom grids need the grid spec; CRS comes from the grid's srid.
+    from databricks.labs.gbx.pygx import _custom
+    from databricks.labs.gbx.vizx import _static_map as sm
+
+    grid = _custom_grid(srid=27700)
+    conf = _custom.conf_from_row(grid)
+    cell = _custom.point_to_cell_id(conf, 500.0, 500.0, 1)
+    df = spark.createDataFrame([(cell,)], ["cellid"])
+    gdf = sm._resolve_gdf(df, "cellid", "custom", 10_000, None, grid_conf=grid)
+    assert gdf.crs.to_epsg() == 27700
+    assert gdf.geometry.iloc[0].geom_type == "Polygon"
+    minx, miny, maxx, maxy = gdf.geometry.iloc[0].bounds
+    assert 0 <= minx < maxx <= 1000 and 0 <= miny < maxy <= 1000
+
+
+def test_resolve_cells_custom_requires_grid_conf(spark):
     from databricks.labs.gbx.vizx import _static_map as sm
 
     df = spark.createDataFrame([(1,)], ["cellid"])
-    with pytest.raises(NotImplementedError):
-        sm._resolve_gdf(df, "cellid", "custom", 10_000, None)
+    with pytest.raises(ValueError):
+        sm._resolve_gdf(df, "cellid", "custom", 10_000, None)  # no grid_conf
+
+
+def test_resolve_cells_custom_no_srid_has_no_crs(spark):
+    # srid<=0 -> the grid declares no CRS, so the GeoDataFrame crs is None.
+    from databricks.labs.gbx.pygx import _custom
+    from databricks.labs.gbx.vizx import _static_map as sm
+
+    grid = _custom_grid(srid=-1)
+    conf = _custom.conf_from_row(grid)
+    cell = _custom.point_to_cell_id(conf, 500.0, 500.0, 1)
+    df = spark.createDataFrame([(cell,)], ["cellid"])
+    gdf = sm._resolve_gdf(df, "cellid", "custom", 10_000, None, grid_conf=grid)
+    assert gdf.crs is None
 
 
 def test_resolve_cells_unknown_grid_system_raises(spark):
@@ -335,4 +377,23 @@ def test_plot_static_basemap_fallback_warns(spark, monkeypatch):
     assert ax is not None
     assert len(plt.get_fignums()) == 1  # figure still produced
     assert any("basemap unavailable" in str(w.message) for w in caught)
+    plt.close("all")
+
+
+def test_plot_static_skips_basemap_when_no_crs(spark):
+    # A custom grid with srid<=0 has no CRS, so the basemap is skipped (with a
+    # warning) rather than placed against arbitrary coordinates.
+    from databricks.labs.gbx.pygx import _custom
+    from databricks.labs.gbx.vizx import plot_static
+
+    grid = _custom_grid(srid=-1)
+    conf = _custom.conf_from_row(grid)
+    cell = _custom.point_to_cell_id(conf, 500.0, 500.0, 1)
+    df = spark.createDataFrame([(cell,)], ["cellid"])
+    plt.close("all")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ax = plot_static(df, grid_system="custom", grid_conf=grid, basemap=True)
+    assert ax is not None
+    assert any("no CRS" in str(w.message) for w in caught)
     plt.close("all")

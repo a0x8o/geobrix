@@ -230,10 +230,10 @@ emitted (never a hard error).
 
 ```python
 plot_static(
-    data, *, geom_col=None, grid_system=None, column=None, cmap="viridis",
-    legend=True, basemap=True, basemap_source=None, alpha=0.8, edgecolor="face",
-    fill=True, markersize=None, title=None, fig_w=10, fig_h=10, max_rows=10_000,
-    srid=None, ax=None,
+    data, *, geom_col=None, grid_system=None, grid_conf=None, column=None,
+    cmap="viridis", legend=True, basemap=True, basemap_source=None, alpha=0.8,
+    edgecolor="face", fill=True, markersize=None, title=None, fig_w=10, fig_h=10,
+    max_rows=10_000, srid=None, ax=None,
 )
 ```
 
@@ -257,12 +257,21 @@ cell ids instead:
 | `'h3'` | H3 cell ids (string index **or** bigint) → cell-boundary polygons (lon/lat). |
 | `'quadbin'` | Quadbin cell ids (bigint) → tile-boundary polygons (lon/lat). |
 | `'bng'` | British National Grid cell ids (string, e.g. `"TQ38"`) → cell polygons in EPSG:27700. |
-| `'custom'` | Planned — raises `NotImplementedError` (a custom grid needs its grid config). |
+| `'custom'` | Custom-grid cell ids → cell polygons; **requires `grid_conf=`** (the grid spec that defines the grid). CRS comes from the grid's `srid`. |
 
 Cell boundaries reuse the lightweight GridX cell→geometry implementations, so
-they match `gbx_h3_*`/`gbx_quadbin_aswkb`/`gbx_bng_aswkb` exactly. Each grid's
-native CRS is honoured (BNG is metres in EPSG:27700) and reprojected to Web
-Mercator for the basemap.
+they match `gbx_h3_*` / `gbx_quadbin_aswkb` / `gbx_bng_aswkb` / `gbx_custom_cellaswkb`
+exactly. Each grid's native CRS is honoured (BNG is metres in EPSG:27700) and
+reprojected to Web Mercator for the basemap. A custom grid whose `srid` is `<= 0`
+has no CRS, so its basemap is skipped (with a warning); pass `basemap=False`.
+
+For a custom grid, `grid_conf` is the grid-spec `Row`/dict — the same struct the
+custom GridX functions consume (`bound_x_min`/`bound_x_max`, `bound_y_min`/`bound_y_max`,
+`cell_splits`, `root_cell_size_x`/`root_cell_size_y`, `srid`):
+
+```python
+plot_static(cells_df, grid_system="custom", grid_conf=grid_spec, column="value")
+```
 
 ```python
 from databricks.labs.gbx.vizx import plot_static

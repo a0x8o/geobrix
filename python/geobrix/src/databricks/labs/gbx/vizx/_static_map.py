@@ -111,42 +111,59 @@ def _bng_boundaries(values):
     return [parse_geom(_bng.cell_aswkb(_bng.parse(c))) for c in values]
 
 
-def _nyi(name):
-    def _raise(_values):
-        raise NotImplementedError(
-            f"plot_static: grid_system={name!r} is a planned fast-follow; "
-            "not supported yet."
-        )
+def _custom_boundaries(values, grid_conf):
+    # Custom grids are not global: a cell id only resolves with the grid's
+    # config (origin/extents/cell sizes/srid). Reuse the lightweight
+    # _custom.conf_from_row + cell_aswkb (the same path as gbx_custom_cellaswkb).
+    # Returns (geometries, srid); srid<=0 means the grid declares no CRS.
+    from databricks.labs.gbx._geom import parse_geom
+    from databricks.labs.gbx.pygx import _custom
 
-    return _raise
+    if grid_conf is None:
+        raise ValueError(
+            "plot_static: grid_system='custom' requires grid_conf= -- the grid "
+            "spec (Row/dict with bound_x_min/max, bound_y_min/max, cell_splits, "
+            "root_cell_size_x/y, srid) that defines the custom grid."
+        )
+    conf = _custom.conf_from_row(grid_conf)
+    srid = conf.srid if conf.srid and conf.srid > 0 else None
+    geoms = [parse_geom(_custom.cell_aswkb(conf, int(c))) for c in values]
+    return geoms, srid
 
 
 # grid_system -> (cell-ids -> boundary geometries, source EPSG). h3/quadbin are
 # lon/lat (4326); BNG is British National Grid eastings/northings (27700).
+# 'custom' is handled separately in _resolve_cells: it needs grid_conf and its
+# CRS comes from the grid spec, not a fixed EPSG.
 _GRID_DISPATCH = {
     "h3": (_h3_boundaries, 4326),
     "quadbin": (_quadbin_boundaries, 4326),
     "bng": (_bng_boundaries, 27700),
-    "custom": (_nyi("custom"), None),
 }
 
+_GRID_SYSTEMS = (*_GRID_DISPATCH, "custom")
 
-def _resolve_cells(data, col, grid_system, max_rows):
+
+def _resolve_cells(data, col, grid_system, max_rows, grid_conf):
     """DGGS cell-id column -> boundary-polygon GeoDataFrame in the grid's CRS."""
     import geopandas as gpd
 
-    if grid_system not in _GRID_DISPATCH:
+    if grid_system not in _GRID_SYSTEMS:
         raise ValueError(
             f"plot_static: grid_system={grid_system!r} is not one of "
-            f"{sorted(_GRID_DISPATCH)} or None."
+            f"{sorted(_GRID_SYSTEMS)} or None."
         )
-    boundaries, srid = _GRID_DISPATCH[grid_system]
     pdf = _collect_limited(data, max_rows)
-    geometry = boundaries(pdf[col].tolist())
+    cells = pdf[col].tolist()
+    if grid_system == "custom":
+        geometry, srid = _custom_boundaries(cells, grid_conf)
+    else:
+        boundaries, srid = _GRID_DISPATCH[grid_system]
+        geometry = boundaries(cells)
     return gpd.GeoDataFrame(pdf.drop(columns=[col]), geometry=geometry, crs=srid)
 
 
-def _resolve_gdf(data, geom_col, grid_system, max_rows, srid):
+def _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf=None):
     """Spark DataFrame or GeoDataFrame -> geopandas.GeoDataFrame (EPSG:4326 or srid)."""
     import geopandas as gpd
 
@@ -156,7 +173,7 @@ def _resolve_gdf(data, geom_col, grid_system, max_rows, srid):
     col = geom_col or _detect_geom_col(data, grid_system)
 
     if grid_system is not None:
-        return _resolve_cells(data, col, grid_system, max_rows)
+        return _resolve_cells(data, col, grid_system, max_rows, grid_conf)
 
     from databricks.labs.gbx._geom import parse_geom
 
@@ -181,6 +198,7 @@ def plot_static(
     *,
     geom_col=None,
     grid_system=None,
+    grid_conf=None,
     column=None,
     cmap="viridis",
     legend=True,
@@ -201,8 +219,12 @@ def plot_static(
 
     ``data`` is a Spark DataFrame or a geopandas.GeoDataFrame. Geometry columns
     accept WKT/EWKT/WKB/EWKB and native GEOMETRY/GEOGRAPHY (decoded via the
-    shared parse_geom); set ``grid_system`` ('h3' in v1) to treat the column as
-    DGGS cell ids (string or long). The contextily basemap is rendered when
+    shared parse_geom); set ``grid_system`` to treat the column as DGGS cell ids
+    instead -- ``'h3'`` / ``'quadbin'`` (lon/lat) or ``'bng'`` (EPSG:27700),
+    string or long. ``grid_system='custom'`` additionally requires
+    ``grid_conf=`` (the grid-spec Row/dict that defines the custom grid); its CRS
+    comes from the grid's ``srid`` (a custom grid with ``srid<=0`` has no CRS, so
+    the basemap is skipped). The contextily basemap is rendered when
     ``basemap=True``; any failure (no egress / missing dep) degrades to a
     warning and a basemap-less render. Returns the matplotlib Axes; pass it back
     via ``ax=`` to overlay layers -- every layer is reprojected to Web Mercator
@@ -222,7 +244,7 @@ def plot_static(
 
     import matplotlib.pyplot as plt
 
-    gdf = _resolve_gdf(data, geom_col, grid_system, max_rows, srid)
+    gdf = _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf)
 
     created = ax is None
     if created:
@@ -248,7 +270,16 @@ def plot_static(
         kwargs["facecolor"] = "none"
     plot_gdf.plot(**kwargs)
 
-    if basemap:
+    if basemap and plot_gdf.crs is None:
+        # No CRS to align tiles against (e.g. a custom grid with srid<=0);
+        # a basemap would be placed against arbitrary coordinates, so skip it.
+        warnings.warn(
+            "plot_static: data has no CRS (e.g. a custom grid with srid<=0); "
+            "skipping the basemap. Pass basemap=False to silence this, or use "
+            "geometries / a grid that declares a real CRS.",
+            stacklevel=2,
+        )
+    elif basemap:
         try:
             import contextily as cx
 
