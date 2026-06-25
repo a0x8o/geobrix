@@ -77,16 +77,19 @@ For the largest datasets, prefer the writers that spread work across partitions:
 (`file_gdb_gbx` uses the native GDAL path and currently assembles in memory — a
 heavy-tier writer; prefer the above on Serverless.)
 
-:::tip Large single-file writes may need more driver memory
-The single-file writers assemble the output on the **driver**, so a very large
-result (for example, a Shapefile whose `.dbf` runs to ~1 GB+) can exceed the
-**default Serverless driver memory** and fail mid-write (the driver is lost and
-the Spark Connect channel reports a `CancelledKeyException`). If you hit that:
+:::tip Large single-file writes may need a larger cluster
+The single-file writers assemble the output in Spark's **Python worker**
+processes, so a very large result (for example, a Shapefile whose `.dbf` runs to
+~1 GB+) can exceed the worker memory on **Serverless** and fail mid-write — seen
+as a `CancelledKeyException` (the driver is lost) or a "Python worker exited
+unexpectedly" crash. If you hit that:
 
-- Switch to **[high-memory Serverless](https://docs.databricks.com/aws/en/compute/serverless/dependencies#use-high-memory-serverless-compute)** (the "High: 32 GB" memory setting in the notebook **Environment** pane — it raises the Python REPL memory the writer assembles in), **or** run on a **classic cluster** with a larger driver.
-- Or avoid single-node assembly entirely: use **`geojsonl_gbx`** (shards per partition) or **`gpkg_gbx`** for large data.
+- Run on a **classic cluster** with a larger node — the proven path for the
+  largest single-file writes.
+- Or avoid single-node assembly entirely: use **`geojsonl_gbx`** (shards per
+  partition) or **`gpkg_gbx`**, which scale on Serverless without this ceiling.
 
-The write itself is correct at scale — this is a driver-memory ceiling, not a writer limit.
+Note: **[high-memory Serverless](https://docs.databricks.com/aws/en/compute/serverless/dependencies#use-high-memory-serverless-compute)** ("High: 32 GB") raises the notebook **REPL** memory but **not** the Spark Python-worker memory the writer assembles in, so it does **not** extend this ceiling — prefer a classic cluster or the sharded writers. The write itself is correct at scale (it completes on a classic cluster); this is a memory ceiling, not a writer limit.
 :::
 
 <Tabs groupId="gbx-tier" queryString="tier">
