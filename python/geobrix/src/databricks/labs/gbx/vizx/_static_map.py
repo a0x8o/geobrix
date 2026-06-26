@@ -64,19 +64,16 @@ def _detect_geom_col(df, grid_system):
     )
 
 
-def _collect_limited(df, max_rows):
-    """Collect a Spark DataFrame to pandas with a truncate-and-warn row guard."""
-    if max_rows is None:
-        return df.toPandas()
-    pdf = df.limit(max_rows + 1).toPandas()
-    if len(pdf) > max_rows:
-        pdf = pdf.iloc[:max_rows]
-        warnings.warn(
-            f"plot_static: output truncated to max_rows={max_rows} for driver-side "
-            "viz; pass max_rows=None to collect all rows.",
-            stacklevel=2,
-        )
-    return pdf
+def _collect_limited(df, max_rows, sample_seed=None):
+    """Collect a Spark DataFrame to pandas with a truncate-and-warn row guard.
+
+    ``sample_seed=None`` keeps the first ``max_rows`` rows (``.limit``); an int
+    draws a reproducible seeded sample. Delegates to the shared adapter helper so
+    plotters and adapters share one capping implementation.
+    """
+    from databricks.labs.gbx.vizx._vector import _collect_capped
+
+    return _collect_capped(df, max_rows, sample_seed, "plot_static")
 
 
 def _h3_boundary(cell):
@@ -144,7 +141,7 @@ _GRID_DISPATCH = {
 _GRID_SYSTEMS = (*_GRID_DISPATCH, "custom")
 
 
-def _resolve_cells(data, col, grid_system, max_rows, grid_conf):
+def _resolve_cells(data, col, grid_system, max_rows, grid_conf, sample_seed=None):
     """DGGS cell-id column -> boundary-polygon GeoDataFrame in the grid's CRS."""
     import geopandas as gpd
 
@@ -153,7 +150,7 @@ def _resolve_cells(data, col, grid_system, max_rows, grid_conf):
             f"plot_static: grid_system={grid_system!r} is not one of "
             f"{sorted(_GRID_SYSTEMS)} or None."
         )
-    pdf = _collect_limited(data, max_rows)
+    pdf = _collect_limited(data, max_rows, sample_seed)
     cells = pdf[col].tolist()
     if grid_system == "custom":
         geometry, srid = _custom_boundaries(cells, grid_conf)
@@ -163,7 +160,9 @@ def _resolve_cells(data, col, grid_system, max_rows, grid_conf):
     return gpd.GeoDataFrame(pdf.drop(columns=[col]), geometry=geometry, crs=srid)
 
 
-def _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf=None):
+def _resolve_gdf(
+    data, geom_col, grid_system, max_rows, srid, grid_conf=None, sample_seed=None
+):
     """Spark DataFrame or GeoDataFrame -> geopandas.GeoDataFrame (EPSG:4326 or srid)."""
     import geopandas as gpd
 
@@ -173,7 +172,7 @@ def _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf=None):
     col = geom_col or _detect_geom_col(data, grid_system)
 
     if grid_system is not None:
-        return _resolve_cells(data, col, grid_system, max_rows, grid_conf)
+        return _resolve_cells(data, col, grid_system, max_rows, grid_conf, sample_seed)
 
     from databricks.labs.gbx._geom import parse_geom
 
@@ -187,7 +186,7 @@ def _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf=None):
         if srid is None and "geography" in field.dataType.simpleString().lower():
             srid = 4326
 
-    pdf = _collect_limited(work, max_rows)
+    pdf = _collect_limited(work, max_rows, sample_seed)
     geoms = [parse_geom(v) for v in pdf[col]]
     pdf = pdf.drop(columns=[col])
     return gpd.GeoDataFrame(pdf, geometry=geoms, crs=(srid or 4326))
@@ -196,10 +195,13 @@ def _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf=None):
 def plot_static(
     data,
     *,
+    column=None,
     geom_col=None,
     grid_system=None,
     grid_conf=None,
-    column=None,
+    max_rows=10_000,
+    sample_seed=None,
+    srid=None,
     cmap="viridis",
     legend=True,
     basemap=True,
@@ -211,8 +213,6 @@ def plot_static(
     title=None,
     fig_w=10,
     fig_h=10,
-    max_rows=10_000,
-    srid=None,
     ax=None,
 ):
     """Render geometries / DGGS cells over a basemap as a static figure.
@@ -233,7 +233,10 @@ def plot_static(
 
     ``plot_static`` does not call ``pyplot.show()``; in a notebook the figure
     auto-displays at cell end with all overlaid layers present, and a script can
-    call ``plt.show()`` itself. Pass ``fill=False`` to draw geometries as
+    call ``plt.show()`` itself. ``sample_seed`` (Spark-only) selects how the
+    ``max_rows`` cap is filled: ``None`` (default) takes the first ``max_rows``
+    rows; an int draws a reproducible seeded sample. Pass ``fill=False`` to draw
+    geometries as
     outlines only (no face) -- e.g. a canvas/footprint boundary over a filled
     choropleth; combine with ``edgecolor`` to colour the outline. Requires the
     [vizx] extra.
@@ -244,7 +247,9 @@ def plot_static(
 
     import matplotlib.pyplot as plt
 
-    gdf = _resolve_gdf(data, geom_col, grid_system, max_rows, srid, grid_conf)
+    gdf = _resolve_gdf(
+        data, geom_col, grid_system, max_rows, srid, grid_conf, sample_seed
+    )
 
     created = ax is None
     if created:
