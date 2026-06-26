@@ -32,7 +32,9 @@ class OGR_Batch(schema: StructType, options: Map[String, String]) extends Scan w
         sparkSession.read.format("com.databricks.labs.gbx.ds.whitelist.WhitelistDataSource").option("path", inPath).load()
 
         NodeFileManager.init(exprConfig.hConf)
-        val files = HadoopUtils.listHadoopFiles(inPath, exprConfig.hConf)
+        // Credential-aware listing (Spark file index) -- a raw driver-thread Hadoop FS listing
+        // lacks the UC Volume / WSFS credential and throws FileNotFound on /Volumes.
+        val files = HadoopUtils.listDataFilesSpark(sparkSession, inPath)
 
         val filesDf = files.toDF("path")
 

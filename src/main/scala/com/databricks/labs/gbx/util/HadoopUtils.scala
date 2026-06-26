@@ -108,6 +108,69 @@ object HadoopUtils {
         }
     }
 
+    /** Lists data files under inPath via Spark's file index, which forwards the UC Volume / WSFS
+      * credential. A raw driver-thread Hadoop FS `getFileStatus`/`listStatus` does NOT carry that
+      * credential during query analysis (the OGR reader's `inferSchema` runs on the Spark analyzer
+      * thread), so it throws `FileNotFoundException` on `/Volumes`; Spark's listing does carry it.
+      * A single file or a `.gdb` / `.gdb.zip` / `.zip` dataset is returned as-is (not a dir of
+      * shards). Falls back to the raw Hadoop FS listing if Spark's binaryFile can't enumerate it. */
+    def listDataFilesSpark(spark: org.apache.spark.sql.SparkSession, inPath: String): Seq[String] = {
+        val cp = cleanPath(inPath)
+        val lower = inPath.toLowerCase(java.util.Locale.ROOT).stripSuffix("/")
+        if (lower.endsWith(".gdb") || lower.endsWith(".gdb.zip") || lower.endsWith(".zip")) {
+            Seq(cp)
+        } else {
+            try {
+                val files = spark.read.format("binaryFile").load(cp).inputFiles.toSeq.sorted
+                if (files.nonEmpty) files else Seq(cp)
+            } catch {
+                case _: Throwable =>
+                    val hc = new SerializableConfiguration(spark.sessionState.newHadoopConf)
+                    try listHadoopFiles(cp, hc) catch { case _: Throwable => Seq(cp) }
+            }
+        }
+    }
+
+    /** Stages a dataset's head file (plus any same-stem sidecars, e.g. shapefile `.shx`/`.dbf`/
+      * `.prj`) to a local temp dir for OGR schema inference, returning the local head path. Reads
+      * bytes via POSIX `java.io.File` on the FUSE path (proven to read `/Volumes` on driver and
+      * executor; `binaryFile` content reads and raw Hadoop FS stats do NOT). Tries a direct read
+      * first; if the calling (analyzer) thread lacks the UC Volume credential, falls back to a
+      * one-task Spark job whose executor carries it. `candidates` is the `listDataFilesSpark`
+      * listing, used to find the sidecars. */
+    def stageHeadForSchemaSpark(
+        spark: org.apache.spark.sql.SparkSession,
+        headPath: String,
+        candidates: Seq[String]
+    ): String = {
+        def baseName(p: String): String = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
+        def toPosix(p: String): String = p.stripPrefix("file:").stripPrefix("dbfs:")
+        val headName = baseName(headPath)
+        val dot = headName.lastIndexOf('.')
+        val stem = if (dot > 0) headName.substring(0, dot) else headName
+        val siblings = candidates.filter { p =>
+            val n = baseName(p)
+            n == headName || n.startsWith(stem + ".")
+        }.distinct
+        val toStage = if (siblings.isEmpty) Seq(headPath) else siblings
+        val tmpDir = java.nio.file.Files.createTempDirectory("gbx_ogr_schema_").toFile
+        for (p <- toStage) {
+            val local = toPosix(p)
+            val bytes: Array[Byte] =
+                try java.nio.file.Files.readAllBytes(new java.io.File(local).toPath)
+                catch {
+                    case _: Throwable =>
+                        // analyzer thread lacked the FUSE credential -> read on an executor task,
+                        // which carries it (proven: executor java.io.File reads /Volumes).
+                        spark.sparkContext.parallelize(Seq(local), 1)
+                            .map(lp => java.nio.file.Files.readAllBytes(new java.io.File(lp).toPath))
+                            .collect().head
+                }
+            java.nio.file.Files.write(new java.io.File(tmpDir, baseName(p)).toPath, bytes)
+        }
+        new java.io.File(tmpDir, headName).getAbsolutePath
+    }
+
     /** Lists immediate subdirectories under inPath (non-recursive). */
     def listHadoopDirs(inPath: String, hconf: SerializableConfiguration): Seq[String] = {
         val path = new Path(new URI(cleanPath(inPath)))

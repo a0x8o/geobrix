@@ -29,11 +29,24 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
         GDALManager.init(config)
         GDALManager.initOgr()
 
-        val hConf = new SerializableConfiguration(sparkSession.sessionState.newHadoopConf)
-        val headPath = HadoopUtils.getFirstFile(options.get("path"), hConf)
-
-        NodeFileManager.init(hConf)
-        val localPath = NodeFileManager.readRemote(headPath)
+        // Enumerate + stage on the DRIVER through Spark's credential-forwarding listing/read.
+        // A raw Hadoop FS getFileStatus on the analyzer thread lacks the UC Volume / WSFS
+        // credential and throws FileNotFound on /Volumes (see HadoopUtils.listDataFilesSpark).
+        val rawPath = options.get("path")
+        val files = HadoopUtils.listDataFilesSpark(sparkSession, rawPath)
+        val headPath = files.headOption.getOrElse(
+          throw new IllegalArgumentException(s"No data files found under: $rawPath")
+        )
+        val lower = rawPath.toLowerCase(java.util.Locale.ROOT).stripSuffix("/")
+        val isGdbLike =
+          lower.endsWith(".gdb") || lower.endsWith(".gdb.zip") || lower.endsWith(".zip")
+        val localPath = if (isGdbLike) {
+            // FileGDB / zipped dataset: stage the whole dataset via the existing path.
+            NodeFileManager.init(new SerializableConfiguration(sparkSession.sessionState.newHadoopConf))
+            NodeFileManager.readRemote(headPath)
+        } else {
+            HadoopUtils.stageHeadForSchemaSpark(sparkSession, headPath, files)
+        }
 
         val schemaOpt = OGR_SchemaInference
             .inferSchemaImpl(
@@ -42,7 +55,7 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
               options.asCaseSensitiveMap().asScala.toMap
             )
 
-        NodeFileManager.releaseRemote(headPath)
+        if (isGdbLike) NodeFileManager.releaseRemote(headPath)
 
         schemaOpt.getOrElse {
             throw new IllegalArgumentException(
