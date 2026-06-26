@@ -524,6 +524,75 @@ def test_shapefile_zip_ignored_for_other_drivers():
     assert w.zip is False
 
 
+def test_filegdb_zip_output_naming():
+    """zip=true for OpenFileGDB: bare stem, .gdb, and .gdb.zip all land at .gdb.zip."""
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+
+    schema = StructType(
+        [
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+    opts = {"driverName": "OpenFileGDB", "zip": "true"}
+    assert (
+        VectorGbxWriter("/tmp/roads", schema, "OpenFileGDB", opts, True).path
+        == "/tmp/roads.gdb.zip"
+    )
+    assert (
+        VectorGbxWriter("/tmp/roads.gdb", schema, "OpenFileGDB", opts, True).path
+        == "/tmp/roads.gdb.zip"
+    )
+    assert (
+        VectorGbxWriter("/tmp/roads.gdb.zip", schema, "OpenFileGDB", opts, True).path
+        == "/tmp/roads.gdb.zip"
+    )
+
+
+def test_zip_honored_per_driver():
+    """zip=true is honored only for the directory/sidecar writers (Shapefile, FileGDB)."""
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+
+    schema = StructType(
+        [
+            StructField("geom_0", BinaryType(), True),
+            StructField("geom_0_srid", StringType(), True),
+            StructField("geom_0_srid_proj", StringType(), True),
+        ]
+    )
+
+    def zflag(driver):
+        return VectorGbxWriter(
+            "/tmp/x", schema, driver, {"driverName": driver, "zip": "true"}, True
+        ).zip
+
+    assert zflag("ESRI Shapefile") is True
+    assert zflag("OpenFileGDB") is True
+    assert zflag("GPKG") is False
+    assert zflag("GeoJSON") is False
+
+
+def test_zip_gdb_bundle_preserves_top_level_dir(tmp_path):
+    """A .gdb directory packs into .gdb.zip with the .gdb folder at the archive root."""
+    import zipfile
+
+    from databricks.labs.gbx.ds.vector import _zip_gdb_bundle
+
+    gdb = tmp_path / "roads.gdb"
+    (gdb / "sub").mkdir(parents=True)
+    (gdb / "a00000001.gdbtable").write_bytes(b"x")
+    (gdb / "gdb").write_bytes(b"y")  # FileGDB has a file literally named 'gdb'
+    (gdb / "sub" / "nested.bin").write_bytes(b"z")
+    zp = str(tmp_path / "roads.gdb.zip")
+    _zip_gdb_bundle(str(gdb), zp)
+    names = sorted(zipfile.ZipFile(zp).namelist())
+    assert names, "archive is empty"
+    assert all(n.startswith("roads.gdb/") for n in names), names
+    assert "roads.gdb/a00000001.gdbtable" in names
+    assert "roads.gdb/sub/nested.bin" in names
+
+
 def test_shapefile_zip_produces_single_file(spark, tmp_path):
     """zip=true writes a single .shp.zip file, not a directory or sidecar set."""
     register(spark)

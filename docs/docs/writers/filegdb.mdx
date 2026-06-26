@@ -50,6 +50,7 @@ lightweight vector readers and writers.
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |
+| `zip` | `false` | When `true`, produce a **single `.gdb.zip`** archive (the `.gdb` directory packed at the archive root) instead of a `.gdb` directory. The output path is normalised automatically: `.save("roads")` → `roads.gdb.zip`; `.save("roads.gdb")` → `roads.gdb.zip`. The [reader](../readers/filegdb) opens `.gdb.zip` transparently. Ignored for non-FileGDB drivers. |
 | `geomCol` | auto-detected from the `*_srid` column | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). This is a lightweight-tier writer (hybrid — requires native GDAL for write). |
 | `sridCol` | `<geomCol>_srid` | Override the SRID column name. **Required** — supplies the CRS authority code (e.g. `"4326"`, or `"0"` if unknown). |
 | `projCol` | `<geomCol>_srid_proj` | Override the PROJ4 column name (optional fallback CRS when `sridCol` is `"0"`). |
@@ -73,10 +74,26 @@ or coerce to the `geom_0` convention.
 For coercing an arbitrary frame to this shape and for exporting Databricks `GEOMETRY` /
 `GEOGRAPHY` columns, see the [**Vector Writer schema**](./vector#schema).
 
-**Output:** an ESRI File Geodatabase (a `.gdb` directory); the geometry is stored in a named
-field (default `SHAPE`). This is the **hybrid** writer — it encodes via native GDAL
-(`osgeo.ogr`), so the output path must end in `.gdb` and the heavyweight GDAL init script is
-required (Esri field name and type limits apply).
+**Output:** an ESRI File Geodatabase (a `.gdb` directory, or a single `.gdb.zip` with
+`zip=true` — see below); the geometry is stored in a named field (default `SHAPE`). This is
+the **hybrid** writer — it encodes via native GDAL (`osgeo.ogr`), so the heavyweight GDAL
+init script is required (Esri field name and type limits apply).
+
+## Producing a portable ZIP archive
+
+Pass `zip=true` to write a single self-contained `.gdb.zip` instead of a `.gdb` directory —
+the `.gdb` folder is packed at the archive root, the layout GDAL expects. The output path is
+normalised regardless of the extension you supply — `.save("roads")`, `.save("roads.gdb")`,
+and `.save("roads.gdb.zip")` all land at `roads.gdb.zip`:
+
+```python
+(df.write.format("file_gdb_gbx")
+   .option("zip", "true")
+   .mode("overwrite").save("/Volumes/cat/sch/vol/parcels"))   # -> parcels.gdb.zip
+```
+
+The [`file_gdb_gbx` / `file_gdb_ogr` reader](../readers/filegdb) opens a `.gdb.zip` directly
+(via GDAL's `/vsizip/`), so the archive round-trips with no extra step.
 
 ## How it scales
 
