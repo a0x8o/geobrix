@@ -19,34 +19,36 @@ object HadoopUtils {
         hadoopConf = hconf
     }
 
-    /** Normalizes a path to a Hadoop-resolvable URI on the local (FUSE-backed) `file:` connector.
+    /** Normalizes a path to a Hadoop-resolvable form for the supported DBR storage fabric.
       *
-      * The supported storage fabric on current DBRs is FUSE-mounted under `/Volumes/...` (Unity
-      * Catalog Volumes) and `/Workspace/...` (Workspace files); their URI forms `dbfs:/Volumes/...`
-      * and `file:/...` are accepted too. A scheme-less `/Volumes/...` would otherwise resolve
-      * against `fs.defaultFS` (`dbfs:` on classic UC compute), which does NOT reach the FUSE mount
-      * and silently returns a null tile — so everything is routed to `file:`.
+      * Unity Catalog Volumes (`/Volumes/...`) are kept BARE — no scheme — so Hadoop resolves them
+      * through Databricks' UC-integrated connector, which carries the Volume credential on executors.
+      * Adding a `file:` scheme forces `LocalFileSystem` (the raw FUSE mount), which is NOT credentialed
+      * in opaque DataSource-V2 executor tasks and fails with "Operation not permitted" / FileNotFound.
+      * (Validated: released 0.3.0 keeps `/Volumes` bare and reads it cleanly on current DBRs; the
+      * `file:` rewrite was the 0.4.0 regression that broke executor reads.) The `dbfs:/Volumes/...`,
+      * `/dbfs/Volumes/...` (note the plural — never `/Volume/`), and legacy `file:/Volumes/...` forms
+      * all normalize to the same bare `/Volumes/...`.
       *
-      * Legacy pre-Volumes DBFS (`/dbfs/...`, `dbfs:/...`) is NOT a supported target: the retired
-      * `/dbfs/` FUSE mount and the `dbfs:` connector are never emitted. A `/dbfs/Volumes/` or
-      * `dbfs:/Volumes/` alias is coerced to the supported `file:/Volumes/...`; any other legacy DBFS
-      * path is coerced off the `/dbfs` prefix (best-effort `file:` — such reads are expected to fail
-      * rather than silently use the retired mount).
+      * Workspace files (`/Workspace/...`) use the `file:` connector. Legacy pre-Volumes DBFS
+      * (`/dbfs/...`, `dbfs:/...`) is NOT a supported target and is coerced off the `/dbfs` prefix
+      * (best-effort `file:` — such reads are expected to fail rather than silently use the retired mount).
       *
-      *  - `/Volumes/...`, `dbfs:/Volumes/...`, `/dbfs/Volumes/...` -> `file:/Volumes/...`
-      *  - `/Workspace/...` -> `file:/Workspace/...`; `file:/...` kept as-is
+      *  - `/Volumes/...`, `dbfs:/Volumes/...`, `/dbfs/Volumes/...`, `file:/Volumes/...` -> `/Volumes/...`
+      *  - `/Workspace/...` -> `file:/Workspace/...`; other `file:/...` kept as-is
       *  - `/tmp/...` and other OS-absolute paths -> `file:...`
       */
     def cleanPath(inPath: String): String = {
         inPath match {
-            // Unity Catalog Volumes (FUSE OS path, the dbfs:/Volumes URI, or the legacy /dbfs/Volumes
-            // alias) -> the supported local connector at file:/Volumes/...
-            case _ if inPath.startsWith("/Volumes/")       => s"file:$inPath"
-            case _ if inPath.startsWith("dbfs:/Volumes/")  => s"file:${inPath.stripPrefix("dbfs:")}"
-            case _ if inPath.startsWith("/dbfs/Volumes/")  => s"file:${inPath.stripPrefix("/dbfs")}"
+            // Unity Catalog Volumes -> BARE /Volumes/... (UC connector, credentialed on executors).
+            // A file: scheme would force LocalFileSystem (raw FUSE) -> EPERM in DSV2 executor tasks.
+            case _ if inPath.startsWith("/Volumes/")       => inPath
+            case _ if inPath.startsWith("dbfs:/Volumes/")  => inPath.stripPrefix("dbfs:")
+            case _ if inPath.startsWith("/dbfs/Volumes/")  => inPath.stripPrefix("/dbfs")
+            case _ if inPath.startsWith("file:/Volumes/")  => inPath.stripPrefix("file:")
             // Workspace files FUSE -> file:/Workspace/...
             case _ if inPath.startsWith("/Workspace/")     => s"file:$inPath"
-            // Already a local/FUSE connector URI (file:/Volumes/, file:/Workspace/, file:/tmp/, ...).
+            // Already a local/FUSE connector URI (file:/Workspace/, file:/tmp/, ...).
             case _ if inPath.startsWith("file:/")          => inPath
             // Legacy pre-Volumes DBFS is unsupported: coerce AWAY from /dbfs and the dbfs: connector
             // (neither is used on supported DBRs). No automatic mapping to /Volumes or /Workspace.
@@ -108,10 +110,35 @@ object HadoopUtils {
         }
     }
 
+    // OGR shapefile companion ("sidecar") extensions: a .shp dataset is a directory bundle of
+    // .shp + these. Only the .shp is openable by the driver; the rest are staged alongside it.
+    private val OGR_SIDECAR_EXTS: Set[String] =
+        Set("cpg", "dbf", "prj", "shx", "qpj", "sbn", "sbx", "qix", "fbn", "fbx",
+            "ain", "aih", "ixs", "mxs", "atx", "cst")
+
+    private def fileExt(p: String): String = {
+        val n = p.toLowerCase(java.util.Locale.ROOT)
+        val slash = math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'))
+        val dot = n.lastIndexOf('.')
+        if (dot > slash) n.substring(dot + 1) else ""
+    }
+
+    /** Picks the PRIMARY data file from a listing for schema inference — the file the OGR driver
+      * actually opens, NOT a sidecar. A shapefile directory lists (sorted) as
+      * `[.cpg, .dbf, .prj, .shp, .shx]`; `files.head` would be `.cpg`, which OGR cannot open as an
+      * ESRI Shapefile (it threw `Could not open dataset ... at .../<name>.cpg`). Excluding the known
+      * shapefile sidecars makes `.shp` the head; non-shapefile datasets (`.geojson`, `.gpkg`, ...)
+      * have no matching sidecars and are unaffected. `stageHeadForSchemaSpark` still stages the
+      * stem-siblings alongside, so the driver sees the full bundle. */
+    def primaryDataFile(files: Seq[String]): Option[String] =
+        files.find(p => !OGR_SIDECAR_EXTS.contains(fileExt(p))).orElse(files.headOption)
+
     /** Lists data files under inPath via Spark's file index, which forwards the UC Volume / WSFS
-      * credential. A raw driver-thread Hadoop FS `getFileStatus`/`listStatus` does NOT carry that
-      * credential during query analysis (the OGR reader's `inferSchema` runs on the Spark analyzer
-      * thread), so it throws `FileNotFoundException` on `/Volumes`; Spark's listing does carry it.
+      * credential. This is for the ANALYZER thread only: the OGR reader's `inferSchema` runs on the
+      * Spark analyzer thread, where a raw Hadoop FS `getFileStatus`/`listStatus` does NOT carry the
+      * UC credential and throws `FileNotFoundException` on `/Volumes`; Spark's file index does carry
+      * it. (Executor reads are separate — they use the bare `/Volumes` UC connector via copyToPath;
+      * do NOT extend this Spark-listing workaround to executor reads or reintroduce `file:` paths.)
       * A single file or a `.gdb` / `.gdb.zip` / `.zip` dataset is returned as-is (not a dir of
       * shards). Falls back to the raw Hadoop FS listing if Spark's binaryFile can't enumerate it. */
     def listDataFilesSpark(spark: org.apache.spark.sql.SparkSession, inPath: String): Seq[String] = {
@@ -211,6 +238,12 @@ object HadoopUtils {
     }
 
     /** Copies a file or directory from inPath to outPath; returns path to copied item in outDir. */
+    // RAKE GUARD: this reads /Volumes on the EXECUTOR via Hadoop FS on the BARE /Volumes path
+    // (see cleanPath) -> the UC-integrated connector, which IS credentialed in DSV2 tasks. Do NOT
+    // "fix" a /Volumes read failure here by rewriting to file: or by adding a POSIX java.io copy:
+    // both force the raw FUSE mount, which is uncredentialed in opaque DSV2 executor tasks and
+    // fails with "Operation not permitted" / FileNotFound. (Tried in 0.4.0; reverted. The real
+    // fix was keeping /Volumes bare in cleanPath; validated against released 0.3.0.)
     def copyToPath(
         inPath: String,
         outPath: String,

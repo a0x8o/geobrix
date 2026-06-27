@@ -34,7 +34,9 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
         // credential and throws FileNotFound on /Volumes (see HadoopUtils.listDataFilesSpark).
         val rawPath = options.get("path")
         val files = HadoopUtils.listDataFilesSpark(sparkSession, rawPath)
-        val headPath = files.headOption.getOrElse(
+        // Use the PRIMARY data file as the schema head, not a sidecar: a shapefile dir lists as
+        // [.cpg, .dbf, .prj, .shp, .shx], and files.head (.cpg) is not openable by OGR.
+        val headPath = HadoopUtils.primaryDataFile(files).getOrElse(
           throw new IllegalArgumentException(s"No data files found under: $rawPath")
         )
         val lower = rawPath.toLowerCase(java.util.Locale.ROOT).stripSuffix("/")
