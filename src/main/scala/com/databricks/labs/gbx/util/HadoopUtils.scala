@@ -158,13 +158,48 @@ object HadoopUtils {
         }
     }
 
+    /** Lists the parent directory of a bare `.shp` path via Spark's credential-aware binaryFile
+      * reader, returning all same-stem sibling files (including the `.shp` itself). Used to discover
+      * sidecar files (`.shx`, `.dbf`, `.prj`, etc.) when the caller supplied only the `.shp` path
+      * and the `candidates` list therefore contains no sidecars. */
+    private def discoverShpSiblingsSpark(
+        spark: org.apache.spark.sql.SparkSession,
+        shpPath: String
+    ): Seq[String] = {
+        def baseName(p: String): String = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
+        val headName = baseName(shpPath)
+        val dot = headName.lastIndexOf('.')
+        val stem = if (dot > 0) headName.substring(0, dot) else headName
+        // Build the parent directory path by stripping the file name.
+        val parentPath = {
+            val norm = shpPath.replace("\\", "/")
+            val slash = norm.lastIndexOf('/')
+            if (slash > 0) norm.substring(0, slash) else norm
+        }
+        try {
+            val all = listDataFilesSpark(spark, parentPath)
+            val siblings = all.filter { p =>
+                val n = baseName(p)
+                n == headName || n.startsWith(stem + ".")
+            }
+            if (siblings.nonEmpty) siblings else Seq(shpPath)
+        } catch {
+            case _: Throwable => Seq(shpPath)
+        }
+    }
+
     /** Stages a dataset's head file (plus any same-stem sidecars, e.g. shapefile `.shx`/`.dbf`/
       * `.prj`) to a local temp dir for OGR schema inference, returning the local head path. Reads
       * bytes via POSIX `java.io.File` on the FUSE path (proven to read `/Volumes` on driver and
       * executor; `binaryFile` content reads and raw Hadoop FS stats do NOT). Tries a direct read
       * first; if the calling (analyzer) thread lacks the UC Volume credential, falls back to a
       * one-task Spark job whose executor carries it. `candidates` is the `listDataFilesSpark`
-      * listing, used to find the sidecars. */
+      * listing, used to find the sidecars.
+      *
+      * When `headPath` is a bare `.shp` file path and `candidates` contains no sidecar siblings
+      * (i.e. the caller listed only the single `.shp`), the parent directory is enumerated via
+      * Spark's credential-aware file index so the full sidecar bundle (`.shx`, `.dbf`, `.prj`,
+      * etc.) is staged alongside — without these GDAL throws "Unable to open .shx". */
     def stageHeadForSchemaSpark(
         spark: org.apache.spark.sql.SparkSession,
         headPath: String,
@@ -175,10 +210,17 @@ object HadoopUtils {
         val headName = baseName(headPath)
         val dot = headName.lastIndexOf('.')
         val stem = if (dot > 0) headName.substring(0, dot) else headName
-        val siblings = candidates.filter { p =>
+        val fromCandidates = candidates.filter { p =>
             val n = baseName(p)
             n == headName || n.startsWith(stem + ".")
         }.distinct
+        // When the head is a bare .shp and candidates has no sidecars, discover them from the
+        // parent directory so GDAL can open the full shapefile bundle.
+        val siblings =
+            if (fromCandidates.size <= 1 && headName.toLowerCase(java.util.Locale.ROOT).endsWith(".shp"))
+                discoverShpSiblingsSpark(spark, headPath).distinct
+            else
+                fromCandidates
         val toStage = if (siblings.isEmpty) Seq(headPath) else siblings
         val tmpDir = java.nio.file.Files.createTempDirectory("gbx_ogr_schema_").toFile
         for (p <- toStage) {
