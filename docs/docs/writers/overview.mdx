@@ -148,6 +148,11 @@ spatial sharding** — partitioning tiles into bounded per-shard archives writte
 and then cataloging them — which scales horizontally instead of building one memory-bound
 archive on a single node. Merges are sequential and rename-free, so they are safe on
 FUSE-mounted Unity Catalog Volumes / DBFS.
+
+The two-phase staging is **isolated per write**: each write stages its parts under a unique,
+hidden scratch namespace, so concurrent jobs — or multiple users — writing to the same output
+location never see or overwrite one another's in-progress data. Scratch left behind by an
+interrupted job is reclaimed automatically on a later write to the same location.
 :::
 
 :::note Register first
