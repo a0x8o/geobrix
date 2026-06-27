@@ -20,6 +20,13 @@ import scala.jdk.CollectionConverters.MapHasAsScala
 //noinspection ScalaUnusedSymbol
 class OGR_DataSource extends TableProvider with DataSourceRegister {
 
+    /** Returns an actionable error message for write attempts on this read-only OGR format.
+      * Subclasses override to name the specific format and its _gbx alternative.
+      */
+    protected def writeGuardMessage(path: String): String =
+        s"'${shortName()}' is a read-only reader; write vector data with a light _gbx writer " +
+        s"(shapefile_gbx, gpkg_gbx, file_gdb_gbx, geojson_gbx) or geojsonl_ogr for sharded GeoJSONL."
+
     /** Overrides TableProvider.inferSchema: first file at path via OGR_SchemaInference; initializes GDAL and NodeFileManager. */
     override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
         val driverName = if (options.containsKey("driverName")) options.get("driverName") else ""
@@ -33,6 +40,19 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
         // A raw Hadoop FS getFileStatus on the analyzer thread lacks the UC Volume / WSFS
         // credential and throws FileNotFound on /Volumes (see HadoopUtils.listDataFilesSpark).
         val rawPath = options.get("path")
+
+        // Write-guard: detect attempted writes to a non-existent path.
+        // On the Spark V2 write path, inferSchema is called with the target write path (which
+        // doesn't exist yet). Fail fast with an actionable message naming the read-only format
+        // and its _gbx alternative, instead of a cryptic NoSuchFileException.
+        if (rawPath != null) {
+            val hadoopConf = sparkSession.sessionState.newHadoopConf()
+            val hadoopPath = new org.apache.hadoop.fs.Path(rawPath)
+            val fileSystem = hadoopPath.getFileSystem(hadoopConf)
+            if (!fileSystem.exists(hadoopPath)) {
+                throw new UnsupportedOperationException(writeGuardMessage(rawPath))
+            }
+        }
         val files = HadoopUtils.listDataFilesSpark(sparkSession, rawPath)
         // Use the PRIMARY data file as the schema head, not a sidecar: a shapefile dir lists as
         // [.cpg, .dbf, .prj, .shp, .shx], and files.head (.cpg) is not openable by OGR.

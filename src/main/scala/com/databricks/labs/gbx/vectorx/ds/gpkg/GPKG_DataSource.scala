@@ -19,6 +19,11 @@ class GPKG_DataSource extends OGR_DataSource with DataSourceExtras {
     /** Overrides parent shortName: returns "gpkg_ogr". */
     override def shortName(): String = "gpkg_ogr"
 
+    /** Overrides parent writeGuardMessage: names gpkg_ogr and its gpkg_gbx alternative. */
+    override protected def writeGuardMessage(path: String): String =
+        "'gpkg_ogr' is a read-only reader; write vector data with the light gpkg_gbx writer " +
+        "(or geojsonl_ogr for sharded GeoJSONL)."
+
     /** Overrides parent inferSchema: delegates to super with dsExtraMap options (GPKG). */
     override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
         super.inferSchema(extraCaseInsensitiveStringMap(options))

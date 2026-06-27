@@ -103,4 +103,49 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // C1: write-guard — read-only OGR formats must fail writes with a clear message
+    // ---------------------------------------------------------------------------
+
+    /** Walk the exception chain to find the root cause. */
+    private def rootCause(t: Throwable): Throwable =
+        if (t.getCause == null) t else rootCause(t.getCause)
+
+    test("shapefile_ogr must reject writes with a read-only error naming shapefile_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_write_").toFile.getAbsolutePath
+
+        val df = spark.range(1).toDF("id")
+        val ex = intercept[Exception] {
+            df.write.format("shapefile_ogr").mode("overwrite").save(tmpPath + "/nonexistent_output")
+        }
+        val root = rootCause(ex)
+        root.getMessage should include("read-only")
+        root.getMessage should include("shapefile_gbx")
+        // Must NOT be a NoSuchFileException (the old cryptic error)
+        root.getClass.getSimpleName should not include "NoSuchFileException"
+    }
+
+    test("shapefile_ogr read must NOT be affected by the write guard") {
+        val shpPath = this.getClass
+            .getResource("/binary/shapefile/map.shp")
+            .toString
+            .replace("file:", "")
+
+        val df = spark.read.format("shapefile_ogr").load(shpPath)
+        df.count() should be > 0L
+    }
+
+    test("gpkg_ogr must reject writes with a read-only error naming gpkg_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_gpkg_").toFile.getAbsolutePath
+
+        val df = spark.range(1).toDF("id")
+        val ex = intercept[Exception] {
+            df.write.format("gpkg_ogr").mode("overwrite").save(tmpPath + "/nonexistent_output")
+        }
+        val root = rootCause(ex)
+        root.getMessage should include("read-only")
+        root.getMessage should include("gpkg_gbx")
+        root.getClass.getSimpleName should not include "NoSuchFileException"
+    }
+
 }
