@@ -13,6 +13,8 @@ import java.nio.file.Files
   *   - bare .shp file path reads correctly (sidecar-bundle staging fix)
   *   - multi-stem divergent-schema directory raises IllegalArgumentException (B4)
   *   - multi-stem same-schema directory reads without error (B4)
+  *   - directory of unzipped shapefiles counts exactly (C73 sidecar over-count fix)
+  *   - mixed unzipped + zipped directory counts exactly (C73)
   */
 class OgrReaderContractTest extends PlanTest with SilentSparkSession {
 
@@ -111,6 +113,22 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
     }
 
     // ---------------------------------------------------------------------------
+    // C73: unzipped shapefile directory exact-count (regression guard for .dbf over-count)
+    // ---------------------------------------------------------------------------
+
+    test("shapefile_ogr must read a directory of two unzipped shapefiles with exact count") {
+        val tmpDir = Files.createTempDirectory("gbx_c73_unzip_").toFile
+        val fields = Seq("name" -> ogrConstants.OFTString, "length" -> ogrConstants.OFTReal)
+        // Write TWO shapefiles with 1 feature each; before the fix a .dbf sidecar was opened
+        // as an attribute-only datasource, yielding 4 rows (2 .shp + 2 .dbf) instead of 2.
+        writeShapefile(tmpDir, "roads", fields)
+        writeShapefile(tmpDir, "rivers", fields)
+
+        val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        df.count() shouldBe 2L
+    }
+
+    // ---------------------------------------------------------------------------
     // D1: dir of .shp.zip — both tiers handle directory of zipped shapefiles
     // ---------------------------------------------------------------------------
 
@@ -173,12 +191,10 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
             .foreach(_.delete())
 
         val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        // After the sidecar-filter fix, loose .dbf files are excluded from the partition list,
+        // so the plain .shp bundle contributes exactly 1 row and the .shp.zip contributes exactly 1 row.
+        df.count() shouldBe 2L
         val names = df.collect().map(_.getAs[String]("name")).toSet
-        // The union must contain a feature from BOTH the plain .shp bundle and the .shp.zip.
-        // (Total row count can exceed 2: for the plain bundle the OGR ESRI Shapefile driver
-        // also opens the loose .dbf sidecar as an attribute-only datasource, so its feature is
-        // counted once via .shp and once via .dbf — pre-existing reader behavior, not specific
-        // to zip support. The .shp.zip archive has no loose sidecars, so it contributes once.)
         names should contain("roads_feat")
         names should contain("rivers_feat")
     }

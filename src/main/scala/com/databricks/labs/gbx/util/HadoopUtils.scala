@@ -140,6 +140,14 @@ object HadoopUtils {
     def primaryDataFile(files: Seq[String]): Option[String] =
         files.find(p => !OGR_SIDECAR_EXTS.contains(fileExt(p))).orElse(files.headOption)
 
+    /** Filters a file listing to primary data files, excluding OGR shapefile sidecar extensions
+      * (`.dbf`, `.shx`, `.prj`, `.cpg`, etc.) that the ESRI Shapefile driver opens as
+      * attribute-only datasources. All non-sidecar files (`.shp`, `.zip`, `.geojson`, `.gpkg`,
+      * etc.) are kept — this supports multi-stem directories and heterogeneous driver mixes.
+      * Used in the OGR batch read path to prevent loose sidecars from being double-counted. */
+    def primaryDataFiles(files: Seq[String]): Seq[String] =
+        files.filterNot(p => OGR_SIDECAR_EXTS.contains(fileExt(p)))
+
     /** Lists data files under inPath via Spark's file index, which forwards the UC Volume / WSFS
       * credential. This is for the ANALYZER thread only: the OGR reader's `inferSchema` runs on the
       * Spark analyzer thread, where a raw Hadoop FS `getFileStatus`/`listStatus` does NOT carry the
