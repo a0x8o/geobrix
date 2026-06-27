@@ -83,11 +83,14 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
             val optMap = options.asCaseSensitiveMap().asScala.toMap
             val headStem = stems.head
             stems.tail.foreach { otherStem =>
+                // Look for <stem>.shp first; if absent fall back to <stem>.shp.zip.
                 val otherShp = files.find { p =>
                     val n = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
-                    n.toLowerCase(java.util.Locale.ROOT) == s"$otherStem.shp"
+                    val lower = n.toLowerCase(java.util.Locale.ROOT)
+                    lower == s"${otherStem.toLowerCase(java.util.Locale.ROOT)}.shp" ||
+                    lower == s"${otherStem.toLowerCase(java.util.Locale.ROOT)}.shp.zip"
                 }.getOrElse(throw new IllegalArgumentException(
-                  s"shapefile reader: could not locate '$otherStem.shp' under $rawPath"
+                  s"shapefile reader: could not locate '$otherStem.shp' or '$otherStem.shp.zip' under $rawPath"
                 ))
                 val otherLocal = HadoopUtils.stageHeadForSchemaSpark(sparkSession, otherShp, files)
                 val otherSchemaOpt = OGR_SchemaInference.inferSchemaImpl(driverName, otherLocal, optMap)

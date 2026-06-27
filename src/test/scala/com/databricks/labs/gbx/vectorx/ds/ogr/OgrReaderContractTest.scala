@@ -199,6 +199,29 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
         names should contain("rivers_feat")
     }
 
+    test("shapefile_ogr must raise on a directory of divergent-schema .shp.zip files") {
+        val tmpDir = Files.createTempDirectory("gbx_d1_diverge_zip_").toFile
+        // roads: one string field 'name'; rivers: one real field 'width' -- different schemas
+        writeShapefile(tmpDir, "roads", Seq("name" -> ogrConstants.OFTString))
+        writeShapefile(tmpDir, "rivers", Seq("width" -> ogrConstants.OFTReal))
+        // Zip each shapefile bundle and remove unzipped sidecars
+        Seq("roads", "rivers").foreach { stem =>
+            val shpFile = new java.io.File(tmpDir, s"$stem.shp")
+            zipShapefile(shpFile)
+            tmpDir.listFiles()
+                .filter(f => f.getName.startsWith(stem + ".") && !f.getName.endsWith(".zip"))
+                .foreach(_.delete())
+        }
+
+        val ex = intercept[IllegalArgumentException] {
+            spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        }
+        val msg = ex.getMessage
+        msg should include("differing schemas")
+        msg should include("load them separately")
+        (msg.contains("roads") || msg.contains("rivers")) shouldBe true
+    }
+
     // ---------------------------------------------------------------------------
     // C1 (revised): write-guard — read-only OGR formats must fail writes with a clear message.
     // Mechanism: OGR_DataSource.supportsExternalMetadata=true routes writes through

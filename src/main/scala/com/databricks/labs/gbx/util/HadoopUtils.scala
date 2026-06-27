@@ -256,14 +256,22 @@ object HadoopUtils {
     }
 
     /** Returns the distinct `.shp` stems (base names without extension) present in a file listing.
+      * Handles both plain `.shp` files and `.shp.zip` archives (e.g. `roads.shp.zip` → stem `roads`).
       * Used to detect multi-stem shapefile directories that may have divergent schemas. */
     def shpStems(files: Seq[String]): Seq[String] =
         files
-            .filter(p => fileExt(p) == "shp")
-            .map { p =>
+            .flatMap { p =>
                 val n = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
-                val dot = n.lastIndexOf('.')
-                if (dot > 0) n.substring(0, dot) else n
+                val lower = n.toLowerCase(java.util.Locale.ROOT)
+                if (lower.endsWith(".shp.zip")) {
+                    // Strip the double suffix .shp.zip to get the stem.
+                    Some(n.substring(0, n.length - ".shp.zip".length))
+                } else if (lower.endsWith(".shp")) {
+                    val dot = n.lastIndexOf('.')
+                    if (dot > 0) Some(n.substring(0, dot)) else Some(n)
+                } else {
+                    None
+                }
             }
             .distinct
 
