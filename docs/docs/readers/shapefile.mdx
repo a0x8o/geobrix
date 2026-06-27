@@ -23,6 +23,28 @@ available it uses native GDAL on the JVM and tends to pull ahead on large worklo
 the [Benchmarking](../api/benchmarking) page for light-vs-heavy timings and methodology.
 :::
 
+## What you can point `.load()` at
+
+The table below covers all three accepted forms. The behavior is identical in both tiers (`shapefile_gbx` and `shapefile_ogr`).
+
+| Path passed to `.load()` | What happens |
+|---|---|
+| `/path/to/x.shp` | Reads that single shapefile. Side-car files (`.shx`, `.dbf`, `.prj`, `.cpg`) are picked up automatically from the same directory. |
+| `/path/to/dir/` | Reads **all** shapefiles found under `dir` recursively, grouped by stem, and unions the results into one DataFrame. All shapefiles must share the same schema; if their schemas diverge, the reader raises an error — load them separately or point at a single-stem directory. |
+| `/path/to/x.shp.zip` | Reads a zipped shapefile archive (the `.zip` must contain the `.shp` and its side-cars at the top level). |
+
+:::note Schema divergence
+When loading a directory that contains shapefiles with different column layouts, the reader raises:
+
+```
+shapefile reader: shapefiles under <path> have differing schemas;
+load them separately or use a single-stem directory.
+Stems: <a>, <b>.
+```
+
+Either pass a path to a specific `.shp` file, or ensure all shapefiles in the directory share the same schema before loading them together.
+:::
+
 ## Options
 
 Both tiers (lightweight `shapefile_gbx`, heavyweight `shapefile_ogr`) preset the ESRI Shapefile driver and take the same options.
