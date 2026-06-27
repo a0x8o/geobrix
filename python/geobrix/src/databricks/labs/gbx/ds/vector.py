@@ -933,7 +933,14 @@ class VectorGbxWriter(DataSourceWriter):
                 # archive is copied to the target. local_out ends in ".zip"; strip
                 # it to get the inner path the writer produces alongside.
                 inner = local_out[: -len(".zip")]  # .../roads.shp or .../roads.gdb
-                if _should_stream(self.driver):
+                if self.driver == "OpenFileGDB":
+                    # FileGDB: stream fragments one at a time with OGR transaction
+                    # batching. Infer geom/CRS from the first fragment only.
+                    first_tbl = feather.read_table(frags[0])
+                    geom_type, crs = self._infer_geom_crs([first_tbl])
+                    del first_tbl
+                    self._write_local_osgeo_gdb(frags, inner, geom_type, crs)
+                elif _should_stream(self.driver):
                     first_tbl = feather.read_table(frags[0])
                     geom_type, crs = self._infer_geom_crs([first_tbl])
                     del first_tbl
@@ -956,6 +963,14 @@ class VectorGbxWriter(DataSourceWriter):
                             ".zip"
                         ):
                             os.remove(os.path.join(local_dir, name))
+            elif self.driver == "OpenFileGDB":
+                # FileGDB: stream fragments one at a time with OGR transaction
+                # batching. Infer geom/CRS from the first fragment only (bounded;
+                # the fragment is released before the write loop begins).
+                first_tbl = feather.read_table(frags[0])
+                geom_type, crs = self._infer_geom_crs([first_tbl])
+                del first_tbl
+                self._write_local_osgeo_gdb(frags, local_out, geom_type, crs)
             elif _should_stream(self.driver):
                 # Infer geom type + CRS from the first fragment only (one
                 # partition, bounded), then stream every fragment into one write.
@@ -1045,11 +1060,9 @@ class VectorGbxWriter(DataSourceWriter):
 
     def _write_local(self, tables, local_out, geom_type, crs) -> None:
         """Write the merged tables to a local path. Use the fast Arrow path; if the
-        driver lacks Arrow-write support (e.g. OpenFileGDB), fall back to the classic
-        feature-based path, which has broader OGR driver support."""
-        if self.driver == "OpenFileGDB":
-            self._write_local_osgeo_gdb(tables, local_out, geom_type, crs)
-            return
+        driver lacks Arrow-write support, fall back to the classic feature-based path.
+        OpenFileGDB is NOT routed here; the commit() method calls _write_local_osgeo_gdb
+        directly with fragment paths (streaming + transaction batching)."""
         import pyogrio
 
         # Write SQLite-backed formats (GPKG) with a DELETE journal -- no WAL/-shm
@@ -1092,11 +1105,16 @@ class VectorGbxWriter(DataSourceWriter):
                 os.remove(local_out)
             self._write_local_classic(tables, local_out, geom_type, crs)
 
-    def _write_local_osgeo_gdb(self, tables, local_out, geom_type, crs) -> None:
+    def _write_local_osgeo_gdb(self, frags, local_out, geom_type, crs) -> None:
         """Hybrid FileGDB path. pyogrio's bundled GDAL has a read-only OpenFileGDB
         driver; the native GDAL from the heavyweight GDAL init script has write. Use
         osgeo.ogr (native) to encode the .gdb. Requires those natives -- raises a clear
-        error otherwise (FileGDB write is unavailable in a lightweight-only env)."""
+        error otherwise (FileGDB write is unavailable in a lightweight-only env).
+
+        Fragments are consumed ONE AT A TIME (bounded driver memory — never the
+        whole dataset in RAM) and features are written inside OGR bulk transactions
+        (committed every _GDB_TX_BATCH_SIZE rows), which eliminates the per-feature
+        auto-commit overhead that otherwise makes large writes O(n) slow."""
         try:
             from osgeo import ogr, osr
         except Exception as e:  # noqa: BLE001
@@ -1107,6 +1125,7 @@ class VectorGbxWriter(DataSourceWriter):
                 "gpkg_gbx / geojson_gbx instead."
             ) from e
         import pyarrow as pa
+        import pyarrow.feather as feather
 
         drv = ogr.GetDriverByName("OpenFileGDB")
         if drv is None or not drv.TestCapability(ogr.ODrCCreateDataSource):
@@ -1142,10 +1161,14 @@ class VectorGbxWriter(DataSourceWriter):
                 return ogr.OFTBinary
             return ogr.OFTString  # strings + anything else
 
-        first = tables[0]
+        # Read the first fragment to derive the schema (attr cols + field types).
+        # The fragment is released from memory before the main write loop so that
+        # only one fragment at a time lives in driver memory.
+        first_tbl = feather.read_table(frags[0])
         meta = {self.geom_col, self.srid_col, self.proj_col}
-        attr_cols = [c for c in first.column_names if c not in meta]
-        types = {f.name: f.type for f in first.schema}
+        attr_cols = [c for c in first_tbl.column_names if c not in meta]
+        types = {f.name: f.type for f in first_tbl.schema}
+        del first_tbl  # release — schema is all we need
 
         ds = drv.CreateDataSource(local_out)
         if ds is None:
@@ -1153,6 +1176,10 @@ class VectorGbxWriter(DataSourceWriter):
                 f"OpenFileGDB CreateDataSource returned None for {local_out!r}; "
                 "the FileGDB output path must end in '.gdb'."
             )
+        # Batch size for OGR transaction commits. Large enough to amortise the
+        # commit overhead; small enough to bound memory and not starve other threads.
+        _TX_BATCH = 100_000
+        use_tx = lyr = None
         try:
             lyr = ds.CreateLayer(
                 self.layer_name or "layer",
@@ -1165,7 +1192,18 @@ class VectorGbxWriter(DataSourceWriter):
             for c in attr_cols:
                 lyr.CreateField(ogr.FieldDefn(c, _ogr_type(types[c])))
             defn = lyr.GetLayerDefn()
-            for tbl in tables:
+
+            # Check once whether the driver supports OGR transactions so we can
+            # fall back gracefully (per-feature auto-commit) on drivers that don't.
+            use_tx = lyr.TestCapability(ogr.OLCTransactions)
+            if use_tx:
+                lyr.StartTransaction()
+            pending = 0  # features written since last commit
+
+            # Stream fragments one at a time — each is loaded, written, then
+            # released before the next is read (bounded driver memory).
+            for frag_path in frags:
+                tbl = feather.read_table(frag_path)
                 cols = {c: tbl.column(c).to_pylist() for c in tbl.column_names}
                 geom = cols.get(self.geom_col, [None] * tbl.num_rows)
                 for i in range(tbl.num_rows):
@@ -1179,6 +1217,22 @@ class VectorGbxWriter(DataSourceWriter):
                         feat.SetGeometry(ogr.CreateGeometryFromWkb(bytes(g)))
                     lyr.CreateFeature(feat)
                     feat = None
+                    pending += 1
+                    if use_tx and pending >= _TX_BATCH:
+                        lyr.CommitTransaction()
+                        lyr.StartTransaction()
+                        pending = 0
+                del tbl, cols, geom  # release fragment memory before next read
+
+            if use_tx and pending > 0:
+                lyr.CommitTransaction()
+        except Exception:
+            if use_tx and lyr is not None:
+                try:
+                    lyr.RollbackTransaction()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
         finally:
             ds = None  # flush + close
 
