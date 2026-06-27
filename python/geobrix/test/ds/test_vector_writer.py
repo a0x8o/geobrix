@@ -35,6 +35,7 @@ def test_default_gpkg_layer_avoids_reserved_prefix():
 def test_gpkg_write_to_path_named_gpkg(spark, tmp_path):
     # Saving to a path whose stem is 'gpkg' must not fail with the GeoPackage
     # reserved-prefix error (the layer name falls back to 'layer').
+    # The writer appends .gpkg so the resolved file is out + ".gpkg".
     register(spark)
     out = str(tmp_path / "gpkg")  # stem == "gpkg"
     rows = [("a", bytearray(to_wkb(Point(1.0, 2.0))), "4326", "")]
@@ -43,7 +44,8 @@ def test_gpkg_write_to_path_named_gpkg(spark, tmp_path):
         schema="name string, geom_0 binary, geom_0_srid string, geom_0_srid_proj string",
     )
     df.write.format("gpkg_gbx").mode("overwrite").save(out)  # must not raise
-    back = spark.read.format("gpkg_gbx").load(out)
+    # Writer resolves 'gpkg' -> 'gpkg.gpkg'; read from the resolved path.
+    back = spark.read.format("gpkg_gbx").load(out + ".gpkg")
     assert back.count() == 1
 
 

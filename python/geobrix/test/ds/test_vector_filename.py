@@ -60,3 +60,17 @@ def test_case3_stem_path_no_filename(tmp_path):
 def test_filename_extension_completed(tmp_path):
     out = _resolve_single_file_output(str(tmp_path), "roads.shp", ".shp.zip")
     assert out == str(tmp_path / "roads.shp.zip")
+
+
+# ---- Task A3: VectorGbxWriter path resolution ----
+
+
+def test_writer_resolves_gpkg_stem(tmp_path):
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
+    from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
+
+    sch = StructType(
+        [StructField("geom", BinaryType()), StructField("geom_srid", IntegerType())]
+    )
+    w = VectorGbxWriter(str(tmp_path / "city"), sch, "GPKG", {}, overwrite=True)
+    assert w.path == str(tmp_path / "city.gpkg")

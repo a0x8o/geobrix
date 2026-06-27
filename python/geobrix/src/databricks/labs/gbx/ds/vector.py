@@ -815,22 +815,12 @@ class VectorGbxWriter(DataSourceWriter):
             "ESRI Shapefile",
             "OpenFileGDB",
         )
-        if self.zip:
-            p = self.path.rstrip("/")
-            if self.driver == "OpenFileGDB":
-                if p.endswith(".gdb.zip"):
-                    self.path = p  # already correct
-                elif p.endswith(".gdb"):
-                    self.path = p + ".zip"
-                else:
-                    self.path = p + ".gdb.zip"
-            else:  # ESRI Shapefile
-                if p.endswith(".shp.zip"):
-                    self.path = p  # already correct
-                elif p.endswith(".shp"):
-                    self.path = p + ".zip"
-                else:
-                    self.path = p + ".shp.zip"
+        self._file_name = opts.get("filename")  # .option("fileName", ...) (opts are lower-cased)
+        # Single-file/unit writers (gpkg/geojson, shapefile+zip, file_gdb): adaptive naming.
+        # Non-zip shapefile remains a directory bundle (existing behavior; not single-file).
+        if self.driver in ("GPKG", "GeoJSON") or self.zip or self.driver == "OpenFileGDB":
+            ext = _canonical_ext(self.driver, self.zip)
+            self.path = _resolve_single_file_output(self.path, self._file_name, ext)
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")
