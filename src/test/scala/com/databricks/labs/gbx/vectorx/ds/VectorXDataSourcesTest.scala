@@ -145,24 +145,24 @@ class VectorXDataSourcesTest extends AnyFunSuite {
     // ====== OGR_Table ======
 
     test("OGR_Table should be a SupportsRead") {
-        val table = new OGR_Table(testSchema, Map.empty)
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
         table shouldBe a[SupportsRead]
     }
 
     test("OGR_Table should return name") {
-        val table = new OGR_Table(testSchema, Map.empty)
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
         table.name() shouldBe "ogr"
     }
 
     test("OGR_Table should return schema") {
-        val table = new OGR_Table(testSchema, Map.empty)
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
         val schema = table.schema()
         schema should not be null
         schema.fields should have length 2
     }
 
     test("OGR_Table should return columns") {
-        val table = new OGR_Table(testSchema, Map.empty)
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
         val columns = table.columns()
         columns should not be null
         columns should have length 2
@@ -171,14 +171,28 @@ class VectorXDataSourcesTest extends AnyFunSuite {
     }
 
     test("OGR_Table should return capabilities with BATCH_READ") {
-        val table = new OGR_Table(testSchema, Map.empty)
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
         val capabilities = table.capabilities()
         capabilities should not be null
         capabilities should contain(org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ)
     }
 
+    test("OGR_Table should return capabilities with BATCH_WRITE") {
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
+        val capabilities = table.capabilities()
+        capabilities should not be null
+        capabilities should contain(org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE)
+    }
+
+    test("OGR_Table should return capabilities with TRUNCATE") {
+        val table = new OGR_Table(testSchema, Map.empty, "test guard")
+        val capabilities = table.capabilities()
+        capabilities should not be null
+        capabilities should contain(org.apache.spark.sql.connector.catalog.TableCapability.TRUNCATE)
+    }
+
     test("OGR_Table should create ScanBuilder") {
-        val table = new OGR_Table(testSchema, Map("path" -> "/test"))
+        val table = new OGR_Table(testSchema, Map("path" -> "/test"), "test guard")
         val builder = table.newScanBuilder(new org.apache.spark.sql.util.CaseInsensitiveStringMap(java.util.Collections.emptyMap()))
         builder should not be null
     }

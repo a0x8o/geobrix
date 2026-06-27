@@ -40,19 +40,6 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
         // A raw Hadoop FS getFileStatus on the analyzer thread lacks the UC Volume / WSFS
         // credential and throws FileNotFound on /Volumes (see HadoopUtils.listDataFilesSpark).
         val rawPath = options.get("path")
-
-        // Write-guard: detect attempted writes to a non-existent path.
-        // On the Spark V2 write path, inferSchema is called with the target write path (which
-        // doesn't exist yet). Fail fast with an actionable message naming the read-only format
-        // and its _gbx alternative, instead of a cryptic NoSuchFileException.
-        if (rawPath != null) {
-            val hadoopConf = sparkSession.sessionState.newHadoopConf()
-            val hadoopPath = new org.apache.hadoop.fs.Path(rawPath)
-            val fileSystem = hadoopPath.getFileSystem(hadoopConf)
-            if (!fileSystem.exists(hadoopPath)) {
-                throw new UnsupportedOperationException(writeGuardMessage(rawPath))
-            }
-        }
         val files = HadoopUtils.listDataFilesSpark(sparkSession, rawPath)
         // Use the PRIMARY data file as the schema head, not a sidecar: a shapefile dir lists as
         // [.cpg, .dbf, .prj, .shp, .shx], and files.head (.cpg) is not openable by OGR.
@@ -117,9 +104,19 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
         headSchema
     }
 
+    /**
+      * Overrides TableProvider.supportsExternalMetadata: returns true so that on the write path
+      * Spark passes the producer DataFrame's schema directly to getTable without calling inferSchema.
+      * inferSchema is still called on the read path (Spark passes None as the user schema there).
+      * The returned OGR_Table exposes a newWriteBuilder that immediately rejects the write with an
+      * actionable UnsupportedOperationException, so no data is ever written through an OGR reader.
+      */
+    override def supportsExternalMetadata(): Boolean = true
+
     /** Overrides TableProvider.getTable: returns OGR_Table with the given schema and properties. */
     override def getTable(schema: StructType, partitions: Array[Transform], properties: java.util.Map[String, String]): Table = {
-        new OGR_Table(schema, properties.asScala.toMap)
+        val path = Option(properties.get("path")).getOrElse("")
+        new OGR_Table(schema, properties.asScala.toMap, writeGuardMessage(path))
     }
 
     /** Overrides DataSourceRegister.shortName: returns "ogr". */

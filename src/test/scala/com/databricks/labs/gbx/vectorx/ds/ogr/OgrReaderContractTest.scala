@@ -104,27 +104,102 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
     }
 
     // ---------------------------------------------------------------------------
-    // C1: write-guard — read-only OGR formats must fail writes with a clear message
+    // C1 (revised): write-guard — read-only OGR formats must fail writes with a clear message.
+    // Mechanism: OGR_DataSource.supportsExternalMetadata=true routes writes through
+    // OGR_Table.newWriteBuilder, which throws immediately. inferSchema is NOT called on writes,
+    // so reads are completely unaffected.
     // ---------------------------------------------------------------------------
 
     /** Walk the exception chain to find the root cause. */
     private def rootCause(t: Throwable): Throwable =
         if (t.getCause == null) t else rootCause(t.getCause)
 
-    test("shapefile_ogr must reject writes with a read-only error naming shapefile_gbx") {
-        val tmpPath = Files.createTempDirectory("gbx_c1_write_").toFile.getAbsolutePath
-
+    /** Assert that a write of the given format to the given path produces a clear read-only error. */
+    private def assertWriteRejected(fmt: String, path: String, altName: String): Unit = {
         val df = spark.range(1).toDF("id")
         val ex = intercept[Exception] {
-            df.write.format("shapefile_ogr").mode("overwrite").save(tmpPath + "/nonexistent_output")
+            df.write.format(fmt).mode("overwrite").save(path)
         }
         val root = rootCause(ex)
         root.getMessage should include("read-only")
-        root.getMessage should include("shapefile_gbx")
-        // Must NOT be a NoSuchFileException (the old cryptic error)
+        root.getMessage should include(altName)
         root.getClass.getSimpleName should not include "NoSuchFileException"
     }
 
+    // shapefile_ogr: new (non-existent) path
+    test("shapefile_ogr must reject writes to a new path with a read-only error naming shapefile_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_shp_").toFile.getAbsolutePath
+        assertWriteRejected("shapefile_ogr", tmpPath + "/nonexistent_output", "shapefile_gbx")
+    }
+
+    // shapefile_ogr: existing path — guard must fire for existing paths too
+    test("shapefile_ogr must reject writes to an existing path with a read-only error naming shapefile_gbx") {
+        val existingDir = Files.createTempDirectory("gbx_c1_shp_exist_").toFile.getAbsolutePath
+        assertWriteRejected("shapefile_ogr", existingDir, "shapefile_gbx")
+    }
+
+    // gpkg_ogr: new path
+    test("gpkg_ogr must reject writes to a new path with a read-only error naming gpkg_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_gpkg_").toFile.getAbsolutePath
+        assertWriteRejected("gpkg_ogr", tmpPath + "/nonexistent_output", "gpkg_gbx")
+    }
+
+    // gpkg_ogr: existing path
+    test("gpkg_ogr must reject writes to an existing path with a read-only error naming gpkg_gbx") {
+        val existingDir = Files.createTempDirectory("gbx_c1_gpkg_exist_").toFile.getAbsolutePath
+        assertWriteRejected("gpkg_ogr", existingDir, "gpkg_gbx")
+    }
+
+    // file_gdb_ogr: new path
+    test("file_gdb_ogr must reject writes to a new path with a read-only error naming file_gdb_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_gdb_").toFile.getAbsolutePath
+        assertWriteRejected("file_gdb_ogr", tmpPath + "/nonexistent_output", "file_gdb_gbx")
+    }
+
+    // file_gdb_ogr: existing path
+    test("file_gdb_ogr must reject writes to an existing path with a read-only error naming file_gdb_gbx") {
+        val existingDir = Files.createTempDirectory("gbx_c1_gdb_exist_").toFile.getAbsolutePath
+        assertWriteRejected("file_gdb_ogr", existingDir, "file_gdb_gbx")
+    }
+
+    // geojson_ogr: new path
+    test("geojson_ogr must reject writes to a new path with a read-only error naming geojson_gbx") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_gjson_").toFile.getAbsolutePath
+        assertWriteRejected("geojson_ogr", tmpPath + "/nonexistent_output", "geojson_gbx")
+    }
+
+    // geojson_ogr: existing path
+    test("geojson_ogr must reject writes to an existing path with a read-only error naming geojson_gbx") {
+        val existingDir = Files.createTempDirectory("gbx_c1_gjson_exist_").toFile.getAbsolutePath
+        assertWriteRejected("geojson_ogr", existingDir, "geojson_gbx")
+    }
+
+    // generic ogr: new path
+    test("ogr must reject writes to a new path with a read-only error listing _gbx alternatives") {
+        val tmpPath = Files.createTempDirectory("gbx_c1_ogr_").toFile.getAbsolutePath
+        assertWriteRejected("ogr", tmpPath + "/nonexistent_output", "shapefile_gbx")
+    }
+
+    // generic ogr: existing path
+    test("ogr must reject writes to an existing path with a read-only error listing _gbx alternatives") {
+        val existingDir = Files.createTempDirectory("gbx_c1_ogr_exist_").toFile.getAbsolutePath
+        assertWriteRejected("ogr", existingDir, "shapefile_gbx")
+    }
+
+    // Regression: a read of a NONEXISTENT path must NOT show the write-guard message.
+    // Previously (a94d05b), inferSchema had a path-existence check that showed "read-only" even
+    // for reads of typo paths. This test confirms that consequence is gone.
+    test("shapefile_ogr read of a nonexistent path must NOT produce a read-only error message") {
+        val ex = intercept[Exception] {
+            spark.read.format("shapefile_ogr").load("/tmp/does_not_exist_gbx_c1_regression.shp").count()
+        }
+        // The error must be a not-found / no-files error, not the write-guard message
+        val root = rootCause(ex)
+        root.getMessage should not include "read-only"
+        root.getMessage should not include "shapefile_gbx"
+    }
+
+    // Regression: existing reads must still work after the mechanism change
     test("shapefile_ogr read must NOT be affected by the write guard") {
         val shpPath = this.getClass
             .getResource("/binary/shapefile/map.shp")
@@ -133,19 +208,6 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
 
         val df = spark.read.format("shapefile_ogr").load(shpPath)
         df.count() should be > 0L
-    }
-
-    test("gpkg_ogr must reject writes with a read-only error naming gpkg_gbx") {
-        val tmpPath = Files.createTempDirectory("gbx_c1_gpkg_").toFile.getAbsolutePath
-
-        val df = spark.range(1).toDF("id")
-        val ex = intercept[Exception] {
-            df.write.format("gpkg_ogr").mode("overwrite").save(tmpPath + "/nonexistent_output")
-        }
-        val root = rootCause(ex)
-        root.getMessage should include("read-only")
-        root.getMessage should include("gpkg_gbx")
-        root.getClass.getSimpleName should not include "NoSuchFileException"
     }
 
 }
