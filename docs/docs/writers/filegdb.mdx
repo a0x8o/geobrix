@@ -48,9 +48,10 @@ lightweight vector readers and writers.
 |---|---|---|
 | `driverName` | `OpenFileGDB` (preset) | OGR driver. Preset by this named writer; override only if needed. |
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
+| `fileName` | _(none)_ | Name the output unit explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>.gdb` (or `path/<fileName>.gdb.zip` when `zip=true`; extension auto-completed). See [Output naming](#output-naming). |
+| `zip` | `false` | When `true`, produce a **single `.gdb.zip`** archive (the `.gdb` directory packed at the archive root) instead of a `.gdb` directory. The output path is normalised automatically: `.save("roads")` → `roads.gdb.zip`; `.save("roads.gdb")` → `roads.gdb.zip`. The [reader](../readers/filegdb) opens `.gdb.zip` transparently. Ignored for non-FileGDB drivers. |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |
-| `zip` | `false` | When `true`, produce a **single `.gdb.zip`** archive (the `.gdb` directory packed at the archive root) instead of a `.gdb` directory. The output path is normalised automatically: `.save("roads")` → `roads.gdb.zip`; `.save("roads.gdb")` → `roads.gdb.zip`. The [reader](../readers/filegdb) opens `.gdb.zip` transparently. Ignored for non-FileGDB drivers. |
 | `geomCol` | auto-detected from the `*_srid` column | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). This is a lightweight-tier writer (hybrid — requires native GDAL for write). |
 | `sridCol` | `<geomCol>_srid` | Override the SRID column name. **Required** — supplies the CRS authority code (e.g. `"4326"`, or `"0"` if unknown). |
 | `projCol` | `<geomCol>_srid_proj` | Override the PROJ4 column name (optional fallback CRS when `sridCol` is `"0"`). |
@@ -103,6 +104,18 @@ written concurrently** by its executor to a scratch fragment, then the driver **
 fragments into one output file**. The merge is sequential and rename-free, so it is safe on
 FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
 write parallelism.
+
+## Output naming
+
+`file_gdb_gbx` applies the standard single-file [output naming contract](./overview#output-naming-for-single-file-writers). The canonical extension is `.gdb` (or `.gdb.zip` when `zip=true`). Rules evaluated in order:
+
+| Case | `.save(path)` / `fileName` | Resolved output (`zip=false`) |
+|---|---|---|
+| `fileName` given | `.option("fileName","parcels").save("/out/exports")` | `/out/exports/parcels.gdb` |
+| No `fileName`; `path` is an existing directory | `.save("/out/exports")` | `/out/exports/exports.gdb` |
+| No `fileName`; `path` is a stem | `.save("/out/exports/parcels")` | `/out/exports/parcels.gdb` |
+
+With `zip=true` replace `.gdb` with `.gdb.zip` in the table above. Extension auto-completion: `parcels` → `parcels.gdb`; `parcels.gdb` → unchanged; `parcels.gdb.zip` → unchanged (when `zip=true`). Passing a name ending in a different recognized geo extension (e.g. `.gpkg`) raises a clear error.
 
 ## Example
 

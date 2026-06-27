@@ -53,6 +53,49 @@ some formats are a single file and others a directory, so name `path` accordingl
 The extension is cosmetic for writing (the driver decides the format), but include it
 on single-file outputs so the result is recognizable and portable.
 
+### Output naming for single-file writers
+
+The single-file vector writers (`gpkg_gbx`, `geojson_gbx`, `shapefile_gbx` with `zip=true`,
+and `file_gdb_gbx`) apply an **adaptive naming contract** that resolves the final output path
+from the `.save(path)` argument and an optional `fileName` option. Extension auto-completion
+handles partial names so you never produce a misnamed file.
+
+**Resolution rules** (evaluated in order):
+
+| Case | Condition | Resolved output |
+|---|---|---|
+| 1 | `.option("fileName", name)` given | `path` is treated as the **parent directory** (created if missing); output = `path/complete(name)` |
+| 2 | No `fileName`; `path` is an **existing directory** | output = `path/complete(basename(path))` — named after the directory, written under it |
+| 3 | No `fileName`; `path` does not yet exist (stem/file path) | output = `complete(path)`; parent directory created if missing |
+
+**Extension auto-completion** (`complete(name)`) appends only the missing parts of the
+canonical extension for the format — so `roads` → `roads.shp.zip`, `roads.shp` →
+`roads.shp.zip`, `roads.shp.zip` → unchanged. If `name` ends with a **different** recognized
+geo extension (for example, `.gpkg` passed to the Shapefile writer), the writer raises a clear
+error rather than silently producing a doubly-suffixed name.
+
+Examples:
+
+```python
+# Case 1 — explicit fileName, path is the parent dir (created as needed)
+df.write.format("gpkg_gbx").option("fileName", "districts").mode("overwrite") \
+    .save("/Volumes/main/geo/exports")
+# -> /Volumes/main/geo/exports/districts.gpkg
+
+# Case 2 — path is an existing directory; output named after the dir, under it
+df.write.format("geojson_gbx").mode("overwrite") \
+    .save("/Volumes/main/geo/exports")
+# -> /Volumes/main/geo/exports/exports.geojson  (if exports/ already exists)
+
+# Case 3 — stem path; extension completed automatically
+df.write.format("shapefile_gbx").option("zip", "true").mode("overwrite") \
+    .save("/Volumes/main/geo/exports/roads")
+# -> /Volumes/main/geo/exports/roads.shp.zip
+```
+
+The `nameCol` option on the sharded and raster writers (`geojsonl_gbx`, `raster_gbx`,
+`gtiff_gbx`) is a separate, per-row concept and is **not** affected by this contract.
+
 ### Choosing a writer for large datasets
 
 The **single-file** writers (`geojson_gbx`, `shapefile_gbx`, `gpkg_gbx`) assemble

@@ -44,6 +44,7 @@ lightweight vector readers and writers.
 |---|---|---|
 | `driverName` | `GeoJSON` (preset) | OGR driver. Preset by this named writer; override only if needed. |
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
+| `fileName` | _(none)_ | Name the output unit explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>.geojson` (extension auto-completed). See [Output naming](#output-naming). |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |
 | `geomCol` | auto-detected from the `*_srid` column | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). |
@@ -80,6 +81,18 @@ written concurrently** by its executor to a scratch fragment, then the driver **
 fragments into one output file**. The merge is sequential and rename-free, so it is safe on
 FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
 write parallelism.
+
+## Output naming
+
+`geojson_gbx` applies the standard single-file [output naming contract](./overview#output-naming-for-single-file-writers). The canonical extension is `.geojson`. Rules evaluated in order:
+
+| Case | `.save(path)` / `fileName` | Resolved output |
+|---|---|---|
+| `fileName` given | `.option("fileName","boroughs").save("/out/exports")` | `/out/exports/boroughs.geojson` |
+| No `fileName`; `path` is an existing directory | `.save("/out/exports")` | `/out/exports/exports.geojson` |
+| No `fileName`; `path` is a stem | `.save("/out/exports/boroughs")` | `/out/exports/boroughs.geojson` |
+
+Extension auto-completion: `boroughs` → `boroughs.geojson`; `boroughs.geojson` → unchanged. Passing a name ending in a different recognized geo extension (e.g. `.gpkg`) raises a clear error.
 
 ## Example
 
