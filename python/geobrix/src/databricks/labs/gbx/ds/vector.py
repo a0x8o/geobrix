@@ -135,6 +135,86 @@ def _zip_vsi(path: str) -> str:
     return path
 
 
+_CANONICAL_EXT = {
+    "GPKG": ".gpkg",
+    "GeoJSON": ".geojson",
+    "ESRI Shapefile": ".shp.zip",  # single-file form is zip; non-zip is a dir bundle (out of scope)
+    "OpenFileGDB": ".gdb",
+}
+# Recognized geo extensions, longest-first, so multi-part suffixes match before their parts.
+_RECOGNIZED_EXTS = (".shp.zip", ".gdb.zip", ".gpkg", ".geojson", ".gdb", ".shp")
+
+
+def _canonical_ext(driver: str, zip_enabled: bool) -> str:
+    """Return the canonical file extension for a given OGR driver + zip flag.
+
+    For OpenFileGDB, zip=True produces '.gdb.zip' (a zipped directory archive);
+    zip=False produces '.gdb' (the directory itself). All other drivers return
+    their single-file extension from _CANONICAL_EXT (zip flag is ignored because
+    Shapefile zip is baked into its canonical form; GPKG/GeoJSON are never zipped).
+    """
+    if driver == "OpenFileGDB":
+        return ".gdb.zip" if zip_enabled else ".gdb"
+    return _CANONICAL_EXT[driver]
+
+
+def _complete_ext(name: str, ext: str) -> str:
+    """Ensure *name* ends with *ext*, handling partial multi-part extensions.
+
+    Rules:
+    - If *name* already ends with *ext* (case-insensitive), return it unchanged.
+    - If *name* ends with a recognized prefix of *ext* (e.g. 'roads.shp' when ext
+      is '.shp.zip'), complete it by appending the missing suffix.
+    - If *name* ends with a DIFFERENT recognized geo extension, raise ValueError
+      (prevents silently double-appending when the caller passes the wrong name).
+    - Otherwise append *ext* directly.
+    """
+    low = name.lower()
+    if low.endswith(ext):
+        return name
+    # Incremental completion for multi-part ext (e.g. "roads.shp" -> "roads.shp.zip").
+    for k in range(1, ext.count(".") + 1):
+        suffix = "." + ".".join(ext.strip(".").split(".")[:k])
+        if low.endswith(suffix) and ext.startswith(suffix):
+            return name + ext[len(suffix):]
+    # Reject a DIFFERENT recognized geo extension rather than double-append.
+    for other in _RECOGNIZED_EXTS:
+        if other != ext and low.endswith(other):
+            raise ValueError(
+                f"output name '{name}' ends with '{other}' but this writer "
+                f"expected {ext} (got a different geo extension)."
+            )
+    return name + ext
+
+
+def _resolve_single_file_output(path: str, file_name, ext: str) -> str:
+    """Resolve the output path for a single-file/single-unit writer.
+
+    Implements the 3-case naming contract:
+
+    Case 1 — *file_name* given: treat *path* as the parent directory, create it,
+        and return ``<path>/<_complete_ext(file_name, ext)>``.
+    Case 2 — *file_name* is None/empty and *path* is an EXISTING directory:
+        name the output after the directory itself (placed under it), e.g.
+        ``/Volumes/.../roads_dir`` -> ``/Volumes/.../roads_dir/roads_dir.gpkg``.
+    Case 3 — *file_name* is None/empty and *path* is NOT an existing directory
+        (file-like target): complete the extension on the stem, create the parent
+        directory, and return the completed path.
+
+    Creates parent directories as needed. Pure path logic + one mkdirs side effect.
+    """
+    path = path.rstrip("/")
+    if file_name:  # case 1: path is the parent dir
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, _complete_ext(file_name, ext))
+    if os.path.isdir(path):  # case 2: existing dir -> name after it, under it
+        return os.path.join(path, _complete_ext(os.path.basename(path), ext))
+    # case 3: file-like target -> complete ext, create parent
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    return _complete_ext(path, ext)
+
+
 def _zip_shapefile_bundle(shp_path: str, zip_path: str) -> None:
     """Zip the shapefile sidecar files (written by pyogrio alongside *shp_path*)
     into a single archive at *zip_path*, flat at the archive root.
