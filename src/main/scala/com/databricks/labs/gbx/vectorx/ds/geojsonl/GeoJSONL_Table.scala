@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 import scala.jdk.CollectionConverters._
 
 /**
-  * Spark Connector Table for the `geojsonl` DataSource. Capability: `BATCH_WRITE` only.
+  * Spark Connector Table for the `geojsonl_ogr` DataSource. Capability: `BATCH_WRITE` only.
   *
   * The write builder validates the (geometry/`*_srid` pair + attrs) schema and requires
   * `.mode("overwrite")` — append has no meaning for a directory of immutable shards in v0.4.0.
@@ -15,8 +15,8 @@ import scala.jdk.CollectionConverters._
 class GeoJSONL_Table(schema: StructType, properties: Map[String, String])
     extends Table with SupportsWrite {
 
-    /** Overrides Table.name: returns "geojsonl". */
-    override def name(): String = "geojsonl"
+    /** Overrides Table.name: returns "geojsonl_ogr". */
+    override def name(): String = "geojsonl_ogr"
 
     /** Overrides Table.schema: returns the producer DataFrame's schema. */
     // noinspection ScalaDeprecation
@@ -29,7 +29,13 @@ class GeoJSONL_Table(schema: StructType, properties: Map[String, String])
     /** Build a write that consumes feature rows and writes a directory of GeoJSONL shards. */
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
         // Validate the schema up front so a bad shape fails fast on the driver.
-        GeoJSONL_DataSource.resolveRoles(info.schema())
+        val o = info.options()
+        GeoJSONL_DataSource.resolveRoles(
+            info.schema(),
+            Option(o.get("geomCol")),
+            Option(o.get("sridCol")),
+            Option(o.get("projCol"))
+        )
         new GeoJSONL_WriteBuilder(info.schema(), properties ++ info.options().asScala)
     }
 

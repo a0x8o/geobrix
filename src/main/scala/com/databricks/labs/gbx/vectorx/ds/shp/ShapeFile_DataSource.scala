@@ -19,6 +19,11 @@ class ShapeFile_DataSource extends OGR_DataSource with DataSourceExtras {
     /** Overrides parent shortName: returns "shapefile_ogr". */
     override def shortName(): String = "shapefile_ogr"
 
+    /** Overrides parent writeGuardMessage: names shapefile_ogr and its shapefile_gbx alternative. */
+    override protected def writeGuardMessage(path: String): String =
+        "'shapefile_ogr' is a read-only reader; write vector data with the light shapefile_gbx writer " +
+        "(or geojsonl_ogr for sharded GeoJSONL)."
+
     /** Overrides parent inferSchema: delegates to super with dsExtraMap options (shapefile driver). */
     override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
         super.inferSchema(extraCaseInsensitiveStringMap(options))

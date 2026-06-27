@@ -67,15 +67,18 @@ class HadoopUtilsTest extends AnyFunSuite with BeforeAndAfterEach {
         an[IllegalArgumentException] should be thrownBy HadoopUtils.getFirstFile(dirUri, hconf)
     }
 
-    // cleanPath: the supported storage fabric (UC Volumes /Volumes/, Workspace files /Workspace/,
-    // and their dbfs:/Volumes / file: URI forms) must all normalize to the local file: connector,
-    // and legacy pre-Volumes DBFS (/dbfs/, dbfs:/) must be coerced AWAY from the retired mount --
-    // never emitted as a dbfs: URI nor as a /dbfs FUSE path. Regression for issue #34, where a
-    // scheme-less /Volumes/ path resolved against fs.defaultFS (dbfs:) and returned a null tile.
-    test("cleanPath routes UC Volumes paths to the file: connector") {
-        HadoopUtils.cleanPath("/Volumes/c/s/v/x.tif") shouldBe "file:/Volumes/c/s/v/x.tif"
-        HadoopUtils.cleanPath("dbfs:/Volumes/c/s/v/x.tif") shouldBe "file:/Volumes/c/s/v/x.tif"
-        HadoopUtils.cleanPath("/dbfs/Volumes/c/s/v/x.tif") shouldBe "file:/Volumes/c/s/v/x.tif"
+    // cleanPath normalizes the supported storage fabric. UC Volumes (/Volumes/, dbfs:/Volumes/,
+    // /dbfs/Volumes/, file:/Volumes/) must resolve to the BARE /Volumes/... path so Hadoop uses the
+    // credentialed UC connector on executors -- a file: scheme would force LocalFileSystem (raw
+    // FUSE) and EPERM in opaque DSV2 executor tasks. Workspace files (/Workspace/) route to file:,
+    // and legacy pre-Volumes DBFS (/dbfs/, dbfs:/) is coerced AWAY from the retired mount -- never a
+    // dbfs: URI nor a /dbfs FUSE path. Regression for issue #34: a scheme-less /Volumes path first
+    // resolved against fs.defaultFS (dbfs:) and returned a null tile; a later fix proved rewriting
+    // it to file:/Volumes EPERMs identically, so the correct normalization is BARE /Volumes.
+    test("cleanPath keeps UC Volumes paths bare for the credentialed UC connector") {
+        HadoopUtils.cleanPath("/Volumes/c/s/v/x.tif") shouldBe "/Volumes/c/s/v/x.tif"
+        HadoopUtils.cleanPath("dbfs:/Volumes/c/s/v/x.tif") shouldBe "/Volumes/c/s/v/x.tif"
+        HadoopUtils.cleanPath("/dbfs/Volumes/c/s/v/x.tif") shouldBe "/Volumes/c/s/v/x.tif"
     }
 
     test("cleanPath routes Workspace files to the file: connector") {
@@ -83,8 +86,8 @@ class HadoopUtilsTest extends AnyFunSuite with BeforeAndAfterEach {
         HadoopUtils.cleanPath("file:/Workspace/Users/me/x.tif") shouldBe "file:/Workspace/Users/me/x.tif"
     }
 
-    test("cleanPath keeps file: paths and routes /tmp and local paths to file:") {
-        HadoopUtils.cleanPath("file:/Volumes/c/s/v/x.tif") shouldBe "file:/Volumes/c/s/v/x.tif"
+    test("cleanPath strips file: from a Volumes URI and routes /tmp and local paths to file:") {
+        HadoopUtils.cleanPath("file:/Volumes/c/s/v/x.tif") shouldBe "/Volumes/c/s/v/x.tif"
         HadoopUtils.cleanPath("/tmp/x.tif") shouldBe "file:/tmp/x.tif"
         HadoopUtils.cleanPath("/local/x.tif") shouldBe "file:/local/x.tif"
     }

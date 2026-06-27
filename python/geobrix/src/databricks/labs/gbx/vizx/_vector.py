@@ -7,12 +7,62 @@ the Databricks-native h3_boundaryaswkt.
 
 import warnings
 
+# 1.3x headroom on the sample fraction: pyspark .sample is Bernoulli
+# (approximate-N), so over-sampling then .limit(max_rows) reliably fills up to
+# max_rows rows while staying reproducible by seed.
+_SAMPLE_HEADROOM = 1.3
 
-def as_gdf(df, wkt_col="wkt", *, max_rows=10_000):
+
+def _collect_capped(df, max_rows, sample_seed, label):
+    """Collect a Spark DataFrame to pandas with a max_rows cap.
+
+    ``sample_seed=None`` -> first ``max_rows`` rows via ``.limit`` (current
+    behaviour; deterministic, cheapest). ``sample_seed=<int>`` -> a reproducible
+    Bernoulli sample via ``pyspark.sql.DataFrame.sample`` (seeded; one extra
+    ``count()`` job) capped at ``max_rows``. Emits a truncate warning labelled
+    ``label`` when the cap fires. ``max_rows=None`` collects everything.
+    """
+    if max_rows is None:
+        return df.toPandas()
+
+    if sample_seed is not None:
+        total = df.count()
+        frac = min(1.0, (max_rows * _SAMPLE_HEADROOM) / total) if total else 1.0
+        sampled = df.sample(
+            withReplacement=False, fraction=frac, seed=sample_seed
+        ).limit(max_rows)
+        pdf = sampled.toPandas()
+        if total > len(pdf):
+            warnings.warn(
+                f"{label}: output sampled to max_rows={max_rows} (seed="
+                f"{sample_seed}) for driver-side viz; pass max_rows=None to "
+                "collect all rows.",
+                stacklevel=3,
+            )
+        return pdf
+
+    pdf = df.limit(max_rows + 1).toPandas()
+    if len(pdf) > max_rows:
+        pdf = pdf.iloc[:max_rows]
+        warnings.warn(
+            f"{label}: output truncated to max_rows={max_rows} for driver-side "
+            "viz; pass max_rows=None to collect all rows.",
+            stacklevel=3,
+        )
+    return pdf
+
+
+def as_gdf(df, wkt_col="wkt", *, max_rows=10_000, sample_seed=None):
     """Spark DataFrame with a WKT column -> geopandas.GeoDataFrame (EPSG:4326).
 
     Collects to the driver. With max_rows set (default 10_000) the frame is
     truncated to max_rows and a warning is emitted; pass max_rows=None to opt out.
+
+    ``sample_seed`` (Spark-only; ignored for an in-memory input): ``None``
+    (default) takes the first ``max_rows`` rows via ``.limit`` (deterministic,
+    partition-order arbitrary); an int draws a reproducible seeded sample via
+    ``pyspark.sql.DataFrame.sample`` (same seed -> same rows) at the cost of one
+    extra ``count()`` job.
     """
     from databricks.labs.gbx.vizx._env import assert_viz_available
 
@@ -23,17 +73,7 @@ def as_gdf(df, wkt_col="wkt", *, max_rows=10_000):
         raise ValueError(
             f"as_gdf: column {wkt_col!r} not in DataFrame columns {df.columns}"
         )
-    if max_rows is None:
-        pdf = df.toPandas()
-    else:
-        pdf = df.limit(max_rows + 1).toPandas()
-        if len(pdf) > max_rows:
-            pdf = pdf.iloc[:max_rows]
-            warnings.warn(
-                f"as_gdf: output truncated to max_rows={max_rows} for driver-side "
-                "viz; pass max_rows=None to collect all rows.",
-                stacklevel=2,
-            )
+    pdf = _collect_capped(df, max_rows, sample_seed, "as_gdf")
     geometry = gpd.GeoSeries.from_wkt(pdf[wkt_col], crs=4326)
     pdf = pdf.drop(columns=[wkt_col])
     pdf["geometry"] = geometry.values
@@ -102,7 +142,13 @@ def grid_as_gdf(grid, srid=None):
 
 
 def cells_as_gdf(
-    df, cell_col="cellid", extra_cols=(), *, max_rows=10_000, dissolve_by=None
+    df,
+    cell_col="cellid",
+    extra_cols=(),
+    *,
+    max_rows=10_000,
+    dissolve_by=None,
+    sample_seed=None,
 ):
     """H3 cell ids (bigint) -> boundary polygons as a GeoDataFrame (EPSG:4326).
 
@@ -113,6 +159,11 @@ def cells_as_gdf(
     returned GeoDataFrame contains one dissolved polygon per distinct value of
     that column (the union footprint) rather than one row per cell. Raises
     ``ValueError`` if ``dissolve_by`` is set but not in ``extra_cols``.
+
+    ``sample_seed`` (Spark-only): ``None`` (default) takes the first ``max_rows``
+    cells via ``.limit``; an int draws a reproducible seeded sample via
+    ``pyspark.sql.DataFrame.sample`` (same seed -> same cells) at the cost of one
+    extra ``count()`` job.
     """
     from databricks.labs.gbx.vizx._env import assert_viz_available
 
@@ -128,17 +179,7 @@ def cells_as_gdf(
     from shapely.geometry import Polygon
 
     cols = [cell_col, *extra_cols]
-    if max_rows is None:
-        pdf = df.select(*cols).toPandas()
-    else:
-        pdf = df.select(*cols).limit(max_rows + 1).toPandas()
-        if len(pdf) > max_rows:
-            pdf = pdf.iloc[:max_rows]
-            warnings.warn(
-                f"cells_as_gdf: output truncated to max_rows={max_rows} for "
-                "driver-side viz; pass max_rows=None to collect all rows.",
-                stacklevel=2,
-            )
+    pdf = _collect_capped(df.select(*cols), max_rows, sample_seed, "cells_as_gdf")
 
     def _boundary(cell_int):
         ring = h3.cell_to_boundary(h3.int_to_str(int(cell_int)))

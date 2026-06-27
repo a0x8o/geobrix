@@ -13,14 +13,15 @@ import org.gdal.ogr.{Feature, FieldDefn, Geometry}
 import org.gdal.osr.SpatialReference
 
 import java.nio.file.{Files, Paths}
+import java.util.Locale
 import scala.collection.mutable
 import scala.util.Try
 
 /**
-  * Per-task data writer for the `geojsonl` DataSource.
+  * Per-task data writer for the `geojsonl_ogr` DataSource.
   *
   * Behavior:
-  *   - Buffer the partition's rows (geometry as WKB bytes — already WKB, or WKT parsed to WKB —
+  *   - Buffer the partition's rows (geometry as WKB bytes - already WKB, or WKT parsed to WKB -
   *     plus attribute values).
   *   - Flush a shard when the buffer reaches `maxRecordsPerFile` (if set) and once more at the end.
   *   - Each flush encodes a `GeoJSONSeq` shard to worker-local temp via OGR (one `Feature` per line),
@@ -29,7 +30,7 @@ import scala.util.Try
   *
   * Shard names use a fresh UUID per flush, so they are unique across tasks AND across a single
   * partition's chunks (matching the lightweight writer). GDAL/OGR registration goes through the
-  * synchronized `GDALManager.initOgr()` guard (REQUIRED — never raw `RegisterAll` per task).
+  * synchronized `GDALManager.initOgr()` guard (REQUIRED - never raw `RegisterAll` per task).
   */
 class GeoJSONL_RowWriter(
     schema: StructType,
@@ -38,15 +39,18 @@ class GeoJSONL_RowWriter(
     hConf: SerializableConfiguration
 ) extends DataWriter[InternalRow] {
 
-    private val ciOptions = options.map { case (k, v) => k.toLowerCase -> v }
+    private val ciOptions = options.map { case (k, v) => k.toLowerCase(Locale.ROOT) -> v }
     private val maxRecordsPerFile: Int = ciOptions.get("maxrecordsperfile").map(_.toInt).getOrElse(0)
     if (maxRecordsPerFile < 0) {
         throw new IllegalArgumentException("maxRecordsPerFile must be a non-negative integer.")
     }
     private val geometryTypeOverride: Option[String] = ciOptions.get("geometrytype")
     private val layerNameOpt: Option[String] = ciOptions.get("layername")
+    private val geomColOpt: Option[String] = ciOptions.get("geomcol")
+    private val sridColOpt: Option[String] = ciOptions.get("sridcol")
+    private val projColOpt: Option[String] = ciOptions.get("projcol")
 
-    private val roles = GeoJSONL_DataSource.resolveRoles(schema)
+    private val roles = GeoJSONL_DataSource.resolveRoles(schema, geomColOpt, sridColOpt, projColOpt)
     private val geomIdx = schema.fieldIndex(roles.geomCol)
     private val sridIdx = schema.fieldIndex(roles.sridCol)
     private val projIdx = if (schema.fieldNames.contains(roles.projCol)) schema.fieldIndex(roles.projCol) else -1
@@ -241,7 +245,7 @@ class GeoJSONL_RowWriter(
         case _                                                => OFTString
     }
 
-    private def geomTypeFromName(name: String): Int = name.toLowerCase match {
+    private def geomTypeFromName(name: String): Int = name.toLowerCase(Locale.ROOT) match {
         case "point"              => wkbPoint
         case "linestring"         => wkbLineString
         case "polygon"            => wkbPolygon
@@ -260,7 +264,7 @@ object GeoJSONL_RowWriter {
 
     /**
       * Ensure the GDAL JNI shared library is loaded on this JVM before any OGR access. Mirrors
-      * `MvtWriter.ensureNativeLoaded` — `GetDriverByName` / `RegisterAll` require
+      * `MvtWriter.ensureNativeLoaded` - `GetDriverByName` / `RegisterAll` require
       * `libgdalalljni.so` to be `System.load`-ed first, and it must happen on the executor JVM.
       */
     private[geojsonl] def ensureNativeLoaded(): Unit = {

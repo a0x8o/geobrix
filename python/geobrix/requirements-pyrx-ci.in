@@ -80,6 +80,11 @@ geopandas==1.1.3
 folium==0.20.0
 mapclassify==2.10.0
 contextily==1.6.2
+# IPython is what the Databricks/Jupyter runtime provides; gbx.vizx.plot_interactive
+# reaches displayHTML through it (IPython.get_ipython user_ns) and falls back to
+# IPython.display. test/vizx/test_interactive.py exercises both paths, so the light
+# CI env needs IPython present. Pinned to the dev-container version (8.30.0).
+ipython==8.30.0
 
 # --- test runner ---
 pytest==8.4.2

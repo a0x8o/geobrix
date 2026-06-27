@@ -32,7 +32,14 @@ class OGR_Batch(schema: StructType, options: Map[String, String]) extends Scan w
         sparkSession.read.format("com.databricks.labs.gbx.ds.whitelist.WhitelistDataSource").option("path", inPath).load()
 
         NodeFileManager.init(exprConfig.hConf)
-        val files = HadoopUtils.listHadoopFiles(inPath, exprConfig.hConf)
+        // Credential-aware listing (Spark file index) -- a raw driver-thread Hadoop FS listing
+        // lacks the UC Volume / WSFS credential and throws FileNotFound on /Volumes.
+        // Filter out OGR sidecar extensions (.dbf, .shx, .prj, .cpg, ...) before building
+        // partitions: the ESRI Shapefile driver opens a loose .dbf as an attribute-only
+        // datasource and counts its records, causing directories of unzipped shapefiles to
+        // over-count (e.g. 200k-feature dir -> 600k rows). .shp.zip archives are unaffected
+        // (no loose sidecars). Each .shp's stem-siblings are still staged via copyToPath.
+        val files = HadoopUtils.primaryDataFiles(HadoopUtils.listDataFilesSpark(sparkSession, inPath))
 
         val filesDf = files.toDF("path")
 
@@ -45,7 +52,7 @@ class OGR_Batch(schema: StructType, options: Map[String, String]) extends Scan w
         val nonSeekable = Set("GeoJSON", "GeoJSONSeq")
         val offsetsUDF = udf { (path: String) =>
             try {
-                // sidecar files will be ignored here
+                // sidecar files are already filtered out above (primaryDataFiles); this opens only primary data files
                 val localPath = NodeFileManager.readRemote(path)
                 val dataset = OGR_Driver.open(localPath, driverName)
                 val resolvedLayerName = if (layerName.isEmpty) dataset.GetLayer(layerN).GetName() else layerName

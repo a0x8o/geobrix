@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /**
-  * BatchWrite for the `geojsonl` DataSource.
+  * BatchWrite for the `geojsonl_ogr` DataSource.
   *
   * Per-partition (executor side, [[GeoJSONL_RowWriter]]): buffer the partition's rows, then on
   * commit encode one (or several, with `maxRecordsPerFile`) `GeoJSONSeq` shard(s) to worker-local

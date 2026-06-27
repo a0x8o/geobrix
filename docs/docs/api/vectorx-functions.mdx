@@ -22,18 +22,10 @@ VectorX augments the product's native `ST_*` functions with vector-tile encoding
 - **OGR-based vector readers** — Shapefile, GeoJSON, GeoPackage, FileGDB (heavyweight only)
 - **Legacy Mosaic conversion** — `gbx_st_legacyaswkb` for migrating geometries written by DBLabs Mosaic, in **both** tiers
 
-:::note Import paths
-- Vector tile encoding lightweight: `databricks.labs.gbx.pyvx` (Python)
-- Vector tile encoding heavyweight: `databricks.labs.gbx.vectorx` (Python) / `com.databricks.labs.gbx.vectorx` (Scala)
-- Legacy Mosaic conversion: `databricks.labs.gbx.vectorx.jts.legacy` (Python) / `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala)
-:::
-
-:::note SQL examples
-Examples on this page use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For SQL, Python, and Scala usage patterns, see [Language Bindings](./language-bindings).
-:::
-
-:::note Geometry input encodings
-Every `gbx_st_*` geometry input accepts **WKB, EWKB, WKT, and EWKT** interchangeably. WKB/WKT carry no SRID; EWKB/EWKT carry one. Pass whichever encoding your upstream produces — no separate conversion step is required.
+:::note Using these functions
+- **Import paths** — vector tile encoding: `databricks.labs.gbx.pyvx` (lightweight) · `databricks.labs.gbx.vectorx` Python / `com.databricks.labs.gbx.vectorx` Scala (heavyweight). Legacy Mosaic conversion: `databricks.labs.gbx.vectorx.jts.legacy` (Python) / `com.databricks.labs.gbx.vectorx.jts.legacy` (Scala).
+- **SQL examples** — examples use **SQL** (and Python where shown); in SQL, VectorX functions are prefixed with **`gbx_`** (e.g. `gbx_st_legacyaswkb`). For SQL, Python, and Scala usage patterns, see [Language Bindings](./language-bindings).
+- **Geometry input encodings** — every `gbx_st_*` geometry input accepts **WKB, EWKB, WKT, and EWKT** interchangeably. WKB/WKT carry no SRID; EWKB/EWKT carry one. Pass whichever encoding your upstream produces — no separate conversion step is required.
 :::
 
 ## Tier availability

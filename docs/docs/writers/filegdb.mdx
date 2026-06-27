@@ -15,40 +15,31 @@ by the heavyweight GDAL init script. It round-trips with the `file_gdb_gbx` read
 schema (`attrs..., geom_0, geom_0_srid, geom_0_srid_proj`) is shared across the
 lightweight vector readers and writers.
 
-:::warning Hybrid — requires the native GDAL
-Writing a File Geodatabase needs the native GDAL Python bindings (`osgeo`) from the
-heavyweight GDAL init script (see [Installation](/docs/installation)) — pyogrio's bundled
-GDAL ships a read-only OpenFileGDB driver. On compute with those natives, `file_gdb_gbx`
-writes the `.gdb` natively; without them it raises a clear error (use `gpkg_gbx` /
-`geojson_gbx` instead). FileGDB **reading** is lightweight-only (pyogrio reads it). The
-output path must end in `.gdb`.
+:::tip Compute & scale
+- **Large datasets:** this writer assembles the `.gdb` on a single node. For very large
+  outputs, use a **classic cluster** with ample memory or switch to the distributed
+  `geojsonl_gbx` writer. See
+  [**Choosing a writer for large datasets**](./overview#choosing-a-writer-for-large-datasets).
+- **Tier & compute:** `file_gdb_gbx` writing is the **exception** among the `*_gbx` writers —
+  because it encodes via native GDAL (`osgeo`), it requires a **classic x86 cluster** with the
+  heavyweight GDAL init script and does **not** run on Serverless or ARM. (FileGDB
+  **reading** is fully lightweight and runs anywhere.) For vector output on Serverless/ARM, use
+  `gpkg_gbx`, `geojson_gbx`, or `geojsonl_gbx`. See
+  [Benchmarking](../api/benchmarking) for timings and methodology.
 :::
 
-:::note Register first
-Call `register(spark)` once before using any `*_gbx` format (see the
-[Writers Overview](./overview)).
-:::
-
-:::note Input geometry format
-The vector writers take a geometry column encoded as **WKB** (binary) or **WKT** (text) —
-the same encodings the `*_gbx` readers emit (controlled by the reader's `asWKB` option). The
-SRID/CRS is taken from the companion `*_srid` / `*_srid_proj` columns, so plain WKB or WKT is
-all that is needed. Extended forms (**EWKB**, **EWKT**) and GeoJSON-encoded geometry are **not**
-accepted as writer input.
-
-Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column? Convert it to a supported interchange
-format first with an [ST export function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-st-geospatial-functions#export):
-use `ST_AsBinary(geom)` for WKB (recommended) or `ST_AsText(geom)` for WKT. Avoid
-`ST_GeomAsEWKB`, `ST_AsEWKT`, and `ST_AsGeoJSON` — those encodings are not accepted as input.
-:::
-
-:::tip Benchmark & tradeoff
-**`file_gdb_gbx` writing is the exception among the lightweight writers.** Because it encodes
-via the native GDAL (`osgeo`), writing a File Geodatabase is **constrained to a classic x86
-cluster carrying the heavyweight GDAL natives** — it does **not** run on Serverless or ARM,
-the same compute limits as the heavyweight tier. (FileGDB **reading** is fully lightweight and
-runs anywhere.) For vector output on Serverless/ARM, reference the other writers. See the
-[Benchmarking](../api/benchmarking) page for timings and methodology.
+:::note Before you write
+- **Register first** — call `register(spark)` once before using any `*_gbx` format (see the
+  [Writers Overview](./overview)).
+- **Hybrid writer** — uses the pure-Python DataSource V2 framework but encodes via **native
+  GDAL** (`osgeo.ogr`), so it requires the heavyweight GDAL init script
+  (see [Installation](/docs/installation)). Without the native GDAL bindings it raises a clear
+  error. The output path must end in `.gdb`.
+- **Input geometry** — provide geometry as **WKB** (binary) or **WKT** (text), with the CRS in
+  the companion `*_srid` / `*_srid_proj` columns. **EWKB**, **EWKT**, and GeoJSON-encoded
+  geometry are **not** accepted. Writing from a Databricks `GEOMETRY` / `GEOGRAPHY` column?
+  Export to WKB first with `ST_AsBinary` (or `ST_AsText` for WKT) — see the
+  [Schema](#schema) section below — and avoid `ST_GeomAsEWKB` / `ST_AsEWKT` / `ST_AsGeoJSON`.
 :::
 
 ## Options
@@ -57,55 +48,53 @@ runs anywhere.) For vector output on Serverless/ARM, reference the other writers
 |---|---|---|
 | `driverName` | `OpenFileGDB` (preset) | OGR driver. Preset by this named writer; override only if needed. |
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
+| `fileName` | _(none)_ | Name the output unit explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>.gdb` (or `path/<fileName>.gdb.zip` when `zip=true`; extension auto-completed). See [Output naming](#output-naming). |
+| `zip` | `false` | When `true`, produce a **single `.gdb.zip`** archive (the `.gdb` directory packed at the archive root) instead of a `.gdb` directory. The output path is normalised automatically: `.save("roads")` → `roads.gdb.zip`; `.save("roads.gdb")` → `roads.gdb.zip`. The [reader](../readers/filegdb) opens `.gdb.zip` transparently. Ignored for non-FileGDB drivers. |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |
+| `geomCol` | auto-detected from the `*_srid` column | Override the geometry column name. Locates the geometry and its SRID companion (`<geomCol>_srid`). See [Named Vector Formats](./overview#named-vector-formats). This is a lightweight-tier writer (hybrid — requires native GDAL for write). |
+| `sridCol` | `<geomCol>_srid` | Override the SRID column name. **Required** — supplies the CRS authority code (e.g. `"4326"`, or `"0"` if unknown). |
+| `projCol` | `<geomCol>_srid_proj` | Override the PROJ4 column name (optional fallback CRS when `sridCol` is `"0"`). |
 
 ## Schema
 
-**Input schema — a geometry column plus its SRID companion:**
-
-```
-root
- |-- <geom>: binary (WKB)  or  string (WKT)   # the geometry
- |-- <geom>_srid: string        # REQUIRED — CRS authority code, e.g. "4326" ("0" if unknown)
- |-- <geom>_srid_proj: string   # optional — PROJ4 string, used as a CRS fallback when srid is "0"
- |-- ...any other columns       # written as feature attributes
-```
-
-The writer locates the geometry as the column `X` that has a companion `X_srid` column, so the geometry column may be named anything (`geom_0` by convention — what the `*_gbx` readers emit). **`<geom>_srid` is required**: it identifies the geometry column and supplies the CRS. The `_srid` / `_srid_proj` columns are consumed for the CRS and are **not** written as fields. **Every other column is written as a feature attribute.**
-
-Coerce your DataFrame/table to this shape before writing:
+`file_gdb_gbx` uses the shared [vector column contract](./vector#schema) — a geometry column
+plus its `*_srid` (required) / `*_srid_proj` (optional) CRS companions; every other column
+becomes an attribute. Point the writer at your columns with `geomCol` / `sridCol` / `projCol`,
+or coerce to the `geom_0` convention.
 
 ```python
-from pyspark.sql import functions as F
-
-df.select(
-    F.col("my_geom_wkb").alias("geom_0"),     # geometry as WKB (or WKT)
-    F.lit("4326").alias("geom_0_srid"),       # CRS authority code
-    F.lit("").alias("geom_0_srid_proj"),      # optional PROJ4 fallback
-    "name", "population",                      # -> written as feature attributes
-).write.format("file_gdb_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+(df  # geometry + CRS under your own column names
+ .write.format("file_gdb_gbx")
+ .option("geomCol", "the_geom")   # WKB or WKT
+ .option("sridCol", "epsg")       # REQUIRED — CRS authority code
+ .option("projCol", "crs_proj")   # optional — PROJ4 fallback
+ .mode("overwrite").save("/Volumes/cat/sch/vol/parcels.gdb"))
 ```
 
-**From a Databricks `GEOMETRY` / `GEOGRAPHY` column.** Databricks native spatial types are not
-a writer input format directly — export them to WKB plus an SRID first. Use `ST_AsWKB` (the
-equivalent of `ST_AsBinary`) for the geometry column and `ST_SRID` for the CRS, casting the
-SRID to a string:
+For coercing an arbitrary frame to this shape and for exporting Databricks `GEOMETRY` /
+`GEOGRAPHY` columns, see the [**Vector Writer schema**](./vector#schema).
+
+**Output:** an ESRI File Geodatabase (a `.gdb` directory, or a single `.gdb.zip` with
+`zip=true` — see below); the geometry is stored in a named field (default `SHAPE`). This is
+the **hybrid** writer — it encodes via native GDAL (`osgeo.ogr`), so the heavyweight GDAL
+init script is required (Esri field name and type limits apply).
+
+## Producing a portable ZIP archive
+
+Pass `zip=true` to write a single self-contained `.gdb.zip` instead of a `.gdb` directory —
+the `.gdb` folder is packed at the archive root, the layout GDAL expects. The output path is
+normalised regardless of the extension you supply — `.save("roads")`, `.save("roads.gdb")`,
+and `.save("roads.gdb.zip")` all land at `roads.gdb.zip`:
 
 ```python
-df.selectExpr(
-    "ST_AsWKB(my_geom) AS geom_0",                     # GEOMETRY/GEOGRAPHY -> WKB
-    "CAST(ST_SRID(my_geom) AS STRING) AS geom_0_srid",  # SRID -> string
-    "'' AS geom_0_srid_proj",
-    "name", "population",                              # -> feature attributes
-).write.format("file_gdb_gbx").mode("overwrite").save("/Volumes/cat/sch/vol/out")
+(df.write.format("file_gdb_gbx")
+   .option("zip", "true")
+   .mode("overwrite").save("/Volumes/cat/sch/vol/parcels"))   # -> parcels.gdb.zip
 ```
 
-See [Databricks Spatial](/docs/databricks-spatial) for the full ST function reference.
-
-The geometry must be WKB or WKT (see the input-geometry note above; convert a Databricks `GEOMETRY` with `ST_AsBinary`). The written file round-trips with the matching `*_gbx` reader — reading it back yields `(…attributes, geom_0, geom_0_srid, geom_0_srid_proj)`.
-
-**Output:** an ESRI File Geodatabase (a `.gdb` directory); attributes are preserved.
+The [`file_gdb_gbx` / `file_gdb_ogr` reader](../readers/filegdb) opens a `.gdb.zip` directly
+(via GDAL's `/vsizip/`), so the archive round-trips with no extra step.
 
 ## How it scales
 
@@ -115,6 +104,18 @@ written concurrently** by its executor to a scratch fragment, then the driver **
 fragments into one output file**. The merge is sequential and rename-free, so it is safe on
 FUSE-mounted cloud storage (Unity Catalog Volumes, DBFS). Repartition the input to control
 write parallelism.
+
+## Output naming
+
+`file_gdb_gbx` applies the standard single-file [output naming contract](./overview#output-naming-for-single-file-writers). The canonical extension is `.gdb` (or `.gdb.zip` when `zip=true`). Rules evaluated in order:
+
+| Case | `.save(path)` / `fileName` | Resolved output |
+|---|---|---|
+| `fileName` given | `.option("fileName","parcels").save("/out/exports")` | `/out/exports/parcels.gdb` |
+| No `fileName`; `path` is an existing directory | `.save("/out/exports")` | `/out/exports/exports.gdb` |
+| No `fileName`; `path` is a stem | `.save("/out/exports/parcels")` | `/out/exports/parcels.gdb` |
+
+With `zip=true` replace `.gdb` with `.gdb.zip` in the table above. Extension auto-completion: `parcels` → `parcels.gdb`; `parcels.gdb` → unchanged; `parcels.gdb.zip` → unchanged (when `zip=true`). Passing a name ending in a different recognized geo extension (e.g. `.gpkg`) raises a clear error.
 
 ## Example
 

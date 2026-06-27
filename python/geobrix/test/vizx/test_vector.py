@@ -55,6 +55,120 @@ def test_cells_as_gdf_boundary_from_h3_lib(spark):
 
 
 # ---------------------------------------------------------------------------
+# sample_seed: reproducible sampling on the collection adapters
+# ---------------------------------------------------------------------------
+
+
+class _FakeSparkDF:
+    """Minimal Spark-DataFrame stand-in for sampling-path unit assertions.
+
+    Records the args passed to ``.sample`` and returns a pandas frame from
+    ``.toPandas`` so the adapter can build a gdf without a real Spark session.
+    """
+
+    def __init__(self, pdf, *, count, columns=None):
+        self._pdf = pdf
+        self._count = count
+        self.columns = columns if columns is not None else list(pdf.columns)
+        self.sample_calls = []
+
+    def count(self):
+        return self._count
+
+    def select(self, *cols):
+        return self
+
+    def sample(self, withReplacement, fraction, seed):
+        self.sample_calls.append(
+            {"withReplacement": withReplacement, "fraction": fraction, "seed": seed}
+        )
+        return self
+
+    def limit(self, n):
+        self._pdf = self._pdf.iloc[:n]
+        return self
+
+    def toPandas(self):
+        return self._pdf
+
+
+def test_as_gdf_sample_seed_calls_sample_with_seed_and_fraction():
+    """sample_seed=int -> df.sample(seed=..., fraction=max_rows*1.3/count)."""
+    import pandas as pd
+
+    from databricks.labs.gbx.vizx import as_gdf
+
+    pdf = pd.DataFrame(
+        {"name": list("abcd"), "wkt": [f"POINT ({i} 0)" for i in range(4)]}
+    )
+    fake = _FakeSparkDF(pdf, count=1000)
+    gdf = as_gdf(fake, max_rows=10, sample_seed=42)
+    assert len(fake.sample_calls) == 1
+    call = fake.sample_calls[0]
+    assert call["seed"] == 42
+    assert call["withReplacement"] is False
+    assert abs(call["fraction"] - (10 * 1.3 / 1000)) < 1e-12
+    assert gdf.crs.to_epsg() == 4326
+
+
+def test_as_gdf_sample_seed_none_uses_limit_not_sample(spark):
+    """sample_seed=None keeps the first-N .limit path (no .sample, no count)."""
+    from databricks.labs.gbx.vizx import as_gdf
+
+    df = spark.range(5).selectExpr("id", "concat('POINT (', id, ' 0)') AS wkt")
+    pdf = df.toPandas()
+    fake = _FakeSparkDF(pdf, count=5)
+    fake.count = lambda: (_ for _ in ()).throw(
+        AssertionError("count() must not be called on the None path")
+    )
+    gdf = as_gdf(fake, max_rows=2)
+    assert fake.sample_calls == []
+    assert len(gdf) == 2
+
+
+def test_as_gdf_sample_seed_reproducible_same_seed_identical(spark):
+    """Same seed twice -> identical collected rows; a different seed differs."""
+    from databricks.labs.gbx.vizx import as_gdf
+
+    df = spark.range(2000).selectExpr("id", "concat('POINT (', id, ' 0)') AS wkt")
+    a = as_gdf(df, max_rows=50, sample_seed=7)
+    b = as_gdf(df, max_rows=50, sample_seed=7)
+    c = as_gdf(df, max_rows=50, sample_seed=99)
+    assert list(a["id"]) == list(b["id"])
+    # different seed: overwhelmingly likely to differ on 50-of-2000 samples
+    assert list(a["id"]) != list(c["id"])
+
+
+def test_cells_as_gdf_sample_seed_calls_sample_with_seed():
+    """cells_as_gdf threads sample_seed into df.sample (seed + fraction)."""
+    import h3
+    import pandas as pd
+
+    from databricks.labs.gbx.vizx import cells_as_gdf
+
+    cell = h3.str_to_int(h3.latlng_to_cell(0.0, 0.0, 5))
+    pdf = pd.DataFrame({"cellid": [cell, cell], "count": [1, 2]})
+    fake = _FakeSparkDF(pdf, count=500, columns=["cellid", "count"])
+    cells_as_gdf(fake, extra_cols=["count"], max_rows=10, sample_seed=11)
+    assert len(fake.sample_calls) == 1
+    call = fake.sample_calls[0]
+    assert call["seed"] == 11
+    assert abs(call["fraction"] - (10 * 1.3 / 500)) < 1e-12
+
+
+def test_cells_as_gdf_sample_seed_none_uses_limit(spark):
+    """cells_as_gdf sample_seed=None keeps first-N .limit (no .sample)."""
+    import h3
+
+    from databricks.labs.gbx.vizx import cells_as_gdf
+
+    cells = [(h3.str_to_int(c), 1) for c in h3.grid_disk(h3.latlng_to_cell(0, 0, 5), 2)]
+    df = spark.createDataFrame(cells, ["cellid", "count"])
+    gdf = cells_as_gdf(df, extra_cols=["count"], max_rows=3)
+    assert len(gdf) == 3
+
+
+# ---------------------------------------------------------------------------
 # grid_as_gdf tests
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,8 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from databricks.labs.gbx.ds import _scratch
+
 # OGR field type (+ subtype) -> Spark type, matching heavy OGR_SchemaInference.getType.
 _OGR_TO_SPARK = {
     "OFTInteger": IntegerType,
@@ -135,6 +137,136 @@ def _zip_vsi(path: str) -> str:
     return path
 
 
+_CANONICAL_EXT = {
+    "GPKG": ".gpkg",
+    "GeoJSON": ".geojson",
+    "ESRI Shapefile": ".shp.zip",  # single-file form is zip; non-zip is a dir bundle (out of scope)
+    "OpenFileGDB": ".gdb",
+}
+# Recognized geo extensions, longest-first, so multi-part suffixes match before their parts.
+_RECOGNIZED_EXTS = (".shp.zip", ".gdb.zip", ".pmtiles", ".gpkg", ".geojson", ".gdb", ".shp")
+
+
+def _canonical_ext(driver: str, zip_enabled: bool) -> str:
+    """Return the canonical file extension for a given OGR driver + zip flag.
+
+    For OpenFileGDB, zip=True produces '.gdb.zip' (a zipped directory archive);
+    zip=False produces '.gdb' (the directory itself). All other drivers return
+    their single-file extension from _CANONICAL_EXT (zip flag is ignored because
+    Shapefile zip is baked into its canonical form; GPKG/GeoJSON are never zipped).
+    """
+    if driver == "OpenFileGDB":
+        return ".gdb.zip" if zip_enabled else ".gdb"
+    return _CANONICAL_EXT[driver]
+
+
+def _complete_ext(name: str, ext: str) -> str:
+    """Ensure *name* ends with *ext*, handling partial multi-part extensions.
+
+    Rules:
+    - If *ext* is ``""`` (directory unit), return *name* unchanged — no extension
+      to append or validate.
+    - If *name* already ends with *ext* (case-insensitive), return it unchanged.
+    - If *name* ends with a recognized prefix of *ext* (e.g. 'roads.shp' when ext
+      is '.shp.zip'), complete it by appending the missing suffix.
+    - If *name* ends with a DIFFERENT recognized geo extension, raise ValueError
+      (prevents silently double-appending when the caller passes the wrong name).
+    - Otherwise append *ext* directly.
+    """
+    if ext == "":
+        return name  # directory unit: no extension to append or validate
+    low = name.lower()
+    if low.endswith(ext):
+        return name
+    # Incremental completion for multi-part ext (e.g. "roads.shp" -> "roads.shp.zip").
+    for k in range(1, ext.count(".") + 1):
+        suffix = "." + ".".join(ext.strip(".").split(".")[:k])
+        if low.endswith(suffix) and ext.startswith(suffix):
+            return name + ext[len(suffix):]
+    # Reject a DIFFERENT recognized geo extension rather than double-append.
+    for other in _RECOGNIZED_EXTS:
+        if other != ext and low.endswith(other):
+            raise ValueError(
+                f"output name '{name}' ends with '{other}' but this writer "
+                f"expected {ext} (got a different geo extension)."
+            )
+    return name + ext
+
+
+def _resolve_single_file_output(path: str, file_name, ext: str) -> str:
+    """Resolve the output path for a single-file/single-unit writer.
+
+    Implements the 3-case naming contract:
+
+    Case 1 — *file_name* given: treat *path* as the parent directory, create it,
+        and return ``<path>/<_complete_ext(file_name, ext)>``.
+    Case 2 — *file_name* is None/empty and *path* is an EXISTING directory:
+        name the output after the directory itself (placed under it), e.g.
+        ``/Volumes/.../roads_dir`` -> ``/Volumes/.../roads_dir/roads_dir.gpkg``.
+    Case 3 — *file_name* is None/empty and *path* is NOT an existing directory
+        (file-like target): complete the extension on the stem, create the parent
+        directory, and return the completed path.
+
+    When *ext* is ``""`` the output is a **directory unit** (e.g. a PMTiles shard
+    tree): the same 3-case name resolution applies but no extension is appended and
+    no wrong-extension rejection occurs.  The parent of the resolved path is created
+    (``case 1`` and ``case 2`` mkdir the path itself; ``case 3`` mkdirs the parent).
+
+    Creates parent directories as needed. Pure path logic + one mkdirs side effect.
+    """
+    path = path.rstrip("/")
+    if file_name:  # case 1: path is the parent dir
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, _complete_ext(file_name, ext))
+    if os.path.isdir(path):  # case 2: existing dir -> name after it, under it
+        return os.path.join(path, _complete_ext(os.path.basename(path), ext))
+    # case 3: file-like target -> complete ext, create parent
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    return _complete_ext(path, ext)
+
+
+def _zip_shapefile_bundle(shp_path: str, zip_path: str) -> None:
+    """Zip the shapefile sidecar files (written by pyogrio alongside *shp_path*)
+    into a single archive at *zip_path*, flat at the archive root.
+
+    pyogrio writes ``roads.shp``, ``roads.shx``, ``roads.dbf``, ``roads.prj``,
+    and ``roads.cpg`` alongside ``shp_path`` (in the same directory); this
+    function collects every file in that directory that shares the stem (e.g.
+    ``roads``) and packs them into a ZIP archive at ``zip_path``, placing each
+    file at the archive root (no subdirectory). The archive is then the only
+    artifact that the commit loop copies to the Volume target.
+    """
+    import zipfile
+
+    parent = os.path.dirname(shp_path)
+    stem = os.path.splitext(os.path.basename(shp_path))[0]  # e.g. "roads"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in sorted(os.listdir(parent)):
+            # Collect all files with the same stem (roads.shp, roads.shx, …)
+            # but not the zip archive itself.
+            if name.startswith(stem + ".") and not name.endswith(".zip"):
+                zf.write(os.path.join(parent, name), arcname=name)
+
+
+def _zip_gdb_bundle(gdb_dir: str, zip_path: str) -> None:
+    """Zip a FileGDB ``.gdb`` DIRECTORY into a single ``.gdb.zip`` archive,
+    preserving the ``.gdb`` directory as the top-level entry so GDAL's OpenFileGDB
+    driver opens it via ``/vsizip/<name>.gdb.zip`` (the standard zipped-FileGDB
+    layout: one ``<name>.gdb/`` folder at the archive root). The archive is then
+    the only artifact the commit loop copies to the Volume target.
+    """
+    import zipfile
+
+    base = os.path.basename(gdb_dir.rstrip("/"))  # e.g. "roads.gdb"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, _dirs, files in os.walk(gdb_dir):
+            for fn in sorted(files):
+                full = os.path.join(root, fn)
+                rel = os.path.relpath(full, gdb_dir)
+                zf.write(full, arcname=os.path.join(base, rel))  # "<name>.gdb/<rel>"
+
+
 def _geometry_type_of(wkb: bytes) -> str:
     """OGR geometry-type name (e.g. 'Point', 'MultiPolygon') from a WKB blob."""
     from shapely import from_wkb
@@ -152,24 +284,191 @@ def _srid_to_crs(srid: str, proj4: str):
     return None
 
 
-def _writer_col_roles(schema):
-    """(geom_col, srid_col, proj_col, attr_cols) derived from the reader schema:
-    the column X paired with X_srid is the geometry; X_srid_proj is its proj4;
-    everything else is an attribute. Mirrors how the parity test finds geom."""
+# Output geometry field name per driver. GeoJSON/GeoJSONSeq/Shapefile geometry
+# is structural (no named field), so the value is inert there; GPKG/FileGDB name
+# the geometry column, so use the format default rather than the input column
+# name (which may be arbitrary once geomCol is in play).
+# OGR transaction batch size for FileGDB writes.  Large enough to amortise the
+# commit overhead; small enough to bound memory and not starve other threads.
+# Module-level so tests can monkeypatch it to exercise the boundary code path.
+_GDB_TX_BATCH = 100_000
+
+_OUTPUT_GEOM_NAME = {"GPKG": "geom", "OpenFileGDB": "SHAPE"}
+
+
+def _output_geom_name(driver, geom_col):
+    return _OUTPUT_GEOM_NAME.get(driver, geom_col)
+
+
+def _should_stream(driver):
+    """Whether the commit assembles the single output file by STREAMING the
+    partition fragments' record batches into one ``write_arrow`` (bounded driver
+    memory + single pass), vs. reading all fragments at once.
+
+    Applies to every pyogrio single-file writer: GeoJSON, ESRI Shapefile, GPKG.
+    Streaming is the union of what the alternatives lack: one pass (no
+    per-fragment file re-opens, and no GeoJSON quadratic re-encode) AND bounded
+    memory (never the whole dataset in driver memory, which OOMs the single-node
+    driver on large inputs). GDAL sizes the shapefile `.dbf` fields safely across
+    the stream (a wider value in a later batch is NOT truncated -- verified).
+    GeoJSON/Shapefile geometry is structural (no rename); GPKG's geometry column
+    is renamed per batch to its format default (see ``_write_streaming``).
+
+    OpenFileGDB is excluded: its write goes through the native ``osgeo`` path
+    (pyogrio's bundled GDAL is read-only for it), so it can't use
+    ``write_arrow``; bounding its memory is a separate follow-up.
+    """
+    return driver in ("GeoJSON", "ESRI Shapefile", "GPKG")
+
+
+def _stream_record_batches(frag_paths, drop_cols, rename=None):
+    """Yield record batches from a sequence of Arrow-IPC fragment files, dropping
+    ``drop_cols`` and optionally renaming one column (``rename=(old, new)``, used
+    to give GPKG its format-default geometry column name). Streams one batch at a
+    time -- never holds all fragments in memory."""
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    for fp in frag_paths:
+        with pa.memory_map(fp, "r") as src:
+            reader = ipc.open_file(src)
+            for i in range(reader.num_record_batches):
+                batch = reader.get_batch(i)
+                keep = [c for c in batch.schema.names if c not in drop_cols]
+                arrays = [batch.column(c) for c in keep]
+                if rename:
+                    old, new = rename
+                    names = [new if c == old else c for c in keep]
+                else:
+                    names = keep
+                yield pa.record_batch(arrays, names=names)
+
+
+def _writer_col_roles(schema, geom_col=None, srid_col=None, proj_col=None):
+    """(geom_col, srid_col, proj_col, attr_cols) for the vector writers.
+
+    By default the column ``X`` paired with ``X_srid`` is the geometry,
+    ``X_srid_proj`` is its PROJ4 fallback, and everything else is an attribute.
+    The geomCol / sridCol / projCol options override these by name so the frame
+    need not use the convention: each option, when given, must name an existing
+    column; when omitted it falls back to its convention name. geom and srid are
+    required (clear error if unresolvable); proj is optional.
+    """
     names = [f.name for f in schema.fields]
-    srid_cols = [n for n in names if n.endswith("_srid")]
-    if not srid_cols:
-        raise ValueError(
-            "vector writer input needs a geometry/'*_srid' column pair "
-            f"(from a *_gbx reader); got columns {names}"
+
+    # geometry (required)
+    if geom_col is not None:
+        if geom_col not in names:
+            raise ValueError(
+                f"vector writer geomCol={geom_col!r} is not a column; got {names}"
+            )
+        geom = geom_col
+    else:
+        srid_named = [n for n in names if n.endswith("_srid")]
+        if not srid_named:
+            raise ValueError(
+                "vector writer input needs a geometry/'*_srid' column pair (from a "
+                f"*_gbx reader) or an explicit geomCol option; got columns {names}"
+            )
+        geom = srid_named[0][: -len("_srid")]
+        if geom not in names:
+            raise ValueError(f"no geometry column {geom!r} for srid {srid_named[0]!r}")
+
+    # srid (required: option, else <geom>_srid)
+    if srid_col is not None:
+        if srid_col not in names:
+            raise ValueError(
+                f"vector writer sridCol={srid_col!r} is not a column; got {names}"
+            )
+        srid = srid_col
+    else:
+        srid = geom + "_srid"
+        if srid not in names:
+            raise ValueError(
+                f"vector writer needs a SRID column: pass sridCol, or add a {srid!r} "
+                f"column (authority code, '0' if unknown). Columns: {names}"
+            )
+
+    # proj (optional: an explicit projCol must exist; the default may be absent)
+    if proj_col is not None:
+        if proj_col not in names:
+            raise ValueError(
+                f"vector writer projCol={proj_col!r} is not a column; got {names}"
+            )
+        proj = proj_col
+    else:
+        proj = geom + "_srid_proj"  # optional; may be absent
+
+    attr_cols = [n for n in names if n not in (geom, srid, proj)]
+    return geom, srid, proj, attr_cols
+
+
+def _writer_arrow_table(cols, schema, geom_col):
+    """Build an Arrow table from per-column value lists using the DECLARED Spark
+    schema for column types.
+
+    Without an explicit schema, ``pa.table`` infers each column's type from its
+    Python values -- so a column that is entirely null in a partition infers
+    Arrow ``null`` type (format code 'n'), which pyogrio/GDAL cannot create an
+    OGR field from ("Type 'n' for field ... is not supported"), and which also
+    makes two partitions disagree on a column's type (all-null vs typed),
+    breaking the cross-partition ``concat_tables`` merge. Typing every column
+    from the reader schema keeps an all-null ``StringType`` column a proper
+    (all-null) Arrow ``string``. The geometry column is always emitted as WKB
+    ``bytes`` here, so it is typed ``binary`` regardless of its declared type.
+    """
+    import pyarrow as pa
+    from pyspark.sql.pandas.types import to_arrow_type
+
+    fields = [
+        pa.field(
+            f.name, pa.binary() if f.name == geom_col else to_arrow_type(f.dataType)
         )
-    srid_col = srid_cols[0]
-    geom_col = srid_col[: -len("_srid")]
-    proj_col = geom_col + "_srid_proj"
-    if geom_col not in names:
-        raise ValueError(f"no geometry column '{geom_col}' for srid '{srid_col}'")
-    attr_cols = [n for n in names if n not in (geom_col, srid_col, proj_col)]
-    return geom_col, srid_col, proj_col, attr_cols
+        for f in schema.fields
+    ]
+    return pa.table(
+        {f.name: cols[f.name] for f in schema.fields}, schema=pa.schema(fields)
+    )
+
+
+def _default_gpkg_layer(path):
+    """A GeoPackage layer name derived from the output filename, made valid.
+
+    With no explicit ``layerName``, GDAL names the layer after the output file
+    stem -- but GeoPackage forbids a layer name that starts with the reserved
+    ``gpkg`` prefix (and forbids an empty name), so e.g. saving to ``.../gpkg``
+    errors with "layer name may not begin with 'gpkg'". Fall back to ``layer``
+    in those cases; override with the ``layerName`` option for anything else.
+    """
+    stem = os.path.splitext(os.path.basename(path.rstrip("/")))[0]
+    if not stem or stem.lower().startswith("gpkg"):
+        return "layer"
+    return stem
+
+
+def _copy_file_to_fuse(src, dst):
+    """Copy file BYTES only -- never copy mode/stat. shutil.copy/copy2 run
+    copymode (chmod) on the destination, which a UC Volume (FUSE) rejects with
+    'Operation not permitted'; shutil.copyfile copies content only and is the
+    Volume-safe primitive. (The chmod can succeed intermittently, so a plain
+    shutil.copy fails non-deterministically partway through a multi-shard write.)
+    """
+    shutil.copyfile(src, dst)
+
+
+def _copy_tree_to_fuse(src, dst):
+    """Recursively copy a directory (e.g. a FileGDB .gdb) to a FUSE/Volume target
+    with byte-only file copies and plain makedirs -- no copystat/chmod, which
+    shutil.copytree applies to every file and to the directories themselves and
+    which fails on a UC Volume."""
+    os.makedirs(dst, exist_ok=True)
+    for entry in os.listdir(src):
+        s = os.path.join(src, entry)
+        d = os.path.join(dst, entry)
+        if os.path.isdir(s):
+            _copy_tree_to_fuse(s, d)
+        else:
+            shutil.copyfile(s, d)
 
 
 class _ChunkPartition(InputPartition):
@@ -253,21 +552,25 @@ class VectorGbxReader(DataSourceReader):
 
     def _members(self) -> List[str]:
         """Member paths to read. For a plain directory, enumerate matching vector
-        files (by driver extension). A .gdb directory is a single FileGDB dataset
-        and is returned as-is. A regular file path returns [self.path]."""
+        files (by driver extension) RECURSIVELY into sub-directories. A .gdb
+        directory is a single FileGDB dataset and is returned as-is. A regular
+        file path returns [self.path]."""
         if not os.path.isdir(self.path) or self.path.lower().rstrip("/").endswith(
             ".gdb"
         ):
             return [self.path]
         exts: Tuple[str, ...] = self._EXT_FOR_DRIVER.get(self.driver) or ()
-        names = sorted(os.listdir(self.path))
-        members = [
-            os.path.join(self.path, n)
-            for n in names
-            if (exts and n.lower().endswith(exts))
-            or n.lower().rstrip("/").endswith(".gdb")
-        ]
-        return members or [self.path]
+        members = []
+        for root, dirs, files in os.walk(self.path):
+            # Skip hidden/marker dirs (Spark convention): a writer's in-flight or
+            # orphaned .gbx_scratch container, _SUCCESS-style markers, etc. are
+            # never input data. Pruning `dirs` in place stops os.walk descending.
+            dirs[:] = [d for d in dirs if not d.startswith((".", "_"))]
+            for n in sorted(files):
+                low = n.lower()
+                if (exts and low.endswith(exts)) or low.rstrip("/").endswith(".gdb"):
+                    members.append(os.path.join(root, n))
+        return sorted(members) or [self.path]
 
     def _needs_stage(self) -> bool:
         """Random-access formats (GeoPackage = SQLite; FileGDB = seeked multi-file).
@@ -314,9 +617,33 @@ class VectorGbxReader(DataSourceReader):
     def _info(self):
         return self._info_for(self._members()[0])
 
+    @staticmethod
+    def _schema_key(info: Dict) -> tuple:
+        """Comparable fingerprint of a member's attribute schema (fields + types).
+
+        Only the attribute columns (name + OGR type) participate in the check —
+        geometry/CRS metadata differs per file and is irrelevant for schema
+        compatibility. Two members are schema-compatible iff their keys match."""
+        fields = list(info.get("fields", []))
+        ogr_types = list(info.get("ogr_types", []))
+        return tuple(zip(fields, ogr_types))
+
     def schema(self) -> StructType:
-        first = self._members()[0]
-        return _vector_schema(self._info_for(first), self.as_wkb)
+        members = self._members()
+        first_info = self._info_for(members[0])
+        if len(members) > 1:
+            first_key = self._schema_key(first_info)
+            for other in members[1:]:
+                other_info = self._info_for(other)
+                if self._schema_key(other_info) != first_key:
+                    stem_a = os.path.splitext(os.path.basename(members[0]))[0]
+                    stem_b = os.path.splitext(os.path.basename(other))[0]
+                    raise ValueError(
+                        f"shapefile reader: shapefiles under {self.path} have "
+                        f"differing schemas; load them separately or use a "
+                        f"single-stem directory. Stems: {stem_a}, {stem_b}."
+                    )
+        return _vector_schema(first_info, self.as_wkb)
 
     def partitions(self) -> Sequence[InputPartition]:
         # ONE partition per member file, read whole (count=0 = all features). Splitting a
@@ -526,19 +853,45 @@ class VectorGbxWriter(DataSourceWriter):
             raise ValueError(
                 "vector_gbx writer requires a 'driverName' option (e.g. 'GeoJSON')."
             )
+        # zip=true produces a single zipped archive: <stem>.shp.zip for Shapefile,
+        # <stem>.gdb.zip for FileGDB. Honored only for those directory/sidecar formats.
+        self.zip = opts.get("zip", "false").lower() == "true" and self.driver in (
+            "ESRI Shapefile",
+            "OpenFileGDB",
+        )
+        self._file_name = opts.get("filename")  # .option("fileName", ...) (opts are lower-cased)
+        # Single-file/unit writers (gpkg/geojson, shapefile+zip, file_gdb): adaptive naming.
+        # Non-zip shapefile remains a directory bundle (existing behavior; not single-file).
+        if self.driver in ("GPKG", "GeoJSON") or self.zip or self.driver == "OpenFileGDB":
+            ext = _canonical_ext(self.driver, self.zip)
+            self.path = _resolve_single_file_output(self.path, self._file_name, ext)
         self.overwrite = overwrite
         self.geometry_type_override = opts.get("geometrytype")
         self.layer_name = opts.get("layername")
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
-            schema
+            schema,
+            geom_col=opts.get("geomcol"),
+            srid_col=opts.get("sridcol"),
+            proj_col=opts.get("projcol"),
         )
+        self._schema = schema
         self._col_order = [f.name for f in schema.fields]
         self._geom_is_wkb = any(
             f.name == self.geom_col and isinstance(f.dataType, BinaryType)
             for f in schema.fields
         )
         parent = os.path.dirname(self.path) or "."
-        self.scratch_dir = os.path.join(parent, "_vec_scratch")
+        # Per-write unique scratch dir under a hidden, self-GC'ing container: the
+        # writer instance is created once on the driver and serialized to the
+        # executors, so every task of THIS write shares one uuid while a
+        # concurrent write to the same parent gets its own. A shared scratch name
+        # would let one write's commit cleanup (rmtree) delete another's in-flight
+        # fragments. The .gbx_scratch container is hidden from the recursive
+        # reader; gc_stale_scratch reclaims (by age) scratch orphaned by a
+        # hard-killed job whose commit/abort never ran. See ds/_scratch.py.
+        self.scratch_dir = _scratch.new_scratch_dir(parent)
+        _scratch.gc_stale_scratch(parent)
+        _scratch.gc_stale_local_temp("gbx_vecout_")
         if not self.overwrite and self._target_exists():
             raise ValueError(
                 "vector_gbx does not support append; use .mode('overwrite')."
@@ -551,7 +904,6 @@ class VectorGbxWriter(DataSourceWriter):
 
     # ---- executor: partition rows -> one Arrow-IPC fragment ----
     def write(self, iterator: Iterator) -> WriterCommitMessage:
-        import pyarrow as pa
         import pyarrow.feather as feather
         from shapely import from_wkt, to_wkb
 
@@ -568,7 +920,7 @@ class VectorGbxWriter(DataSourceWriter):
         if not cols[self.geom_col]:
             return _VectorCommitMessage(frag_path="")  # empty partition
         os.makedirs(self.scratch_dir, exist_ok=True)
-        tbl = pa.table({n: cols[n] for n in self._col_order})
+        tbl = _writer_arrow_table(cols, self._schema, self.geom_col)
         frag = os.path.join(self.scratch_dir, f"frag-{uuid.uuid4().hex}.arrow")
         feather.write_feather(tbl, frag)
         return _VectorCommitMessage(frag_path=frag)
@@ -586,23 +938,66 @@ class VectorGbxWriter(DataSourceWriter):
         try:
             if not frags:
                 return
-            import pyarrow as pa
-
-            tables = [feather.read_table(f) for f in frags]
-            # Merge all partition fragments into ONE Arrow table so the local write is a
-            # single pass. pyogrio's append path (append=True per fragment) re-encodes the
-            # growing file for some drivers -- GeoJSON especially -- which is ~quadratic in
-            # fragment count. One concatenated write keeps single-file export fast (and is
-            # why no coalesce is needed: the writer always emits a single merged file).
-            if len(tables) > 1:
-                tables = [pa.concat_tables(tables)]
-            geom_type, crs = self._infer_geom_crs(tables)
             # Write to driver-local disk first (supports random I/O for SQLite/
             # FileGDB/Shapefile sidecars), then copy to the Volume target with
             # sequential byte copies (FUSE-safe). Mirrors the PMTiles writer.
             local_dir = tempfile.mkdtemp(prefix="gbx_vecout_")
             local_out = os.path.join(local_dir, os.path.basename(self.path.rstrip("/")))
-            self._write_local(tables, local_out, geom_type, crs)
+            if self.zip:
+                # zip=true: write the normal output to <stem>.shp / <stem>.gdb,
+                # then pack it into <stem>.shp.zip / <stem>.gdb.zip; only the
+                # archive is copied to the target. local_out ends in ".zip"; strip
+                # it to get the inner path the writer produces alongside.
+                inner = local_out[: -len(".zip")]  # .../roads.shp or .../roads.gdb
+                if self.driver == "OpenFileGDB":
+                    # FileGDB: stream fragments one at a time with OGR transaction
+                    # batching. Infer geom/CRS from the first fragment only.
+                    first_tbl = feather.read_table(frags[0])
+                    geom_type, crs = self._infer_geom_crs([first_tbl])
+                    del first_tbl
+                    self._write_local_osgeo_gdb(frags, inner, geom_type, crs)
+                elif _should_stream(self.driver):
+                    first_tbl = feather.read_table(frags[0])
+                    geom_type, crs = self._infer_geom_crs([first_tbl])
+                    del first_tbl
+                    self._write_streaming(frags, inner, geom_type, crs)
+                else:
+                    tables = [feather.read_table(f) for f in frags]
+                    geom_type, crs = self._infer_geom_crs(tables)
+                    self._write_local(tables, inner, geom_type, crs)
+                if self.driver == "OpenFileGDB":
+                    # .gdb is a directory: pack the whole tree, then drop it so only
+                    # the .gdb.zip remains for the copy-to-Volume loop.
+                    _zip_gdb_bundle(inner, local_out)
+                    shutil.rmtree(inner, ignore_errors=True)
+                else:
+                    # Shapefile sidecars are flat files sharing the stem.
+                    _zip_shapefile_bundle(inner, local_out)
+                    stem_base = os.path.basename(os.path.splitext(inner)[0])  # "roads"
+                    for name in list(os.listdir(local_dir)):
+                        if name.startswith(stem_base + ".") and not name.endswith(
+                            ".zip"
+                        ):
+                            os.remove(os.path.join(local_dir, name))
+            elif self.driver == "OpenFileGDB":
+                # FileGDB: stream fragments one at a time with OGR transaction
+                # batching. Infer geom/CRS from the first fragment only (bounded;
+                # the fragment is released before the write loop begins).
+                first_tbl = feather.read_table(frags[0])
+                geom_type, crs = self._infer_geom_crs([first_tbl])
+                del first_tbl
+                self._write_local_osgeo_gdb(frags, local_out, geom_type, crs)
+            elif _should_stream(self.driver):
+                # Infer geom type + CRS from the first fragment only (one
+                # partition, bounded), then stream every fragment into one write.
+                first_tbl = feather.read_table(frags[0])
+                geom_type, crs = self._infer_geom_crs([first_tbl])
+                del first_tbl
+                self._write_streaming(frags, local_out, geom_type, crs)
+            else:
+                tables = [feather.read_table(f) for f in frags]
+                geom_type, crs = self._infer_geom_crs(tables)
+                self._write_local(tables, local_out, geom_type, crs)
             # Clear any Spark-created stub at self.path, then copy everything
             # pyogrio produced in local_dir (file, sidecar set, or .gdb dir).
             self._prepare_target()
@@ -614,9 +1009,9 @@ class VectorGbxWriter(DataSourceWriter):
                 src = os.path.join(local_dir, name)
                 dst = os.path.join(parent, name)
                 if os.path.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                    _copy_tree_to_fuse(src, dst)
                 else:
-                    shutil.copy(src, dst)  # sequential -> FUSE-safe
+                    _copy_file_to_fuse(src, dst)  # byte-only -> Volume-safe
         finally:
             if local_dir is not None:
                 shutil.rmtree(local_dir, ignore_errors=True)
@@ -627,13 +1022,63 @@ class VectorGbxWriter(DataSourceWriter):
             [c for c in (self.srid_col, self.proj_col) if c in tbl.column_names]
         )
 
+    def _write_streaming(self, frags, local_out, geom_type, crs) -> None:
+        """Assemble the output by streaming the fragment batches into ONE
+        write_arrow (bounded driver memory, single pass) for GeoJSON / Shapefile /
+        GPKG. The geometry column is written under the format default
+        (``_output_geom_name``); for GPKG that differs from the input name, so the
+        column is renamed per batch (GeoJSON/Shapefile geometry is structural, no
+        rename). Falls back to a concat write only if the GDAL build cannot consume
+        a RecordBatchReader."""
+        import pyarrow as pa
+        import pyarrow.feather as feather
+        import pyarrow.ipc as ipc
+        import pyogrio
+
+        drop = {c for c in (self.srid_col, self.proj_col) if c}
+        out_geom = _output_geom_name(self.driver, self.geom_col)
+        rename = None if out_geom == self.geom_col else (self.geom_col, out_geom)
+        with pa.memory_map(frags[0], "r") as src0:
+            full_schema = ipc.open_file(src0).schema
+        fields = [
+            (f.with_name(out_geom) if rename and f.name == self.geom_col else f)
+            for f in full_schema
+            if f.name not in drop
+        ]
+        stream_schema = pa.schema(fields)
+        # GPKG: DELETE journal (no WAL/-shm sidecars) so the output reads back from
+        # read-only object storage; harmless for non-SQLite drivers.
+        pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
+        kw = dict(
+            driver=self.driver,
+            geometry_name=out_geom,
+            geometry_type=geom_type,
+            crs=crs,
+        )
+        if self.layer_name:
+            kw["layer"] = self.layer_name
+        elif self.driver == "GPKG":
+            kw["layer"] = _default_gpkg_layer(self.path)
+        try:
+            reader = pa.RecordBatchReader.from_batches(
+                stream_schema, _stream_record_batches(frags, drop, rename)
+            )
+            pyogrio.write_arrow(reader, local_out, **kw)
+        except Exception as e:  # noqa: BLE001
+            # Only fall back if the GDAL build can't consume a streaming reader;
+            # re-raise genuine write errors.
+            if "does not support" not in str(e) and not isinstance(e, TypeError):
+                raise
+            tables = [feather.read_table(f) for f in frags]
+            if len(tables) > 1:
+                tables = [pa.concat_tables(tables)]
+            self._write_local(tables, local_out, geom_type, crs)
+
     def _write_local(self, tables, local_out, geom_type, crs) -> None:
         """Write the merged tables to a local path. Use the fast Arrow path; if the
-        driver lacks Arrow-write support (e.g. OpenFileGDB), fall back to the classic
-        feature-based path, which has broader OGR driver support."""
-        if self.driver == "OpenFileGDB":
-            self._write_local_osgeo_gdb(tables, local_out, geom_type, crs)
-            return
+        driver lacks Arrow-write support, fall back to the classic feature-based path.
+        OpenFileGDB is NOT routed here; the commit() method calls _write_local_osgeo_gdb
+        directly with fragment paths (streaming + transaction batching)."""
         import pyogrio
 
         # Write SQLite-backed formats (GPKG) with a DELETE journal -- no WAL/-shm
@@ -643,17 +1088,28 @@ class VectorGbxWriter(DataSourceWriter):
         pyogrio.set_gdal_config_options({"OGR_SQLITE_JOURNAL": "DELETE"})
         kw = dict(
             driver=self.driver,
-            geometry_name=self.geom_col,
+            geometry_name=_output_geom_name(self.driver, self.geom_col),
             geometry_type=geom_type,
             crs=crs,
         )
         if self.layer_name:
             kw["layer"] = self.layer_name
+        elif self.driver == "GPKG":
+            # GDAL would name the GPKG layer after the file stem, which is invalid
+            # when it starts with the reserved 'gpkg' prefix; use a safe default.
+            kw["layer"] = _default_gpkg_layer(self.path)
+        out_geom = _output_geom_name(self.driver, self.geom_col)
         try:
             for n, tbl in enumerate(tables):
-                pyogrio.write_arrow(
-                    self._drop_meta_cols(tbl), local_out, append=(n > 0), **kw
-                )
+                t = self._drop_meta_cols(tbl)
+                # Rename the input geom column to the format-canonical output name
+                # (e.g. GPKG: geom_0 -> geom) so pyogrio can find the geometry by
+                # the name passed as geometry_name=out_geom.
+                if out_geom != self.geom_col and self.geom_col in t.column_names:
+                    t = t.rename_columns(
+                        [out_geom if c == self.geom_col else c for c in t.column_names]
+                    )
+                pyogrio.write_arrow(t, local_out, append=(n > 0), **kw)
         except Exception as e:  # noqa: BLE001
             if "does not support write functionality" not in str(e):
                 raise
@@ -665,11 +1121,16 @@ class VectorGbxWriter(DataSourceWriter):
                 os.remove(local_out)
             self._write_local_classic(tables, local_out, geom_type, crs)
 
-    def _write_local_osgeo_gdb(self, tables, local_out, geom_type, crs) -> None:
+    def _write_local_osgeo_gdb(self, frags, local_out, geom_type, crs) -> None:
         """Hybrid FileGDB path. pyogrio's bundled GDAL has a read-only OpenFileGDB
         driver; the native GDAL from the heavyweight GDAL init script has write. Use
         osgeo.ogr (native) to encode the .gdb. Requires those natives -- raises a clear
-        error otherwise (FileGDB write is unavailable in a lightweight-only env)."""
+        error otherwise (FileGDB write is unavailable in a lightweight-only env).
+
+        Fragments are consumed ONE AT A TIME (bounded driver memory — never the
+        whole dataset in RAM) and features are written inside OGR bulk transactions
+        (committed every _GDB_TX_BATCH rows), which eliminates the per-feature
+        auto-commit overhead that otherwise makes large writes O(n) slow."""
         try:
             from osgeo import ogr, osr
         except Exception as e:  # noqa: BLE001
@@ -680,6 +1141,7 @@ class VectorGbxWriter(DataSourceWriter):
                 "gpkg_gbx / geojson_gbx instead."
             ) from e
         import pyarrow as pa
+        import pyarrow.feather as feather
 
         drv = ogr.GetDriverByName("OpenFileGDB")
         if drv is None or not drv.TestCapability(ogr.ODrCCreateDataSource):
@@ -715,10 +1177,14 @@ class VectorGbxWriter(DataSourceWriter):
                 return ogr.OFTBinary
             return ogr.OFTString  # strings + anything else
 
-        first = tables[0]
+        # Read the first fragment to derive the schema (attr cols + field types).
+        # The fragment is released from memory before the main write loop so that
+        # only one fragment at a time lives in driver memory.
+        first_tbl = feather.read_table(frags[0])
         meta = {self.geom_col, self.srid_col, self.proj_col}
-        attr_cols = [c for c in first.column_names if c not in meta]
-        types = {f.name: f.type for f in first.schema}
+        attr_cols = [c for c in first_tbl.column_names if c not in meta]
+        types = {f.name: f.type for f in first_tbl.schema}
+        del first_tbl  # release — schema is all we need
 
         ds = drv.CreateDataSource(local_out)
         if ds is None:
@@ -726,14 +1192,31 @@ class VectorGbxWriter(DataSourceWriter):
                 f"OpenFileGDB CreateDataSource returned None for {local_out!r}; "
                 "the FileGDB output path must end in '.gdb'."
             )
+        use_tx = lyr = None
         try:
             lyr = ds.CreateLayer(
-                self.layer_name or "layer", srs, _WKB.get(geom_type, ogr.wkbUnknown)
+                self.layer_name or "layer",
+                srs,
+                _WKB.get(geom_type, ogr.wkbUnknown),
+                options=[
+                    f"GEOMETRY_NAME={_output_geom_name(self.driver, self.geom_col)}"
+                ],
             )
             for c in attr_cols:
                 lyr.CreateField(ogr.FieldDefn(c, _ogr_type(types[c])))
             defn = lyr.GetLayerDefn()
-            for tbl in tables:
+
+            # Check once whether the driver supports OGR transactions so we can
+            # fall back gracefully (per-feature auto-commit) on drivers that don't.
+            use_tx = lyr.TestCapability(ogr.OLCTransactions)
+            if use_tx:
+                lyr.StartTransaction()
+            pending = 0  # features written since last commit
+
+            # Stream fragments one at a time — each is loaded, written, then
+            # released before the next is read (bounded driver memory).
+            for frag_path in frags:
+                tbl = feather.read_table(frag_path)
                 cols = {c: tbl.column(c).to_pylist() for c in tbl.column_names}
                 geom = cols.get(self.geom_col, [None] * tbl.num_rows)
                 for i in range(tbl.num_rows):
@@ -747,6 +1230,22 @@ class VectorGbxWriter(DataSourceWriter):
                         feat.SetGeometry(ogr.CreateGeometryFromWkb(bytes(g)))
                     lyr.CreateFeature(feat)
                     feat = None
+                    pending += 1
+                    if use_tx and pending >= _GDB_TX_BATCH:
+                        lyr.CommitTransaction()
+                        lyr.StartTransaction()
+                        pending = 0
+                del tbl, cols, geom  # release fragment memory before next read
+
+            if use_tx and pending > 0:
+                lyr.CommitTransaction()
+        except Exception:
+            if use_tx and lyr is not None:
+                try:
+                    lyr.RollbackTransaction()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
         finally:
             ds = None  # flush + close
 
@@ -854,8 +1353,12 @@ class GeoJSONLGbxWriter(DataSourceWriter):
         if self.max_records_per_file < 0:
             raise ValueError("maxRecordsPerFile must be a non-negative integer.")
         self.geom_col, self.srid_col, self.proj_col, self.attr_cols = _writer_col_roles(
-            schema
+            schema,
+            geom_col=opts.get("geomcol"),
+            srid_col=opts.get("sridcol"),
+            proj_col=opts.get("projcol"),
         )
+        self._schema = schema
         self._col_order = [f.name for f in schema.fields]
         self._geom_is_wkb = any(
             f.name == self.geom_col and isinstance(f.dataType, BinaryType)
@@ -911,7 +1414,6 @@ class GeoJSONLGbxWriter(DataSourceWriter):
 
     # ---- executor: partition rows -> one or more GeoJSONL shards in OUTDIR ----
     def write(self, iterator: Iterator) -> WriterCommitMessage:
-        import pyarrow as pa
         import pyogrio
         from shapely import from_wkt, to_wkb
 
@@ -929,7 +1431,7 @@ class GeoJSONLGbxWriter(DataSourceWriter):
         if nrows == 0:
             return _GeoJSONLCommitMessage(shard_paths=())  # empty partition -> nothing
 
-        tbl = pa.table({n: cols[n] for n in self._col_order})
+        tbl = _writer_arrow_table(cols, self._schema, self.geom_col)
         geom_type, crs = self._infer_geom_crs(tbl)
         chunk = self.max_records_per_file or nrows  # split into N-row shards if set
         bounds = list(range(0, nrows, chunk))
@@ -953,7 +1455,7 @@ class GeoJSONLGbxWriter(DataSourceWriter):
                     kw["layer"] = self.layer_name
                 pyogrio.write_arrow(slice_tbl, local_path, **kw)
                 dst = os.path.join(self.path, name)
-                shutil.copy(local_path, dst)  # sequential -> FUSE-safe
+                _copy_file_to_fuse(local_path, dst)  # byte-only -> Volume-safe
                 written.append(dst)
         finally:
             shutil.rmtree(local_dir, ignore_errors=True)

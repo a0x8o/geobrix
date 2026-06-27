@@ -36,6 +36,11 @@ File Geodatabases contain multiple feature classes (layers); both tiers (lightwe
 
 All other [OGR reader options](./vector#options) (`driverName`, …) are also available.
 
+**Zipped input:** a `.gdb.zip` (or a plain `.zip` wrapping a single `.gdb`) is read
+transparently — GDAL opens it via `/vsizip/`, so just point `.load()` at the archive (or a
+directory of them); no option is required. This is the layout the
+[`file_gdb_gbx` writer](../writers/filegdb) produces with `zip=true`.
+
 Example — reading a specific feature class by name:
 
 <CodeFromTest

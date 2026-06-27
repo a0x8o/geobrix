@@ -19,6 +19,11 @@ class FileGDB_DataSource extends OGR_DataSource with DataSourceExtras {
     /** Overrides parent shortName: returns "file_gdb_ogr". */
     override def shortName(): String = "file_gdb_ogr"
 
+    /** Overrides parent writeGuardMessage: names file_gdb_ogr and its file_gdb_gbx alternative. */
+    override protected def writeGuardMessage(path: String): String =
+        "'file_gdb_ogr' is a read-only reader; write vector data with the light file_gdb_gbx writer " +
+        "(or geojsonl_ogr for sharded GeoJSONL)."
+
     /** Overrides parent inferSchema: delegates to super with dsExtraMap options (File GDB). */
     override def inferSchema(options: CaseInsensitiveStringMap): StructType = {
         super.inferSchema(extraCaseInsensitiveStringMap(options))

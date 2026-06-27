@@ -8,7 +8,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
 /**
-  * WriteBuilder for the `geojsonl` DataSource.
+  * WriteBuilder for the `geojsonl_ogr` DataSource.
   *
   * Requires `.mode("overwrite")`: Spark calls [[truncate]] for overwrite writes and `build()`
   * directly for append/default writes, so a write that reaches `build()` without `truncate()`
@@ -34,10 +34,10 @@ class GeoJSONL_WriteBuilder(schema: StructType, options: Map[String, String])
     override def build(): Write = {
         val path = options.getOrElse("path",
             throw new IllegalArgumentException(
-                "geojsonl DataSource requires a path option (use .save(path))."))
+                "geojsonl_ogr DataSource requires a path option (use .save(path))."))
         if (!truncated) {
             throw new IllegalArgumentException(
-                "geojsonl does not support append; use .mode(\"overwrite\").")
+                "geojsonl_ogr does not support append; use .mode(\"overwrite\").")
         }
         val spark = SparkSession.builder().getOrCreate()
         val hConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())

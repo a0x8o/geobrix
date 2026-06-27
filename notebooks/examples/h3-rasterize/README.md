@@ -92,7 +92,7 @@ Coverage-depth figure: pixel = count of bands covering that location
 ## Key GeoBrix / Databricks functions shown
 
 - **GeoBrix RasterX** (`rx.*`): `rst_h3_gridspec`, `rst_h3_rasterize_agg`, `rst_frombands_agg`.
-- **GeoBrix viz** (`gbx.vizx`): `plot_file` (raw DEM render), `cells_as_gdf` (per-cell H3 footprints; pass `dissolve_by="band_level"` for larger sets to merge each band into one footprint polygon), `grid_as_gdf` (shared-canvas rectangle on a folium map), `plot_mask_layers` (overlay two mid-coverage bands with distinct colours and a legend), `plot_raster` (stacked raster rendered as `composite="depth"` coverage map).
+- **GeoBrix viz** (`gbx.vizx`): `plot_file` (raw DEM render), `plot_static` (per-cell H3 footprints over a basemap, GitHub-renderable), `plot_interactive` (interactive folium pan/zoom map of the same cells — scale-safe and Databricks-safe), `cells_as_gdf` (per-cell H3 footprints as a GeoDataFrame; pass `dissolve_by="band_level"` for larger sets to merge each band into one footprint polygon), `grid_as_gdf` (shared-canvas rectangle), `plot_mask_layers` (overlay two mid-coverage bands with distinct colours and a legend), `plot_raster` (stacked raster rendered as `composite="depth"` coverage map).
 - **Databricks built-in H3** (used indirectly): `h3.polygon_to_cells`, `h3.str_to_int`.
 - **Full API reference**: [RasterX functions](https://databrickslabs.github.io/geobrix/docs/api/raster-functions) · [Viz helpers](https://databrickslabs.github.io/geobrix/docs/api/vizx).
 

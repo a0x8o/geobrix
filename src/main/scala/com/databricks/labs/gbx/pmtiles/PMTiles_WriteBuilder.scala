@@ -1,5 +1,6 @@
 package com.databricks.labs.gbx.pmtiles
 
+import com.databricks.labs.gbx.util.HadoopUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.write.{BatchWrite, SupportsTruncate, Write, WriteBuilder}
 import org.apache.spark.sql.types.StructType
@@ -22,13 +23,20 @@ class PMTiles_WriteBuilder(schema: StructType, options: Map[String, String])
     /** Default Spark mode is ErrorIfExists; truncate flips it to overwrite for the binary blob. */
     override def truncate(): WriteBuilder = this
 
-    /** Builds a Write whose batch is a PMTiles_BatchWrite carrying schema, options, and hConf. */
+    /** Builds a Write whose batch is a PMTiles_BatchWrite carrying schema, options, and hConf.
+      *
+      * Applies the 3-case single-file naming contract via
+      * [[HadoopUtils.resolveSingleFileOutput]]: the `fileName` option (if supplied) names the
+      * output file inside `path`; otherwise adaptive naming kicks in (existing dir → name after
+      * dir; file-like path → ensure `.pmtiles` extension). */
     override def build(): Write = {
-        val path = options.getOrElse("path",
+        val rawPath = options.getOrElse("path",
             throw new IllegalArgumentException(
                 "pmtiles DataSource requires a path option (use .save(path))"))
         val spark = SparkSession.builder().getOrCreate()
         val hConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+        val fileNameOpt = options.get("filename").filter(_.nonEmpty)
+        val path = HadoopUtils.resolveSingleFileOutput(rawPath, fileNameOpt, ".pmtiles", hConf)
         new Write {
             override def toBatch: BatchWrite = new PMTiles_BatchWrite(schema, path, options, hConf)
         }
