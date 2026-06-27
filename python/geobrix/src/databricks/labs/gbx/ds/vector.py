@@ -597,9 +597,33 @@ class VectorGbxReader(DataSourceReader):
     def _info(self):
         return self._info_for(self._members()[0])
 
+    @staticmethod
+    def _schema_key(info: Dict) -> tuple:
+        """Comparable fingerprint of a member's attribute schema (fields + types).
+
+        Only the attribute columns (name + OGR type) participate in the check —
+        geometry/CRS metadata differs per file and is irrelevant for schema
+        compatibility. Two members are schema-compatible iff their keys match."""
+        fields = list(info.get("fields", []))
+        ogr_types = list(info.get("ogr_types", []))
+        return tuple(zip(fields, ogr_types))
+
     def schema(self) -> StructType:
-        first = self._members()[0]
-        return _vector_schema(self._info_for(first), self.as_wkb)
+        members = self._members()
+        first_info = self._info_for(members[0])
+        if len(members) > 1:
+            first_key = self._schema_key(first_info)
+            for other in members[1:]:
+                other_info = self._info_for(other)
+                if self._schema_key(other_info) != first_key:
+                    stem_a = os.path.splitext(os.path.basename(members[0]))[0]
+                    stem_b = os.path.splitext(os.path.basename(other))[0]
+                    raise ValueError(
+                        f"shapefile reader: shapefiles under {self.path} have "
+                        f"differing schemas; load them separately or use a "
+                        f"single-stem directory. Stems: {stem_a}, {stem_b}."
+                    )
+        return _vector_schema(first_info, self.as_wkb)
 
     def partitions(self) -> Sequence[InputPartition]:
         # ONE partition per member file, read whole (count=0 = all features). Splitting a

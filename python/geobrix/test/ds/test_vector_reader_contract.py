@@ -1,18 +1,21 @@
-"""Unit tests for VectorGbxReader._members — recursive directory listing contract.
+"""Unit tests for VectorGbxReader._members and schema-divergence detection.
 
-These are pure-unit tests (no Spark) that verify _members() enumerates matching
-vector files. Tests cover:
-  - recursive shapefile enumeration (Task B1 — the core change)
+These are pure-unit tests (no Spark) that verify:
+  - _members() enumerates matching vector files recursively (Task B1)
+  - divergent schemas in a multi-shapefile directory raise ValueError (Task B2)
+  - same-schema multi-shapefile directories still union without error (Task B2)
+  - single shapefiles are unaffected by the schema check (Task B2)
   - flat-directory regression (existing flat behaviour unchanged)
   - bare-file path passthrough (unchanged)
   - .gdb directory passthrough (unchanged)
 """
 
 import os
+from unittest.mock import patch
 
 import pytest
 
-from databricks.labs.gbx.ds.vector import VectorGbxReader
+from databricks.labs.gbx.ds.vector import VectorGbxReader, _ShapefileReader
 
 
 def _make_reader(path: str, driver: str = "ESRI Shapefile") -> VectorGbxReader:
@@ -145,3 +148,92 @@ def test_members_empty_dir_falls_back_to_path(tmp_path):
     members = reader._members()
 
     assert members == [str(empty)]
+
+
+# ---------------------------------------------------------------------------
+# Task B2 — schema-divergence error on multi-member shapefile directory
+# ---------------------------------------------------------------------------
+
+def _fake_info(fields, ogr_types):
+    """Minimal pyogrio read_info dict for schema-check unit testing."""
+    return {
+        "fields": fields,
+        "ogr_types": ogr_types,
+        "ogr_subtypes": ["OFSTNone"] * len(fields),
+        "geometry_name": "geom_0",
+        "crs": None,
+    }
+
+
+def test_schema_divergence_raises_valueerror(tmp_path):
+    """A directory with two shapefiles of differing schemas must raise ValueError
+    with the shared divergence message (Task B2)."""
+    # Create two stub .shp bundles
+    _touch_shp_bundle(str(tmp_path), "roads")
+    _touch_shp_bundle(str(tmp_path), "rivers")
+
+    # roads: one field 'name' (string); rivers: one field 'width' (real) — divergent
+    info_roads = _fake_info(["name"], ["OFTString"])
+    info_rivers = _fake_info(["width"], ["OFTReal"])
+
+    def fake_info_for(self, path):
+        if "roads" in path:
+            return info_roads
+        return info_rivers
+
+    reader = _make_reader(str(tmp_path))
+
+    with patch.object(VectorGbxReader, "_info_for", fake_info_for):
+        with pytest.raises(ValueError) as exc:
+            reader.schema()
+
+    msg = str(exc.value)
+    assert "shapefile reader: shapefiles under" in msg
+    assert "have differing schemas" in msg
+    assert "load them separately" in msg
+    assert "roads" in msg or "rivers" in msg  # at least one diverging stem appears
+
+
+def test_same_schema_multi_shapefile_no_error(tmp_path):
+    """A directory with two shapefiles of IDENTICAL schemas must NOT raise — the
+    union read proceeds normally (Task B2)."""
+    _touch_shp_bundle(str(tmp_path), "roads")
+    _touch_shp_bundle(str(tmp_path), "rivers")
+
+    # Both have the same field set
+    info_both = _fake_info(["name", "length"], ["OFTString", "OFTReal"])
+
+    def fake_info_for(self, path):
+        return info_both
+
+    reader = _make_reader(str(tmp_path))
+
+    with patch.object(VectorGbxReader, "_info_for", fake_info_for):
+        # Should not raise; schema() returns the StructType from the first member
+        schema = reader.schema()
+
+    # Confirm the schema was returned (not None) and has the expected fields
+    field_names = [f.name for f in schema.fields]
+    assert "name" in field_names
+    assert "length" in field_names
+
+
+def test_single_shapefile_no_schema_check(tmp_path):
+    """A single .shp file (one member) skips the divergence check entirely
+    (Task B2 — single member is unchanged)."""
+    shp = tmp_path / "lone.shp"
+    shp.write_bytes(b"")
+
+    info = _fake_info(["id"], ["OFTInteger"])
+
+    def fake_info_for(self, path):
+        return info
+
+    reader = _make_reader(str(shp))
+
+    with patch.object(VectorGbxReader, "_info_for", fake_info_for):
+        # Single member — no schema check; should return schema without error
+        schema = reader.schema()
+
+    field_names = [f.name for f in schema.fields]
+    assert "id" in field_names
