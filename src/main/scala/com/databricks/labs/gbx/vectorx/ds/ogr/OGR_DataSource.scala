@@ -79,7 +79,9 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
                 val otherShp = files.find { p =>
                     val n = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
                     n.toLowerCase(java.util.Locale.ROOT) == s"$otherStem.shp"
-                }.getOrElse(files.filter(_.contains(otherStem)).head)
+                }.getOrElse(throw new IllegalArgumentException(
+                  s"shapefile reader: could not locate '$otherStem.shp' under $rawPath"
+                ))
                 val otherLocal = HadoopUtils.stageHeadForSchemaSpark(sparkSession, otherShp, files)
                 val otherSchemaOpt = OGR_SchemaInference.inferSchemaImpl(driverName, otherLocal, optMap)
                 otherSchemaOpt.foreach { otherSchema =>
