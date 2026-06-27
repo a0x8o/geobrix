@@ -12,6 +12,13 @@ import scala.collection.mutable
 //noinspection ScalaWeakerAccess
 object HadoopUtils {
 
+    /** Shared schema-divergence error message for multi-stem shapefile directories.
+      * Wording is identical across the heavy (Scala) and light (Python) tiers so the
+      * user sees a consistent message regardless of which reader surfaces the error. */
+    def shapefileDivergenceMsg(path: String, stemA: String, stemB: String): String =
+        s"shapefile reader: shapefiles under $path have differing schemas; " +
+        s"load them separately or use a single-stem directory. Stems: $stemA, $stemB."
+
     var hadoopConf: SerializableConfiguration = _
 
     /** Sets the default Hadoop config used by listHadoopFiles when no config is passed. */
@@ -239,6 +246,18 @@ object HadoopUtils {
         }
         new java.io.File(tmpDir, headName).getAbsolutePath
     }
+
+    /** Returns the distinct `.shp` stems (base names without extension) present in a file listing.
+      * Used to detect multi-stem shapefile directories that may have divergent schemas. */
+    def shpStems(files: Seq[String]): Seq[String] =
+        files
+            .filter(p => fileExt(p) == "shp")
+            .map { p =>
+                val n = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
+                val dot = n.lastIndexOf('.')
+                if (dot > 0) n.substring(0, dot) else n
+            }
+            .distinct
 
     /** Lists immediate subdirectories under inPath (non-recursive). */
     def listHadoopDirs(inPath: String, hconf: SerializableConfiguration): Seq[String] = {

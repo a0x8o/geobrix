@@ -59,13 +59,40 @@ class OGR_DataSource extends TableProvider with DataSourceRegister {
 
         if (isGdbLike) NodeFileManager.releaseRemote(headPath)
 
-        schemaOpt.getOrElse {
+        val headSchema = schemaOpt.getOrElse {
             throw new IllegalArgumentException(
               s"Unable to infer schema from file: $headPath. " +
               s"The file may be empty, corrupted, or in an unsupported format. " +
               s"Driver: ${if (driverName.isEmpty) "auto-detect" else driverName}"
             )
         }
+
+        // When multiple .shp stems are present under a directory, verify they all share the
+        // same schema. Silently merging divergent schemas produces a union mismatch that
+        // surfaces as a confusing read error later; fail early with a clear message instead.
+        // This mirrors the light-tier (Python) check in VectorGbxReader.schema() (Task B2).
+        val stems = HadoopUtils.shpStems(files)
+        if (stems.size > 1) {
+            val optMap = options.asCaseSensitiveMap().asScala.toMap
+            val headStem = stems.head
+            stems.tail.foreach { otherStem =>
+                val otherShp = files.find { p =>
+                    val n = p.replace("\\", "/").reverse.takeWhile(_ != '/').reverse
+                    n.toLowerCase(java.util.Locale.ROOT) == s"$otherStem.shp"
+                }.getOrElse(files.filter(_.contains(otherStem)).head)
+                val otherLocal = HadoopUtils.stageHeadForSchemaSpark(sparkSession, otherShp, files)
+                val otherSchemaOpt = OGR_SchemaInference.inferSchemaImpl(driverName, otherLocal, optMap)
+                otherSchemaOpt.foreach { otherSchema =>
+                    if (otherSchema != headSchema) {
+                        throw new IllegalArgumentException(
+                          HadoopUtils.shapefileDivergenceMsg(rawPath, headStem, otherStem)
+                        )
+                    }
+                }
+            }
+        }
+
+        headSchema
     }
 
     /** Overrides TableProvider.getTable: returns OGR_Table with the given schema and properties. */
