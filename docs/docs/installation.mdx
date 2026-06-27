@@ -157,6 +157,23 @@ Download all three. Verify the tarball locally before uploading anywhere:
 sha256sum -c geobrix-gdal-artifacts-v<version>-noble.tar.gz.sha256
 ```
 
+:::note Two packaging variations: artifacts vs platform
+The bundle above is the **artifacts** variation — GDAL *plus* the GeoBrix JAR
+and Python wheel pre-packed inside. A second **platform** variation
+(`geobrix-gdal-platform-noble.tar.gz`) adds GDAL via the **same init script
+without the JAR or WHL embedded**; you stage those yourself at the configured
+location (handy for swapping a JAR/WHL build without rebuilding the tarball).
+See [Git LFS — the GDAL platform tarball](./developers#git-lfs--required-to-clone-the-gdal-platform-tarball)
+for how the platform tarball is produced and updated.
+
+When you use the platform packaging, keep `VOL_DIR` unambiguous: stage **only
+one variation or the other** in the Volume path (artifacts *or* platform, never
+both), and keep **only a single version of the JAR / WHL** at the configured
+location. The init script glob-copies `geobrix-*-jar-with-dependencies.jar`, so
+a stray second tarball or a second JAR/wheel version produces a
+nondeterministic classpath.
+:::
+
 ### 2. Upload Bundle to a Unity Catalog Volume
 
 Upload the **tarball and the sidecar** (not the init script) to a Unity

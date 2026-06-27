@@ -217,7 +217,7 @@ grid_gdf.explore(m=m, color="black", style_kwds={"fill": False})
 
 See the [H3 rasterize notebook](../notebooks/h3-rasterize) for a worked example pairing `grid_as_gdf` with `cells_as_gdf` to build a shared-canvas overlay.
 
-## Static maps
+## Vector static maps
 
 `plot_static` renders Spark- or GeoPandas-derived geometries (or H3 cells) over
 a basemap as a **static** matplotlib figure — the GitHub-renderable counterpart
@@ -290,7 +290,7 @@ plot_static(grid_gdf, ax=ax, fill=False, edgecolor="red", basemap=False)
 `basemap_source` overrides the default `contextily.providers.CartoDB.Positron`;
 `basemap=False` skips tiles entirely (deterministic, no network).
 
-## Interactive maps
+## Vector interactive maps
 
 `plot_interactive` is the **interactive twin of `plot_static`** — same input
 model (a `geopandas.GeoDataFrame`, or a Spark DataFrame via `geom_col` /
