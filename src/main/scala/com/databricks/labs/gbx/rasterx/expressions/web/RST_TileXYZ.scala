@@ -12,6 +12,7 @@ import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.gdal.gdal.{Dataset, gdal}
 
+import java.util.Locale
 import scala.util.Try
 
 /** Render a single web-mercator XYZ tile from a raster.
@@ -19,12 +20,12 @@ import scala.util.Try
  *  Returns BINARY bytes of the PNG / JPEG / WEBP tile at `(z, x, y)`. Per-tile primitive:
  *
  *    1. Compute the EPSG:3857 bbox of the tile via [[TileMath.tileBboxWebMerc]].
- *    2. `gdal.Warp` the source into a `size × size` raster covering exactly that bbox
+ *    2. `gdal.Warp` the source into a `size x size` raster covering exactly that bbox
  *       (`-te xmin ymin xmax ymax -t_srs EPSG:3857 -ts size size -r <resampling>`).
  *    3. `gdal.Translate -of <format>` to materialize PNG / JPEG / WEBP bytes.
  *    4. Read the bytes back from `/vsimem/`.
  *
- *  Out-of-extent tiles return a transparent PNG (alpha=0) of the requested size — NOT
+ *  Out-of-extent tiles return a transparent PNG (alpha=0) of the requested size - NOT
  *  null. Slippy-map tile servers expect a 200-status non-zero body even outside source
  *  coverage; returning null would surface as a 404 in the publishing pipeline.
  *
@@ -63,7 +64,7 @@ object RST_TileXYZ extends WithExpressionInfo {
         "average", "mode", "max", "min", "med", "q1", "q3"
     )
 
-    // Spark sends Python ints as LongType — we accept both Int and Long overloads. Int
+    // Spark sends Python ints as LongType - we accept both Int and Long overloads. Int
     // overloads are needed for SQL literal default args; Long overloads cover the
     // PySpark-from-notebook case (Wave 3 found this in Quadbin_PointAsCell).
     def evalBinary(row: InternalRow, z: Int, x: Int, y: Int, format: UTF8String, size: Int, resampling: UTF8String, conf: UTF8String): Array[Byte] =
@@ -98,7 +99,7 @@ object RST_TileXYZ extends WithExpressionInfo {
             try execute(ds, options, z, x, y, fmt, size, resampleLower)
             finally RasterDriver.releaseDataset(ds)
         }
-        // safeEval wraps Throwables → null; for BinaryType callers want bytes, never null.
+        // safeEval wraps Throwables -> null; for BinaryType callers want bytes, never null.
         // On hard failure we still want a transparent PNG, so wrap the safe-eval ourselves.
         val result = Try(safe()).toOption.flatMap(Option(_))
         result.getOrElse(transparentPng(size))
@@ -128,7 +129,7 @@ object RST_TileXYZ extends WithExpressionInfo {
           command = s"gdalwarp -t_srs EPSG:3857 -te $xmin $ymin $xmax $ymax -ts $size $size -r $resampling"
         )
         try {
-            val extension = format.toLowerCase match {
+            val extension = format.toLowerCase(Locale.ROOT) match {
                 case "png"  => "png"
                 case "jpeg" => "jpg"
                 case "webp" => "webp"
@@ -165,24 +166,24 @@ object RST_TileXYZ extends WithExpressionInfo {
         val srcXmax = math.max(gt(0), gt(0) + w * gt(1) + h * gt(2))
         val srcYmax = math.max(gt(3), gt(3) + w * gt(4) + h * gt(5))
         val srcYmin = math.min(gt(3), gt(3) + w * gt(4) + h * gt(5))
-        // If source is not in EPSG:3857, this comparison is approximate — but it's only
+        // If source is not in EPSG:3857, this comparison is approximate - but it's only
         // used to short-circuit when there's clearly no overlap (e.g. the user asked
         // for a tile half a world away). For ambiguous cases we just warp and let GDAL
-        // produce an empty raster — the bytes check at the end catches that.
+        // produce an empty raster - the bytes check at the end catches that.
         val srs = ds.GetSpatialRef
         if (srs != null && srs.GetAuthorityCode(null) == "3857") {
             !(srcXmax < xmin || srcXmin > xmax || srcYmax < ymin || srcYmin > ymax)
         } else {
-            // Source not in 3857 — be permissive (let GDAL try; empty output ⇒ transparent).
+            // Source not in 3857 - be permissive (let GDAL try; empty output => transparent).
             true
         }
     }.getOrElse(true)
 
-    /** Returns a minimal RGBA transparent PNG of `size × size`. */
+    /** Returns a minimal RGBA transparent PNG of `size x size`. */
     private def transparentPng(size: Int): Array[Byte] = {
         val drv = gdal.GetDriverByName("MEM")
         val src = drv.Create("", size, size, 4, org.gdal.gdalconst.gdalconstConstants.GDT_Byte)
-        // All bands are already zero-initialized — alpha=0 ⇒ fully transparent.
+        // All bands are already zero-initialized - alpha=0 => fully transparent.
         val uuid = java.util.UUID.randomUUID().toString.replace("-", "")
         val outPath = s"/vsimem/tilexyz_empty_$uuid.png"
         val (resDs, _) = GDALTranslate.executeTranslate(
