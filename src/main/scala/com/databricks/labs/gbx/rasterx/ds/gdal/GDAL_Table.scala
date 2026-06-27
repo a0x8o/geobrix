@@ -31,7 +31,9 @@ class GDAL_Table(schema: StructType, properties: Map[String, String]) extends Ta
         new GDAL_WriteBuilder(info.schema(), properties ++ info.options().asScala)
     }
 
-    /** Overrides Table.capabilities: BATCH_READ and BATCH_WRITE. */
-    override def capabilities(): java.util.Set[TableCapability] = Set(TableCapability.BATCH_READ, TableCapability.BATCH_WRITE).asJava
+    /** Overrides Table.capabilities: BATCH_READ, BATCH_WRITE, and TRUNCATE (the latter lets
+      * `.mode("overwrite")` clear the target dir via GDAL_WriteBuilder's SupportsTruncate). */
+    override def capabilities(): java.util.Set[TableCapability] =
+        Set(TableCapability.BATCH_READ, TableCapability.BATCH_WRITE, TableCapability.TRUNCATE).asJava
 
 }
