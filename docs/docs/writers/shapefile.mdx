@@ -46,7 +46,7 @@ across all lightweight vector readers and writers.
 |---|---|---|
 | `driverName` | `ESRI Shapefile` (preset) | OGR driver. Preset by this named writer; override only if needed. |
 | `mode` | `overwrite` | `overwrite` only; `append` is rejected. |
-| `fileName` | _(none)_ | Name the output unit explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>` with the extension auto-completed (`.shp.zip` when `zip=true`, otherwise a sidecar directory `path/<fileName>/`). See [Output naming](#output-naming). |
+| `fileName` | _(none)_ | Name the output archive explicitly. **Only honored when `zip=true`**: when set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>.shp.zip`. For non-zip shapefile (directory bundle), `fileName` is not applied — use `zip=true` for single-archive naming. See [Output naming](#output-naming). |
 | `zip` | `false` | When `true`, produce a **single `.shp.zip`** archive containing the `.shp/.shx/.dbf/.prj/.cpg` files at the archive root instead of a sidecar directory. The output path is normalised automatically: `.save("roads")` → `roads.shp.zip`; `.save("roads.shp")` → `roads.shp.zip`. Useful when the destination requires a single portable file (e.g. uploading to a GIS portal). Ignored for non-Shapefile drivers. |
 | `geometryType` | inferred from the data | Override the OGR geometry type. |
 | `layerName` | driver default | Output layer name where supported. |

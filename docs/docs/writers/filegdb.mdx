@@ -109,7 +109,7 @@ write parallelism.
 
 `file_gdb_gbx` applies the standard single-file [output naming contract](./overview#output-naming-for-single-file-writers). The canonical extension is `.gdb` (or `.gdb.zip` when `zip=true`). Rules evaluated in order:
 
-| Case | `.save(path)` / `fileName` | Resolved output (`zip=false`) |
+| Case | `.save(path)` / `fileName` | Resolved output |
 |---|---|---|
 | `fileName` given | `.option("fileName","parcels").save("/out/exports")` | `/out/exports/parcels.gdb` |
 | No `fileName`; `path` is an existing directory | `.save("/out/exports")` | `/out/exports/exports.gdb` |
