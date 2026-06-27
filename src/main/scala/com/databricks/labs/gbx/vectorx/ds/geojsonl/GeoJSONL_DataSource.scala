@@ -9,12 +9,12 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import scala.jdk.CollectionConverters.MapHasAsScala
 
 /**
-  * Spark Data Source V2 provider for the `geojsonl` heavyweight vector writer — the first
+  * Spark Data Source V2 provider for the `geojsonl_ogr` heavyweight vector writer — the first
   * heavyweight vector writer.
   *
   * Write only:
   *   {{{
-  *   df.write.format("geojsonl").mode("overwrite").save("/path/to/outdir")
+  *   df.write.format("geojsonl_ogr").mode("overwrite").save("/path/to/outdir")
   *   }}}
   *
   * It emits a DIRECTORY of newline-delimited GeoJSONL shards (OGR driver `GeoJSONSeq`, one
@@ -46,8 +46,8 @@ class GeoJSONL_DataSource extends TableProvider with DataSourceRegister {
     /** Write-only DataSources should not be asked to infer the schema from the producer DataFrame. */
     override def supportsExternalMetadata(): Boolean = true
 
-    /** Overrides DataSourceRegister.shortName: returns "geojsonl". */
-    override def shortName(): String = "geojsonl"
+    /** Overrides DataSourceRegister.shortName: returns "geojsonl_ogr". */
+    override def shortName(): String = "geojsonl_ogr"
 }
 
 object GeoJSONL_DataSource {
@@ -82,18 +82,18 @@ object GeoJSONL_DataSource {
             case Some(g) =>
                 if (!names.contains(g))
                     throw new IllegalArgumentException(
-                        s"`geojsonl` writer geomCol='$g' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                        s"`geojsonl_ogr` writer geomCol='$g' is not a column; got ${names.mkString("[", ", ", "]")}.")
                 g
             case None =>
                 val sridCols = names.filter(_.endsWith("_srid"))
                 if (sridCols.isEmpty)
                     throw new IllegalArgumentException(
-                        "`geojsonl` writer input needs a geometry/'*_srid' column pair (from a *_ogr " +
+                        "`geojsonl_ogr` writer input needs a geometry/'*_srid' column pair (from a *_ogr " +
                         s"reader) or an explicit geomCol option; got ${names.mkString("[", ", ", "]")}.")
                 val g = sridCols.head.dropRight("_srid".length)
                 if (!names.contains(g))
                     throw new IllegalArgumentException(
-                        s"`geojsonl` writer found srid column '${sridCols.head}' but no geometry column '$g'.")
+                        s"`geojsonl_ogr` writer found srid column '${sridCols.head}' but no geometry column '$g'.")
                 g
         }
 
@@ -102,13 +102,13 @@ object GeoJSONL_DataSource {
             case Some(s) =>
                 if (!names.contains(s))
                     throw new IllegalArgumentException(
-                        s"`geojsonl` writer sridCol='$s' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                        s"`geojsonl_ogr` writer sridCol='$s' is not a column; got ${names.mkString("[", ", ", "]")}.")
                 s
             case None =>
                 val s = geomCol + "_srid"
                 if (!names.contains(s))
                     throw new IllegalArgumentException(
-                        s"`geojsonl` writer needs a SRID column: pass sridCol, or add a '$s' column " +
+                        s"`geojsonl_ogr` writer needs a SRID column: pass sridCol, or add a '$s' column " +
                         "(authority code, '0' if unknown).")
                 s
         }
@@ -118,7 +118,7 @@ object GeoJSONL_DataSource {
             case Some(p) =>
                 if (!names.contains(p))
                     throw new IllegalArgumentException(
-                        s"`geojsonl` writer projCol='$p' is not a column; got ${names.mkString("[", ", ", "]")}.")
+                        s"`geojsonl_ogr` writer projCol='$p' is not a column; got ${names.mkString("[", ", ", "]")}.")
                 p
             case None => geomCol + "_srid_proj"
         }
@@ -130,7 +130,7 @@ object GeoJSONL_DataSource {
             case StringType => false
             case other =>
                 throw new IllegalArgumentException(
-                    s"`geojsonl` writer geometry column '$geomCol' must be BINARY (WKB) or STRING (WKT); got $other.")
+                    s"`geojsonl_ogr` writer geometry column '$geomCol' must be BINARY (WKB) or STRING (WKT); got $other.")
         }
         ColRoles(geomCol, sridCol, projCol, attrCols, geomIsWkb)
     }

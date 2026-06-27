@@ -19,7 +19,7 @@ that round-trips with the GeoJSON reader's directory mode:
 
 - **Lightweight** `geojsonl_gbx` — pure-Python, Serverless-safe (pyogrio); read back via
   `geojson_gbx` with `option("multi","true")`.
-- **Heavyweight** `geojsonl` — DataSource V2 writer on native GDAL/OGR (JVM); read back via
+- **Heavyweight** `geojsonl_ogr` — DataSource V2 writer on native GDAL/OGR (JVM); read back via
   `geojson_ogr` with `option("multi","true")`.
 
 :::tip Compute & scale
@@ -29,7 +29,7 @@ that round-trips with the GeoJSON reader's directory mode:
   for a comparison with the single-file writers.
 - **Tier & compute:** the lightweight `geojsonl_gbx` writer needs **no JAR or init script** and
   is the **only** option on Serverless, standard (shared), and ARM clusters. The heavyweight
-  `geojsonl` writer requires a **classic x86 cluster** with the GeoBrix JAR + GDAL init script;
+  `geojsonl_ogr` writer requires a **classic x86 cluster** with the GeoBrix JAR + GDAL init script;
   it encodes each shard with native GDAL/OGR on the JVM. Your compute usually decides the tier.
   See [Benchmarking](../api/benchmarking) for timings and methodology.
 :::
@@ -37,7 +37,7 @@ that round-trips with the GeoJSON reader's directory mode:
 :::note Before you write
 - **Register first** — call `register(spark)` once before using any `*_gbx` format (see the
   [Writers Overview](./overview)).
-- **Both tiers** — `geojsonl_gbx` (lightweight) and `geojsonl` (heavyweight) take the same
+- **Both tiers** — `geojsonl_gbx` (lightweight) and `geojsonl_ogr` (heavyweight) take the same
   input shape and produce the same output layout; the format name is the only difference.
 - **Input geometry** — provide geometry as **WKB** (binary) or **WKT** (text), with the CRS in
   the companion `*_srid` / `*_srid_proj` columns. **EWKB**, **EWKT**, and GeoJSON-encoded
@@ -60,7 +60,7 @@ that round-trips with the GeoJSON reader's directory mode:
 
 ## Schema
 
-`geojsonl_gbx` / `geojsonl` use the shared [vector column contract](./vector#schema) — a
+`geojsonl_gbx` / `geojsonl_ogr` use the shared [vector column contract](./vector#schema) — a
 geometry column plus its `*_srid` (required) / `*_srid_proj` (optional) CRS companions; every
 other column becomes a feature attribute. Point the writer at your columns with
 `geomCol` / `sridCol` / `projCol`, or coerce to the `geom_0` convention.
@@ -94,15 +94,15 @@ back = spark.read.format("geojson_gbx").option("multi", "true").load("/Volumes/c
 ```
 
 </TabItem>
-<TabItem value="heavyweight" label="Heavyweight · geojsonl">
+<TabItem value="heavyweight" label="Heavyweight · geojsonl_ogr">
 
-Same input shape and output layout; the format name is `geojsonl` and reads back through the
+Same input shape and output layout; the format name is `geojsonl_ogr` and reads back through the
 heavyweight GeoJSON reader (`geojson_ogr`). Requires a classic x86 cluster with the GeoBrix JAR
 and GDAL init script. The same column options apply (see the [Vector Writer schema](./vector#schema)):
 
 ```python
 (df  # geometry + CRS under your own column names
- .write.format("geojsonl")
+ .write.format("geojsonl_ogr")
  .option("geomCol", "the_geom")   # WKB or WKT
  .option("sridCol", "epsg")       # REQUIRED — CRS authority code
  .mode("overwrite").save("/Volumes/cat/sch/vol/out"))
@@ -168,7 +168,7 @@ df.repartition(64, "id").write.format("geojsonl_gbx").mode("overwrite").save(
 ```
 
 On a classic x86 cluster, swap the format names for the heavyweight tier
-(`geojsonl` to write, `geojson_ogr` with `multi=true` to read back).
+(`geojsonl_ogr` to write, `geojson_ogr` with `multi=true` to read back).
 
 To cap features per shard regardless of partition size:
 

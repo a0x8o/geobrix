@@ -10,7 +10,7 @@ import org.scalatest.matchers.should.Matchers._
 import java.nio.file.Files
 
 /**
-  * Tests for the heavyweight multi-file `geojsonl` vector writer.
+  * Tests for the heavyweight multi-file `geojsonl_ogr` vector writer.
   *
   * Like the lightweight `geojsonl_gbx`, it writes a DIRECTORY of newline-delimited GeoJSONL
   * shards — one per partition, NO driver merge — with an optional `maxRecordsPerFile` that splits
@@ -40,14 +40,14 @@ class GeoJSONLWriterTest extends PlanTest with SilentSparkSession {
         Option(dir.list()).getOrElse(Array.empty)
             .filter(n => n.endsWith(".geojsonl") || n.endsWith(".geojsons"))
 
-    test("geojsonl writer emits exactly one shard per partition and round-trips") {
+    test("geojsonl_ogr writer emits exactly one shard per partition and round-trips") {
         spark.sparkContext.setLogLevel("ERROR")
         val out = Files.createTempDirectory("gbx_geojsonl_out_").toFile
         out.delete() // let the writer create it
         val df = wkbDf(6).repartition(3)
         val nparts = df.rdd.getNumPartitions
 
-        df.write.format("geojsonl").mode("overwrite").save(out.getAbsolutePath)
+        df.write.format("geojsonl_ogr").mode("overwrite").save(out.getAbsolutePath)
 
         out.isDirectory shouldBe true
         val sh = shards(out)
@@ -70,7 +70,7 @@ class GeoJSONLWriterTest extends PlanTest with SilentSparkSession {
         val out = Files.createTempDirectory("gbx_geojsonl_split_").toFile
         out.delete()
         val (m, k) = (10, 3) // ceil(10/3) == 4
-        wkbDf(m).repartition(1).write.format("geojsonl").mode("overwrite")
+        wkbDf(m).repartition(1).write.format("geojsonl_ogr").mode("overwrite")
             .option("maxRecordsPerFile", k.toString).save(out.getAbsolutePath)
 
         val expected = (m + k - 1) / k // ceil(m/k) = ceil(10/3) = 4
@@ -84,9 +84,9 @@ class GeoJSONLWriterTest extends PlanTest with SilentSparkSession {
         spark.sparkContext.setLogLevel("ERROR")
         val out = Files.createTempDirectory("gbx_geojsonl_ow_").toFile
         out.delete()
-        wkbDf(8).repartition(4).write.format("geojsonl").mode("overwrite").save(out.getAbsolutePath)
+        wkbDf(8).repartition(4).write.format("geojsonl_ogr").mode("overwrite").save(out.getAbsolutePath)
         val first = shards(out).toSet
-        wkbDf(2).repartition(1).write.format("geojsonl").mode("overwrite").save(out.getAbsolutePath)
+        wkbDf(2).repartition(1).write.format("geojsonl_ogr").mode("overwrite").save(out.getAbsolutePath)
         val second = shards(out).toSet
         assert(first.intersect(second).isEmpty, "overwrite left stale shards behind")
         val back = spark.read.format("geojson_ogr").option("multi", "true").load(out.getAbsolutePath)
@@ -97,9 +97,9 @@ class GeoJSONLWriterTest extends PlanTest with SilentSparkSession {
         spark.sparkContext.setLogLevel("ERROR")
         val out = Files.createTempDirectory("gbx_geojsonl_append_").toFile
         out.delete()
-        wkbDf(4).repartition(2).write.format("geojsonl").mode("overwrite").save(out.getAbsolutePath)
+        wkbDf(4).repartition(2).write.format("geojsonl_ogr").mode("overwrite").save(out.getAbsolutePath)
         val ex = intercept[Exception] {
-            wkbDf(4).write.format("geojsonl").mode("append").save(out.getAbsolutePath)
+            wkbDf(4).write.format("geojsonl_ogr").mode("append").save(out.getAbsolutePath)
         }
         // unwrap to the root message
         val msg = Iterator.iterate[Throwable](ex)(_.getCause).takeWhile(_ != null)
@@ -115,7 +115,7 @@ class GeoJSONLWriterTest extends PlanTest with SilentSparkSession {
         val df = spark.createDataFrame(rows).toDF("name", "the_geom", "epsg", "p4")
         val out = s"$tmpDir/renamed"
         df.write
-            .format("geojsonl")
+            .format("geojsonl_ogr")
             .mode("overwrite")
             .option("geomCol", "the_geom")
             .option("sridCol", "epsg")

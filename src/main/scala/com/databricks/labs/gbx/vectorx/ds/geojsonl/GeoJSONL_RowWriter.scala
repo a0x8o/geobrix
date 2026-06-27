@@ -17,7 +17,7 @@ import scala.collection.mutable
 import scala.util.Try
 
 /**
-  * Per-task data writer for the `geojsonl` DataSource.
+  * Per-task data writer for the `geojsonl_ogr` DataSource.
   *
   * Behavior:
   *   - Buffer the partition's rows (geometry as WKB bytes — already WKB, or WKT parsed to WKB —
