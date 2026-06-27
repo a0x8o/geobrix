@@ -536,21 +536,21 @@ class VectorGbxReader(DataSourceReader):
 
     def _members(self) -> List[str]:
         """Member paths to read. For a plain directory, enumerate matching vector
-        files (by driver extension). A .gdb directory is a single FileGDB dataset
-        and is returned as-is. A regular file path returns [self.path]."""
+        files (by driver extension) RECURSIVELY into sub-directories. A .gdb
+        directory is a single FileGDB dataset and is returned as-is. A regular
+        file path returns [self.path]."""
         if not os.path.isdir(self.path) or self.path.lower().rstrip("/").endswith(
             ".gdb"
         ):
             return [self.path]
         exts: Tuple[str, ...] = self._EXT_FOR_DRIVER.get(self.driver) or ()
-        names = sorted(os.listdir(self.path))
-        members = [
-            os.path.join(self.path, n)
-            for n in names
-            if (exts and n.lower().endswith(exts))
-            or n.lower().rstrip("/").endswith(".gdb")
-        ]
-        return members or [self.path]
+        members = []
+        for root, _dirs, files in os.walk(self.path):
+            for n in sorted(files):
+                low = n.lower()
+                if (exts and low.endswith(exts)) or low.rstrip("/").endswith(".gdb"):
+                    members.append(os.path.join(root, n))
+        return sorted(members) or [self.path]
 
     def _needs_stage(self) -> bool:
         """Random-access formats (GeoPackage = SQLite; FileGDB = seeked multi-file).
