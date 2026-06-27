@@ -30,7 +30,7 @@ The table below covers all three accepted forms. The behavior is identical in bo
 | Path passed to `.load()` | What happens |
 |---|---|
 | `/path/to/x.shp` | Reads that single shapefile. Side-car files (`.shx`, `.dbf`, `.prj`, `.cpg`) are picked up automatically from the same directory. |
-| `/path/to/dir/` | Reads **all** shapefiles found under `dir` recursively, grouped by stem, and unions the results into one DataFrame. All shapefiles must share the same schema; if their schemas diverge, the reader raises an error — load them separately or point at a single-stem directory. |
+| `/path/to/dir/` | Reads **all** shapefiles found under `dir` recursively and unions the results into one DataFrame. The directory may contain unzipped `.shp` bundles, zipped `.shp.zip` archives, or a mix — all are enumerated and unioned. All shapefiles must share the same schema; if their schemas diverge, the reader raises an error — load them separately or point at a single-stem directory. |
 | `/path/to/x.shp.zip` | Reads a zipped shapefile archive (the `.zip` must contain the `.shp` and its side-cars at the top level). |
 
 :::note Schema divergence

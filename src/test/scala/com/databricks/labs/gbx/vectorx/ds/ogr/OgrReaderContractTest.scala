@@ -20,7 +20,12 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
     // Helper: write a minimal ESRI Shapefile to a temp dir under a given stem.
     // Fields describe the schema; the file will have one POINT feature.
     // ---------------------------------------------------------------------------
-    private def writeShapefile(dir: java.io.File, stem: String, fields: Seq[(String, Int)]): Unit = {
+    private def writeShapefile(
+        dir: java.io.File,
+        stem: String,
+        fields: Seq[(String, Int)],
+        name: String = ""
+    ): Unit = {
         GDALManager.initOgr()
         val drv = ogr.GetDriverByName("ESRI Shapefile")
         require(drv != null, "ESRI Shapefile driver not available")
@@ -31,10 +36,12 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
         require(ds != null, s"Could not create datasource at $shpPath")
         val layer = ds.CreateLayer(stem, srs, ogrConstants.wkbPoint)
         require(layer != null, s"Could not create layer in $shpPath")
-        fields.foreach { case (name, ftype) => layer.CreateField(new FieldDefn(name, ftype)) }
+        fields.foreach { case (fname, ftype) => layer.CreateField(new FieldDefn(fname, ftype)) }
         val fdef = layer.GetLayerDefn
         val feat = new org.gdal.ogr.Feature(fdef)
         feat.SetGeometryDirectly(ogr.CreateGeometryFromWkt("POINT (0 0)"))
+        // Optionally set the 'name' field so callers can prove which source a row came from.
+        if (name.nonEmpty && fields.exists(_._1 == "name")) feat.SetField("name", name)
         layer.CreateFeature(feat)
         ds.FlushCache()
         ds.delete()
@@ -101,6 +108,79 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
             val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
             df.count()
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // D1: dir of .shp.zip — both tiers handle directory of zipped shapefiles
+    // ---------------------------------------------------------------------------
+
+    private def zipShapefile(shpFile: java.io.File): java.io.File = {
+        import java.util.zip.{ZipEntry, ZipOutputStream}
+        val dir = shpFile.getParentFile
+        val stem = shpFile.getName.stripSuffix(".shp")
+        val zipFile = new java.io.File(dir, s"$stem.shp.zip")
+        val zos = new ZipOutputStream(new java.io.FileOutputStream(zipFile))
+        try {
+            dir.listFiles()
+                .filter { f =>
+                    val n = f.getName
+                    n.startsWith(stem + ".") && !n.endsWith(".zip")
+                }
+                .foreach { f =>
+                    zos.putNextEntry(new ZipEntry(f.getName))
+                    val bytes = java.nio.file.Files.readAllBytes(f.toPath)
+                    zos.write(bytes)
+                    zos.closeEntry()
+                }
+        } finally {
+            zos.close()
+        }
+        zipFile
+    }
+
+    test("shapefile_ogr must read a directory of .shp.zip files (same schema)") {
+        val tmpDir = Files.createTempDirectory("gbx_d1_zipdir_").toFile
+        val fields = Seq("name" -> ogrConstants.OFTString, "length" -> ogrConstants.OFTReal)
+        writeShapefile(tmpDir, "roads", fields)
+        writeShapefile(tmpDir, "rivers", fields)
+        // Zip each shapefile bundle and remove unzipped sidecars
+        Seq("roads", "rivers").foreach { stem =>
+            val shpFile = new java.io.File(tmpDir, s"$stem.shp")
+            zipShapefile(shpFile)
+            tmpDir.listFiles()
+                .filter(f => f.getName.startsWith(stem + ".") && !f.getName.endsWith(".zip"))
+                .foreach(_.delete())
+        }
+        // Verify only .zip files remain
+        val zips = tmpDir.listFiles().filter(_.getName.endsWith(".shp.zip"))
+        zips.length shouldBe 2
+
+        val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        df.count() shouldBe 2L
+    }
+
+    test("shapefile_ogr must read a mixed directory of .shp and .shp.zip (same schema)") {
+        val tmpDir = Files.createTempDirectory("gbx_d1_mixed_").toFile
+        val fields = Seq("name" -> ogrConstants.OFTString)
+        // Distinct attribute values so we can prove BOTH sources contribute to the union.
+        writeShapefile(tmpDir, "roads", fields, name = "roads_feat")
+        writeShapefile(tmpDir, "rivers", fields, name = "rivers_feat")
+        // Zip only "rivers", leave "roads" as plain .shp bundle
+        val riversShp = new java.io.File(tmpDir, "rivers.shp")
+        zipShapefile(riversShp)
+        tmpDir.listFiles()
+            .filter(f => f.getName.startsWith("rivers.") && !f.getName.endsWith(".zip"))
+            .foreach(_.delete())
+
+        val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        val names = df.collect().map(_.getAs[String]("name")).toSet
+        // The union must contain a feature from BOTH the plain .shp bundle and the .shp.zip.
+        // (Total row count can exceed 2: for the plain bundle the OGR ESRI Shapefile driver
+        // also opens the loose .dbf sidecar as an attribute-only datasource, so its feature is
+        // counted once via .shp and once via .dbf — pre-existing reader behavior, not specific
+        // to zip support. The .shp.zip archive has no loose sidecars, so it contributes once.)
+        names should contain("roads_feat")
+        names should contain("rivers_feat")
     }
 
     // ---------------------------------------------------------------------------

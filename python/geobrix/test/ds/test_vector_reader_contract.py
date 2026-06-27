@@ -237,3 +237,41 @@ def test_single_shapefile_no_schema_check(tmp_path):
 
     field_names = [f.name for f in schema.fields]
     assert "id" in field_names
+
+
+# ---------------------------------------------------------------------------
+# D1 — directory of .shp.zip and mixed .shp/.shp.zip enumeration
+# ---------------------------------------------------------------------------
+
+
+def _touch_zip_bundle(directory: str, stem: str) -> None:
+    """Create a minimal .shp.zip file (valid zip containing shapefile sidecars)."""
+    import zipfile
+
+    zip_path = os.path.join(directory, stem + ".shp.zip")
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for ext in (".shp", ".dbf", ".shx"):
+            zf.writestr(stem + ext, b"")
+
+
+def test_members_dir_of_shp_zip(tmp_path):
+    """_members() must enumerate .shp.zip files in a directory (zipped shapefiles)."""
+    _touch_zip_bundle(str(tmp_path), "a")
+    _touch_zip_bundle(str(tmp_path), "b")
+    reader = _make_reader(str(tmp_path))
+    members = reader._members()
+    basenames = {os.path.basename(m) for m in members}
+    assert "a.shp.zip" in basenames, f"Expected a.shp.zip in members; got {basenames}"
+    assert "b.shp.zip" in basenames, f"Expected b.shp.zip in members; got {basenames}"
+    assert len(basenames) == 2, f"Expected exactly 2 members; got {basenames}"
+
+
+def test_members_mixed_shp_and_zip(tmp_path):
+    """_members() must enumerate both unzipped .shp bundles AND .shp.zip files in a mixed directory."""
+    _touch_shp_bundle(str(tmp_path), "roads")
+    _touch_zip_bundle(str(tmp_path), "rivers")
+    reader = _make_reader(str(tmp_path))
+    members = reader._members()
+    basenames = {os.path.basename(m) for m in members}
+    assert "roads.shp" in basenames, f"Expected roads.shp in {basenames}"
+    assert "rivers.shp.zip" in basenames, f"Expected rivers.shp.zip in {basenames}"
