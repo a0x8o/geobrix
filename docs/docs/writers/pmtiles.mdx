@@ -93,6 +93,7 @@ Both tiers are write-only and require `.mode("overwrite")` — a finalized archi
 | `tileType` | _auto-detect_ | Override the PMTile `tile_type`: `png`, `jpeg`/`jpg`, `webp`, `avif`, or `mvt`. |
 | `tileCompression` | `"none"` | PMTile `tile_compression` advertised in the header: `none`, `gzip`, `brotli`, or `zstd`. Tile bytes pass through unchanged. |
 | `metadata` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
+| `fileName` | _(none)_ | Name the output unit explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing). In single-archive mode (`shardZoom=0`): output = `path/<fileName>.pmtiles` (extension auto-completed). In sharded mode (default): output directory = `path/<fileName>` (no extension appended). See [Output naming](#output-naming). |
 
 <CodeFromTest code={pmtilesEx} language="python" functionName="OPTIONS_NOTE"
   source="docs/tests/python/writers/pmtiles_gbx_examples.py"
@@ -105,6 +106,24 @@ Both tiers are write-only and require `.mode("overwrite")` — a finalized archi
 | `metadataJson` | `"{}"` | JSON metadata string written into the PMTile header (e.g. `'{"name":"my_tileset","attribution":"..."}'`). |
 | `tileType` | _auto-detect_ | Override the auto-detected PMTile `tile_type` byte: `1` = MVT, `2` = PNG, `3` = JPEG, `4` = WebP. Useful when emitting via a custom encoder that doesn't carry the standard magic bytes. |
 | `tileCompression` | `1` (none) | PMTile `tile_compression` byte advertised in the header: `1` = none, `2` = gzip, `3` = brotli, `4` = zstd. GeoBrix passes tile bytes through unchanged; set this only if you have pre-compressed your tiles upstream. |
+| `fileName` | _(none)_ | Name the output `.pmtiles` file explicitly. When set, `.save(path)` treats `path` as the **parent directory** (created if missing) and writes `path/<fileName>.pmtiles` (extension auto-completed). The heavyweight writer is always single-archive. See [Output naming](#output-naming). |
+
+## Output naming
+
+Both tiers apply the same 3-case naming contract. The output unit differs by mode:
+
+- **Single-archive** (`shardZoom=0` for `pmtiles_gbx`; always for `pmtiles`) — the unit is a **single `.pmtiles` file**. Extension auto-completion applies: `tiles` → `tiles.pmtiles`; `tiles.pmtiles` → unchanged. Passing a name ending in a different recognized geo extension raises a clear error.
+- **Sharded** (default `pmtiles_gbx` with `shardZoom ≥ 1`) — the unit is the **output directory** that holds the shard archives, `overview.pmtiles`, and the catalog. No `.pmtiles` extension is appended to the directory name.
+
+Rules evaluated in order:
+
+| Case | `.save(path)` / `fileName` | Single-archive resolved output | Sharded resolved output |
+|---|---|---|---|
+| `fileName` given | `.option("fileName","tiles").save("/out/exports")` | `/out/exports/tiles.pmtiles` | `/out/exports/tiles/` (directory) |
+| No `fileName`; `path` is an existing directory | `.save("/out/exports")` | `/out/exports/exports.pmtiles` | `/out/exports/exports/` (directory under the given path) |
+| No `fileName`; `path` is a stem | `.save("/out/exports/tiles")` | `/out/exports/tiles.pmtiles` | `/out/exports/tiles/` (directory) |
+
+The heavyweight `pmtiles` writer is always single-archive (the sharded column does not apply). Both tiers behave identically for single-archive mode.
 
 <Tabs groupId="gbx-tier" queryString="tier">
 <TabItem value="lightweight" label="Lightweight · pmtiles_gbx">
@@ -190,10 +209,16 @@ tiles_df.write.mode("overwrite").format("pmtiles")...     # ✅
 
 `append` and `ignore` are not implemented.
 
-### 3. Output path is the final file, not a directory
+### 3. Output path and naming
+
+By default, `.save(path)` resolves `path` as the final `.pmtiles` file (extension auto-completed). With `.option("fileName", name)`, `path` is instead treated as the parent directory and `name.pmtiles` is written inside it. See [Output naming](#output-naming) for the full 3-case contract.
 
 ```python
-.save("/Volumes/main/default/tiles/out.pmtiles")
+# stem path — extension auto-completed
+.save("/Volumes/main/default/tiles/out")          # -> out.pmtiles
+
+# explicit fileName — path is the parent directory
+.option("fileName", "out").save("/Volumes/main/default/tiles")  # -> tiles/out.pmtiles
 ```
 
 Scratch `_part_*.tdata` and `_part_*.entries` files are written alongside the target path during the commit phase and deleted on success.
