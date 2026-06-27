@@ -72,8 +72,11 @@ class RasterGbxWriter(DataSourceWriter):
         self.name_col = name_col
         self.ext = ext
         self.force_driver = force_driver
-        if overwrite and os.path.isdir(path):
-            for stale in glob.glob(os.path.join(path, f"*.{ext}")):
+        # Use self.path (scheme stripped), NOT the raw path: a dbfs:/file:-qualified
+        # path makes os.path.isdir(path) False, which would silently skip the
+        # overwrite cleanup and leave stale tiles from a prior write mixed in.
+        if overwrite and os.path.isdir(self.path):
+            for stale in glob.glob(os.path.join(self.path, f"*.{ext}")):
                 try:
                     os.remove(stale)
                 except OSError:

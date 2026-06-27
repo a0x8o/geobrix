@@ -33,6 +33,8 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from databricks.labs.gbx.ds import _scratch
+
 # OGR field type (+ subtype) -> Spark type, matching heavy OGR_SchemaInference.getType.
 _OGR_TO_SPARK = {
     "OFTInteger": IntegerType,
@@ -559,7 +561,11 @@ class VectorGbxReader(DataSourceReader):
             return [self.path]
         exts: Tuple[str, ...] = self._EXT_FOR_DRIVER.get(self.driver) or ()
         members = []
-        for root, _dirs, files in os.walk(self.path):
+        for root, dirs, files in os.walk(self.path):
+            # Skip hidden/marker dirs (Spark convention): a writer's in-flight or
+            # orphaned .gbx_scratch container, _SUCCESS-style markers, etc. are
+            # never input data. Pruning `dirs` in place stops os.walk descending.
+            dirs[:] = [d for d in dirs if not d.startswith((".", "_"))]
             for n in sorted(files):
                 low = n.lower()
                 if (exts and low.endswith(exts)) or low.rstrip("/").endswith(".gdb"):
@@ -875,12 +881,17 @@ class VectorGbxWriter(DataSourceWriter):
             for f in schema.fields
         )
         parent = os.path.dirname(self.path) or "."
-        # Per-write unique scratch dir: the writer instance is created once on the
-        # driver and serialized to the executors, so every task of THIS write shares
-        # one uuid while a concurrent write to the same parent gets its own. A shared
-        # "_vec_scratch" would let one write's commit cleanup (rmtree) delete
-        # another's in-flight fragments.
-        self.scratch_dir = os.path.join(parent, f"_vec_scratch_{uuid.uuid4().hex}")
+        # Per-write unique scratch dir under a hidden, self-GC'ing container: the
+        # writer instance is created once on the driver and serialized to the
+        # executors, so every task of THIS write shares one uuid while a
+        # concurrent write to the same parent gets its own. A shared scratch name
+        # would let one write's commit cleanup (rmtree) delete another's in-flight
+        # fragments. The .gbx_scratch container is hidden from the recursive
+        # reader; gc_stale_scratch reclaims (by age) scratch orphaned by a
+        # hard-killed job whose commit/abort never ran. See ds/_scratch.py.
+        self.scratch_dir = _scratch.new_scratch_dir(parent)
+        _scratch.gc_stale_scratch(parent)
+        _scratch.gc_stale_local_temp("gbx_vecout_")
         if not self.overwrite and self._target_exists():
             raise ValueError(
                 "vector_gbx does not support append; use .mode('overwrite')."

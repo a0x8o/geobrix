@@ -14,6 +14,7 @@ from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pyspark.sql.datasource import DataSource, DataSourceWriter, WriterCommitMessage
 from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
+from databricks.labs.gbx.ds import _scratch
 from databricks.labs.gbx.ds.tiles import shard as _shard
 from databricks.labs.gbx.ds.tiles._header import build_header_info, sniff_tile_type
 from databricks.labs.gbx.ds.tiles.backend import PMTilesBackend
@@ -115,11 +116,16 @@ class PMTilesGbxWriter(DataSourceWriter):
         ext = ".pmtiles" if self.shard_zoom == 0 else ""
         self.path = _resolve_single_file_output(raw_path, file_name, ext)
         # For single-archive mode path is a .pmtiles file; scratch must live
-        # beside it (in parent dir), not inside it.
+        # beside it (in parent dir), not inside it. Use a per-write unique scratch
+        # dir under the hidden, self-GC'ing .gbx_scratch container so concurrent
+        # jobs/users writing the same target can't share (and corrupt) one
+        # another's fragments -- a fixed "_scratch" name let two writes' commit
+        # rmtree and read_entries cross-contaminate. See ds/_scratch.py.
         _scratch_base = (
             os.path.dirname(self.path) or "." if self.shard_zoom == 0 else self.path
         )
-        self.scratch_dir = os.path.join(_scratch_base, "_scratch")
+        self.scratch_dir = _scratch.new_scratch_dir(_scratch_base)
+        _scratch.gc_stale_scratch(_scratch_base)
 
         if not self.overwrite and self._target_exists():
             raise ValueError(

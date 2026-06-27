@@ -13,6 +13,7 @@ from shapely import LineString, Point, Polygon
 from shapely import from_wkb as _from_wkb
 from shapely import to_wkb
 
+from databricks.labs.gbx.ds import _scratch
 from databricks.labs.gbx.ds.register import register
 from databricks.labs.gbx.ds.vector import (
     VectorGbxWriter,
@@ -187,8 +188,12 @@ def test_scratch_dir_unique_per_write(tmp_path):
     w1 = VectorGbxWriter(f"{parent}/a.geojson", schema, "GeoJSON", {}, overwrite=True)
     w2 = VectorGbxWriter(f"{parent}/b.geojson", schema, "GeoJSON", {}, overwrite=True)
     assert w1.scratch_dir != w2.scratch_dir
-    assert os.path.dirname(w1.scratch_dir) == parent
-    assert os.path.dirname(w2.scratch_dir) == parent
+    # Each write's scratch is a unique subdir under the shared hidden container
+    # <parent>/.gbx_scratch/ (so a concurrent write's rmtree can't touch it, and
+    # the recursive reader skips the dot-prefixed container).
+    container = os.path.join(parent, _scratch.SCRATCH_CONTAINER)
+    assert os.path.dirname(w1.scratch_dir) == container
+    assert os.path.dirname(w2.scratch_dir) == container
 
 
 def test_geometry_type_of_point_and_line():
