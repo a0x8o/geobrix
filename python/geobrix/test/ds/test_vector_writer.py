@@ -471,6 +471,92 @@ def test_file_gdb_multi_fragment_streaming(spark, tmp_path):
     assert len(geom_types) > 0, "no non-null geometries read back"
 
 
+def test_file_gdb_tx_batch_boundary(spark, tmp_path, monkeypatch):
+    """The OGR mid-loop CommitTransaction/StartTransaction path must not drop or
+    double-write features.
+
+    With the default _GDB_TX_BATCH=100_000 a 10-feature test never triggers the
+    boundary commit.  Monkeypatching the module-level constant to 3 forces the
+    commit/restart cycle at rows 3, 6 (and the tail commit at row 7), so this
+    test exercises the code path the default value leaves dead.
+
+    Asserts:
+    (a) exact row count == 7  (no drop, no double-write at batch boundaries)
+    (b) attribute values survive intact across commit boundaries
+    (c) geometry values survive (non-null, correct shapely type)
+    """
+    import importlib.util
+
+    import databricks.labs.gbx.ds.vector as _vec_mod
+    from shapely import Polygon as _Polygon
+    from shapely import from_wkb as _from_wkb
+
+    if importlib.util.find_spec("osgeo") is None:
+        pytest.skip(
+            "native osgeo (heavy GDAL natives) not present; "
+            "file_gdb_gbx write requires osgeo"
+        )
+
+    # Patch the module-level batch size to 3 so 7 features cross two boundaries.
+    monkeypatch.setattr(_vec_mod, "_GDB_TX_BATCH", 3)
+
+    register(spark)
+
+    def _box(x, y):
+        return bytearray(
+            to_wkb(
+                _Polygon(
+                    [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1), (x, y)]
+                )
+            )
+        )
+
+    # 7 features, 2 partitions -> >=2 fragments; batch=3 means commits at
+    # features 3 and 6, then a tail commit for feature 7.
+    rows = [(f"r{i}", i * 5, _box(float(i), 0.0), "4326", "") for i in range(7)]
+    df = spark.createDataFrame(
+        rows,
+        schema="name string, val int, geom_0 binary, "
+        "geom_0_srid string, geom_0_srid_proj string",
+    ).repartition(2, F.col("name"))
+
+    out = str(tmp_path / "boundary.gdb")
+    df.write.format("file_gdb_gbx").mode("overwrite").save(out)
+
+    back = spark.read.format("file_gdb_gbx").load(out)
+    rows_back = back.collect()
+
+    # (a) exact row count -- no drop or double-write
+    assert len(rows_back) == 7, f"expected 7 rows, got {len(rows_back)}"
+
+    # (b) attribute values survive
+    name_to_val = {r["name"]: r["val"] for r in rows_back}
+    assert set(name_to_val.keys()) == {f"r{i}" for i in range(7)}, (
+        f"name set mismatch: {set(name_to_val.keys())}"
+    )
+    for i in range(7):
+        assert name_to_val[f"r{i}"] == i * 5, (
+            f"val mismatch for r{i}: got {name_to_val[f'r{i}']}"
+        )
+
+    # (c) geometry survives (non-null; OpenFileGDB may promote Polygon->MultiPolygon)
+    gcol = next(
+        f.name
+        for f in back.schema.fields
+        if f.name not in ("name", "val")
+        and not f.name.endswith(("_srid", "_srid_proj"))
+    )
+    geom_types = {
+        _from_wkb(bytes(r[gcol])).geom_type
+        for r in rows_back
+        if r[gcol] is not None
+    }
+    assert geom_types <= {"Polygon", "MultiPolygon"}, (
+        f"unexpected geometry types: {geom_types}"
+    )
+    assert len(geom_types) > 0, "all geometries were null after round-trip"
+
+
 def test_gpkg_output_uses_format_default_geom_name(spark, tmp_path):
     # GPKG output should use the format-default geometry column name `geom`,
     # not the input column name, so an arbitrary input name doesn't leak out.

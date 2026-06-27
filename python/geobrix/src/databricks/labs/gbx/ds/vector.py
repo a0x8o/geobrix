@@ -286,6 +286,11 @@ def _srid_to_crs(srid: str, proj4: str):
 # is structural (no named field), so the value is inert there; GPKG/FileGDB name
 # the geometry column, so use the format default rather than the input column
 # name (which may be arbitrary once geomCol is in play).
+# OGR transaction batch size for FileGDB writes.  Large enough to amortise the
+# commit overhead; small enough to bound memory and not starve other threads.
+# Module-level so tests can monkeypatch it to exercise the boundary code path.
+_GDB_TX_BATCH = 100_000
+
 _OUTPUT_GEOM_NAME = {"GPKG": "geom", "OpenFileGDB": "SHAPE"}
 
 
@@ -1113,7 +1118,7 @@ class VectorGbxWriter(DataSourceWriter):
 
         Fragments are consumed ONE AT A TIME (bounded driver memory — never the
         whole dataset in RAM) and features are written inside OGR bulk transactions
-        (committed every _GDB_TX_BATCH_SIZE rows), which eliminates the per-feature
+        (committed every _GDB_TX_BATCH rows), which eliminates the per-feature
         auto-commit overhead that otherwise makes large writes O(n) slow."""
         try:
             from osgeo import ogr, osr
@@ -1176,9 +1181,6 @@ class VectorGbxWriter(DataSourceWriter):
                 f"OpenFileGDB CreateDataSource returned None for {local_out!r}; "
                 "the FileGDB output path must end in '.gdb'."
             )
-        # Batch size for OGR transaction commits. Large enough to amortise the
-        # commit overhead; small enough to bound memory and not starve other threads.
-        _TX_BATCH = 100_000
         use_tx = lyr = None
         try:
             lyr = ds.CreateLayer(
@@ -1218,7 +1220,7 @@ class VectorGbxWriter(DataSourceWriter):
                     lyr.CreateFeature(feat)
                     feat = None
                     pending += 1
-                    if use_tx and pending >= _TX_BATCH:
+                    if use_tx and pending >= _GDB_TX_BATCH:
                         lyr.CommitTransaction()
                         lyr.StartTransaction()
                         pending = 0
