@@ -81,6 +81,17 @@ object HadoopUtils {
         !n.startsWith("_") && !n.startsWith(".")
     }
 
+    /** Returns true for known Spark/Hadoop job-marker files that should always be excluded from
+      * data listings: `_SUCCESS`, `_metadata`, `_common_metadata`, `_committed_*`, `_started_*`,
+      * and CRC sidecar files. Does NOT exclude all `_`-prefixed files — this is intentionally
+      * different from the Spark FileScan hidden-file filter, which excludes ALL `_`-prefixed names
+      * and therefore misses legitimate data files like `_us_roads.shp`. */
+    private def isMarkerFile(path: Path): Boolean = {
+        val n = path.getName
+        n == "_SUCCESS" || n == "_metadata" || n == "_common_metadata" ||
+        n.startsWith("_committed_") || n.startsWith("_started_") || n.endsWith(".crc")
+    }
+
     /** Lists non-directory data files under inPath using the given Hadoop config
       * (marker/hidden files like `_SUCCESS` are skipped). */
     def listHadoopFiles(inPath: String, hconf: SerializableConfiguration): Seq[String] = {
@@ -155,7 +166,10 @@ object HadoopUtils {
       * it. (Executor reads are separate — they use the bare `/Volumes` UC connector via copyToPath;
       * do NOT extend this Spark-listing workaround to executor reads or reintroduce `file:` paths.)
       * A single file or a `.gdb` / `.gdb.zip` / `.zip` dataset is returned as-is (not a dir of
-      * shards). Falls back to the raw Hadoop FS listing if Spark's binaryFile can't enumerate it. */
+      * shards). Falls back to the raw Hadoop FS listing if Spark's binaryFile can't enumerate it.
+      * When binaryFile returns empty (Spark's hidden-file filter skips ALL `_`-prefixed names),
+      * falls back to a raw Hadoop FS listing via an executor task, which carries the UC credential
+      * and has no `_`-prefix filter — stripping only known Spark/Hadoop job-marker files. */
     def listDataFilesSpark(spark: org.apache.spark.sql.SparkSession, inPath: String): Seq[String] = {
         val cp = cleanPath(inPath)
         val lower = inPath.toLowerCase(java.util.Locale.ROOT).stripSuffix("/")
@@ -164,13 +178,56 @@ object HadoopUtils {
         } else {
             try {
                 val files = spark.read.format("binaryFile").load(cp).inputFiles.toSeq.sorted
-                if (files.nonEmpty) files else Seq(cp)
+                if (files.nonEmpty) {
+                    files
+                } else {
+                    // binaryFile returned empty: Spark's hidden-file filter may have skipped all
+                    // files in a directory whose names start with '_' (e.g. _shp_fix_782054.shp).
+                    // Fall back to a raw Hadoop FS listing on an executor (which carries the UC
+                    // Volume credential and has no '_'-prefix filter) and strip only known
+                    // Spark/Hadoop job markers.
+                    val hc = new SerializableConfiguration(spark.sessionState.newHadoopConf)
+                    val path = new Path(new URI(cp))
+                    val isDir = try {
+                        val fs = path.getFileSystem(hc.value)
+                        fs.isDirectory(path)
+                    } catch { case _: Throwable => false }
+                    if (isDir) {
+                        val listed = try listDirOnExecutor(spark, cp) catch { case _: Throwable => Seq.empty }
+                        val filtered = listed.filterNot(p => isMarkerFile(new Path(new URI(p))))
+                        if (filtered.nonEmpty) filtered else Seq(cp)
+                    } else {
+                        Seq(cp)
+                    }
+                }
             } catch {
                 case _: Throwable =>
                     val hc = new SerializableConfiguration(spark.sessionState.newHadoopConf)
                     try listHadoopFiles(cp, hc) catch { case _: Throwable => Seq(cp) }
             }
         }
+    }
+
+    /** Lists files in a directory using Hadoop FileSystem on an executor, bypassing Spark's hidden-
+      * file filter (which skips `_`-prefixed names unconditionally). Marker files that are genuine
+      * Hadoop/Spark job artifacts are dropped; real data files with `_`-prefixed names are kept. */
+    private def listDirOnExecutor(
+        spark: org.apache.spark.sql.SparkSession,
+        cp: String
+    ): Seq[String] = {
+        val hc = new SerializableConfiguration(spark.sessionState.newHadoopConf)
+        spark.sparkContext.parallelize(Seq(cp), 1).flatMap { p =>
+            val path = new Path(new URI(p))
+            val fs = path.getFileSystem(hc.value)
+            if (fs.isDirectory(path)) {
+                fs.listStatus(path)
+                    .filterNot(_.isDirectory)
+                    .map(_.getPath.toString)
+                    .toSeq
+            } else {
+                Seq(p)
+            }
+        }.collect().toSeq.sorted
     }
 
     /** Lists the parent directory of a bare `.shp` path via Spark's credential-aware binaryFile
@@ -240,6 +297,15 @@ object HadoopUtils {
         val tmpDir = java.nio.file.Files.createTempDirectory("gbx_ogr_schema_").toFile
         for (p <- toStage) {
             val local = toPosix(p)
+            // Defensive guard: never attempt to read a directory as bytes. This can happen if
+            // listDataFilesSpark falls back to the directory path itself (e.g. all files were
+            // filtered out). Skip with a clear error rather than the cryptic "Is a directory".
+            if (new java.io.File(local).isDirectory) {
+                throw new IllegalArgumentException(
+                    s"stageHeadForSchemaSpark: expected a file but got a directory: $local. " +
+                    s"The directory may contain no readable data files."
+                )
+            }
             val bytes: Array[Byte] =
                 try java.nio.file.Files.readAllBytes(new java.io.File(local).toPath)
                 catch {

@@ -129,6 +129,34 @@ class OgrReaderContractTest extends PlanTest with SilentSparkSession {
     }
 
     // ---------------------------------------------------------------------------
+    // US1: underscore-prefixed shapefile names — Spark's hidden-file filter skips
+    // all files whose names start with '_', so a dir of _foo.shp/_foo.dbf/_foo.shx
+    // returned empty from binaryFile.inputFiles() and caused "Is a directory".
+    // ---------------------------------------------------------------------------
+
+    test("shapefile_ogr must read a directory of underscore-prefixed shapefile files") {
+        val tmpDir = Files.createTempDirectory("gbx_us1_underscore_").toFile
+        val fields = Seq("name" -> ogrConstants.OFTString)
+        // Write under a normal stem first, then rename to underscore-prefixed stem
+        writeShapefile(tmpDir, "tmp_normal", fields, name = "under_feat")
+        // Rename all components to underscore-prefixed stem
+        val exts = Seq("shp", "shx", "dbf", "prj", "cpg")
+        exts.foreach { ext =>
+            val src = new java.io.File(tmpDir, s"tmp_normal.$ext")
+            if (src.exists()) {
+                val dst = new java.io.File(tmpDir, s"_us_test.$ext")
+                src.renameTo(dst)
+            }
+        }
+        // Verify the dir now contains only _-prefixed files
+        val fileNames = tmpDir.listFiles().map(_.getName).toSet
+        fileNames.filter(_.endsWith(".shp")) shouldBe Set("_us_test.shp")
+
+        val df = spark.read.format("shapefile_ogr").load(tmpDir.getAbsolutePath)
+        df.count() shouldBe 1L
+    }
+
+    // ---------------------------------------------------------------------------
     // D1: dir of .shp.zip — both tiers handle directory of zipped shapefiles
     // ---------------------------------------------------------------------------
 
