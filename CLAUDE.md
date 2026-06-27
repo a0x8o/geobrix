@@ -181,8 +181,8 @@ When adding a new `gbx:<category>:<action>` command (or fixing an existing one �
 
 Two locations, by artifact class:
 
-- **Design specs** (brainstorming-skill output — the `*-design.md` files) go under `docs/superpowers/specs/YYYY-MM-DD-<kebab-topic>-design.md`. This tree is **version-controlled** — specs are committed alongside the work they describe.
-- **Everything else** (session summaries, implementation plans, analyses, progress notes) goes under `prompts/<category>/YYYY-MM-DD-<kebab-topic>.md`. Categories include `features/`, `documentation/`, `refactoring/`, `testing/`, `bugfixes/`. **`/prompts/` is gitignored** — local scratch, not committed.
+- **Design specs and implementation plans** (the `superpowers` workflow outputs) live under `docs/superpowers/` — specs (brainstorming-skill output, the `*-design.md` files) under `docs/superpowers/specs/YYYY-MM-DD-<kebab-topic>-design.md`, and plans (writing-plans-skill output) under `docs/superpowers/plans/YYYY-MM-DD-<kebab-topic>.md`. This tree is **version-controlled** — specs and plans are committed alongside the work they describe.
+- **Everything else** (session summaries, analyses, progress notes, scoping drafts) goes under `prompts/<category>/YYYY-MM-DD-<kebab-topic>.md`. Categories include `features/`, `documentation/`, `refactoring/`, `testing/`, `bugfixes/`. **`/prompts/` is gitignored** — local scratch, not committed.
 
 ## What used to live under `.cursor/`
 
