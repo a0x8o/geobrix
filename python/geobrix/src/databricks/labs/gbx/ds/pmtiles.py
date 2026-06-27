@@ -23,6 +23,7 @@ from databricks.labs.gbx.ds.tiles.catalog import (
     TileJSONCatalog,
 )
 from databricks.labs.gbx.ds.tiles.grid import SlippyGrid
+from databricks.labs.gbx.ds.vector import _resolve_single_file_output
 
 INPUT_SCHEMA = StructType(
     [
@@ -92,7 +93,7 @@ class PMTilesGbxWriter(DataSourceWriter):
         opts = {k.lower(): v for k, v in options.items()}
         # The output path may arrive dbfs:-qualified; strip the scheme once so all
         # os.path.{exists,isfile,isdir,join} + writes operate on the bare FUSE path.
-        self.path = to_local_path(path)
+        raw_path = to_local_path(path)
         self.overwrite = overwrite
         self.shard_zoom = int(opts.get("shardzoom", "6"))
         tps = opts.get("targettilespershard")
@@ -107,6 +108,12 @@ class PMTilesGbxWriter(DataSourceWriter):
         ]
         self.metadata = json.loads(opts["metadata"]) if opts.get("metadata") else {}
         self.grid = SlippyGrid()
+        # Adaptive naming: single-archive -> .pmtiles file; sharded -> directory unit.
+        # fileName option (case-insensitively received as 'filename') lets callers
+        # control the output name independently of the path argument.
+        file_name = opts.get("filename")
+        ext = ".pmtiles" if self.shard_zoom == 0 else ""
+        self.path = _resolve_single_file_output(raw_path, file_name, ext)
         # For single-archive mode path is a .pmtiles file; scratch must live
         # beside it (in parent dir), not inside it.
         _scratch_base = (

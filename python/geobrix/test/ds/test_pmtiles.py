@@ -84,11 +84,23 @@ def test_adaptive_sharding_option(spark, tmp_path):
 
 
 def test_append_mode_rejected(spark, tmp_path):
+    """Appending to an existing pmtiles output must raise an error.
+
+    Write once to establish the output at the resolved path, then try a second
+    write with mode('append') -- the writer detects the existing target and rejects.
+    The stem path 'appendme' resolves to 'appendme.pmtiles' (single-archive).
+    """
     register(spark)
-    out = str(tmp_path / "appendme")
-    os.makedirs(out, exist_ok=True)
-    open(os.path.join(out, "marker"), "w").close()
     import pytest
 
+    stem = str(tmp_path / "appendme")
+    resolved = stem + ".pmtiles"  # single-archive; shardZoom=0 -> <stem>.pmtiles
+    _rows(spark, [(6, 32, 21)]).write.format("pmtiles_gbx").mode("overwrite").option(
+        "shardZoom", "0"
+    ).save(stem)
+    assert os.path.isfile(resolved)
+
     with pytest.raises(Exception):
-        _rows(spark, [(6, 32, 21)]).write.format("pmtiles_gbx").mode("append").save(out)
+        _rows(spark, [(6, 32, 21)]).write.format("pmtiles_gbx").mode("append").option(
+            "shardZoom", "0"
+        ).save(stem)

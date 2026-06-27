@@ -142,7 +142,7 @@ _CANONICAL_EXT = {
     "OpenFileGDB": ".gdb",
 }
 # Recognized geo extensions, longest-first, so multi-part suffixes match before their parts.
-_RECOGNIZED_EXTS = (".shp.zip", ".gdb.zip", ".gpkg", ".geojson", ".gdb", ".shp")
+_RECOGNIZED_EXTS = (".shp.zip", ".gdb.zip", ".pmtiles", ".gpkg", ".geojson", ".gdb", ".shp")
 
 
 def _canonical_ext(driver: str, zip_enabled: bool) -> str:
@@ -162,6 +162,8 @@ def _complete_ext(name: str, ext: str) -> str:
     """Ensure *name* ends with *ext*, handling partial multi-part extensions.
 
     Rules:
+    - If *ext* is ``""`` (directory unit), return *name* unchanged — no extension
+      to append or validate.
     - If *name* already ends with *ext* (case-insensitive), return it unchanged.
     - If *name* ends with a recognized prefix of *ext* (e.g. 'roads.shp' when ext
       is '.shp.zip'), complete it by appending the missing suffix.
@@ -169,6 +171,8 @@ def _complete_ext(name: str, ext: str) -> str:
       (prevents silently double-appending when the caller passes the wrong name).
     - Otherwise append *ext* directly.
     """
+    if ext == "":
+        return name  # directory unit: no extension to append or validate
     low = name.lower()
     if low.endswith(ext):
         return name
@@ -200,6 +204,11 @@ def _resolve_single_file_output(path: str, file_name, ext: str) -> str:
     Case 3 — *file_name* is None/empty and *path* is NOT an existing directory
         (file-like target): complete the extension on the stem, create the parent
         directory, and return the completed path.
+
+    When *ext* is ``""`` the output is a **directory unit** (e.g. a PMTiles shard
+    tree): the same 3-case name resolution applies but no extension is appended and
+    no wrong-extension rejection occurs.  The parent of the resolved path is created
+    (``case 1`` and ``case 2`` mkdir the path itself; ``case 3`` mkdirs the parent).
 
     Creates parent directories as needed. Pure path logic + one mkdirs side effect.
     """

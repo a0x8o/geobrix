@@ -348,3 +348,22 @@ def _members(self):
 **Spec coverage:** §3 contract → A1/A2; §4 EXT → A1; §5 applicability (light now) → A3/A4; §6 heavy read-only error → C1; §9 tests → A4/B5 round-trips + unit tests. #71 reader contract → B1–B5. PMTiles → helper is reusable (A2), application out of scope (noted). ✅
 **Placeholder scan:** B2/B3/B4 implementation steps describe the mechanism with the exact files + message but defer some Scala specifics to the implementer — acceptable as they hinge on `read_info`/Hadoop-FS list calls already used in the file; the shared message string is fixed in Global Constraints. No "TBD"/"handle edge cases". 
 **Type consistency:** `_resolve_single_file_output(path, file_name, ext)`, `_canonical_ext(driver, zip_enabled)`, `_complete_ext(name, ext)` used consistently A1→A3. ✅
+
+---
+
+## Workstream D — PMTiles (single-unit naming, both tiers)
+
+Apply the `fileName` + adaptive-naming contract to PMTiles. Single-archive (light `shardZoom=0` + heavy `pmtiles`) = full contract with `EXT=".pmtiles"`. Light **sharded** (default `shardZoom=6`, a directory of shards + overview + STAC) = the SAME 3-case resolution for the output DIRECTORY with `EXT=""` (no extension; directory unit), creating parents. Decision recorded 2026-06-27: "single-archive full; sharded dir adaptive too".
+
+### Task D1: light `pmtiles_gbx` fileName + adaptive naming (both modes)
+- In `python/.../ds/vector.py`: make `_resolve_single_file_output(path, file_name, ext)` accept `ext=""` (directory unit) → 3-case resolution with NO extension completion and NO wrong-ext rejection (just resolve the name + mkdir parents); `_complete_ext(name, "")` returns `name` unchanged. Add `".pmtiles"` to `_RECOGNIZED_EXTS`.
+- In `python/.../ds/pmtiles.py` `__init__`: read `opts.get("filename")`; set `self.path = _resolve_single_file_output(to_local_path(path), file_name, ".pmtiles" if self.shard_zoom==0 else "")`. Compute `scratch_dir`/`_target_exists`/`_clear_target` AFTER resolution (unchanged logic).
+- Tests (`python/.../test/ds/`): single-archive (stem→`.pmtiles`; `fileName`; existing-dir→`<dir>/<dirname>.pmtiles`) and sharded (stem→dir; `fileName`→`<path>/<name>/` dir; existing-dir→`<dir>/<dirname>/`) resolution + a round-trip each; cross-writer wrong-ext (a `.gpkg` fileName on single → clear error).
+
+### Task D2: heavy `pmtiles` fileName + adaptive naming (single-archive)
+- Add `HadoopUtils.resolveSingleFileOutput(path, fileName, ext, hConf)` (Scala) mirroring the Python 3-case using Hadoop FS (`exists`/`isDirectory`/`mkdirs` on `cleanPath`'d BARE `/Volumes` paths — never `file:`).
+- In `PMTiles_WriteBuilder.build()`: read `options.get("fileName")`; resolve `path` (EXT=`.pmtiles`) before constructing `PMTiles_BatchWrite`.
+- Tests (`src/test/.../pmtiles/`): write to a stem path → `<name>.pmtiles`; `fileName`; existing-dir.
+
+### Task D3: docs
+- The pmtiles writer doc page: document `fileName` + the 3-case naming for single-archive (`.pmtiles`) and sharded (directory) modes; note both tiers.
