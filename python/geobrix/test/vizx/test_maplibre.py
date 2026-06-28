@@ -400,3 +400,100 @@ def test_extract_vector_layer_names_unit():
     assert _extract_vector_layer_names(
         {"vector_layers": [{"name": "bad"}, {"id": "good"}]}
     ) == ["good"]
+
+
+# ---------------------------------------------------------------------------
+# build_html — Task 5
+# ---------------------------------------------------------------------------
+
+
+def test_build_html_is_self_contained_and_sri_pinned():
+    """The brief's required smoke test: vector layer → build_html → assertions."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import vector_layer
+
+    gdf = gpd.GeoDataFrame(
+        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
+    )
+    prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
+    html = build_html(prepared)
+    assert "maplibregl.Map" in html
+    assert 'integrity="sha384-' in html
+    assert 'crossorigin="anonymous"' in html
+    assert "carto" in html.lower()  # basemap wired
+    assert "gbx0" in html  # source id present
+
+
+def test_build_html_pmtiles_embed_mode_no_sidecar():
+    """build_html pops the _gbx_pmtiles sidecar and emits FileSource JS."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+
+    archive = _build_pmtiles_archive("mvt")
+    prepared = [layer_to_sources_layers(pmtiles_layer(archive), 0)]
+    html = build_html(prepared)
+    # Sidecar must be gone from the serialised HTML (MapLibre rejects unknown keys).
+    assert "_gbx_pmtiles" not in html
+    # FileSource registration must be present.
+    assert "pmtiles.FileSource" in html
+
+
+def test_build_html_pmtiles_url_mode():
+    """build_html url-mode emits new pmtiles.PMTiles(<url>) and no sidecar."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+
+    url = "https://example.com/tiles.pmtiles"
+    prepared = [layer_to_sources_layers(pmtiles_layer(url), 0)]
+    html = build_html(prepared)
+    assert "_gbx_pmtiles" not in html
+    assert "new pmtiles.PMTiles(" in html
+    assert url in html
+
+
+def test_build_html_basemap_none():
+    """basemap='none' renders an empty style literal, not a CARTO URL."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import vector_layer
+
+    gdf = gpd.GeoDataFrame(
+        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
+    )
+    prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
+    html = build_html(prepared, basemap="none")
+    assert "carto" not in html.lower()
+    assert "version:8" in html
+
+
+def test_build_html_custom_center_and_zoom():
+    """center and zoom are written into the Map constructor."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import vector_layer
+
+    gdf = gpd.GeoDataFrame(
+        {"v": [1]}, geometry=[Point(0.0, 51.5)], crs="EPSG:4326"
+    )
+    prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
+    html = build_html(prepared, center=[0.0, 51.5], zoom=8)
+    assert "[0.0, 51.5]" in html
+    assert "zoom: 8" in html
+
+
+def test_build_html_multi_layer():
+    """N prepared tuples → N source ids present in the HTML."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import vector_layer
+
+    gdf0 = gpd.GeoDataFrame(
+        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
+    )
+    gdf1 = gpd.GeoDataFrame(
+        {"v": [2]}, geometry=[Point(-122.5, 37.8)], crs="EPSG:4326"
+    )
+    prepared = [
+        layer_to_sources_layers(vector_layer(gdf0), 0),
+        layer_to_sources_layers(vector_layer(gdf1), 1),
+    ]
+    html = build_html(prepared)
+    assert "gbx0" in html
+    assert "gbx1" in html

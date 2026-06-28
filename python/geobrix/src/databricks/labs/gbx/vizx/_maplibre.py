@@ -1,8 +1,12 @@
-"""MapLibre GL per-layer adapters for the VizX interactive compositor.
+"""MapLibre GL per-layer adapters and HTML builder for the VizX interactive compositor.
 
 ``layer_to_sources_layers(layer, idx)`` converts one :class:`~databricks.labs.gbx.vizx._layers.Layer`
 into the MapLibre GL ``sources`` dict, ``layers`` list, and ``embed_bytes`` integer
 that ``build_html`` (Task 5) stitches together into a self-contained HTML viewer.
+
+``build_html(prepared, *, basemap, center, zoom)`` assembles N per-layer outputs into
+one self-contained HTML page with SRI-pinned ``<script>`` tags, a CARTO basemap,
+and pmtiles protocol registration (embed or url mode per layer).
 
 Dispatch by ``layer.kind``:
 
@@ -12,7 +16,7 @@ Dispatch by ``layer.kind``:
   PNG rendered via rasterio (decimated to ≤ ``raster_max_px``).
 * ``"pmtiles"`` — ``raster|vector`` source with ``pmtiles://gbx{idx}`` URL plus a
   ``_gbx_pmtiles`` sidecar dict recording embed mode or remote URL; consumed and
-  popped by the Task-5 HTML builder.
+  popped by the HTML builder.
 """
 
 from __future__ import annotations
@@ -21,6 +25,16 @@ import base64
 import io
 import json
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# SRI-pinned CDN constants — hashes are finalised in Task 12.
+# ---------------------------------------------------------------------------
+
+_MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
+_MAPLIBRE_JS_SRI = "sha384-REPLACE_WITH_PINNED_HASH"  # pinned in Task 12
+_PMTILES_JS = "https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"
+_PMTILES_JS_SRI = "sha384-REPLACE_WITH_PINNED_HASH"  # pinned in Task 12
+_CARTO_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 _DEFAULT_RASTER_MAX_PX = 1024
 
@@ -55,6 +69,102 @@ def layer_to_sources_layers(
     if kind == "pmtiles":
         return _pmtiles(layer, idx)
     raise ValueError(f"layer_to_sources_layers: unknown layer.kind={kind!r}")
+
+
+# ---------------------------------------------------------------------------
+# public HTML builder
+# ---------------------------------------------------------------------------
+
+
+def build_html(
+    prepared,
+    *,
+    basemap: str = "carto-positron",
+    center=None,
+    zoom=None,
+) -> str:
+    """Assemble N per-layer adapter outputs into one self-contained HTML viewer.
+
+    Args:
+        prepared: A list of ``(sources, layers, embed_bytes)`` tuples as returned
+                  by :func:`layer_to_sources_layers`.  The ``sources`` dicts are
+                  mutated in-place: any ``_gbx_pmtiles`` sidecar key is popped
+                  before the source is serialised into the MapLibre style.
+        basemap:  ``"carto-positron"`` (default) uses the CARTO Positron style as
+                  the base layer.  Pass ``"none"`` to render a blank dark canvas.
+        center:   ``[lon, lat]`` map centre (default San Francisco ``[-122.43, 37.77]``).
+        zoom:     Initial zoom level (default ``11``).
+
+    Returns:
+        A self-contained HTML string with inline ``<script>`` tags, SRI hashes,
+        and base64-embedded PMTiles archives (or URL-referenced ones).
+    """
+    sources: dict = {}
+    layers: list = []
+    pm_pairs: list[tuple[str, dict]] = []
+
+    for s, ls, *_rest in prepared:
+        for sid, sdef in s.items():
+            if "_gbx_pmtiles" in sdef:
+                # Pop the sidecar BEFORE merging — MapLibre rejects unknown keys.
+                pm_pairs.append((sid, sdef.pop("_gbx_pmtiles")))
+        sources.update(s)
+        layers.extend(ls)
+
+    if basemap and basemap != "none":
+        base_js = f'"{_CARTO_STYLE}"'
+    else:
+        base_js = "{version:8,sources:{},layers:[]}"
+
+    overlay_json = json.dumps({"sources": sources, "layers": layers})
+    pm_js = "".join(_pmtiles_register_js(sid, info) for sid, info in pm_pairs)
+
+    center_js = json.dumps(center if center is not None else [-122.43, 37.77])
+    zoom_js = zoom if zoom is not None else 11
+
+    return f"""\
+<div id="gbx-map" style="height:480px"></div>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="{_MAPLIBRE_JS}" integrity="{_MAPLIBRE_JS_SRI}" crossorigin="anonymous"></script>
+<script src="{_PMTILES_JS}" integrity="{_PMTILES_JS_SRI}" crossorigin="anonymous"></script>
+<script>
+  const proto = new pmtiles.Protocol();
+  maplibregl.addProtocol('pmtiles', proto.tile.bind(proto));
+  {pm_js}
+  const map = new maplibregl.Map({{
+    container: 'gbx-map',
+    style: {base_js},
+    center: {center_js},
+    zoom: {zoom_js}
+  }});
+  const overlay = {overlay_json};
+  map.on('load', () => {{
+    for (const [sid, sdef] of Object.entries(overlay.sources)) {{
+      map.addSource(sid, sdef);
+    }}
+    for (const ly of overlay.layers) {{
+      map.addLayer(ly);
+    }}
+  }});
+</script>"""
+
+
+def _pmtiles_register_js(sid: str, info: dict) -> str:
+    """Return the JS snippet that registers one PMTiles source with the protocol.
+
+    For ``"url"`` mode the archive is fetched on demand from the remote URL.
+    For ``"embed"`` mode the bytes are base64-encoded into a JS ``Uint8Array``
+    wrapped in a ``File`` → ``pmtiles.FileSource``.
+    """
+    if info["mode"] == "url":
+        return f"  proto.add(new pmtiles.PMTiles({json.dumps(info['url'])}));\n"
+    # Embed mode: base64 → Uint8Array → File → FileSource.
+    b64 = base64.b64encode(info["bytes"]).decode("ascii")
+    return (
+        f"  const _b{sid} = Uint8Array.from(atob({json.dumps(b64)}), c => c.charCodeAt(0));\n"
+        f"  proto.add(new pmtiles.PMTiles(new pmtiles.FileSource("
+        f"new File([_b{sid}.buffer], '{sid}.pmtiles'))));\n"
+    )
 
 
 # ---------------------------------------------------------------------------
