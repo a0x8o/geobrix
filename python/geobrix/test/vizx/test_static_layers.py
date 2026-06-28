@@ -4,9 +4,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 import geopandas as gpd  # noqa: E402
+import warnings  # noqa: E402
+import pytest  # noqa: E402
 from shapely.geometry import Point, Polygon  # noqa: E402
 
-from databricks.labs.gbx.vizx._layers import vector_layer  # noqa: E402
+from databricks.labs.gbx.vizx._layers import vector_layer, pmtiles_layer  # noqa: E402
 from databricks.labs.gbx.vizx._static_map import plot_static  # noqa: E402
 
 
@@ -31,3 +33,15 @@ def test_legacy_single_dataframe_call_still_works():
     pts = _gdf([Point(-122.4, 37.7)])
     ax = plot_static(pts, column="v", basemap=False)
     assert ax is not None
+
+
+def test_plot_static_empty_list_raises():
+    with pytest.raises(ValueError):
+        plot_static([])
+
+
+def test_plot_static_pmtiles_layer_warns():
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        plot_static([pmtiles_layer(b"PMTiles\x03")], basemap=False)
+    assert any("pmtiles" in str(x.message).lower() for x in w)

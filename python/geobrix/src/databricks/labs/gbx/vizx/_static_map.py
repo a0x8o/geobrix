@@ -230,7 +230,13 @@ def _draw_one_layer(lyr, ax, *, max_rows=10_000, sample_seed=None, srid=None,
         from databricks.labs.gbx.vizx._cog import plot_cog
 
         plot_cog(lyr.data, band=lyr.band, basemap=False, ax=ax)
-    # 'pmtiles' not supported in the static compositor; silently skip.
+    elif lyr.kind == "pmtiles":
+        warnings.warn(
+            "plot_static: 'pmtiles' layers are not rendered by the static compositor "
+            "and produce no output here. Use plot_interactive for pmtiles, or let the "
+            ">64MB static fallback decode them to a raster first.",
+            stacklevel=2,
+        )
 
 
 def plot_static(
@@ -299,6 +305,9 @@ def plot_static(
     # A bare GeoDataFrame / Spark DataFrame / other coercible passes through
     # as_layers too (wraps to a single vector_layer), so the legacy keyword
     # arguments (column, geom_col, etc.) are applied onto that single layer.
+    if isinstance(data, (list, tuple)) and len(data) == 0:
+        raise ValueError("plot_static: no layers provided")
+
     is_layer_input = isinstance(data, Layer) or (
         isinstance(data, (list, tuple)) and data and isinstance(data[0], Layer)
     )
