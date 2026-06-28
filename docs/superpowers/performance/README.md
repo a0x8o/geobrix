@@ -12,3 +12,4 @@ two cross-reference but do not merge.
 | Slug | Pattern | Status |
 |---|---|---|
 | [serverless-aoi-ingestion-strategy](serverless-aoi-ingestion-strategy.md) | Serverless-first AOI ingestion: distributed read-in-place + bbox predicate pushdown + column-hash repartition, with whole-file download fallback | Pattern/correctness confirmed; cluster-scale speedup not yet measured |
+| [notebook-pmtiles-rendering](notebook-pmtiles-rendering.md) | In-notebook PMTiles rendering via base64-embedded in-browser FileSource (no tile server, no remote range requests) + size-guarded static fallback for GitHub-renderable output | Correctness/portability confirmed (offline tests); no distributed compute speedup — driver-side render |
