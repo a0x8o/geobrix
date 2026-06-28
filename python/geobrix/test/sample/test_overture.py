@@ -119,6 +119,101 @@ def test_download_distributed_writes_aoi_subset(spark, tmp_path):
     assert subset.collect()[0]["id"] == 1
 
 
+def test_download_distributed_multi_asset_no_clobber(spark, tmp_path):
+    """Two assets sharing (theme, type) must both survive — no shard clobber.
+
+    Before the fix: the 2nd asset's mode("overwrite") wiped the 1st asset's
+    output dir; only the last shard survived; metadata source values collapsed
+    to one (MERGE key (theme, type, source) collapsed to 1 row). After the fix:
+    each asset writes to its own per-asset token subdir, both rows survive, and
+    metadata has TWO distinct source values.
+
+    Regression test for C1 from the SP1 whole-branch review.
+    """
+    # Asset A: shard 1 — ids 10, 11 (both inside AOI)
+    src_a = str(tmp_path / "shard_a.parquet")
+    spark.createDataFrame(
+        [
+            Row(id=10, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76)),
+            Row(id=11, bbox=Row(xmin=-122.43, ymin=37.75, xmax=-122.42, ymax=37.76)),
+        ]
+    ).write.mode("overwrite").parquet(src_a)
+
+    # Asset B: shard 2 — id 20 inside AOI, id 21 outside
+    src_b = str(tmp_path / "shard_b.parquet")
+    spark.createDataFrame(
+        [
+            Row(id=20, bbox=Row(xmin=-122.44, ymin=37.75, xmax=-122.43, ymax=37.76)),
+            Row(id=21, bbox=Row(xmin=10.0, ymin=50.0, xmax=10.1, ymax=50.1)),
+        ]
+    ).write.mode("overwrite").parquet(src_b)
+
+    out_dir = str(tmp_path / "out_multi")
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    # Both assets share theme="buildings", type="building"
+    assets = spark.createDataFrame(
+        [
+            (
+                "buildings",
+                "building",
+                src_a,
+                [-122.52, 37.70, -122.36, 37.83],
+                "2024-07-01",
+            ),
+            (
+                "buildings",
+                "building",
+                src_b,
+                [-122.52, 37.70, -122.36, 37.83],
+                "2024-07-01",
+            ),
+        ],
+        schema,
+    )
+
+    bbox = (-122.45, 37.74, -122.40, 37.78)
+    meta = client._download_distributed(
+        assets, out_dir, bbox=bbox, validate=True, partitions=4
+    )
+    mrows = meta.collect()
+
+    # Metadata: TWO rows, each with a DISTINCT source (not collapsed)
+    assert len(mrows) == 2, f"Expected 2 metadata rows, got {len(mrows)}"
+    sources = {r["source"] for r in mrows}
+    assert len(sources) == 2, f"Expected 2 distinct sources, got {sources}"
+    # Both source dirs must exist
+    for src in sources:
+        assert os.path.isdir(src), f"Source dir missing: {src}"
+
+    # Data: recursive read over theme/type picks up BOTH shards' AOI rows
+    combined = client.read(out_dir, theme="buildings", type="building")
+    ids = {r["id"] for r in combined.collect()}
+    # Shard A contributes ids 10, 11; shard B contributes id 20 (21 is outside AOI)
+    assert ids == {10, 11, 20}, f"Expected {{10, 11, 20}}, got {ids}"
+    assert combined.count() == 3, f"Expected 3 rows total, got {combined.count()}"
+
+    # Idempotency: re-running download keeps counts stable (no duplication, same sources)
+    meta2 = client._download_distributed(
+        assets, out_dir, bbox=bbox, validate=True, partitions=4
+    )
+    mrows2 = meta2.collect()
+    assert len(mrows2) == 2, f"Idempotency: expected 2 metadata rows, got {len(mrows2)}"
+    sources2 = {r["source"] for r in mrows2}
+    assert sources2 == sources, f"Idempotency: sources changed: {sources2} != {sources}"
+    combined2 = client.read(out_dir, theme="buildings", type="building")
+    assert combined2.count() == 3, f"Idempotency: count changed to {combined2.count()}"
+
+
 def test_empty_meta_dataframe_matches_meta_cols(spark):
     """Empty-result meta DataFrame must have the exact _META_COLS schema.
 

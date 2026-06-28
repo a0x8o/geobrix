@@ -187,6 +187,7 @@ class OvertureClient:
         partitions:
             Target partition count for repartition(N, col). Must be >= 1.
         """
+        import hashlib
         import os
 
         from pyspark.sql import SparkSession
@@ -209,7 +210,16 @@ class OvertureClient:
                     & (F.col("bbox.ymin") <= F.lit(maxy))
                     & (F.col("bbox.ymax") >= F.lit(miny))
                 )
-            target = os.path.join(out_dir, a["theme"], a["type"])
+            # Per-asset unique subdirectory: strip query params then hash the
+            # canonical href so each asset gets a STABLE, DETERMINISTIC token.
+            # Multiple assets sharing the same (theme, type) — e.g. Overture
+            # buildings shards — each write to their own subdir; mode("overwrite")
+            # is now safe and idempotent (re-running the same asset hits the same
+            # subdir). Without this, the 2nd asset's overwrite deletes the 1st
+            # asset's data → silent data loss.
+            canonical = a["href"].split("?")[0]
+            token = hashlib.sha1(canonical.encode()).hexdigest()[:12]
+            target = os.path.join(out_dir, a["theme"], a["type"], token)
             # Hash-by-column repartition (NOT number-only): on Serverless a
             # round-robin repartition(N) is AQE-coalesced to 1 (serial). Hash by a
             # real source column so the per-asset row groups spread across cores.
