@@ -940,24 +940,50 @@ git commit -m "docs(vizx): red-carpet multi-layer + ladder page with executable 
 
 ---
 
-## Task 15: Notebook/doc audit + migration to the new surface
+## Task 15: Audit, migrate, AND showcase the new viewer in the example notebooks
+
+This task does two things per notebook: (a) migrate any usage the folium-retirement or
+`plot_interactive` signature change would break, and (b) **actively showcase** the new multi-layer
+interactive viewer on each notebook's *final* artifact — not just keep it from breaking. The
+showcase is the point: these notebooks are where users learn the capability exists.
 
 **Files:**
-- Modify: any of `notebooks/examples/{eo-series,h3-rasterize,xview}/*.ipynb` and their READMEs/`docs/docs/notebooks/*.mdx` that call `plot_interactive`/`plot_static`/`plot_pmtiles`/`plot_cog`/`plot_raster`/`show_*` in a way the folium-retirement or the `plot_interactive` signature change affects.
+- Modify: `notebooks/examples/eo-series/03. Gridded EO Data.ipynb`, `04. Band Stacking + Clipping.ipynb`, `notebooks/examples/xview/Clipping - xView.ipynb`, `notebooks/examples/h3-rasterize/*.ipynb`, and their READMEs / `docs/docs/notebooks/*.mdx` where they call `plot_*`/`show_*`/folium.
 - Test: per-notebook cell-by-cell harness up to the config ceiling.
 
 **Interfaces:**
-- Consumes: the migrated API. Produces: every VizX usage reads consistently against the new surface; no folium references remain in examples.
+- Consumes: `vector_layer`/`raster_layer`/`grid_layer`/`pmtiles_layer` + `plot_interactive([...])` (Tasks 1,7); `cells_as_gdf` (existing). Produces: every VizX usage reads consistently against the new surface; no folium references remain; each example ends with a real multi-layer interactive showcase honoring `INTERACTIVE_PLOTS`.
 
-- [ ] **Step 1: Audit.** Run `grep -rn -E "plot_interactive|plot_static|plot_pmtiles|plot_cog|plot_raster|show_(pmtiles|cog|raster)|folium" notebooks/ docs/docs` and list every hit with its call shape. (No code change yet — produce the work-list.)
-- [ ] **Step 2: Migrate** each affected call to the new signatures (e.g. a multi-arg `plot_interactive(df, column=...)` still works via coercion; any folium-specific kwargs are removed). Update prose that references folium.
-- [ ] **Step 3: Verify** each touched notebook with `bash scripts/commands/gbx-test-notebooks.sh --path "<notebook>"` to its config ceiling (no NEW early-cell break).
-- [ ] **Step 4: Confirm** `grep -rn folium notebooks/ docs/docs` prints nothing.
-- [ ] **Step 5: Commit**
+- [ ] **Step 1: Audit (work-list).** Run `grep -rn -E "plot_interactive|plot_static|plot_pmtiles|plot_cog|plot_raster|show_(pmtiles|cog|raster)|folium" notebooks/ docs/docs` and record every hit with its call shape. No code change yet.
+- [ ] **Step 2: Migrate** each affected call to the new signatures (a multi-arg `plot_interactive(df, column=...)` still works via coercion; remove folium-specific kwargs; fix prose referencing folium).
+- [ ] **Step 3: Showcase — eo-series.** The series currently renders its final raster with a single-layer `plot_raster`. Add an interactive multi-layer cell on the merged/stacked result:
+  - **NB03 "Gridded EO Data"** — after the `rst_merge_agg` cell that produces `kring_df` (the merged raster per H3 kring; the existing `plot_raster(kring_df.select("tile.raster").first()[0])`), add:
+    ```python
+    # Showcase: the merged raster + its H3 tessellation in one interactive map.
+    from databricks.labs.gbx.vizx import raster_layer, grid_layer, plot_interactive
+    plot_interactive([
+        raster_layer(kring_df.select("tile.raster").first()[0]),
+        grid_layer(kring_df, grid_system="h3", cellid_col="kring", opacity=0.25),
+    ])
+    ```
+  - **NB04 "Band Stacking + Clipping"** — after `stacked_df` (the band-stacked rasters) and the clip cell (`to_plot[0]["clip_tile"]["raster"]`), add a showcase overlaying the stacked RGB tile with the clip cutline / H3 cells via `plot_interactive([raster_layer(<stacked tile>), grid_layer(stacked_df, grid_system="h3", cellid_col="cellid", opacity=0.25)])`.
+  Both go through `show_*`/the `INTERACTIVE_PLOTS` toggle so the committed `.ipynb` stays static for GitHub.
+- [ ] **Step 4: Showcase — xview.** After the clip result (`clip_raster = clip_row['tile_clip']['raster']`, currently `plot_raster`/`plot_file`), add the headline "clip to vector" view interactively — the clipped aerial tile with the labeled detected-object boundaries on top:
+    ```python
+    from databricks.labs.gbx.vizx import raster_layer, vector_layer, plot_interactive
+    plot_interactive([
+        raster_layer(clip_raster),
+        vector_layer(objects_gdf, color="#ff3", width=2),   # the xView object boundaries (from the objects table)
+    ])
+    ```
+  (`objects_gdf` = the detected-objects geometries built in section [3]; convert via `as_gdf` if it's a Spark DataFrame.)
+- [ ] **Step 5: Showcase — h3-rasterize (opportunistic).** If it produces a raster + an H3 grid, add `plot_interactive([raster_layer(<raster>), grid_layer(<cells_df>, grid_system="h3")])` on the final result; skip if no natural multi-layer pairing.
+- [ ] **Step 6: Verify** each touched notebook with `bash scripts/commands/gbx-test-notebooks.sh --path "<notebook>"` to its config ceiling (no NEW early-cell break); `grep -rn folium notebooks/ docs/docs` prints nothing.
+- [ ] **Step 7: Commit**
 
 ```bash
 git add notebooks/ docs/docs
-git commit -m "docs: migrate eo-series/h3-rasterize/xview VizX usage to the layer surface"
+git commit -m "docs: migrate + showcase the multi-layer viewer in eo-series/xview/h3-rasterize"
 ```
 
 ---
@@ -987,7 +1013,7 @@ git commit -m "docs(helios): real multi-layer overlays in NB02/NB03 + honest pro
 
 ## Self-Review
 
-**Spec coverage:** Layer model (T1); plot_static multi-layer + plot_cog ax= (T2,T3); MapLibre adapters/builder/folium-retire (T4,T5,T7); >64MB ladder (T6,T11); simplify two-flavor + spec + tippecanoe/tile-join/rasterio engine policy (T8,T9,T10); exports/extras/SRI/supply-chain (T12); Phase-1.5 dynamic cut-over (T13); red-carpet docs + diagram + doc-tests (T14); notebook/doc audit (T15); Helios rewiring + prose (T16). Indefinite single-archive correctly OUT (App). contextily retained on the static path (T2/T3). Covered.
+**Spec coverage:** Layer model (T1); plot_static multi-layer + plot_cog ax= (T2,T3); MapLibre adapters/builder/folium-retire (T4,T5,T7); >64MB ladder (T6,T11); simplify two-flavor + spec + tippecanoe/tile-join/rasterio engine policy (T8,T9,T10); exports/extras/SRI/supply-chain (T12); Phase-1.5 dynamic cut-over (T13); red-carpet docs + diagram + doc-tests (T14); notebook/doc audit + migrate + **showcase** the new viewer in eo-series/xview/h3-rasterize (T15); Helios rewiring + prose (T16). Indefinite single-archive correctly OUT (App). contextily retained on the static path (T2/T3). Covered.
 
 **Placeholder scan:** The only intentional deferred literal is the SRI hash, explicitly computed and asserted real in Task 12 (test guards against `REPLACE`). No "TBD/handle edge cases" steps.
 
