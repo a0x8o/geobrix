@@ -425,7 +425,7 @@ def test_build_html_is_self_contained_and_sri_pinned():
 
 
 def test_build_html_pmtiles_embed_mode_no_sidecar():
-    """build_html pops the _gbx_pmtiles sidecar and emits FileSource JS."""
+    """build_html reads the _gbx_pmtiles sidecar without mutating it, emits FileSource JS."""
     from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
 
@@ -436,6 +436,8 @@ def test_build_html_pmtiles_embed_mode_no_sidecar():
     assert "_gbx_pmtiles" not in html
     # FileSource registration must be present.
     assert "pmtiles.FileSource" in html
+    # Lock the base64→Uint8Array round-trip JS.
+    assert "charCodeAt(0)" in html
 
 
 def test_build_html_pmtiles_url_mode():
@@ -497,3 +499,54 @@ def test_build_html_multi_layer():
     html = build_html(prepared)
     assert "gbx0" in html
     assert "gbx1" in html
+
+
+# ---------------------------------------------------------------------------
+# security + idempotency fixes
+# ---------------------------------------------------------------------------
+
+
+def test_build_html_escapes_script_breakout():
+    """Crafted feature-attribute values must not break out of the <script> block."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import vector_layer
+
+    gdf = gpd.GeoDataFrame(
+        {"name": ["PWNED</script><img src=x onerror=alert(1)>"]},
+        geometry=[Point(-122.4, 37.7)],
+        crs="EPSG:4326",
+    )
+    html = build_html([layer_to_sources_layers(vector_layer(gdf), 0)])
+    # Raw breakout string must NOT appear verbatim.
+    assert "PWNED</script>" not in html
+    # The data payload must still survive (in Unicode-escaped form).
+    assert "PWNED" in html
+    # The </script> token must be escaped.
+    assert "\\u003c/script" in html or "u003c" in html
+
+
+def test_build_html_does_not_mutate_prepared():
+    """build_html must not mutate the caller's prepared list; calling it twice is idempotent."""
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+
+    archive = _build_pmtiles_archive("mvt")
+    prepared = [layer_to_sources_layers(pmtiles_layer(archive), 0)]
+    sid = next(iter(prepared[0][0]))
+
+    # Sidecar must be present before the first call.
+    assert "_gbx_pmtiles" in prepared[0][0][sid]
+
+    h1 = build_html(prepared)
+
+    # Sidecar must NOT have been popped — caller's dict is unchanged.
+    assert "_gbx_pmtiles" in prepared[0][0][sid], (
+        "build_html mutated prepared: _gbx_pmtiles was popped from the caller's source dict"
+    )
+
+    h2 = build_html(prepared)
+
+    # Both calls must produce identical output (idempotent).
+    assert h1 == h2, "build_html is not idempotent: second call produced different HTML"
+    # PMTiles registration must be present in the output.
+    assert "pmtiles.FileSource" in h2

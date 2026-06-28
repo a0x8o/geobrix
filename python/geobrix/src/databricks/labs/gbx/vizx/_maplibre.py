@@ -26,6 +26,29 @@ import io
 import json
 from typing import Any
 
+
+# ---------------------------------------------------------------------------
+# security helper
+# ---------------------------------------------------------------------------
+
+
+def _json_for_script(obj) -> str:
+    """json.dumps escaped for safe embedding inside an HTML <script> block.
+
+    json.dumps alone does NOT escape ``</script>``, ``<``, ``>``, or ``&``,
+    so a crafted value in user data can break out of the script context.
+    The Unicode escapes produced here are valid JSON/JS string escapes —
+    ``JSON.parse`` and the JS engine see the original characters at runtime.
+    """
+    return (
+        json.dumps(obj)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace(" ", "\\u2028")
+        .replace(" ", "\\u2029")
+    )
+
 # ---------------------------------------------------------------------------
 # SRI-pinned CDN constants — hashes are finalised in Task 12.
 # ---------------------------------------------------------------------------
@@ -106,9 +129,15 @@ def build_html(
     for s, ls, *_rest in prepared:
         for sid, sdef in s.items():
             if "_gbx_pmtiles" in sdef:
-                # Pop the sidecar BEFORE merging — MapLibre rejects unknown keys.
-                pm_pairs.append((sid, sdef.pop("_gbx_pmtiles")))
-        sources.update(s)
+                # Read sidecar WITHOUT mutating the caller's dict — Task 6 calls
+                # build_html twice (size-check then real build) and must find the
+                # sidecar intact on the second call.
+                pm_pairs.append((sid, sdef["_gbx_pmtiles"]))
+                # Build a clean copy for the overlay (MapLibre rejects unknown keys).
+                clean = {k: v for k, v in sdef.items() if k != "_gbx_pmtiles"}
+                sources[sid] = clean
+            else:
+                sources[sid] = sdef
         layers.extend(ls)
 
     if basemap and basemap != "none":
@@ -116,10 +145,10 @@ def build_html(
     else:
         base_js = "{version:8,sources:{},layers:[]}"
 
-    overlay_json = json.dumps({"sources": sources, "layers": layers})
+    overlay_json = _json_for_script({"sources": sources, "layers": layers})
     pm_js = "".join(_pmtiles_register_js(sid, info) for sid, info in pm_pairs)
 
-    center_js = json.dumps(center if center is not None else [-122.43, 37.77])
+    center_js = _json_for_script(center if center is not None else [-122.43, 37.77])
     zoom_js = zoom if zoom is not None else 11
 
     return f"""\
@@ -157,8 +186,9 @@ def _pmtiles_register_js(sid: str, info: dict) -> str:
     wrapped in a ``File`` → ``pmtiles.FileSource``.
     """
     if info["mode"] == "url":
-        return f"  proto.add(new pmtiles.PMTiles({json.dumps(info['url'])}));\n"
+        return f"  proto.add(new pmtiles.PMTiles({_json_for_script(info['url'])}));\n"
     # Embed mode: base64 → Uint8Array → File → FileSource.
+    # The base64 string is already ASCII-safe; json.dumps is sufficient here.
     b64 = base64.b64encode(info["bytes"]).decode("ascii")
     return (
         f"  const _b{sid} = Uint8Array.from(atob({json.dumps(b64)}), c => c.charCodeAt(0));\n"
