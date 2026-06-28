@@ -1486,7 +1486,9 @@ pyspark==4.0.0 \
 pystac==1.14.3 \
     --hash=sha256:24f92d6f301371859aa0abc1bbe7b1523a603e1184a6d139ecb323967c2c9bb3 \
     --hash=sha256:2f60005f521d541fb801428307098f223c14697b3faf4d2f0209afb6a43f39e5
-    # via rio-tiler
+    # via
+    #   -r requirements-pyrx-ci.in
+    #   rio-tiler
 pytest==8.4.2 \
     --hash=sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01 \
     --hash=sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79

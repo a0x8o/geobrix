@@ -71,6 +71,13 @@ xarray-spatial==0.9.9
 requests==2.32.3
 tenacity==9.1.4
 
+# --- Overture static-STAC catalog traversal (gbx.sample.overture). pystac is the
+# static-catalog reader (distinct from pystac-client, which is the search-API client
+# the stac/ suite stubs). geopandas/pyarrow for parquet read are already pinned above.
+# pystac>=1.9 is the floor set by rio-tiler (already in this lock); <2 matches the
+# [overture] pyproject.toml extra ceiling. ---
+pystac>=1.9,<2
+
 # --- visualization ([vizx] extra): gbx.vizx raster rendering + GeoDataFrame map
 # adapters. Package code imports matplotlib + geopandas; folium + mapclassify are
 # for user GeoDataFrame.explore() maps. geopandas matches requirements-dev-container.in;

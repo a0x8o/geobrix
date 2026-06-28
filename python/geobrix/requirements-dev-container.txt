@@ -2124,6 +2124,7 @@ pystac==1.14.3 \
     --hash=sha256:24f92d6f301371859aa0abc1bbe7b1523a603e1184a6d139ecb323967c2c9bb3 \
     --hash=sha256:2f60005f521d541fb801428307098f223c14697b3faf4d2f0209afb6a43f39e5
     # via
+    #   -r requirements-dev-container.in
     #   planetary-computer
     #   pystac-client
     #   rio-tiler

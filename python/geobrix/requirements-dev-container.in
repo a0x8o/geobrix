@@ -37,6 +37,11 @@ geopandas==1.1.3
 keplergl==0.3.2
 pystac-client==0.9.0
 planetary-computer==1.0.0
+# Overture static-STAC catalog traversal (gbx.sample.overture). pystac is the
+# static-catalog reader used directly by OvertureClient._open_catalog; pystac-client
+# (above) pulls it transitively, but listing it here pins it explicitly so any bump
+# of pystac-client doesn't silently float pystac. Range matches [overture] extra.
+pystac>=1.9,<2
 rasterio==1.5.0
 rioxarray==0.22.0
 pdal==3.5.3
