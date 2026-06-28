@@ -143,3 +143,67 @@ def test_empty_meta_dataframe_matches_meta_cols(spark):
 
     # DataFrame must be truly empty.
     assert empty_meta.count() == 0
+
+
+def test_download_fallback_injected_fetcher(spark, tmp_path):
+    # build a real source parquet, then serve its bytes through a fake _get_fn
+    src = str(tmp_path / "asset.parquet")
+
+    spark.createDataFrame([Row(id=1), Row(id=2)]).coalesce(1).write.mode(
+        "overwrite"
+    ).parquet(src)
+    # the "asset" is a single part file inside src
+    part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
+    src_file = os.path.join(src, part)
+
+    def fake_get(href, timeout=None, stream=False):
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def iter_content(self, n):
+                with open(src_file, "rb") as fh:
+                    while True:
+                        chunk = fh.read(n)
+                        if not chunk:
+                            break
+                        yield chunk
+
+        return _Resp()
+
+    client = OvertureClient(
+        release="2024-07-01", _catalog_opener=open_fake_overture, _get_fn=fake_get
+    )
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    out_dir = str(tmp_path / "out_fb")
+    assets = spark.createDataFrame(
+        [
+            (
+                "places",
+                "place",
+                "http://fake/place.parquet",
+                [0.0, 0.0, 1.0, 1.0],
+                "2024-07-01",
+            )
+        ],
+        schema,
+    )
+    meta = client._download_fallback(
+        assets, out_dir, validate=True, max_tries=2, partitions=4
+    )
+    assert meta.rdd.getNumPartitions() > 1
+    row = meta.collect()[0]
+    assert row["is_out_file_valid"] is True
+    assert os.path.exists(row["source"])
+    assert row["source"] == row["path"]
+    assert spark.read.parquet(row["source"]).count() == 2

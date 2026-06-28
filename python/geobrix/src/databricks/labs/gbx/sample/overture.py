@@ -110,6 +110,17 @@ def _meta_dataframe(spark, meta_rows, partitions):
     )
 
 
+def _is_valid_parquet(path: str) -> bool:
+    """True iff the parquet opens (pyarrow). Validity = opens, not raster-decodable."""
+    try:
+        import pyarrow.parquet as pq
+
+        pq.ParquetFile(path).metadata  # touch metadata to force a read
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _discover_schema():
     from pyspark.sql.types import (
         ArrayType,
@@ -237,6 +248,116 @@ class OvertureClient:
             )
 
         return _meta_dataframe(spark, meta_rows, partitions)
+
+    def _download_fallback(
+        self, assets_df, out_dir, *, validate, max_tries, partitions
+    ) -> "DataFrame":
+        """Fallback: whole-file HTTP download fanned out by href (column-hash
+        repartition, Serverless-safe). Temp-file then sequential copy (Volume-safe).
+        Returns the same metadata schema as the distributed path."""
+        import os
+        import shutil
+        import tempfile
+
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import (
+            ArrayType,
+            BooleanType,
+            DoubleType,
+            LongType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
+        get_fn = self._get_fn  # None in production; injectable for tests
+        _validate = validate
+        _max_tries = max_tries
+
+        row_schema = StructType(
+            [
+                StructField("theme", StringType()),
+                StructField("type", StringType()),
+                StructField("source", StringType()),
+                StructField("out_file_sz", LongType()),
+                StructField("is_out_file_valid", BooleanType()),
+                StructField("asset_bbox", ArrayType(DoubleType())),
+                StructField("release", StringType()),
+                StructField("href", StringType()),
+            ]
+        )
+
+        @F.udf(row_schema)
+        def _fetch(theme, type_, href, asset_bbox, release):
+            getter = get_fn
+            if getter is None:
+                import requests
+
+                getter = requests.get
+            target_dir = os.path.join(out_dir, theme, type_)
+            os.makedirs(target_dir, exist_ok=True)
+            basename = os.path.basename(href.split("?")[0]) or "asset.parquet"
+            outpath = os.path.join(target_dir, basename)
+            # idempotent skip: a present, openable file is left as-is
+            if os.path.exists(outpath) and _is_valid_parquet(outpath):
+                sz = os.path.getsize(outpath)
+                return (theme, type_, outpath, sz, True, asset_bbox, release, href)
+            for _ in range(max(1, _max_tries)):
+                tmpd = tempfile.mkdtemp(prefix="gbx_overture_")
+                try:
+                    local = os.path.join(tmpd, basename)
+                    resp = getter(href, timeout=100, stream=True)
+                    resp.raise_for_status()
+                    with open(local, "wb") as fh:
+                        for chunk in resp.iter_content(1024 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+                    ok = (not _validate) or _is_valid_parquet(local)
+                    if ok:
+                        shutil.copyfile(local, outpath)
+                        sz = os.path.getsize(outpath)
+                        return (
+                            theme,
+                            type_,
+                            outpath,
+                            sz,
+                            True,
+                            asset_bbox,
+                            release,
+                            href,
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                finally:
+                    shutil.rmtree(tmpd, ignore_errors=True)
+            return (theme, type_, None, None, False, asset_bbox, release, href)
+
+        n = max(1, partitions or 1)
+        fetched = (
+            assets_df.select(*_DISCOVER_COLS)
+            # column-hash repartition by href (NOT number-only) for Serverless.
+            .repartition(n, F.col("href"))
+            .withColumn(
+                "_m",
+                _fetch("theme", "type", "href", "asset_bbox", "release"),
+            )
+            .select("_m.*")
+            .withColumn("path", F.col("source"))
+            .withColumn("last_update", F.current_timestamp())
+            .select(
+                "theme",
+                "type",
+                "source",
+                "path",
+                "out_file_sz",
+                "is_out_file_valid",
+                "last_update",
+                "asset_bbox",
+                "release",
+                "href",
+            )
+        )
+        return fetched
 
     def discover(self, bbox, themes=None, release=None) -> "DataFrame":
         """One row per intersecting GeoParquet asset for the AOI.
