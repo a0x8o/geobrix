@@ -13,9 +13,14 @@ from pyspark.sql.types import (  # noqa: E402
     StringType,
     StructField,
     StructType,
+    TimestampType,
 )
 
-from databricks.labs.gbx.sample.overture import OvertureClient  # noqa: E402
+from databricks.labs.gbx.sample.overture import (  # noqa: E402
+    _META_COLS,
+    OvertureClient,
+    _meta_dataframe,
+)
 
 
 @pytest.fixture(scope="module")
@@ -110,3 +115,31 @@ def test_download_distributed_writes_aoi_subset(spark, tmp_path):
     subset = spark.read.parquet(written)
     assert subset.count() == 1
     assert subset.collect()[0]["id"] == 1
+
+
+def test_empty_meta_dataframe_matches_meta_cols(spark):
+    """Empty-result meta DataFrame must have the exact _META_COLS schema.
+
+    Tasks 7/8 union meta DataFrames; a schema mismatch on the empty branch
+    (missing path/last_update) causes a union error at runtime.
+    """
+    empty_meta = _meta_dataframe(spark, [], partitions=2)
+
+    # Column names must match _META_COLS exactly (order included).
+    assert empty_meta.columns == _META_COLS
+
+    # path and last_update must carry the right types (not missing or string-only).
+    schema_map = {f.name: f.dataType for f in empty_meta.schema}
+    assert "path" in schema_map, "path column missing from empty meta DataFrame"
+    assert isinstance(
+        schema_map["path"], StringType
+    ), f"path should be StringType, got {schema_map['path']}"
+    assert (
+        "last_update" in schema_map
+    ), "last_update column missing from empty meta DataFrame"
+    assert isinstance(
+        schema_map["last_update"], TimestampType
+    ), f"last_update should be TimestampType, got {schema_map['last_update']}"
+
+    # DataFrame must be truly empty.
+    assert empty_meta.count() == 0
