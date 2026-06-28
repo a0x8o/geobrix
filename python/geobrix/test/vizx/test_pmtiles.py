@@ -186,15 +186,22 @@ def test_static_raster_fallback_calls_plot_raster(monkeypatch):
     png = _real_png_tile()
     archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
     captured = {}
+
+    def _fake_plot_raster(raster_bytes, **kw):
+        captured["n"] = len(raster_bytes)
+        captured["kw"] = kw
+
     monkeypatch.setattr(
         "databricks.labs.gbx.vizx.plot_raster",
-        lambda raster_bytes, **kw: captured.update(n=len(raster_bytes)),
+        _fake_plot_raster,
     )
     info = __import__(
         "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
     ).pmtiles_info(archive)
-    p._static_raster_fallback(archive, info)
+    p._static_raster_fallback(archive, info, basemap=False)
     assert captured["n"] == len(png)  # the decoded lowest-zoom tile bytes
+    # basemap must be stripped before forwarding to plot_raster (which rejects it)
+    assert "basemap" not in captured["kw"]
 
 
 def _real_mvt_tile(z, x, y):

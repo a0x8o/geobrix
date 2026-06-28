@@ -1,6 +1,7 @@
 """Executable doc examples for the VizX PMTiles and COG viewers (Docker)."""
 
 import io
+import os
 
 import matplotlib
 
@@ -84,24 +85,27 @@ def _build_raster_tile_archive():
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
         tif_path = f.name
-    size = 8
-    rng = np.random.default_rng(99)
-    data = (rng.random((3, size, size)) * 255).astype("uint8")
-    transform = from_bounds(-1.36e7, 4.5e6, -1.35e7, 4.51e6, size, size)
-    with rasterio.open(
-        tif_path,
-        "w",
-        driver="GTiff",
-        height=size,
-        width=size,
-        count=3,
-        dtype="uint8",
-        crs="EPSG:3857",
-        transform=transform,
-    ) as dst:
-        dst.write(data)
-    with open(tif_path, "rb") as f:
-        return f.read()
+    try:
+        size = 8
+        rng = np.random.default_rng(99)
+        data = (rng.random((3, size, size)) * 255).astype("uint8")
+        transform = from_bounds(-1.36e7, 4.5e6, -1.35e7, 4.51e6, size, size)
+        with rasterio.open(
+            tif_path,
+            "w",
+            driver="GTiff",
+            height=size,
+            width=size,
+            count=3,
+            dtype="uint8",
+            crs="EPSG:3857",
+            transform=transform,
+        ) as dst:
+            dst.write(data)
+        with open(tif_path, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(tif_path)
 
 
 def plot_pmtiles_static_example():
@@ -121,9 +125,9 @@ def plot_pmtiles_static_example():
     )
 
     # max_embed_mb=0 → static raster fallback (offline-safe).
-    # The static path delegates to plot_raster, which renders without a basemap
-    # by default — no network fetch required.
-    plot_pmtiles(archive, max_embed_mb=0)
+    # basemap=False is forwarded through plot_pmtiles; the static raster path
+    # strips it before calling plot_raster (which does not accept basemap).
+    plot_pmtiles(archive, max_embed_mb=0, basemap=False)
 
     # The static path delegates to plot_raster which opens a matplotlib figure.
     assert len(plt.get_fignums()) >= 1
@@ -146,25 +150,28 @@ def plot_cog_example():
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
         path = f.name
 
-    size = 16
-    rng7 = np.random.default_rng(7)
-    data = (rng7.random((3, size, size)) * 1000).astype("uint16")
-    transform = from_bounds(-1.36e7, 4.5e6, -1.35e7, 4.51e6, size, size)
-    with rasterio.open(
-        path,
-        "w",
-        driver="GTiff",
-        height=size,
-        width=size,
-        count=3,
-        dtype="uint16",
-        crs="EPSG:3857",
-        transform=transform,
-    ) as dst:
-        dst.write(data)
+    try:
+        size = 16
+        rng7 = np.random.default_rng(7)
+        data = (rng7.random((3, size, size)) * 1000).astype("uint16")
+        transform = from_bounds(-1.36e7, 4.5e6, -1.35e7, 4.51e6, size, size)
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            height=size,
+            width=size,
+            count=3,
+            dtype="uint16",
+            crs="EPSG:3857",
+            transform=transform,
+        ) as dst:
+            dst.write(data)
 
-    # basemap=False skips contextily (offline-safe)
-    plot_cog(path, basemap=False)
+        # basemap=False skips contextily (offline-safe)
+        plot_cog(path, basemap=False)
 
-    assert len(plt.get_fignums()) >= 1
-    plt.close("all")
+        assert len(plt.get_fignums()) >= 1
+        plt.close("all")
+    finally:
+        os.unlink(path)
