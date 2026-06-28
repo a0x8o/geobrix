@@ -374,10 +374,20 @@ class OvertureClient:
     ) -> "DataFrame":
         """Distributed download of discovered assets to out_dir (a Volume).
 
-        Default path: distributed read + AOI rewrite with bbox-struct pushdown
-        (when assets are cloud-readable). Fallback: whole-file HTTP-href download.
-        table=<name> UPSERTs the metadata to a Delta table keyed by
-        (theme, type, source). Serverless-safe; idempotent skip on valid targets.
+        Cloud predicate — routes to the distributed read path when ALL hrefs:
+        - start with a cloud object-store scheme (``s3://``, ``s3a://``, ``abfs://``,
+          ``abfss://``, ``gs://``, ``wasbs://``), OR
+        - start with ``/`` (FUSE-mounted UC Volumes such as ``/Volumes/...``, which
+          Spark can read directly without HTTP).
+
+        Any other scheme (``http://``, ``https://``, etc.) falls through to the
+        whole-file HTTP download fallback (``_download_fallback``).
+
+        ``table=`` is reserved for the Task 8 Delta UPSERT (keyed by
+        ``(theme, type, source)``). Passing it today is accepted but has no effect
+        — the merge body is not yet implemented.
+
+        Serverless-safe; idempotent skip on valid existing targets.
         """
         assets = assets_df.select(*_DISCOVER_COLS)
         n = partitions if partitions is not None else max(1, assets.count())

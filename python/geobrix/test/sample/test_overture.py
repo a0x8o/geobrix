@@ -212,7 +212,9 @@ def test_download_fallback_injected_fetcher(spark, tmp_path):
 def test_download_routes_cloud_to_distributed(spark, tmp_path):
     src = str(tmp_path / "cloudish.parquet")
 
-    # simulate a cloud asset with a local path that LOOKS like a cloud read target
+    # The href is an absolute path (starts with "/"), so download()'s cloud
+    # predicate treats it as a FUSE-mounted Volume path and routes to
+    # _download_distributed (not the HTTP fallback).
     spark.createDataFrame(
         [Row(id=1, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76))]
     ).write.mode("overwrite").parquet(src)
@@ -227,8 +229,6 @@ def test_download_routes_cloud_to_distributed(spark, tmp_path):
             StructField("release", StringType()),
         ]
     )
-    # local file path -> not a cloud scheme, so it routes to distributed-read anyway
-    # only when the caller forces it; here use a real local path and assert columns + idempotency
     assets = spark.createDataFrame(
         [
             (
@@ -245,18 +245,7 @@ def test_download_routes_cloud_to_distributed(spark, tmp_path):
     meta = client.download(
         assets, out_dir, bbox=(-122.45, 37.74, -122.40, 37.78), partitions=4
     )
-    assert meta.columns == [
-        "theme",
-        "type",
-        "source",
-        "path",
-        "out_file_sz",
-        "is_out_file_valid",
-        "last_update",
-        "asset_bbox",
-        "release",
-        "href",
-    ]
+    assert meta.columns == _META_COLS
     first = meta.collect()
     assert len(first) == 1 and first[0]["is_out_file_valid"] is True
     # idempotent re-run: same target, still valid, no error
@@ -264,3 +253,71 @@ def test_download_routes_cloud_to_distributed(spark, tmp_path):
         assets, out_dir, bbox=(-122.45, 37.74, -122.40, 37.78), partitions=4
     )
     assert meta2.collect()[0]["is_out_file_valid"] is True
+
+
+def test_download_routes_http_to_fallback(spark, tmp_path):
+    """download() with an http:// href routes to _download_fallback (not distributed).
+
+    The cloud predicate requires all hrefs to start with a cloud scheme or "/";
+    an http:// URL matches neither, so the fallback path is taken. This test
+    proves the routing — _download_fallback is not called directly.
+    """
+    # Build a real parquet file to serve via the injected fake _get_fn.
+    src = str(tmp_path / "http_asset.parquet")
+    spark.createDataFrame([Row(id=1), Row(id=2)]).coalesce(1).write.mode(
+        "overwrite"
+    ).parquet(src)
+    part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
+    src_file = os.path.join(src, part)
+
+    def fake_get(href, timeout=None, stream=False):
+        class _Resp:
+            status_code = 200
+
+            def raise_for_status(self):
+                pass
+
+            def iter_content(self, n):
+                with open(src_file, "rb") as fh:
+                    while True:
+                        chunk = fh.read(n)
+                        if not chunk:
+                            break
+                        yield chunk
+
+        return _Resp()
+
+    client = OvertureClient(
+        release="2024-07-01", _catalog_opener=open_fake_overture, _get_fn=fake_get
+    )
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    # http:// href — fails the cloud predicate → _download_fallback is called
+    assets = spark.createDataFrame(
+        [
+            (
+                "places",
+                "place",
+                "http://fake-overture.example.com/place.parquet",
+                [0.0, 0.0, 1.0, 1.0],
+                "2024-07-01",
+            )
+        ],
+        schema,
+    )
+    out_dir = str(tmp_path / "out_http")
+    meta = client.download(assets, out_dir, partitions=4)
+    # Result must carry the full _META_COLS schema in order.
+    assert meta.columns == _META_COLS
+    row = meta.collect()[0]
+    assert row["is_out_file_valid"] is True
+    assert os.path.exists(row["source"])
+    assert row["source"] == row["path"]
+    assert spark.read.parquet(row["source"]).count() == 2
