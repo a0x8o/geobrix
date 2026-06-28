@@ -8,6 +8,8 @@ exactly like StacClient's seam.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from typing import List, Optional, Tuple
 
 Bbox = Tuple[float, float, float, float]
@@ -79,6 +81,66 @@ def traverse_catalog(opener, bbox, theme_pairs):
                         "type": pair[1],
                         "href": asset.href,
                         "asset_bbox": [float(v) for v in item_bbox],
+                    }
+                )
+    return rows
+
+
+def resolve_release(opener, release: Optional[str] = None) -> str:
+    """release=None -> latest release id from the catalog; an explicit string passes through."""
+    if release is not None:
+        return release
+    catalog = opener()
+    releases = getattr(catalog, "extra_fields", {}).get("overture:releases")
+    if releases:
+        return sorted(releases)[-1]
+    cat_id = getattr(catalog, "id", None)
+    if cat_id:
+        return cat_id
+    raise ValueError(
+        "could not resolve latest Overture release from the catalog; pass release=... explicitly"
+    )
+
+
+def cli_discover(bbox, theme_pairs, release, runner=subprocess.run):
+    """Fast-path via the `overturemaps` CLI when present; None otherwise.
+
+    Returns rows shaped like traverse_catalog (theme/type/href/asset_bbox). The
+    asset_bbox is the AOI bbox (the CLI lists paths intersecting the bbox, not
+    per-file extents), which is sufficient for downstream pushdown bookkeeping.
+    """
+    if shutil.which("overturemaps") is None:
+        return None
+    aoi = normalize_bbox(bbox)
+    bbox_arg = ",".join(str(v) for v in aoi)
+    rows = []
+    for theme, type_ in theme_pairs:
+        completed = runner(
+            [
+                "overturemaps",
+                "download",
+                "--bbox",
+                bbox_arg,
+                "--release",
+                release,
+                "--type",
+                type_,
+                "--list-paths",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if getattr(completed, "returncode", 1) != 0:
+            continue
+        for line in (completed.stdout or "").splitlines():
+            href = line.strip()
+            if href:
+                rows.append(
+                    {
+                        "theme": theme,
+                        "type": type_,
+                        "href": href,
+                        "asset_bbox": list(aoi),
                     }
                 )
     return rows
