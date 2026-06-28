@@ -63,11 +63,16 @@ class OvertureClient:
         Columns: theme, type, href, asset_bbox, release.
         themes=None => ALL themes/types."""
 
-    def download(self, assets_df, out_dir, *, table=None, validate=True,
-                 max_tries=5, partitions=None) -> "DataFrame":
+    def download(self, assets_df, out_dir, *, bbox=None, table=None,
+                 validate=True, max_tries=5, partitions=None) -> "DataFrame":
         """Distributed download of discovered assets to out_dir (a Volume).
         Serverless-safe repartition(N, col); idempotent skip; parquet-readable
-        validation.
+        validation. `bbox` (the AOI) drives the distributed-read predicate
+        pushdown on the performant default path; `download_overture_aoi` passes
+        it through. Each asset is written to a unique per-asset subdirectory
+        under out_dir/<theme>/<type>/ (a stable href-derived token) so sharded
+        types do not clobber one another and the (theme, type, source) MERGE key
+        stays 1:1 with assets.
 
         Returns a metadata DataFrame: theme, type, source (the Volumes path of
         the downloaded asset; also aliased as `path`), out_file_sz,
