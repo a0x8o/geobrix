@@ -196,6 +196,57 @@ class PMTiles_AggTest extends PlanTest with SilentSparkSession {
         assert(tileBytes.sameElements(pngA), "raster first-wins violated")
     }
 
+    test("pmtiles_agg merged MVT tile preserves tile-local coordinates") {
+        spark.sparkContext.setLogLevel("ERROR")
+        functions.register(spark)
+        import functions._
+
+        // Two single-feature blobs at known tile-local positions.
+        // polygonWkb(100, 100) → polygon at corners (100,100)-(200,200) in [0,4096] space.
+        // polygonWkb(300, 300) → polygon at corners (300,300)-(400,400) in [0,4096] space.
+        val blobA = realMvtBlob(id = 1, x0 = 100, y0 = 100)
+        val blobB = realMvtBlob(id = 2, x0 = 300, y0 = 300)
+        val df = spark.createDataFrame(Seq(
+            (3, 2, 4, blobA),
+            (3, 2, 4, blobB)
+        )).toDF("z", "x", "y", "bytes")
+
+        val archive = df
+            .agg(pmtiles_agg(col("bytes"), col("z"), col("x"), col("y")).as("pmt"))
+            .collect().head.getAs[Array[Byte]]("pmt")
+
+        val tileBytes = PMTilesTestHelper.readTile(archive, z = 3, x = 2, y = 4)
+        assert(tileBytes.nonEmpty, "merged tile must be present in archive")
+
+        val features = MvtDecoder.decode(tileBytes)
+        assert(features.size == 2, s"expected 2 features after merge; got ${features.size}")
+
+        // Collect the bounding boxes of all decoded features.
+        // MVT integer quantization allows ±1 unit of rounding from OGR encode/decode.
+        val tolerance = 2.0
+        val allCoords = features.flatMap { case (_, wkb, _) =>
+            val geom = JTS.fromWKB(wkb)
+            assert(geom != null && !geom.isEmpty, "decoded geometry null/empty")
+            geom.getCoordinates.toSeq
+        }
+        // Feature 1: polygon corners near (100,100), (200,100), (200,200), (100,200)
+        // Feature 2: polygon corners near (300,300), (400,300), (400,400), (300,400)
+        // All coordinates must be in [0, 4096] tile-local space, NOT in world metres (~±2e7).
+        allCoords.foreach { c =>
+            assert(c.x >= 0 && c.x <= 4096,
+                s"decoded x=${c.x} is out of tile-local [0,4096] range — double world-transform bug")
+            assert(c.y >= 0 && c.y <= 4096,
+                s"decoded y=${c.y} is out of tile-local [0,4096] range — double world-transform bug")
+        }
+
+        // Additionally assert the two polygon origins are recovered near their input positions.
+        val sortedMinX = allCoords.map(_.x).sorted
+        assert(math.abs(sortedMinX.head - 100.0) <= tolerance,
+            s"first polygon minX expected ~100; got ${sortedMinX.head}")
+        assert(math.abs(sortedMinX.dropWhile(_ < 200.0).head - 300.0) <= tolerance,
+            s"second polygon minX expected ~300; got ${sortedMinX.dropWhile(_ < 200.0).head}")
+    }
+
     // ── Raster duplicate-tileid regression (malformed-archive fix) ──────────────
 
     test("pmtiles_agg raster duplicate tileid produces exactly one directory entry") {

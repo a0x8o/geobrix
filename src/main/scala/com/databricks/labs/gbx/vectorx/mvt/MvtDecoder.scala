@@ -1,6 +1,8 @@
 package com.databricks.labs.gbx.vectorx.mvt
 
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+import com.databricks.labs.gbx.rasterx.tile.TileMath
+import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.gdal
 import org.gdal.ogr.ogr.{GetDriverByName => OGRGetDriverByName}
 import org.gdal.ogr.ogrConstants
@@ -22,10 +24,11 @@ import scala.util.Try
   * `GDALManager.initOgr()` guard (CLAUDE.md requirement). The `/vsimem/` paths are
   * UUID-namespaced to avoid collisions across concurrent Spark tasks.
   *
-  * Returns `Seq[(layerName, geom_wkb, attrs)]`. WKB uses the geometry coordinates
-  * as decoded by the OGR MVT reader (tile-local space). Features with null or empty
-  * geometries are skipped. Returns an empty Seq for an empty blob or any
-  * undecodable input — never throws.
+  * Returns `Seq[(layerName, geom_wkb, attrs)]`. WKB coordinates are converted back
+  * to tile-local `[0, extent]` pixel space (the inverse of `MvtWriter.tileLocalToWorld`)
+  * so callers receive geometries in the same frame that `MvtWriter.encode` expects.
+  * Features with null or empty geometries are skipped. Returns an empty Seq for an
+  * empty blob or any undecodable input — never throws.
   */
 object MvtDecoder {
 
@@ -34,7 +37,8 @@ object MvtDecoder {
       *
       * @param blob MVT protobuf bytes.
       * @return All features across all layers; empty Seq if the blob is empty or
-      *         cannot be decoded.
+      *         cannot be decoded. Returned WKB is in tile-local `[0, extent]` pixel
+      *         space, matching the input contract of `MvtWriter.encode`.
       */
     def decode(blob: Array[Byte]): Seq[(String, Array[Byte], Map[String, Any])] = {
         if (blob == null || blob.isEmpty) return Seq.empty
@@ -75,7 +79,10 @@ object MvtDecoder {
                             if (geom != null) {
                                 val wkb = geom.ExportToWkb()
                                 if (wkb != null && wkb.nonEmpty) {
-                                    result += ((layerName, wkb, readAttrs(feat)))
+                                    val localWkb = Try(worldToTileLocal(wkb, MvtWriter.DefaultExtent)).toOption.orNull
+                                    if (localWkb != null && localWkb.nonEmpty) {
+                                        result += ((layerName, localWkb, readAttrs(feat)))
+                                    }
                                 }
                             }
                         } finally {
@@ -91,6 +98,28 @@ object MvtDecoder {
             Try(gdal.Unlink(pbfPath))
         }
         result.toSeq
+    }
+
+    /**
+      * Convert OGR-decoded EPSG:3857 world-coordinate WKB back to tile-local
+      * `[0, extent]` pixel space. Exact inverse of `MvtWriter.tileLocalToWorld`:
+      *   u = (world_x - WEBMERC_MIN) / worldSpan * extent
+      *   v = (WEBMERC_MAX - world_y) / worldSpan * extent
+      */
+    private def worldToTileLocal(wkb: Array[Byte], extent: Int): Array[Byte] = {
+        val g = JTS.fromWKB(wkb)
+        if (g == null || g.isEmpty) return null
+        val worldSpan = TileMath.WEBMERC_MAX - TileMath.WEBMERC_MIN
+        val coords = g.getCoordinates
+        var i = 0
+        while (i < coords.length) {
+            val c = coords(i)
+            c.x = (c.x - TileMath.WEBMERC_MIN) / worldSpan * extent.toDouble
+            c.y = (TileMath.WEBMERC_MAX - c.y) / worldSpan * extent.toDouble
+            i += 1
+        }
+        g.geometryChanged()
+        JTS.toWKB(g)
     }
 
     /** Extract all field values from a feature as `Map[String, Any]` with native types. */
