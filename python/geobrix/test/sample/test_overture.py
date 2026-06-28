@@ -459,3 +459,44 @@ def test_read_from_table_name(spark, tmp_path):
         assert rows[0]["id"] == 42
     finally:
         spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+
+
+def test_download_overture_aoi_one_shot(spark, tmp_path, monkeypatch):
+    # Force the convenience fn's default client to use the fake opener (offline).
+    import databricks.labs.gbx.sample.overture as ov
+
+    src = str(tmp_path / "aoi.parquet")
+
+    spark.createDataFrame(
+        [Row(id=1, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76))]
+    ).write.mode("overwrite").parquet(src)
+
+    orig_init = ov.OvertureClient.__init__
+
+    def patched_init(self, *a, **k):
+        k["_catalog_opener"] = open_fake_overture
+        orig_init(self, *a, **k)
+
+    monkeypatch.setattr(ov.OvertureClient, "__init__", patched_init)
+
+    # The fake catalog's SF building href points at s3://...; rewrite discover to our local src
+    orig_discover = ov.OvertureClient.discover
+
+    def patched_discover(self, bbox, themes=None, release=None):
+        df = orig_discover(self, bbox, themes=themes, release=release)
+
+        return df.withColumn("href", F.lit(src))
+
+    monkeypatch.setattr(ov.OvertureClient, "discover", patched_discover)
+
+    out_dir = str(tmp_path / "oneshot")
+    meta = ov.download_overture_aoi(
+        (-122.45, 37.74, -122.40, 37.78),
+        out_dir,
+        themes=["buildings"],
+        release="2024-07-01",
+    )
+    rows = meta.collect()
+    assert len(rows) == 1
+    assert rows[0]["theme"] == "buildings"
+    assert rows[0]["is_out_file_valid"] is True

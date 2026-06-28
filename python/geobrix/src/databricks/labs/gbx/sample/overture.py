@@ -567,3 +567,36 @@ class OvertureClient:
             return spark.createDataFrame([], schema)
         ordered = [tuple(r[c] for c in _DISCOVER_COLS) for r in rows]
         return spark.createDataFrame(ordered, schema)
+
+
+def download_overture_aoi(
+    bbox, out_dir, themes=None, release=None, table=None
+) -> "DataFrame":
+    """One-shot: discover the AOI's Overture assets and download them to out_dir.
+
+    Constructs a default OvertureClient, discovers (themes=None => all), then
+    downloads with the AOI bbox pushdown and an optional metadata Delta table.
+
+    Parameters
+    ----------
+    bbox
+        Area of interest as (minx, miny, maxx, maxy).
+    out_dir
+        Root output directory (UC Volume path or local path).
+    themes
+        List of theme names (e.g. ["buildings"]). None => all themes.
+    release
+        Release date (e.g. "2024-07-01"). None => latest available.
+    table
+        Optional metadata Delta table name. If provided, metadata is persisted
+        via idempotent MERGE keyed by (theme, type, source).
+
+    Returns
+    -------
+    DataFrame
+        Metadata DataFrame with columns matching _META_COLS, one row per
+        discovered and downloaded asset.
+    """
+    client = OvertureClient(release=release)
+    assets = client.discover(bbox, themes=themes, release=release)
+    return client.download(assets, out_dir, bbox=bbox, table=table)

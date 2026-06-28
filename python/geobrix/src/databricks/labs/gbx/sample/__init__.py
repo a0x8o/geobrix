@@ -14,10 +14,11 @@ from databricks.labs.gbx.sample._bundle import (
     run_complete_bundle,
     run_essential_bundle,
 )
-from databricks.labs.gbx.sample.overture import OvertureClient
+from databricks.labs.gbx.sample.overture import OvertureClient, download_overture_aoi
 
 __all__ = [
     "OvertureClient",
+    "download_overture_aoi",
     "get_temp_dir",
     "get_volumes_path",
     "run_complete_bundle",
