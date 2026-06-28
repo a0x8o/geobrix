@@ -10,7 +10,8 @@ A "twofer" deliverable for GeoBrix 0.4.0, decomposed into **three sequenced sub-
 
 1. **Overture data source** (`gbx.sample.overture`) — an API-level, distributed, AOI-driven
    downloader for Overture Maps GeoParquet (all themes/types), via Overture's STAC catalog,
-   into a Unity Catalog Volume.
+   into a Unity Catalog Volume — with an optional metadata Delta table that catalogs each
+   asset's Volumes path (`source`/`path` column) for queryable, re-runnable, reader-ready output.
 2. **VizX viewers** — net-new public `gbx.vizx` functions `plot_pmtiles` (and `plot_cog`) that
    render a PMTiles archive / COG inline in a Databricks notebook, plus a small reusable
    Python PMTiles inspector in `gbx.pmtiles`.
@@ -62,19 +63,30 @@ class OvertureClient:
         Columns: theme, type, href, asset_bbox, release.
         themes=None => ALL themes/types."""
 
-    def download(self, assets_df, out_dir, *, validate=True, max_tries=5,
-                 partitions=None) -> "DataFrame":
+    def download(self, assets_df, out_dir, *, table=None, validate=True,
+                 max_tries=5, partitions=None) -> "DataFrame":
         """Distributed download of discovered assets to out_dir (a Volume).
         Serverless-safe repartition(N, col); idempotent skip; parquet-readable
-        validation. Returns: theme, type, out_file_path, out_file_sz,
-        is_out_file_valid, last_update."""
+        validation.
 
-    def read(self, source, theme, type=None, bbox=None) -> "DataFrame":
-        """Load downloaded GeoParquet back into Spark, optional bbox-struct
-        AOI filter (the overture.py loader pattern)."""
+        Returns a metadata DataFrame: theme, type, source (the Volumes path of
+        the downloaded asset; also aliased as `path`), out_file_sz,
+        is_out_file_valid, last_update, plus carried discovery columns
+        (asset_bbox, release, href).
+
+        table=<delta_table_name> also persists/UPSERTs that metadata to a Delta
+        table (idempotent MERGE keyed by (theme, type, source)), so the catalog
+        of downloaded assets is queryable and re-runnable."""
+
+    def read(self, source, theme=None, type=None, bbox=None) -> "DataFrame":
+        """Load downloaded GeoParquet back into Spark, optional bbox-struct AOI
+        filter (the overture.py loader pattern). `source` may be a Volume
+        directory OR a metadata Delta table / DataFrame whose `source`/`path`
+        column points at the per-asset Volumes paths."""
 
 # convenience one-shot
-def download_overture_aoi(bbox, out_dir, themes=None, release=None) -> "DataFrame": ...
+def download_overture_aoi(bbox, out_dir, themes=None, release=None,
+                          table=None) -> "DataFrame": ...
 ```
 
 ### Behavior / design notes
@@ -97,6 +109,13 @@ def download_overture_aoi(bbox, out_dir, themes=None, release=None) -> "DataFram
   file downloads are distributed.
 - **Validation:** `validate=True` means the downloaded parquet opens (pyarrow/geopandas),
   not rasterio-decodable. Idempotent skip when the target exists and is valid.
+- **Output targets (both supported):** (1) asset **files on a UC Volume** under `out_dir`;
+  (2) an optional **metadata Delta table** (`table=...`) with one row per asset and a `source`
+  column (aliased `path`) holding that asset's Volumes path. The table is UPSERTed via Delta
+  `MERGE` keyed by `(theme, type, source)` so re-runs are idempotent and a `repair()`-style
+  re-download of invalid rows works (the StacClient/eo-series pattern). The `source`/`path`
+  naming matches what downstream GeoBrix readers and `read()` consume, so the metadata table
+  can directly drive distributed reads.
 - **Testability:** `_catalog_opener` and `_get_fn` injection seams (exactly like `StacClient`)
   so unit tests run offline on the driver with a fake catalog and fake fetcher — no network.
 
