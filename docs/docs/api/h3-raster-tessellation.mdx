@@ -199,3 +199,5 @@ GROUP BY cellid;
 ```
 
 Use Databricks-native `h3_coverash3` and `h3_tessellateaswkb` for the **vector** side of the same grid (polygon covering sets, geometry chips); use GeoBrix `rst_h3_tessellate` for the **raster** side.
+
+See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst_h3_rastertogridavg` binning slope and aspect rasters into H3 cells to produce a per-cell `solar_score` via native Databricks SQL (NB03).

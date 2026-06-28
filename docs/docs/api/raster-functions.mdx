@@ -1556,7 +1556,7 @@ Powered by **rasterio**.
 
 ## Web-Mercator Tile Output
 
-Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pair with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a raster pyramid as a single `.pmtiles` archive.
+Reproject rasters to EPSG:3857 (Web Mercator) and emit slippy-map XYZ tiles. Pair with [`gbx_pmtiles_agg`](./pmtiles-functions#pmtiles_agg) or the [PMTiles writer](../writers/pmtiles) to publish a raster pyramid as a single `.pmtiles` archive. See the [Helios notebooks](../notebooks/helios) for a worked example: NAIP aerial scenes are reprojected and pyramided into a PMTiles archive in NB02.
 
 ### rst_to_webmercator
 
@@ -1645,7 +1645,7 @@ FROM <table>, LATERAL gbx_rst_polygonize(tile, band, connectedness) t
 
 ## Terrain Analysis {#terrain}
 
-Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) derivatives. Each function takes a single-band DEM tile and returns a derived tile of the same footprint.
+Thin wrappers around `gdal.DEMProcessing` for digital elevation model (DEM) derivatives. Each function takes a single-band DEM tile and returns a derived tile of the same footprint. See the [Helios notebooks](../notebooks/helios) for a worked example: `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` are applied to 3DEP DEMs in NB03 to produce terrain layers and a per-H3-cell solar score.
 
 ### rst_slope
 
@@ -1913,7 +1913,7 @@ Powered by **NumPy**. This tier keeps each passing pixel's original value and se
 
 ## Analysis
 
-Higher-level analytical transforms wrapping single GDAL primitives — COG layout publishing, proximity surfaces, contour extraction, and viewshed analysis.
+Higher-level analytical transforms wrapping single GDAL primitives — COG layout publishing, proximity surfaces, contour extraction, and viewshed analysis. See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst_cog_convert` converting 3DEP DEMs to COGs and cataloging them in a STAC Delta table (NB03).
 
 ### rst_cog_convert
 
@@ -2049,4 +2049,5 @@ For rendering tiles and building maps from results, see the [Visualization (`gbx
 - [PMTiles Function Reference](./pmtiles-functions) — Aggregator (`gbx_pmtiles_agg`) for publishing tile pyramids
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to a single `.pmtiles` file
 - [RasterX Readers](../readers/raster)
+- [Helios notebooks](../notebooks/helios) — worked end-to-end example: Web Mercator reprojection, XYZ pyramid generation, COG conversion, and terrain analytics packaged into PMTiles archives over San Francisco.
 

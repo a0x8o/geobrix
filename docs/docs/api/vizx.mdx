@@ -370,7 +370,7 @@ never truncates coverage.
 
 ## PMTiles viewers
 
-These helpers render a `.pmtiles` archive or a Cloud-Optimized GeoTIFF in a notebook — driver-side, no tile server, no distributed op.
+These helpers render a `.pmtiles` archive or a Cloud-Optimized GeoTIFF in a notebook — driver-side, no tile server, no distributed op. See the [Helios notebooks](../notebooks/helios) for a worked end-to-end example: `plot_pmtiles` renders all three archives (vector MVT, raster XYZ, hillshade) and `plot_cog` visualizes a 3DEP terrain COG inline in a Databricks notebook.
 
 ### `pmtiles_info`
 
@@ -490,3 +490,4 @@ When you need raster math that isn't in the `rst_*` surface, drop down to NumPy 
 - [RasterX Function Reference](./raster-functions)
 - [RasterX Readers](../readers/raster)
 - [STAC Client](./stac)
+- [Helios notebooks](../notebooks/helios) — worked end-to-end example using `plot_pmtiles`, `plot_cog`, and `pmtiles_info` to render San Francisco tilesets inline.

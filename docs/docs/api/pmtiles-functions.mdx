@@ -195,6 +195,8 @@ Tile type is detected automatically from the content of the first non-null paylo
 
 For pyramids that exceed the Spark cell ceiling, use the [PMTiles Writer](../writers/pmtiles) instead.
 
+See the [Helios notebooks](../notebooks/helios) for a worked end-to-end example: `gbx_pmtiles_agg` packages vector MVT tiles (NB01), a raster XYZ pyramid (NB02), and a hillshade pyramid (NB03) into separate PMTiles archives over a San Francisco AOI.
+
 ---
 
 ## Serving from object storage
@@ -239,4 +241,5 @@ PMTiles is designed to be served as a single static file via HTTP `Range` reques
 
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to disk.
 - [Raster Functions](./raster-functions#rst_xyzpyramid) — Generate tile bytes with `gbx_rst_xyzpyramid`.
+- [Helios notebooks](../notebooks/helios) — worked end-to-end example using `gbx_pmtiles_agg` for all three data modalities (vector MVT, raster XYZ, hillshade).
 - [VectorX Function Reference](./vectorx-functions) — Generate MVT tiles with `gbx_st_asmvt_pyramid`.
