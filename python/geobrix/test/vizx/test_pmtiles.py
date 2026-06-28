@@ -54,3 +54,65 @@ def test_archive_bytes_passthrough_and_path(tmp_path):
     f.write_bytes(raw)
     assert p._archive_bytes(str(f)) == raw
     assert p._archive_bytes("dbfs:" + str(f)) == raw
+
+
+def _info(tile_type, *, min_zoom=0, max_zoom=2):
+    return {
+        "tile_type": tile_type,
+        "tile_compression": "none",
+        "min_zoom": min_zoom,
+        "max_zoom": max_zoom,
+        "bounds": (-122.52, 37.70, -122.35, 37.83),
+        "center": (-122.44, 37.76, min_zoom),
+        "tile_count": 3,
+        "metadata": {"vector_layers": [{"id": "demo"}]},
+    }
+
+
+def test_build_html_pins_cdn_versions():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html("QUJD", _info("png"))
+    assert "maplibre-gl@4.7.1/dist/maplibre-gl.js" in html
+    assert "maplibre-gl@4.7.1/dist/maplibre-gl.css" in html
+    assert "pmtiles@3.2.1/dist/pmtiles.js" in html
+
+
+def test_build_html_embeds_base64_and_registers_protocol():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html("QUJDREVG", _info("png"))
+    assert "QUJDREVG" in html  # the base64 archive is embedded inline
+    assert "new pmtiles.Protocol" in html
+    assert "addProtocol" in html
+    assert "pmtiles.FileSource" in html or "FileSource" in html
+    assert "pmtiles://" in html
+
+
+def test_build_html_raster_layer_for_png():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html("QUJD", _info("png"))
+    assert (
+        '"type": "raster"' in html
+        or "'type': 'raster'" in html
+        or 'type: "raster"' in html
+    )
+
+
+def test_build_html_vector_layer_for_mvt():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html("QUJD", _info("mvt"))
+    assert '"type": "vector"' in html or 'type: "vector"' in html
+    # the source-layer id from the metadata vector_layers drives the fill layer
+    assert "demo" in html
+
+
+def test_build_html_honors_custom_style():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html(
+        "QUJD", _info("mvt"), style={"version": 8, "layers": []}
+    )
+    assert '"version": 8' in html
