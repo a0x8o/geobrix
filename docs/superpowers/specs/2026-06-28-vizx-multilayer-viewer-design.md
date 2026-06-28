@@ -143,7 +143,9 @@ matplotlib, and that is where contextily provides the basemap. Complementary, no
   gateway so the *bucket's* CORS governs, not the API gateway's), gated on that bucket's CORS
   allowing the iframe origin **and the `Range` header** — **conditional and spike-gated** (often not
   controllable for UC-managed storage; minting a presigned URL for a managed Volume file is itself
-  uncertain). This is what **Spike A** tests conclusively.
+  uncertain). **Spike A resolved this: for a MANAGED volume no presigned URL is mintable → App-only.**
+  An EXTERNAL volume with customer-configured bucket CORS could enable the rung — parked, out of
+  scope now.
 - The durable answer for indefinite single-archive streaming is the **Phase-2 App** (same-origin).
 
 ### Budget is measured on the *prepared artifact* bytes, not raw input
@@ -426,12 +428,19 @@ the docs site reads consistently against the new surface.
 - **CORS Files-API probe — DONE.** Files API: `ACAO: *`, `Authorization` allowed, **`Range` not in
   `Access-Control-Allow-Headers`** → ranged pmtiles.js fetch fails preflight. In-notebook Volume
   range via the gateway is ruled out.
-- **Spike A — presigned-S3 URL (CORS + range + render).** Can we mint a browser-reachable presigned
-  URL to a Volume archive's backing object, and does a `databricksusercontent.com` iframe
-  successfully range-read + render it? Pass → indefinite-size ladder rung 1; fail → Phase-2 only.
-- **Spike B — AnyWidget on Serverless (JS↔kernel comm round-trip) + tippecanoe `%pip` install.**
-  Pass → dynamic cut-over built as an immediate follow-on; also confirms the tippecanoe
-  manylinux/cp312 wheel installs on the Serverless env.
+- **Spike A — presigned-S3 URL (CORS + range + render) — DONE (FAIL → App-only).** Tested on a
+  **MANAGED** volume (`geospatial_docs.geobrix.data`, backed by a Databricks-managed bucket): no
+  presigned URL could be minted (headless temp-volume-credentials returned nothing; the in-notebook
+  boto3 attempt also produced none). Conclusion: **indefinite-size single-archive in a notebook is
+  Phase-2 (App)** for managed volumes. Phase-1 covers scale via `simplify_tiles` + sharding.
+  **Parked future consideration:** an **EXTERNAL** volume (customer-owned bucket) *could* support the
+  presigned rung if the customer configures bucket CORS (`databricksusercontent.com` origin + `Range`
+  header) — out of scope now, revisit if demand appears.
+- **Spike B — AnyWidget on Serverless (JS↔kernel comm round-trip) — DONE (PASS).** The round-trip
+  works on Serverless (`REPLY (trait): kernel saw zoom=12 bbox=[…]` — JS `model.send` → Python
+  `on_msg` → synced trait → JS `change` handler). **→ the dynamic zoom cut-over IS in scope** as a
+  Phase-1.5 immediate follow-on. (Confirm the tippecanoe `%pip` line printed a version on the same
+  run; the wheel install is a build-time verify regardless.)
 
 Spikes A and B are browser/notebook-frontend behaviors; harnesses are provided to run on a live
 Serverless notebook. Results finalize the plan's scope.
