@@ -359,6 +359,40 @@ class OvertureClient:
         )
         return fetched
 
+    def _merge_metadata(self, meta_df, table):
+        """Create or UPSERT the metadata Delta table keyed by (theme, type, source)."""
+        from pyspark.sql import SparkSession
+
+        spark = SparkSession.getActiveSession()
+        if not spark.catalog.tableExists(table):
+            meta_df.write.format("delta").mode("overwrite").saveAsTable(table)
+            return meta_df
+
+        from delta.tables import DeltaTable
+
+        dt = DeltaTable.forName(spark, table)
+        (
+            dt.alias("t")
+            .merge(
+                meta_df.alias("u"),
+                "t.theme = u.theme AND t.type = u.type AND t.source = u.source",
+            )
+            .whenMatchedUpdate(
+                set={
+                    "path": "u.path",
+                    "out_file_sz": "u.out_file_sz",
+                    "is_out_file_valid": "u.is_out_file_valid",
+                    "last_update": "u.last_update",
+                    "asset_bbox": "u.asset_bbox",
+                    "release": "u.release",
+                    "href": "u.href",
+                }
+            )
+            .whenNotMatchedInsertAll()
+            .execute()
+        )
+        return meta_df
+
     _CLOUD_SCHEMES = ("s3://", "s3a://", "abfs://", "abfss://", "gs://", "wasbs://")
 
     def download(
@@ -383,9 +417,13 @@ class OvertureClient:
         Any other scheme (``http://``, ``https://``, etc.) falls through to the
         whole-file HTTP download fallback (``_download_fallback``).
 
-        ``table=`` is reserved for the Task 8 Delta UPSERT (keyed by
-        ``(theme, type, source)``). Passing it today is accepted but has no effect
-        — the merge body is not yet implemented.
+        When ``table=<name>`` is set, the per-asset metadata DataFrame is
+        persisted to a Delta table via idempotent MERGE keyed by
+        ``(theme, type, source)``: the first call creates the table; subsequent
+        calls update the volatile columns (``path``, ``out_file_sz``,
+        ``is_out_file_valid``, ``last_update``, ``asset_bbox``, ``release``,
+        ``href``) so the catalog stays queryable and re-runnable without
+        accumulating duplicate rows. The returned DataFrame is unchanged.
 
         Serverless-safe; idempotent skip on valid existing targets.
         """
@@ -408,7 +446,8 @@ class OvertureClient:
                 assets, out_dir, validate=validate, max_tries=max_tries, partitions=n
             )
 
-        # table= MERGE is added in Task 8; accept the kwarg but defer the merge.
+        if table is not None:
+            meta = self._merge_metadata(meta, table)
         return meta
 
     def discover(self, bbox, themes=None, release=None) -> "DataFrame":

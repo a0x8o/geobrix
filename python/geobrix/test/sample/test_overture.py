@@ -255,6 +255,66 @@ def test_download_routes_cloud_to_distributed(spark, tmp_path):
     assert meta2.collect()[0]["is_out_file_valid"] is True
 
 
+def test_download_table_merge_idempotent(spark, tmp_path):
+    pytest.importorskip("delta")
+    # a SparkSession with Delta configured is required; skip if not available
+    try:
+        spark.sql("SELECT 1")  # sanity
+        spark.range(1).write.format("delta").mode("overwrite").save(
+            str(tmp_path / "_delta_probe")
+        )
+    except Exception:
+        pytest.skip("Delta not enabled on this local SparkSession")
+
+    src = str(tmp_path / "m.parquet")
+
+    spark.createDataFrame(
+        [Row(id=1, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76))]
+    ).write.mode("overwrite").parquet(src)
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    assets = spark.createDataFrame(
+        [
+            (
+                "buildings",
+                "building",
+                src,
+                [-122.52, 37.70, -122.36, 37.83],
+                "2024-07-01",
+            )
+        ],
+        schema,
+    )
+    table = "overture_meta_test"
+    out_dir = str(tmp_path / "dl2")
+    client.download(
+        assets,
+        out_dir,
+        bbox=(-122.45, 37.74, -122.40, 37.78),
+        table=table,
+        partitions=2,
+    )
+    client.download(
+        assets,
+        out_dir,
+        bbox=(-122.45, 37.74, -122.40, 37.78),
+        table=table,
+        partitions=2,
+    )
+    # MERGE keyed by (theme, type, source) -> still exactly one row, not two
+    assert spark.table(table).count() == 1
+    spark.sql(f"DROP TABLE IF EXISTS {table}")
+
+
 def test_download_routes_http_to_fallback(spark, tmp_path):
     """download() with an http:// href routes to _download_fallback (not distributed).
 
