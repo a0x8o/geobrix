@@ -23,6 +23,92 @@ OVERTURE_CATALOG = "https://stac.overturemaps.org/catalog.json"
 # Spark schema for discover() output — pinned; SP2/SP3 depend on it.
 _DISCOVER_COLS = ["theme", "type", "href", "asset_bbox", "release"]
 
+# Columns for the download() metadata output — pinned; Tasks 6-10 + SP3 depend on it.
+_META_COLS = [
+    "theme",
+    "type",
+    "source",
+    "path",
+    "out_file_sz",
+    "is_out_file_valid",
+    "last_update",
+    "asset_bbox",
+    "release",
+    "href",
+]
+
+
+def _meta_schema():
+    from pyspark.sql.types import (
+        ArrayType,
+        BooleanType,
+        DoubleType,
+        LongType,
+        StringType,
+        StructField,
+        StructType,
+    )
+
+    return StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("source", StringType()),
+            StructField("out_file_sz", LongType()),
+            StructField("is_out_file_valid", BooleanType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+            StructField("href", StringType()),
+        ]
+    )
+
+
+def _meta_dataframe(spark, meta_rows, partitions):
+    """Build the download metadata DataFrame.
+
+    Repartitions by (theme, type, source) using column-hash (NOT number-only) so
+    the result stays distributed on Serverless (AQE cannot coalesce a column-hash
+    repartition to 1). Aliases `source` as `path` and adds `last_update`.
+    """
+    from pyspark.sql import functions as F
+
+    cols = [
+        "theme",
+        "type",
+        "source",
+        "out_file_sz",
+        "is_out_file_valid",
+        "asset_bbox",
+        "release",
+        "href",
+    ]
+    if not meta_rows:
+        df = spark.createDataFrame([], _meta_schema())
+    else:
+        df = spark.createDataFrame(
+            [tuple(r[c] for c in cols) for r in meta_rows], _meta_schema()
+        )
+    n = max(1, partitions or 1)
+    # Column-hash repartition: on Serverless, number-only repartition(N) is
+    # AQE-coalesced to 1 (serial); hashing by real columns keeps it distributed.
+    return (
+        df.repartition(n, F.col("theme"), F.col("type"), F.col("source"))
+        .withColumn("path", F.col("source"))
+        .withColumn("last_update", F.current_timestamp())
+        .select(
+            "theme",
+            "type",
+            "source",
+            "path",
+            "out_file_sz",
+            "is_out_file_valid",
+            "last_update",
+            "asset_bbox",
+            "release",
+            "href",
+        )
+    )
+
 
 def _discover_schema():
     from pyspark.sql.types import (
@@ -68,6 +154,89 @@ class OvertureClient:
             if self._catalog_opener is not None
             else self._open_catalog
         )
+
+    def _download_distributed(
+        self, assets_df, out_dir, *, bbox, validate, partitions
+    ) -> "DataFrame":
+        """Performant default: distributed read of each asset's GeoParquet with a
+        bbox-struct predicate pushdown, AOI subset written to the Volume per
+        (theme, type). Returns the metadata rows. Serverless-safe: repartition by
+        column only; no spark.conf/cache/persist/.rdd.
+
+        Parameters
+        ----------
+        assets_df:
+            DataFrame from discover() — columns: theme, type, href, asset_bbox, release.
+        out_dir:
+            Root output directory (UC Volume path or local path).
+        bbox:
+            AOI as (minx, miny, maxx, maxy).
+        validate:
+            If True, read-back one row from the written parquet to confirm it is valid.
+        partitions:
+            Target partition count for repartition(N, col). Must be >= 1.
+        """
+        import os
+
+        from pyspark.sql import SparkSession
+        from pyspark.sql import functions as F
+
+        from databricks.labs.gbx.sample._overture_discover import normalize_bbox
+
+        spark = SparkSession.getActiveSession()
+        minx, miny, maxx, maxy = normalize_bbox(bbox)
+        assets = assets_df.select(*_DISCOVER_COLS).collect()
+
+        meta_rows = []
+        for a in assets:
+            df = spark.read.parquet(a["href"])
+            # bbox-struct predicate pushdown when the Overture `bbox` struct is present.
+            if "bbox" in df.columns:
+                df = df.filter(
+                    (F.col("bbox.xmin") <= F.lit(maxx))
+                    & (F.col("bbox.xmax") >= F.lit(minx))
+                    & (F.col("bbox.ymin") <= F.lit(maxy))
+                    & (F.col("bbox.ymax") >= F.lit(miny))
+                )
+            target = os.path.join(out_dir, a["theme"], a["type"])
+            # Hash-by-column repartition (NOT number-only): on Serverless a
+            # round-robin repartition(N) is AQE-coalesced to 1 (serial). Hash by a
+            # real source column so the per-asset row groups spread across cores.
+            # Prefer the Overture `id` column; else hash by the first column.
+            key = "id" if "id" in df.columns else df.columns[0]
+            (
+                df.repartition(partitions, F.col(key))
+                .write.mode("overwrite")
+                .parquet(target)
+            )
+            valid = True
+            if validate:
+                try:
+                    spark.read.parquet(target).limit(1).count()
+                except Exception:
+                    valid = False
+            try:
+                sz = sum(
+                    os.path.getsize(os.path.join(target, f))
+                    for f in os.listdir(target)
+                    if f.endswith(".parquet")
+                )
+            except OSError:
+                sz = None
+            meta_rows.append(
+                {
+                    "theme": a["theme"],
+                    "type": a["type"],
+                    "source": target,
+                    "out_file_sz": sz,
+                    "is_out_file_valid": valid,
+                    "asset_bbox": a["asset_bbox"],
+                    "release": a["release"],
+                    "href": a["href"],
+                }
+            )
+
+        return _meta_dataframe(spark, meta_rows, partitions)
 
     def discover(self, bbox, themes=None, release=None) -> "DataFrame":
         """One row per intersecting GeoParquet asset for the AOI.
