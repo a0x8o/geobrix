@@ -807,7 +807,7 @@ git commit -m "feat(vizx): wire simplify_tiles into the >64MB ladder rung"
 ## Task 12: Exports, extras, SRI pinning, back-compat
 
 **Files:**
-- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/__init__.py`; `python/geobrix/pyproject.toml` (`[vizx]` extra); CI lock `requirements-pyrx-ci.in` + recompiled hashed `.txt`; `_maplibre.py` (real SRI hashes)
+- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/__init__.py`; `python/geobrix/pyproject.toml` (`[vizx]` extra); CI lock `requirements-pyrx-ci.in` + recompiled hashed `.txt`; `_maplibre.py` (real SRI hashes); **`_pmtiles.py` + `test_pmtiles.py` — remove the now-dead `_build_pmtiles_html` + its duplicate/divergent `_MAPLIBRE_JS`/`_PMTILES_JS` constants (pinned `pmtiles@3.2.1` vs `_maplibre.py`'s `3.2.0`) since `plot_pmtiles` now delegates; consolidate ONE CDN pin + SRI in `_maplibre.py` and drop the ~8 `test_pmtiles` tests that exercised the old standalone builder (the delegation path is covered by the new tests).**
 - Test: `python/geobrix/test/vizx/test_exports.py`
 
 **Interfaces:**
