@@ -1116,8 +1116,20 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   - `## Files` table (config_nb + 3 notebooks).
   - `## Prerequisites`, `## Run order`, `## Data flow` (the same ASCII flow as the README), `## Key GeoBrix / Databricks functions shown`, `## Gotchas` — all mirroring eo-series.mdx, trimmed to Helios.
 - [ ] **Step 2:** Edit `docs/sidebars.js` — in the `Notebooks` category `items` array (currently `'notebooks/eo-series'`, `'notebooks/xview'`, `'notebooks/h3-rasterize'`), append `'notebooks/helios'`.
-- [ ] **Step 3 (VALIDATION):** Doc-voice grep **must be empty**: `grep -rniE "wave [0-9]+|wave-[0-9]+" docs/docs/notebooks/helios.mdx` prints nothing; also `grep -rniE "subagent|dispatch|\bSP[0-9]\b|sub-project" docs/docs/notebooks/helios.mdx` prints nothing. Build-check the docs locally if practical (`gbx:docs:dev` or the docs build) to confirm the MDX parses and the sidebar entry resolves; at minimum confirm `notebooks/helios` matches the new file id and the three image paths exist.
-- [ ] **Step 4 (commit):** `git add docs/docs/notebooks/helios.mdx docs/sidebars.js && git commit` — subject `docs(helios): add Helios docs page + sidebar entry`; body WHY. Trailer.
+- [ ] **Step 3 (reciprocal cross-link sweep):** The series touches many functions/writers — add a link FROM each docs page/listing that showcases a Helios-touched function/writer TO the new series page (`../notebooks/helios`), mirroring the EXISTING convention (a one-line "worked example" sentence near the function + a Related-links list entry, exactly like the `[EO Series](../notebooks/eo-series)` / `[H3 rasterize notebook](../notebooks/h3-rasterize)` links already in `api/stac.mdx`, `api/vizx.mdx`, `api/raster-functions.mdx`). Link target is `../notebooks/helios` from every `docs/docs/<subdir>/*.mdx` (api/, writers/, sample-data/ are all one level under docs/docs). **Inventory of pages/places to touch** (add the link near the named function/section; confirm the exact anchor at edit time):
+  | Page | Function(s)/feature the series showcases | NB |
+  |---|---|---|
+  | `api/vectorx-functions.mdx` | `gbx_st_asmvt`, `gbx_st_asmvt_pyramid` | NB01 |
+  | `api/raster-functions.mdx` | `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, terrain (slope/hillshade), `gbx_pmtiles_agg` (raster PMTiles) | NB02, NB03 |
+  | `api/pmtiles-functions.mdx` | `gbx_pmtiles_agg` (vector + raster) | NB01, NB02, NB03 |
+  | `writers/pmtiles.mdx` (+ `writers/overview.mdx`) | `.write.format("pmtiles")` writer | NB02/NB03 (large pyramids) |
+  | `api/vizx.mdx` | `plot_pmtiles`, `plot_cog`, `pmtiles_info` | all three |
+  | `api/stac.mdx` | `StacClient` (catalog COGs) — ADD helios ALONGSIDE the existing eo-series link | NB03 |
+  | `api/h3-raster-tessellation.mdx` | `gbx_rst_h3_rastertogridavg` (per-H3-cell solar score) | NB03 |
+  | `sample-data/overview.mdx` | Overture data source (`gbx.sample.overture`) acquisition | NB01 |
+  Only add the link on the CANONICAL function-listing page per function — do NOT spam the aggregate pages (`performance.mdx`, `execution-tiers.mdx`, `api/overview.mdx`) that merely mention the functions in passing (an `api/overview.mdx` one-line mention in the tiling/PMTiles narrative is optional). Keep docs voice clean.
+- [ ] **Step 4 (VALIDATION):** Doc-voice grep **must be empty**: `grep -rniE "wave [0-9]+|wave-[0-9]+" docs/docs/notebooks/helios.mdx` prints nothing; also `grep -rniE "subagent|dispatch|\bSP[0-9]\b|sub-project" docs/docs/notebooks/helios.mdx` prints nothing. Confirm the reciprocal links resolve: `grep -rl "notebooks/helios" docs/docs` should list the inventory pages above (and `notebooks/helios.mdx` itself). Build-check the docs locally if practical (`gbx:docs:dev` or the docs build) to confirm the MDX parses and the sidebar entry resolves; at minimum confirm `notebooks/helios` matches the new file id and the three image paths exist.
+- [ ] **Step 5 (commit):** `git add docs/docs/notebooks/helios.mdx docs/sidebars.js docs/docs/api/ docs/docs/writers/ docs/docs/sample-data/ && git commit` — subject `docs(helios): Helios docs page + sidebar + reciprocal function-page links`; body WHY (incl. the cross-link sweep). Trailer.
 
 ---
 
