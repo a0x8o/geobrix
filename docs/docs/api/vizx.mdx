@@ -422,7 +422,7 @@ Render a `.pmtiles` archive inline in a Databricks or Jupyter notebook.
 | `max_embed_mb` | `float` | `64` | Budget for the base64-embedded archive. Exceeding it triggers the static fallback. `0` forces the static path. |
 | `fallback` | `bool` | `True` | When `False`, raise instead of falling back to the static render. |
 | `style` | `dict` or `None` | `None` | Override the auto-generated MapLibre style on the interactive path. |
-| `**map_kwargs` | | | Forwarded to the static plotter (`plot_raster` or `plot_static`). |
+| `**map_kwargs` | | | On the static fallback, forwarded to the matching static plotter: `plot_raster` for raster archives (PNG/JPEG/WebP/AVIF) or `plot_static` for vector archives (MVT). Must be keyword arguments valid for that plotter — e.g. `basemap`, `column`, `cmap`, `title`, `fig_w`/`fig_h` for `plot_static`; an unrecognised keyword raises `TypeError`. Ignored on the interactive path. |
 
 The interactive page pins CDN versions for reproducibility: MapLibre GL JS 4.7.1 and pmtiles.js 3.2.1.
 

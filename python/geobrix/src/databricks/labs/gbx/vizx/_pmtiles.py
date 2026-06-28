@@ -26,8 +26,11 @@ _PMTILES_JS = "https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"
 _RASTER_TYPES = frozenset({"png", "jpeg", "webp", "avif"})
 
 
+_SUPPORTED_TILE_TYPES = frozenset({"png", "jpeg", "webp", "avif", "mvt"})
+
+
 def _is_raster_type(tile_type: str) -> bool:
-    """True for image tile types (raster layer); False for mvt/unknown (vector)."""
+    """True for image tile types (raster layer); False for mvt (vector)."""
     return tile_type in _RASTER_TYPES
 
 
@@ -231,15 +234,31 @@ def plot_pmtiles(
     decode MVT to geometries and plot_static over a contextily basemap.
     ``fallback=False`` raises instead of degrading; ``max_embed_mb=0``
     deliberately forces the static render (for GitHub-renderable notebooks).
-    ``map_kwargs`` flow to the chosen static plotter. ``style`` overrides the
-    auto MapLibre style on the interactive path. Requires the [vizx] extra for
-    the static fallback.
+    ``style`` overrides the auto MapLibre style on the interactive path.
+    Archives with unsupported tile types raise ``ValueError`` immediately.
+    Requires the [vizx] extra for the static fallback.
+
+    On the static path, ``**map_kwargs`` are forwarded to the matching static
+    plotter: ``plot_raster`` for raster archives (PNG/JPEG/WebP/AVIF) or
+    ``plot_static`` for vector archives (MVT). Only keyword arguments valid for
+    that plotter are accepted — for example, ``basemap``, ``column``, ``cmap``,
+    ``title``, ``fig_w``/``fig_h`` are valid for ``plot_static``; ``plot_raster``
+    does not accept ``basemap`` (which is silently stripped). Passing an
+    unrecognised keyword for the matched plotter raises ``TypeError``.
+    ``map_kwargs`` are ignored on the interactive path.
     """
     from databricks.labs.gbx.pmtiles import pmtiles_info
     from databricks.labs.gbx.vizx._interactive import _notebook_display_html
 
     data = _archive_bytes(path_or_bytes)
     info = pmtiles_info(data)
+
+    tile_type = info["tile_type"]
+    if tile_type not in _SUPPORTED_TILE_TYPES:
+        raise ValueError(
+            f"plot_pmtiles: unsupported tile type {tile_type!r}. "
+            "Supported types: mvt, png, jpeg, webp, avif."
+        )
 
     # Interactive by default. base64 inflates ~33%; compare the *embedded* size
     # against the budget and only then degrade to the static render.

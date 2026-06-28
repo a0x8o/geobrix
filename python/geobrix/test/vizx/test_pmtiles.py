@@ -308,6 +308,38 @@ def test_plot_pmtiles_oversized_without_fallback_raises():
         p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=False)
 
 
+def test_plot_pmtiles_unknown_tile_type_raises(monkeypatch):
+    """M1: unknown/unsupported tile type must raise ValueError before any decode."""
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    # Build a minimal archive (PNG bytes, actual tile_type doesn't matter —
+    # we monkeypatch pmtiles_info to return tile_type="unknown" offline).
+    archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
+
+    def _fake_pmtiles_info(data):
+        return {
+            "tile_type": "unknown",
+            "tile_compression": "none",
+            "min_zoom": 0,
+            "max_zoom": 0,
+            "bounds": (-122.52, 37.70, -122.35, 37.83),
+            "center": (-122.44, 37.76, 0),
+            "tile_count": 1,
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(
+        "databricks.labs.gbx.pmtiles.pmtiles_info",
+        _fake_pmtiles_info,
+    )
+    # Must raise for both static and interactive paths (single dispatch point).
+    with pytest.raises(ValueError, match="unsupported tile type") as exc_info:
+        p.plot_pmtiles(archive)
+    msg = str(exc_info.value)
+    assert "mvt" in msg
+    assert "png" in msg
+
+
 def test_public_exports():
     import databricks.labs.gbx.vizx as vizx
 
