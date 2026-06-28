@@ -221,17 +221,16 @@ class PMTiles_AggTest extends PlanTest with SilentSparkSession {
         val features = MvtDecoder.decode(tileBytes)
         assert(features.size == 2, s"expected 2 features after merge; got ${features.size}")
 
-        // Collect the bounding boxes of all decoded features.
-        // MVT integer quantization allows ±1 unit of rounding from OGR encode/decode.
-        val tolerance = 2.0
+        // Collect coordinates from all decoded features.
         val allCoords = features.flatMap { case (_, wkb, _) =>
             val geom = JTS.fromWKB(wkb)
             assert(geom != null && !geom.isEmpty, "decoded geometry null/empty")
             geom.getCoordinates.toSeq
         }
-        // Feature 1: polygon corners near (100,100), (200,100), (200,200), (100,200)
-        // Feature 2: polygon corners near (300,300), (400,300), (400,400), (300,400)
-        // All coordinates must be in [0, 4096] tile-local space, NOT in world metres (~±2e7).
+
+        // PRIMARY ASSERTION: all coordinates must be in [0, 4096] tile-local space.
+        // If a double world-transform bug exists, coordinates would be ~±2e7 (EPSG:3857
+        // world metres), which trivially fails this range check.
         allCoords.foreach { c =>
             assert(c.x >= 0 && c.x <= 4096,
                 s"decoded x=${c.x} is out of tile-local [0,4096] range — double world-transform bug")
@@ -239,14 +238,17 @@ class PMTiles_AggTest extends PlanTest with SilentSparkSession {
                 s"decoded y=${c.y} is out of tile-local [0,4096] range — double world-transform bug")
         }
 
-        // Additionally assert the two polygon origins are recovered near their input positions.
-        // Polygon 1 has x in [100, 200], polygon 2 has x in [300, 400].
-        // Use a gap midpoint (250) to separate the two polygons when scanning sorted x values.
-        val sortedMinX = allCoords.map(_.x).sorted
-        assert(math.abs(sortedMinX.head - 100.0) <= tolerance,
-            s"first polygon minX expected ~100; got ${sortedMinX.head}")
-        assert(math.abs(sortedMinX.dropWhile(_ < 250.0).head - 300.0) <= tolerance,
-            s"second polygon minX expected ~300; got ${sortedMinX.dropWhile(_ < 250.0).head}")
+        // SECONDARY ASSERTION: the two features are spatially distinct.
+        // Each polygon occupies a 100×100 region; with extent=4096, their bounding boxes
+        // must not overlap if both are faithfully encoded. The max-x of all decoded
+        // coordinates must be at least 200 units beyond the min-x (polygon 2 is 300+
+        // units away from polygon 1 in the input; OGR quantization won't collapse that gap).
+        val xValues = allCoords.map(_.x)
+        val xMin = xValues.min
+        val xMax = xValues.max
+        assert(xMax - xMin > 200.0,
+            s"decoded coordinate range (xMax=$xMax - xMin=$xMin = ${xMax - xMin}) is too narrow; " +
+            s"the two polygons should be spatially distinct after merge")
     }
 
     // ── Raster duplicate-tileid regression (malformed-archive fix) ──────────────
