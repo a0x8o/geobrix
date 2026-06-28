@@ -7,8 +7,8 @@
 ## Problem
 
 `gbx_pmtiles_agg` (both tiers) deduplicates tiles by `(z, x, y)` **first-write-wins**:
-- light `pmtiles/_agg_light.py`: `if tileid in seen: continue` (docstring: "duplicate (z,x,y) keep the first").
-- heavy `PMTilesAcc`/`PMTiles_Agg.scala`: first-non-null per tile id.
+- light `pmtiles/_agg_light.py`: `if tileid in seen: continue` (docstring: "duplicate (z,x,y) keep the first") — first-wins, structurally valid but drops vector features.
+- heavy `PMTilesV3Encoder.scala:83-105`: **no tileId dedup at all** — `PMTilesAcc.add` appends unconditionally and the encoder writes a directory entry per tuple, so duplicate `(z,x,y)` produce **two directory entries → a structurally malformed PMTiles archive** (the spec requires ≤1 entry per tileId; content-hash dedup only collapses identical bytes, not differing blobs at the same tileId). This affects **raster too**, not just vector — a distinct, worse failure mode than light's first-wins. (Found by the cross-aggregator audit, which also confirmed the drop-on-collision flaw is UNIQUE to `gbx_pmtiles_agg` — all other `_agg`s combine correctly.)
 
 `gbx_st_asmvt_pyramid` is a generator that emits **one single-feature MVT blob per `(feature, z, x, y)`**. So the documented composition — release notes: *"`st_asmvt_pyramid` … composes with `gbx_pmtiles_agg` for end-to-end vector publishing pipelines"* — **drops all but the first feature in each tile** for dense data (e.g. a buildings basemap: thousands of features per tile collapse to one). First-wins is correct for **raster** (one tile = one image) but wrong for **vector** (one tile = many features). The Helios NB01 buildings basemap is the first end-to-end exercise of this path and exposed it.
 
@@ -28,8 +28,12 @@ multiple blobs:
   stays in tile-local `[0, extent]` integer space — **no reprojection** (the blobs are already
   tile-local for that exact `(z,x,y)`; decode→encode round-trips the local coords). Attributes
   are preserved per feature.
-- **Raster (PNG/JPEG/WebP/etc.) tile type:** **keep first-write-wins** (unchanged — images can't
-  be meaningfully merged; one tile = one image).
+- **Raster (PNG/JPEG/WebP/etc.) tile type:** emit **exactly one entry per tile id** (first-wins —
+  images can't be meaningfully merged; one tile = one image). For the LIGHT tier this is unchanged.
+  For the HEAVY tier this is a **fix**: today it writes a directory entry per tuple (duplicate
+  `(z,x,y)` → malformed archive); grouping by tile id and emitting one blob per group makes the
+  heavy raster archive structurally valid. So the both-tiers "group by tile id, one output blob per
+  group" design fixes BOTH the vector feature-drop AND the heavy raster malformed-duplicate-entry bug.
 
 Tile type is auto-detected from the first non-null payload's magic bytes, as today. The
 vector-vs-raster branch keys off that detected type.
@@ -71,6 +75,10 @@ features are present with their attributes.
 - Heavy unit: same, JVM side.
 - **Light-vs-heavy parity** (POLYGON multi-feature) per the convention.
 - Existing `gbx_pmtiles_agg` raster + the PMTiles writer tests stay green (regression).
+- **Heavy raster duplicate-tile regression (new):** pack a group with two RASTER blobs sharing one
+  `(z,x,y)` → the archive has **exactly one** directory entry for that tile id and reads back as a
+  valid PMTiles archive (locks the malformed-duplicate-entry fix the audit surfaced). Add the
+  equivalent light assertion if not already covered by the existing `duplicate_tileid_dropped` test.
 - A focused re-run proving the `st_asmvt_pyramid → groupBy? no → pmtiles_agg` path now preserves
   features (NB01 will consume this).
 
