@@ -453,8 +453,9 @@ def g_cog_catalog(cx, cy, color, tint):
         f'H {fx + 8} Q {fx} {fy + fh + 8} {fx} {fy + fh} Z" '
         f'fill="{tint}" stroke="{color}" stroke-width="2" stroke-linejoin="round"/>'
     )
-    # COG file icons inside folder
-    file_defs = [(-36, 10), (-6, 10), (24, 10)]
+    # COG file icons inside folder — pushed down to clear the "STAC Delta"
+    # tab label above and leave breathing room below it
+    file_defs = [(-36, 32), (-6, 32), (24, 32)]
     for (fdx, fdy) in file_defs:
         fex = cx + fdx
         fey = fy + fdy
@@ -474,9 +475,9 @@ def g_cog_catalog(cx, cy, color, tint):
             f'font-family="ui-monospace, Menlo, monospace" font-size="8" '
             f'font-weight="700" fill="{color}">.cog</text>'
         )
-    # Delta label on folder tab
+    # Delta label on folder tab — sits below the folder top edge with headroom
     out.append(
-        f'<text x="{fx + 12}" y="{fy + 12}" '
+        f'<text x="{fx + 12}" y="{fy + 18}" '
         f'font-family="Inter, sans-serif" font-size="9" '
         f'font-weight="700" fill="{color}">STAC Delta</text>'
     )
@@ -494,18 +495,13 @@ def g_hillshade_relief(cx, cy, color, tint):
         f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{span}" height="{span}" '
         f'fill="{tint}" stroke="{color}" stroke-width="2"/>'
     ]
-    # Hillshade pattern: light from upper-left
+    # Hillshade lit from the upper-left (where the sun glyph sits): cell
+    # opacity encodes darkness, so it is LOW (light) near the top-left corner
+    # and rises smoothly toward the bottom-right (in shadow) — a clean
+    # diagonal relief gradient.
     def hillshade_val(r, c):
-        # Simulate a hill: darker on lower-right, lighter on upper-left
-        # hill centered at (3,3) in grid coords
-        dr = r - 3
-        dc = c - 3
-        dist = math.sqrt(dr**2 + dc**2)
-        # Normal vector of hill face
-        norm_factor = max(0.0, 1.0 - dist / 5.0)
-        # Light direction: upper-left
-        light = 0.3 + 0.6 * norm_factor * (1.0 - (dr + dc + 2) / 12.0)
-        return max(0.05, min(0.85, light))
+        t = (r + c) / (2.0 * (cells - 1))  # 0 at top-left → 1 at bottom-right
+        return 0.12 + 0.70 * t
 
     for r in range(cells):
         for c in range(cells):
@@ -728,9 +724,9 @@ NOTEBOOKS = {
                   glyph=g_cog_catalog,
                   chip_text="StacClient"),
             Stage(title="Slope / hillshade",
-                  subtitle="rst_terrainslope + rst_hillshade derive solar-relevant terrain metrics per tile",
+                  subtitle="gbx_rst_slope + gbx_rst_hillshade derive solar-relevant terrain metrics per tile",
                   glyph=g_hillshade_relief,
-                  chip_text="rst_terrainslope"),
+                  chip_text="gbx_rst_slope"),
             Stage(title="PMTiles + COG view",
                   subtitle="gbx_rst_xyzpyramid + gbx_pmtiles_agg package results; plot_cog and plot_pmtiles render inline",
                   glyph=g_map_pin,
@@ -738,7 +734,7 @@ NOTEBOOKS = {
         ],
         "footer_chips": [
             "gbx_rst_cog_convert", "StacClient",
-            "rst_terrainslope", "rst_hillshade",
+            "gbx_rst_slope", "gbx_rst_hillshade",
             "gbx_rst_xyzpyramid", "plot_cog", "plot_pmtiles",
         ],
     },
