@@ -33,18 +33,18 @@ These apply to every task; do not restate them per step, but honor them everywhe
 
 **Files:**
 - Create dir: `notebooks/examples/helios/`
-- Create: `resources/images/helios.py` (the per-notebook diagram generator, mirroring `resources/images/eo-series.py`)
-- Produces (committed): `resources/images/helios-01.svg`/`.png`, `helios-02.svg`/`.png`, `helios-03.svg`/`.png`
+- Create: `resources/images/generators/helios.py` (the per-notebook diagram generator, mirroring `resources/images/generators/eo-series.py`)
+- Produces (committed): `resources/images/diagrams/helios/helios-01.svg`/`.png`, `helios-02.svg`/`.png`, `helios-03.svg`/`.png`
 
 **Interfaces:** Produces the three `helios-0N.png` images that NB01–NB03 and `helios.mdx` reference by exact path. No code dependency on SP1/SP2.
 
-- [ ] **Step 1: Copy and adapt the diagram generator.** Copy `resources/images/eo-series.py` to `resources/images/helios.py`. Keep its palette, glyph, chip, and four-stage layout machinery verbatim. Replace the four notebook diagram definitions with **three** Helios diagrams. Each is a catchy **data → tile → PMTiles → view** flow with a hero glyph per stage and a footer of the GeoBrix/Databricks function chips that notebook actually uses:
+- [ ] **Step 1: Copy and adapt the diagram generator.** Copy `resources/images/generators/eo-series.py` to `resources/images/generators/helios.py`. Keep its palette, glyph, chip, and four-stage layout machinery verbatim. Replace the four notebook diagram definitions with **three** Helios diagrams. Each is a catchy **data → tile → PMTiles → view** flow with a hero glyph per stage and a footer of the GeoBrix/Databricks function chips that notebook actually uses:
   - `helios-01` (Vector Engine / MVT): stages `Overture buildings (SF)` → `gbx_st_asmvt + st_asmvt_pyramid` → `gbx_pmtiles_agg → vector .pmtiles` → `plot_pmtiles`. Glyphs: building footprints → vector-tile grid → stacked-archive → map pin. Chips: `OvertureClient.discover/download/read`, `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_pmtiles_agg`, `plot_pmtiles`.
   - `helios-02` (Visual Basemap / XYZ): stages `NAIP aerial (SF)` → `gbx_rst_to_webmercator` → `gbx_rst_xyzpyramid → gbx_pmtiles_agg → raster .pmtiles` → `plot_pmtiles`. Glyphs: aerial swatch → web-mercator globe → XYZ pyramid → map pin. Chips: `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_pmtiles_agg`, `pmtiles_info`, `plot_pmtiles`.
   - `helios-03` (Analytical Core / COG+STAC): stages `USGS 3DEP DEM (SF)` → `gbx_rst_cog_convert → COGs + STAC Delta` → `slope/hillshade → gbx_rst_xyzpyramid → .pmtiles` → `plot_cog + plot_pmtiles`. Glyphs: contour DEM → catalog/COG → hillshade relief → map pin. Chips: `gbx_rst_cog_convert`, `StacClient`/STAC Delta, `rst_terrainslope`/`rst_hillshade`, `gbx_rst_xyzpyramid`, `plot_cog`, `plot_pmtiles`.
 - [ ] **Step 2: Update the module docstring** re-render block to loop `01 02 03` (not `01 02 03 04`) and to point at `helios-$n.svg`/`.png`. Keep the Chrome-headless screenshot + PIL bbox-trim recipe identical.
-- [ ] **Step 3 (VALIDATION):** Run `python3 resources/images/helios.py` then the Chrome-headless + PIL crop recipe from the docstring on the host (Chrome is host-only, not in Docker). Assert the three `.svg` and three trimmed `.png` files exist and open (`python3 -c "from PIL import Image; [Image.open(f'resources/images/helios-{n}.png').load() for n in ('01','02','03')]"` exits 0). Expected: three non-empty PNGs, each a four-stage horizontal flow with a chip footer.
-- [ ] **Step 4 (commit):** `git add notebooks/examples/helios resources/images/helios.py resources/images/helios-0*.svg resources/images/helios-0*.png && git commit` — subject `feat(helios): add notebook-series diagram generator + images`; body: WHY (per-notebook data→tile→PMTiles flow diagrams for the SF solar series, mirrors eo-series.py). Trailer `Co-authored-by: Isaac`.
+- [ ] **Step 3 (VALIDATION):** Run `python3 resources/images/generators/helios.py` then the Chrome-headless + PIL crop recipe from the docstring on the host (Chrome is host-only, not in Docker). Assert the three `.svg` and three trimmed `.png` files exist and open (`python3 -c "from PIL import Image; [Image.open(f'resources/images/helios-{n}.png').load() for n in ('01','02','03')]"` exits 0). Expected: three non-empty PNGs, each a four-stage horizontal flow with a chip footer.
+- [ ] **Step 4 (commit):** `git add notebooks/examples/helios resources/images/generators/helios.py resources/images/helios-0*.svg resources/images/helios-0*.png && git commit` — subject `feat(helios): add notebook-series diagram generator + images`; body: WHY (per-notebook data→tile→PMTiles flow diagrams for the SF solar series, mirrors eo-series.py). Trailer `Co-authored-by: Isaac`.
 
 ---
 
@@ -342,7 +342,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ```markdown
   # Helios 01 — Vector Engine: building footprints to vector PMTiles
 
-  ![Overture buildings to vector PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/helios-01.png)
+  ![Overture buildings to vector PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/diagrams/helios/helios-01.png)
 
   **Solar site-selection, step 1: the candidate surfaces.** Every rooftop in San
   Francisco is a potential solar surface. This notebook pulls **Overture Maps building
@@ -567,7 +567,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ```markdown
   # Helios 02 — Visual Basemap: NAIP aerial imagery to raster PMTiles
 
-  ![NAIP aerial to raster PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/helios-02.png)
+  ![NAIP aerial to raster PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/diagrams/helios/helios-02.png)
 
   **Solar site-selection, step 2: the visual context.** Before scoring roofs, we want
   to *see* them. This notebook stages **NAIP** (National Agriculture Imagery Program)
@@ -776,7 +776,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ```markdown
   # Helios 03 — Analytical Core: terrain, COGs, STAC, and solar scoring
 
-  ![3DEP DEM to COG + STAC + hillshade PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/helios-03.png)
+  ![3DEP DEM to COG + STAC + hillshade PMTiles](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/diagrams/helios/helios-03.png)
 
   **Solar site-selection, step 3: the analytical layer.** Roof solar yield depends on
   **slope** and **aspect** (south-facing, gently sloped wins). This notebook stages a

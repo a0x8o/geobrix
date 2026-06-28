@@ -14,7 +14,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 ### 01 — Vector Engine (MVT)
 
-![Notebook 01 — Overture buildings → MVT tiles → PMTiles archive → show_pmtiles](../../../resources/images/helios-01.png)
+![Notebook 01 — Overture buildings → MVT tiles → PMTiles archive → show_pmtiles](../../../resources/images/diagrams/helios/helios-01.png)
 
 - **Distributed MVT encoding** — `gbx_st_asmvt` + `gbx_st_asmvt_pyramid` fans out tile generation across the cluster in parallel, producing a full zoom-range MVT pyramid without driver-side loops or single-node bottlenecks.
 - **Databricks-native spatial composition** — Databricks built-in `st_area` / `st_centroid` compute per-building roof area and centroid directly on the WKB column; `h3_longlatash3` bins centroids into H3 cells for roof-density scoring. These native functions compose cleanly with GeoBrix MVT encoding — no format conversion required.
@@ -22,7 +22,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 ### 02 — Visual Basemap (XYZ)
 
-![Notebook 02 — NAIP aerial → Web Mercator → XYZ pyramid → PMTiles archive → show_pmtiles](../../../resources/images/helios-02.png)
+![Notebook 02 — NAIP aerial → Web Mercator → XYZ pyramid → PMTiles archive → show_pmtiles](../../../resources/images/diagrams/helios/helios-02.png)
 
 - **Distributed Web Mercator reprojection** — `gbx_rst_to_webmercator` reprojects each NAIP scene across the cluster to the standard slippy-map CRS, scaling linearly with tile count rather than running serially on the driver.
 - **Full-resolution XYZ pyramid** — `gbx_rst_xyzpyramid` generates all zoom levels in a single distributed pass, matching the zoom range of the vector layer above.
@@ -30,7 +30,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 ### 03 — Analytical Core (COG + STAC)
 
-![Notebook 03 — 3DEP/SRTM DEM → COGs + STAC Delta → slope/aspect/hillshade → PMTiles → solar score per H3 cell](../../../resources/images/helios-03.png)
+![Notebook 03 — 3DEP/SRTM DEM → COGs + STAC Delta → slope/aspect/hillshade → PMTiles → solar score per H3 cell](../../../resources/images/diagrams/helios/helios-03.png)
 
 - **COG conversion + STAC Delta catalog** — `gbx_rst_cog_convert` converts raw 3DEP DEMs to Cloud-Optimized GeoTIFFs in a distributed pass; the resulting COG paths are written to a managed STAC Delta table that `StacClient` can query for incremental updates and downstream notebooks.
 - **Terrain analytics at scale** — `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` derive terrain layers in parallel across all DEM tiles; `gbx_rst_xyzpyramid` + `gbx_pmtiles_agg` package the hillshade into `sf_hillshade.pmtiles` for the combined view.
@@ -38,7 +38,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 ### 04 — Distributed Sharding & Mosaic
 
-![Notebook 04 — MVT pyramid → shard by parent tile → per-shard PMTiles archives → mosaic catalog + manifest](../../../resources/images/helios-04.png)
+![Notebook 04 — MVT pyramid → shard by parent tile → per-shard PMTiles archives → mosaic catalog + manifest](../../../resources/images/diagrams/helios/helios-04.png)
 
 - **Spatial sharding into parallel work units** — each pyramid tile is assigned to a coarse parent tile (z11) via `shiftright(x, z-11)`, then `groupBy(shard).agg(gbx_pmtiles_agg(...))` fans archive packing out across the cluster — one `.pmtiles` per shard instead of one monolithic file. The SF AOI splits into four shards.
 - **Shard catalog + mosaic manifest** — a `sf_building_shards` Delta table maps each shard key to its archive path and bounds (`pmtiles_info`), and a `mosaic.json` manifest lets a client discover and assemble the shards with no tile server.

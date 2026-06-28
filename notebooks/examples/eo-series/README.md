@@ -14,7 +14,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 ### 01 — Discover EO imagery via STAC
 
-![Notebook 01 — AOI polygon → H3 res-2 cells → Planetary Computer STAC search → cell_assets Delta](../../../resources/images/eo-series-01.png)
+![Notebook 01 — AOI polygon → H3 res-2 cells → Planetary Computer STAC search → cell_assets Delta](../../../resources/images/diagrams/eo-series/eo-series-01.png)
 
 - **Spatially-indexed STAC search** — tessellate any AOI polygon to H3 res-2 cells and query Planetary Computer per cell, so results are pre-keyed to the grid you'll join on later.
 - **Shapefile I/O without unzipping** — the `shapefile_gbx` reader pulls TIGER counties straight from a `.zip` blob in the Volume; no scratch-disk shuffling required.
@@ -22,7 +22,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 ### 02 — Parallel band download with idempotent retry
 
-![Notebook 02 — STAC items fanning out to per-band downloads with retry loop and per-band Delta tables](../../../resources/images/eo-series-02.png)
+![Notebook 02 — STAC items fanning out to per-band downloads with retry loop and per-band Delta tables](../../../resources/images/diagrams/eo-series/eo-series-02.png)
 
 - **Spark-driven concurrent download** — a `pandas_udf` (`download_band`) fans out per-(item, band) HTTPS retrievals across the cluster, writing files into a Volume and one Delta table per band.
 - **Idempotent and self-healing** — a 1 KB validity threshold detects throttled auth-error payloads, and a Delta MERGE retry path (`update_assets` / `download_missing_assets`) repairs corrupt files without re-downloading the whole catalog.
@@ -30,7 +30,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 ### 03 — Tessellate rasters to H3 cells
 
-![Notebook 03 — Sentinel-2 scene → typed tile struct → H3 res-7 tessellation → per-cell timeseries](../../../resources/images/eo-series-03.png)
+![Notebook 03 — Sentinel-2 scene → typed tile struct → H3 res-7 tessellation → per-cell timeseries](../../../resources/images/diagrams/eo-series/eo-series-03.png)
 
 - **One-step raster ingestion** — the `gtiff` reader (and the `binaryFile` → `rst_fromcontent` pattern) materializes a typed `tile` column with bytes, bbox, SRID, and standardized nodata in a single pass.
 - **Spatial-indexed raster tables** — `rst_h3_tessellate` shreds each Sentinel-2 scene into H3 resolution-7 cells, producing `band_b0X_h3` Delta tables that join cleanly across bands and dates.
@@ -38,7 +38,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 
 ### 04 — Band Stacking + Clipping
 
-![Notebook 04 — per-band cell tables → rst_frombands → multi-band raster → GeoTIFF write-back → CRS-safe clip](../../../resources/images/eo-series-04.png)
+![Notebook 04 — per-band cell tables → rst_frombands → multi-band raster → GeoTIFF write-back → CRS-safe clip](../../../resources/images/diagrams/eo-series/eo-series-04.png)
 
 - **Multi-band assembly from grid joins** — joins `band_b02_h3` / `b03` / `b04` / `b08` on `(cellid, date)`, then `rst_frombands` produces a single 4-band (R, G, B, NIR) tile per cell-date.
 - **Round-trip GeoTIFF writes** — the `gtiff` writer (`nameCol`, `mode("append")`, `option("ext", "tif")`) materializes the stacked rasters back to disk in a Volume, ready for downstream tools.

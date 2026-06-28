@@ -1,4 +1,4 @@
-<img src="resources/images/GeoBriX.png" width="50%" />
+<img src="resources/images/brand/GeoBriX.png" width="50%" />
 
 [![build](https://github.com/databrickslabs/geobrix/actions/workflows/build_main.yml/badge.svg)](https://github.com/databrickslabs/geobrix/actions/workflows/build_main.yml)
 [![codecov](https://codecov.io/gh/databrickslabs/geobrix/branch/main/graph/badge.svg)](https://codecov.io/gh/databrickslabs/geobrix)
@@ -22,7 +22,7 @@
 
 > **Full docs:** **https://databrickslabs.github.io/geobrix/** — this README is the 2-minute tour.
 
-<img src="resources/images/geobrix_vision.png" width="70%" />
+<img src="resources/images/brand/geobrix_vision.png" width="70%" />
 
 ## Tiers
 
@@ -31,7 +31,7 @@
 
 ## Packages
 
-<img src="resources/images/RasterX.png" width="18%" /> <img src="resources/images/GridX.png" width="18%" /> <img src="resources/images/VectorX.png" width="18%" />
+<img src="resources/images/brand/RasterX.png" width="18%" /> <img src="resources/images/brand/GridX.png" width="18%" /> <img src="resources/images/brand/VectorX.png" width="18%" />
 
 - **[RasterX](https://databrickslabs.github.io/geobrix/docs/api/raster-functions)** — raster I/O and analytics (gap-filling; the platform has no built-in raster). **Both tiers** — lightweight `pyrx` and heavyweight Scala.
 - **[GridX](https://databrickslabs.github.io/geobrix/docs/api/gridx-functions)** — BNG, Quadbin, and custom grids (pairs with native H3 for global hex). **Both tiers** — lightweight `pygx` and heavyweight Scala.

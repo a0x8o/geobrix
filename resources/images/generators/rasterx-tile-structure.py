@@ -3,13 +3,13 @@
 
 Re-render after a change to the tile schema:
 
-    python3 resources/images/rasterx-tile-structure.py
+    python3 resources/images/generators/rasterx-tile-structure.py
     # then rasterize to PNG (used by docs/api/tile-structure.mdx and slides):
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
         --headless --disable-gpu --hide-scrollbars \\
         --force-device-scale-factor=2 --window-size=1480,880 \\
-        --screenshot=resources/images/rasterx-tile-structure.png \\
-        resources/images/rasterx-tile-structure.svg
+        --screenshot=resources/images/diagrams/rasterx/rasterx-tile-structure.png \\
+        resources/images/diagrams/rasterx/rasterx-tile-structure.svg
 """
 from dataclasses import dataclass
 from textwrap import dedent
@@ -475,7 +475,7 @@ if __name__ == "__main__":
     import sys
 
     default = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "rasterx-tile-structure.svg")
+                           "..", "diagrams", "rasterx", "rasterx-tile-structure.svg")
     out = sys.argv[1] if len(sys.argv) > 1 else default
     with open(out, "w") as f:
         f.write(render())

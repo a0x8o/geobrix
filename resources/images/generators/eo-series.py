@@ -7,21 +7,21 @@ that the notebook actually uses.
 
 Re-render after editing this script:
 
-    python3 resources/images/eo-series.py
+    python3 resources/images/generators/eo-series.py
     for n in 01 02 03 04; do
       # window-size is wider/taller than the SVG to absorb Chrome's default
       # body margin; the bbox-trim step below crops it back to SVG bounds.
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
           --headless --disable-gpu --hide-scrollbars \\
           --force-device-scale-factor=2 --window-size=1500,820 \\
-          --screenshot=resources/images/eo-series-$n.png \\
-          resources/images/eo-series-$n.svg
+          --screenshot=resources/images/diagrams/eo-series/eo-series-$n.png \\
+          resources/images/diagrams/eo-series/eo-series-$n.svg
     done
     python3 -c "from PIL import Image, ImageChops; \\
       [Image.open(p).convert('RGB').crop(ImageChops.difference( \\
         Image.open(p).convert('RGB'), \\
         Image.new('RGB', Image.open(p).size, (255,255,255))).getbbox()).save(p) \\
-       for p in [f'resources/images/eo-series-{n}.png' for n in ('01','02','03','04')]]"
+       for p in [f'resources/images/diagrams/eo-series/eo-series-{n}.png' for n in ('01','02','03','04')]]"
 """
 import math
 import os
@@ -721,7 +721,7 @@ def render_notebook(num):
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     for num in (1, 2, 3, 4):
-        out = os.path.join(here, f"eo-series-{num:02d}.svg")
+        out = os.path.join(here, "..", "diagrams", "eo-series", f"eo-series-{num:02d}.svg")
         with open(out, "w") as f:
             f.write(render_notebook(num))
         print(f"wrote {out}")
