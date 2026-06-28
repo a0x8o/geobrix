@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import warnings as _warnings
 from typing import Any
 
 
@@ -176,6 +177,285 @@ def build_html(
     }}
   }});
 </script>"""
+
+
+# ---------------------------------------------------------------------------
+# budget ladder
+# ---------------------------------------------------------------------------
+
+
+def _simplify_layer(layer, spec: dict):
+    """Stub for the Task-11 simplify engine.  Wired but not yet implemented."""
+    raise NotImplementedError(
+        "_simplify_layer: simplify wired in Task 11 — "
+        "pass simplify_tiles_spec=None or omit it for now."
+    )
+
+
+def _pmtiles_is_url(layer) -> bool:
+    """Return True when the pmtiles layer carries an explicit http(s) URL."""
+    data = getattr(layer, "data", None)
+    if not isinstance(data, str):
+        return False
+    return data.startswith("http://") or data.startswith("https://")
+
+
+def _layer_label(layer, idx: int) -> str:
+    """Return a human-readable label for *layer* (for warning messages)."""
+    lbl = getattr(layer, "label", None)
+    if lbl:
+        return repr(lbl)
+    kind = getattr(layer, "kind", "unknown")
+    return f"layer[{idx}] ({kind})"
+
+
+def _decode_pmtiles_for_static(layer) -> "Layer":
+    """Convert a pmtiles Layer into a raster_layer or vector_layer for plot_static.
+
+    Reads the raw archive bytes, calls the appropriate static fallback renderer
+    to produce a decoded representation, but rather than *rendering* it here we
+    return a Layer that plot_static can accept.
+
+    For raster pmtiles: decode the lowest-zoom tile → raster_layer(bytes).
+    For vector pmtiles: decode MVT tiles → vector_layer(GeoDataFrame).
+
+    Raises ValueError when the archive contains no renderable tiles.
+    """
+    from databricks.labs.gbx.pmtiles import pmtiles_info
+    from databricks.labs.gbx.vizx._layers import raster_layer, vector_layer
+    from databricks.labs.gbx.vizx._pmtiles import (
+        MemorySource,
+        _decode_mvt_to_geoms,
+        _is_raster_type,
+        _lowest_zoom_tile,
+        all_tiles,
+    )
+
+    data = layer.data
+    if isinstance(data, (bytes, bytearray)):
+        raw = bytes(data)
+    elif isinstance(data, str):
+        with open(data, "rb") as f:
+            raw = f.read()
+    else:
+        raise TypeError(
+            f"_decode_pmtiles_for_static: unsupported data type {type(data).__name__!r}"
+        )
+
+    info = pmtiles_info(raw)
+    if _is_raster_type(info["tile_type"]):
+        tile = _lowest_zoom_tile(raw)
+        if tile is None:
+            raise ValueError("prepare_layers static fallback: raster pmtiles archive has no tiles")
+        # tile is (z, x, y, data_bytes); return a raster layer carrying the tile bytes
+        return raster_layer(tile[3], opacity=layer.opacity)
+    else:
+        # Vector (MVT): decode all tiles to geometries
+        import geopandas as gpd
+
+        geoms, rows = [], []
+        for (z, x, y), payload in all_tiles(MemorySource(raw)):
+            for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
+                geoms.append(geom)
+                rows.append(props)
+        if not geoms:
+            raise ValueError(
+                "prepare_layers static fallback: vector pmtiles archive decoded to no geometries"
+            )
+        gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
+        return vector_layer(gdf, opacity=layer.opacity, color=layer.color, label=layer.label)
+
+
+def _pmtiles_raw_bytes(layer):
+    """Return the raw archive bytes for an embedded pmtiles layer, or None for url mode."""
+    data = getattr(layer, "data", None)
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    if isinstance(data, str) and not (
+        data.startswith("http://") or data.startswith("https://")
+    ):
+        try:
+            with open(data, "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+    return None  # url mode or unrecognised
+
+
+def prepare_layers(
+    layers,
+    *,
+    max_embed_mb: float = 64,
+    simplify_tiles_spec=None,
+    fallback: bool = True,
+) -> dict:
+    """Decide, per layer, whether the interactive map can be embedded or must fall back.
+
+    Rung order per layer:
+
+    1. pmtiles layer whose source is an explicit ``http(s)://`` URL -> url-stream
+       mode (0 embed cost; always interactive regardless of budget).
+    2. Embedded pmtiles layers whose raw archive bytes already exceed the budget
+       are flagged before calling ``layer_to_sources_layers`` (which would call
+       ``pmtiles_info`` on potentially-malformed archives and throw).  These are
+       immediately routed to the fallback path.
+    3. All other layers -> :func:`layer_to_sources_layers` (embed bytes measured).
+    4. **(Simplify hook -- Task 11)** if ``simplify_tiles_spec`` or
+       ``layer.simplify`` is present, invoke :func:`_simplify_layer`.  Since the
+       engine is not yet implemented the stub raises :exc:`NotImplementedError`;
+       this rung is therefore **not** entered unless a spec is explicitly supplied.
+    5. If the fully-assembled HTML (via :func:`build_html`) exceeds *max_embed_mb*:
+       - ``fallback=True`` (default) -> ``mode="static"`` with a loud warning
+         naming the offending layer(s) and the three remedies.  pmtiles layers
+         are decoded to raster/vector layers for ``plot_static`` so they are never
+         silently dropped.
+       - ``fallback=False`` -> raises :exc:`ValueError`.
+
+    The budget gate is the **actual assembled-HTML byte-length**, not a per-layer
+    sum.  :func:`build_html` is called once (non-mutating) to measure, then the
+    result is returned in ``"prepared"``.
+
+    Args:
+        layers:               A list of :class:`~databricks.labs.gbx.vizx._layers.Layer`.
+        max_embed_mb:         HTML size threshold in mebibytes (default ``64``).
+        simplify_tiles_spec:  Optional spec dict passed to the Task-11 simplify
+                              engine.  Currently wired only; passing a non-``None``
+                              value invokes the stub and raises
+                              :exc:`NotImplementedError`.
+        fallback:             When ``True`` (default), degrade gracefully to a
+                              static render if the budget is exceeded.  When
+                              ``False``, raise :exc:`ValueError` instead.
+
+    Returns:
+        ``{"mode": "interactive"|"static", "prepared": [...], "warnings": [str, ...]}``.
+        On the ``"interactive"`` path, ``"prepared"`` is the list of
+        ``(sources, layers, embed_bytes)`` tuples suitable for :func:`build_html`.
+        On the ``"static"`` path, ``"prepared"`` is a list of
+        :class:`~databricks.labs.gbx.vizx._layers.Layer` objects suitable for
+        ``plot_static``.
+    """
+    from databricks.labs.gbx.vizx._layers import as_layers
+
+    layers = as_layers(layers) if not isinstance(layers, list) else layers
+    budget_bytes = int(max_embed_mb * 1_048_576)
+
+    remedy_msg = (
+        "Remedies: (1) stage the archive at a reachable https:// URL and pass it "
+        "to pmtiles_layer(); (2) pre-tile your data to a smaller PMTiles archive "
+        "(reduce AOI or max zoom); (3) increase max_embed_mb if your notebook "
+        "environment supports larger payloads."
+    )
+
+    prepared: list = []
+    warn_msgs: list[str] = []
+    # Layers that are known-oversize before even trying to process them.
+    early_oversize_labels: list[str] = []
+
+    for idx, layer in enumerate(layers):
+        kind = getattr(layer, "kind", None)
+
+        # ------------------------------------------------------------------ #
+        # Rung 1 -- pmtiles with an explicit http(s) URL: zero embed cost.   #
+        # Always interactive; skip budget accounting entirely.                #
+        # ------------------------------------------------------------------ #
+        if kind == "pmtiles" and _pmtiles_is_url(layer):
+            entry = layer_to_sources_layers(layer, idx)
+            prepared.append(entry)
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Rung 2 (pre-check) -- for embedded pmtiles, guard against archives  #
+        # whose raw bytes already exceed the budget.  This avoids calling     #
+        # pmtiles_info on potentially-invalid archives and keeps the error    #
+        # boundary clean.                                                     #
+        # ------------------------------------------------------------------ #
+        if kind == "pmtiles":
+            raw = _pmtiles_raw_bytes(layer)
+            if raw is not None and len(raw) > budget_bytes:
+                early_oversize_labels.append(_layer_label(layer, idx))
+                # Placeholder so indices stay aligned for the static-path pass.
+                prepared.append(None)
+                continue
+
+        # ------------------------------------------------------------------ #
+        # Rung 3 -- simplify hook (Task 11; stub raises NotImplementedError). #
+        # Only invoked when a spec is actually passed.                        #
+        # ------------------------------------------------------------------ #
+        spec = simplify_tiles_spec or getattr(layer, "simplify", None)
+        if spec is not None:
+            layer = _simplify_layer(layer, spec)
+
+        # ------------------------------------------------------------------ #
+        # Rung 2 (normal) -- prepare via layer_to_sources_layers.            #
+        # ------------------------------------------------------------------ #
+        entry = layer_to_sources_layers(layer, idx)
+        prepared.append(entry)
+
+    # ------------------------------------------------------------------ #
+    # If any layer was early-flagged as oversize, skip the HTML build and #
+    # jump straight to the fallback decision.                             #
+    # ------------------------------------------------------------------ #
+    oversize_labels: list[str] = list(early_oversize_labels)
+    html_bytes = None
+
+    if not early_oversize_labels:
+        # Budget gate: measure actual assembled-HTML size.
+        # (build_html is non-mutating -- safe to call for measurement.)
+        valid_prepared = [e for e in prepared if e is not None]
+        html_bytes = len(build_html(valid_prepared).encode())
+        if html_bytes <= budget_bytes:
+            return {"mode": "interactive", "prepared": valid_prepared, "warnings": warn_msgs}
+
+        # Over budget -- identify embedded layer(s) for the warning.
+        for i, (lyr, entry) in enumerate(zip(layers, prepared)):
+            eb = entry[2] if entry is not None and len(entry) > 2 else 0
+            if eb > 0:
+                oversize_labels.append(_layer_label(lyr, i))
+        if not oversize_labels:
+            oversize_labels = [_layer_label(l, i) for i, l in enumerate(layers)]
+
+    if not fallback:
+        size_desc = (
+            f"{html_bytes / 1_048_576:.1f} MB"
+            if html_bytes is not None
+            else f">{max_embed_mb} MB (raw archive exceeds budget)"
+        )
+        raise ValueError(
+            f"prepare_layers: assembled HTML exceeds budget ({size_desc} > "
+            f"{max_embed_mb} MB). {remedy_msg}"
+        )
+
+    size_desc = (
+        f"{html_bytes / 1_048_576:.1f} MB"
+        if html_bytes is not None
+        else f">{max_embed_mb} MB (raw archive size)"
+    )
+    warn_text = (
+        f"prepare_layers: embedded HTML ({size_desc}) exceeds "
+        f"max_embed_mb={max_embed_mb}; falling back to static render. "
+        f"Offending layer(s): {', '.join(oversize_labels)}. {remedy_msg}"
+    )
+    warn_msgs.append(warn_text)
+    _warnings.warn(warn_text, stacklevel=2)
+
+    # Build static-path layer list: decode pmtiles -> raster/vector for plot_static.
+    static_layers = []
+    for idx, layer in enumerate(layers):
+        if getattr(layer, "kind", None) == "pmtiles":
+            try:
+                decoded = _decode_pmtiles_for_static(layer)
+                static_layers.append(decoded)
+            except Exception as e:
+                msg = (
+                    f"prepare_layers: could not decode pmtiles {_layer_label(layer, idx)} "
+                    f"for static fallback: {e}"
+                )
+                warn_msgs.append(msg)
+                _warnings.warn(msg, stacklevel=2)
+        else:
+            static_layers.append(layer)
+
+    return {"mode": "static", "prepared": static_layers, "warnings": warn_msgs}
 
 
 def _pmtiles_register_js(sid: str, info: dict) -> str:
