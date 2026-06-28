@@ -1146,9 +1146,138 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 
 ---
 
+## Task 8: Execute the series end-to-end on Serverless (sequential run chain)
+
+Serverless is the series' **target** environment; this task runs the whole series there
+as a real job — the real-environment counterpart to Task 7's Docker cell-by-cell validation.
+The chain is `nb01 → nb02 → nb03`, each numbered notebook running with `config_nb` (which it
+`%run`s as its first cell — separate job tasks do NOT share Python state, so `config_nb` must
+execute inside each run; it is not a standalone predecessor task). The sequential `depends_on`
+ordering exists to thread the **Volume/Delta artifacts** (nb01 writes `sf_buildings.pmtiles`;
+nb02/nb03 read/extend the shared Volume + Delta tables), not Python state.
+
+**Files:**
+- Create: `notebooks/examples/helios/run_series_serverless.py` (the runner).
+- Create: `scripts/commands/gbx-run-helios-series.md` + `scripts/commands/gbx-run-helios-series.sh` (new `run` category, per the "Adding a `gbx:*` command" procedure).
+
+**Interfaces:**
+- Consumes: the four committed notebooks (`config_nb`, `01. Vector Engine (MVT)`, `02. Visual Basemap (XYZ)`, `03. Analytical Core (COG + STAC)`); the staged wheel on the sample-data Volume (config_nb `%pip`-installs it per Task 1 Step 3); a Serverless-enabled workspace with the `geospatial_docs.helios` catalog/schema + `data` Volume pre-created.
+- Produces: a Databricks multi-task **Serverless** job run; prints the `run_page_url` (always emit it).
+
+- [ ] **Step 1 — write the runner.** Uses the default Databricks SDK auth resolution (OAuth profile / `DATABRICKS_CONFIG_PROFILE`); uploads all four notebooks to one workspace dir so `%run ./config_nb` resolves; submits sequential Serverless notebook tasks.
+
+```python
+# notebooks/examples/helios/run_series_serverless.py
+"""Run the Helios series end-to-end on Databricks Serverless as a sequential
+job-run chain (01 -> 02 -> 03). Each notebook %run-s config_nb as its first cell,
+so config_nb executes inside every task (job tasks don't share Python state). The
+depends_on chain threads the shared Volume/Delta artifacts, not Python state.
+
+Auth: default SDK resolution (OAuth profile / DATABRICKS_CONFIG_PROFILE). Serverless
+is selected by submitting notebook tasks with NO cluster spec.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service import jobs, workspace
+
+# config_nb is %run-ed inside each numbered notebook; it is NOT its own task.
+ALL_NOTEBOOKS = ["config_nb", "01. Vector Engine (MVT)",
+                 "02. Visual Basemap (XYZ)", "03. Analytical Core (COG + STAC)"]
+ORDERED = ALL_NOTEBOOKS[1:]
+
+
+def _upload(w: WorkspaceClient, local_dir: str, ws_dir: str) -> None:
+    w.workspace.mkdirs(ws_dir)
+    for name in ALL_NOTEBOOKS:
+        with open(f"{local_dir}/{name}.ipynb", "rb") as f:
+            content = f.read()
+        w.workspace.upload(f"{ws_dir}/{name}", content,
+                           format=workspace.ImportFormat.JUPYTER, overwrite=True)
+
+
+def _tasks(ws_dir: str) -> list:
+    tasks, prev = [], None
+    for i, name in enumerate(ORDERED):
+        key = f"helios_{i + 1:02d}"
+        tasks.append(jobs.SubmitTask(
+            task_key=key,
+            notebook_task=jobs.NotebookTask(notebook_path=f"{ws_dir}/{name}"),
+            depends_on=[jobs.TaskDependency(task_key=prev)] if prev else None,
+        ))  # no cluster spec -> Serverless
+        prev = key
+    return tasks
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--local-dir", default="notebooks/examples/helios")
+    ap.add_argument("--workspace-dir", required=True, help="e.g. /Users/<you>/helios")
+    ap.add_argument("--profile", default=None)
+    ap.add_argument("--no-wait", action="store_true")
+    args = ap.parse_args(argv)
+
+    w = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
+    _upload(w, args.local_dir, args.workspace_dir)
+    run = w.jobs.submit(run_name="helios-series", tasks=_tasks(args.workspace_dir))
+    url = w.jobs.get_run(run.run_id).run_page_url
+    print(f"helios-series submitted: {url}")  # ALWAYS emit the run URL
+    if args.no_wait:
+        return 0
+    final = w.jobs.wait_get_run_job_terminated_or_skipped(run_id=run.run_id)
+    state = final.state.result_state
+    print(f"helios-series finished: {state} — {url}")
+    return 0 if str(state).endswith("SUCCESS") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+> NOTE: confirm the workspace allows Serverless jobs. Some SDK/job versions require an
+> `environment_key` + `environments=[jobs.JobEnvironment(...)]` on serverless notebook tasks;
+> config_nb does its own `%pip` install, so a bare serverless task should suffice — if the
+> submit rejects it for a missing environment, add one minimal `environments` entry and set
+> `environment_key` on each `SubmitTask`. Resolve against the SDK version pinned in the repo.
+
+- [ ] **Step 2 — add the `gbx:run:helios-series` command** (`.md` + `.sh`) per the repo procedure: source `common.sh`, support `--help`/`--log`, pass through `--workspace-dir` (required), `--profile`, `--no-wait`. The `.sh` resolves `PROJECT_ROOT` and invokes the runner:
+
+```bash
+# scripts/commands/gbx-run-helios-series.sh (core)
+python "$PROJECT_ROOT/notebooks/examples/helios/run_series_serverless.py" \
+    --workspace-dir "$WORKSPACE_DIR" ${PROFILE:+--profile "$PROFILE"} ${NO_WAIT:+--no-wait}
+```
+
+- [ ] **Step 3 — `chmod +x scripts/commands/gbx-run-helios-series.sh`.**
+
+- [ ] **Step 4 (VALIDATION — real Serverless run, consumes compute):** authenticate (`databricks-authentication`), then:
+  ```
+  gbx:run:helios-series --workspace-dir /Users/<you>/helios --log helios-serverless.log
+  ```
+  Expected: the runner prints the `run_page_url`; the run reaches `SUCCESS`; in the UI the three tasks ran in order `helios_01 → helios_02 → helios_03` on Serverless; and on the Volume the three `*.pmtiles` archives + the COG + the `sf_solar_cells` Delta table exist (the same artifacts Task 7 asserts in Docker). Emit the `run_page_url` to the user. If a task fails, open its task run, fix the owning notebook (Task 2–4), re-stage the wheel if needed, and re-run.
+
+- [ ] **Step 5 — commit:**
+```bash
+git add notebooks/examples/helios/run_series_serverless.py \
+        scripts/commands/gbx-run-helios-series.md scripts/commands/gbx-run-helios-series.sh
+git commit -m "feat(helios): Serverless end-to-end series run chain
+
+Run the series on its target environment (Serverless) as a sequential
+job: nb01 -> nb02 -> nb03, each %run-ing config_nb, depends_on threading
+the shared Volume/Delta artifacts. gbx:run:helios-series wraps the SDK
+jobs.submit runner and emits the run_page_url.
+
+Co-authored-by: Isaac"
+```
+
+---
+
 ## Self-review against the spec (SP3 + cross-cutting)
 
-- **Coverage:** config_nb spine ✓ (Task 1), NB01 MVT ✓ (Task 2), NB02 XYZ ✓ (Task 3), NB03 COG+STAC ✓ (Task 4), README ✓ (Task 5), helios.mdx + sidebar ✓ (Task 6), full-series Docker validation + doc-voice grep + gains capture ✓ (Task 7), diagrams ✓ (Task 0). One SF AOI ✓; solar narrative ✓; per-notebook data→tile→PMTiles diagram ✓ (Task 0 generates the committed PNGs); ample plotting ✓ (`plot_file`/`plot_cog`/`show_pmtiles` in each NB); series-only helpers in config_nb ✓ (`solar_score`, `finalize_delta`, `show_pmtiles`/`show_cog`/`show_raster`); no SP1/SP2 re-implementation ✓ (consumed only).
+- **Coverage:** config_nb spine ✓ (Task 1), NB01 MVT ✓ (Task 2), NB02 XYZ ✓ (Task 3), NB03 COG+STAC ✓ (Task 4), README ✓ (Task 5), helios.mdx + sidebar ✓ (Task 6), full-series Docker validation + doc-voice grep + gains capture ✓ (Task 7), diagrams ✓ (Task 0), Serverless end-to-end sequential run chain ✓ (Task 8 — the target-environment run). config_nb runs inside each task via `%run` (job tasks don't share Python state); `depends_on` threads the Volume/Delta artifacts. One SF AOI ✓; solar narrative ✓; per-notebook data→tile→PMTiles diagram ✓ (Task 0 generates the committed PNGs); ample plotting ✓ (`plot_file`/`plot_cog`/`show_pmtiles` in each NB); series-only helpers in config_nb ✓ (`solar_score`, `finalize_delta`, `show_pmtiles`/`show_cog`/`show_raster`); no SP1/SP2 re-implementation ✓ (consumed only).
 - **Type consistency with pinned SP1/SP2 signatures:** `OvertureClient().discover(bbox, themes=...)`, `.download(assets_df, out_dir, *, table=..., validate=..., partitions=...)` returning `theme,type,source,path,...`, `.read(source, theme=, type=, bbox=)` — used verbatim in NB01. `plot_pmtiles(path, ...)`, `plot_cog(path, ...)`, `pmtiles_info(path)` — used verbatim; the toggle helpers use the pinned `plot_pmtiles(path, max_embed_mb=0, ...)` static form from SP2 (where `max_embed_mb=0` forces the static render) and `plot_cog` stays static-only per the SP2 decision. `plot_static`/`plot_interactive` imported from vizx for the `show_raster` toggle.
 - **`INTERACTIVE_PLOTS` toggle (Refinement 1):** added to `config_nb` Step 12 (rebuild-control cell, next to `FORCE_REBUILD`), default `False` with the exact required comment. Viz imports (Step 11) add `plot_interactive`. Toggle-aware helpers (`show_pmtiles`/`show_cog`/`show_raster`, Step 17) branch on it — static (`plot_pmtiles(..., max_embed_mb=0)` / `plot_static` / `plot_cog`) by default, interactive (`plot_pmtiles(...)` MapLibre / `plot_interactive` folium) when `True`. NB01 view (Step 14 md + Step 15 `show_pmtiles`) and NB02 view (Step 16 md + Step 17 `show_pmtiles`) and NB03 views (`show_cog`/`show_pmtiles`) all route through the helpers; `plot_file` source-previews are intentionally left static (a raw source raster has no tiled interactive form, noted in NB02 Step 6). Global Constraint + README Run-order line + helios.mdx `:::note` carry the one-line reader instruction.
 - **Native ST/H3 injection (Refinement 2) — where, and where NOT:**
