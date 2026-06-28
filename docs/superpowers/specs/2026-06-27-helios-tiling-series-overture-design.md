@@ -304,9 +304,11 @@ Whenever a tiling-path improvement is found (light/Serverless is the target), it
    (execution shapes + function classification + where the light tier wins). The corpus is the
    internal "how/why we got the gain" engineering record; the two cross-reference but do not merge.
 
-The three-layer knowledge structure and the seeding of the corpus from existing perf memories are
-specified in their own precursor design (see `docs/superpowers/performance/README.md` once seeded);
-this Helios work both follows the practice and contributes new patterns to it.
+The `docs/superpowers/performance/` corpus is built **incrementally within the Helios plans** (no
+separate precursor): the `README.md` index and each pattern file are created the first time a gain
+is validated, with its paired thin pointer memory added alongside. The three-layer structure is —
+(1) user-facing `docs/docs/api/performance.mdx`, (2) developer corpus `docs/superpowers/performance/`,
+(3) agent-memory pointers — and each SP plan carries a "capture validated gains" step.
 
 ### Docs voice
 
