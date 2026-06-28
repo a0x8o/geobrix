@@ -116,3 +116,52 @@ def test_build_html_honors_custom_style():
         "QUJD", _info("mvt"), style={"version": 8, "layers": []}
     )
     assert '"version": 8' in html
+
+
+def test_build_html_script_injection_escaped():
+    """I1: </script> in style JSON must be escaped so the HTML parser cannot close
+    the script element early."""
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    evil_style = {
+        "version": 8,
+        "sources": {},
+        "layers": [{"id": "x", "type": "fill", "evil": "</script><script>alert(1)"}],
+    }
+    html = p._build_pmtiles_html("QUJD", _info("mvt"), style=evil_style)
+    # Locate the script block that contains the map init (style JSON is there).
+    # The raw substring </script> must NOT appear inside the JS block.
+    script_start = html.index("<script>\nconst b64")
+    script_end = html.index("</script>", script_start)
+    script_body = html[script_start:script_end]
+    assert "</script>" not in script_body
+    # The escaped form must be present so the value round-trips correctly.
+    assert "<\\/script>" in script_body
+
+
+def test_build_html_b64_newline_stripped():
+    """I2: archive_b64 with embedded newlines (e.g. from base64.encodebytes) must
+    produce a single-line const b64 = "..." literal."""
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    b64_with_newlines = "QUJD\nREVG\r\nR0hJ"
+    html = p._build_pmtiles_html(b64_with_newlines, _info("png"))
+    # Find the b64 literal line and confirm no newline inside the quotes.
+    for line in html.splitlines():
+        if line.strip().startswith("const b64"):
+            # Everything between the first " and last " on this line is the value.
+            inner = line.split('"', 1)[1].rsplit('"', 1)[0]
+            assert "\n" not in inner and "\r" not in inner
+            break
+    else:
+        raise AssertionError("const b64 line not found in HTML")
+
+
+def test_build_html_raster_layer_zoom_range():
+    """M1: raster layer must carry minzoom/maxzoom from info so archives with
+    min_zoom > 0 don't show a blank map before the user zooms in."""
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    html = p._build_pmtiles_html("QUJD", _info("png", min_zoom=2, max_zoom=5))
+    assert '"minzoom": 2' in html
+    assert '"maxzoom": 5' in html

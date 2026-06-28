@@ -55,7 +55,15 @@ def _default_style(info: dict, source_name: str) -> dict:
     }
     if is_raster:
         source["tileSize"] = 256
-        layers = [{"id": "tiles", "type": "raster", "source": source_name}]
+        layers = [
+            {
+                "id": "tiles",
+                "type": "raster",
+                "source": source_name,
+                "minzoom": info["min_zoom"],
+                "maxzoom": info["max_zoom"],
+            }
+        ]
     else:
         # Vector: one fill + one line layer per declared source-layer (MVT layer
         # name). The pmtiles metadata's vector_layers carries those ids; fall
@@ -94,8 +102,9 @@ def _build_pmtiles_html(archive_b64: str, info: dict, *, style=None) -> str:
     server, no remote range requests.
     """
     source_name = "gbx"
+    archive_b64 = archive_b64.replace("\n", "").replace("\r", "")
     map_style = style if style is not None else _default_style(info, source_name)
-    style_json = json.dumps(map_style)
+    style_json = json.dumps(map_style).replace("</", "<\\/")
     minlon, minlat, maxlon, maxlat = info["bounds"]
     clon, clat, czoom = info["center"]
     return f"""<!DOCTYPE html>
