@@ -265,8 +265,11 @@ object MvtWriter {
       * has no equivalent yet — and the call has to happen on the *executor* JVM
       * before any OGR access, not just on the driver. Idempotent guard avoids
       * reloading the library.
+      *
+      * Package-private so `MvtDecoder` (same package) can call the shared guard
+      * without duplicating the load path.
       */
-    private def ensureNativeLoaded(): Unit = {
+    private[mvt] def ensureNativeLoaded(): Unit = {
         if (!nativeLoaded) {
             nativeLock.synchronized {
                 if (!nativeLoaded) {

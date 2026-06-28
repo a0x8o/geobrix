@@ -81,12 +81,44 @@ final case class PMTiles_Agg(
     override def eval(buffer: PMTilesAcc): Any = {
         if (buffer.tiles.isEmpty) {
             // Empty group: emit a valid header-only PMTile so downstream callers always get bytes.
-            PMTilesV3Encoder.encode(Iterator.empty, buffer.metadataJson)
-        } else {
-            val firstNonNull = buffer.tiles.iterator.map(_._4).find(b => b != null && b.nonEmpty)
-            val tileType = firstNonNull.map(PMTiles_Agg.detectTileType).getOrElse(PMTilesV3Encoder.TILE_TYPE_MVT)
-            PMTilesV3Encoder.encode(buffer.tiles.iterator, buffer.metadataJson, tileType)
+            return PMTilesV3Encoder.encode(Iterator.empty, buffer.metadataJson)
         }
+        val firstNonNull = buffer.tiles.iterator.map(_._4).find(b => b != null && b.nonEmpty)
+        val tileType = firstNonNull
+            .map(PMTiles_Agg.detectTileType)
+            .getOrElse(PMTilesV3Encoder.TILE_TYPE_MVT)
+        val isVector = tileType == PMTilesV3Encoder.TILE_TYPE_MVT
+
+        // Group payloads by Hilbert tile id, preserving insertion order within each group.
+        // This fixes two bugs at once:
+        //   1. Vector (MVT): multiple blobs at the same (z,x,y) are merged into one
+        //      multi-feature tile instead of keeping only the first.
+        //   2. Raster: the old code wrote a directory entry per tuple, so duplicate
+        //      (z,x,y) produced two entries — a structurally invalid PMTiles archive.
+        //      Grouping ensures exactly one entry per tile id.
+        val grouped = scala.collection.mutable.LinkedHashMap
+            .empty[Long, scala.collection.mutable.ArrayBuffer[(Int, Int, Int, Array[Byte])]]
+        buffer.tiles.foreach { case row @ (z, x, y, _) =>
+            val tid = PMTilesV3Encoder.hilbertId(z, x, y)
+            grouped.getOrElseUpdate(
+                tid, scala.collection.mutable.ArrayBuffer.empty
+            ) += row
+        }
+
+        // Resolve each tile id to one output blob.
+        val resolved: Iterator[(Int, Int, Int, Array[Byte])] = grouped.iterator.map {
+            case (_, rows) =>
+                val (z, x, y, _) = rows.head
+                val payloads = rows.map(_._4).filter(b => b != null && b.nonEmpty)
+                val blob =
+                    if (isVector && payloads.length > 1)
+                        PMTiles_Agg.mergeMvtPayloads(payloads.toSeq)
+                    else
+                        payloads.headOption.getOrElse(Array.emptyByteArray)
+                (z, x, y, blob)
+        }
+
+        PMTilesV3Encoder.encode(resolved, buffer.metadataJson, tileType)
     }
 
     override def serialize(b: PMTilesAcc): Array[Byte] = b.serialize
@@ -127,6 +159,45 @@ object PMTiles_Agg extends WithExpressionInfo {
         case null                    => throw new IllegalArgumentException("PMTiles z/x/y must not be null")
         case other                   => throw new IllegalArgumentException(
             s"PMTiles z/x/y must be INT or LONG; got ${other.getClass.getName}")
+    }
+
+    /**
+      * Merge multiple MVT blobs for the same `(z, x, y)` into one multi-feature tile.
+      *
+      * Decodes each blob via `MvtDecoder`, unions features per layer name, and
+      * re-encodes one merged blob per layer via `MvtWriter.encode`. Layers from
+      * distinct blobs are concatenated as raw protobuf bytes — valid because MVT is
+      * a repeated `layers` field (tag 3) and concatenating two valid protobuf messages
+      * of the same message type produces a valid merged message.
+      *
+      * If all blobs fail to decode, falls back to the first blob unchanged.
+      */
+    private[pmtiles] def mergeMvtPayloads(payloads: Seq[Array[Byte]]): Array[Byte] = {
+        if (payloads.length == 1) return payloads.head
+        import com.databricks.labs.gbx.vectorx.mvt.{MvtDecoder, MvtWriter}
+
+        // Decode all blobs and union features per layer name.
+        val layerFeatures = scala.collection.mutable.LinkedHashMap
+            .empty[String, scala.collection.mutable.ArrayBuffer[(Array[Byte], Map[String, Any])]]
+        payloads.foreach { blob =>
+            MvtDecoder.decode(blob).foreach { case (layerName, wkb, attrs) =>
+                layerFeatures
+                    .getOrElseUpdate(layerName, scala.collection.mutable.ArrayBuffer.empty)
+                    .+=((wkb, attrs))
+            }
+        }
+        if (layerFeatures.isEmpty) return payloads.head
+
+        // Re-encode: one MvtWriter.encode call per layer, concatenate the raw protobuf
+        // bytes. MVT spec: each layer is a top-level repeated field — concatenating two
+        // .pbf blobs with the same schema produces a structurally valid merged tile.
+        val out = new java.io.ByteArrayOutputStream()
+        layerFeatures.foreach { case (layerName, feats) =>
+            val layerBlob = MvtWriter.encode(layerName, MvtWriter.DefaultExtent, feats.toSeq)
+            if (layerBlob.nonEmpty) out.write(layerBlob)
+        }
+        val merged = out.toByteArray
+        if (merged.isEmpty) payloads.head else merged
     }
 
     /**
