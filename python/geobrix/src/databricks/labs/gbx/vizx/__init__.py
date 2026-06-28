@@ -8,10 +8,16 @@ GeoDataFrame adapters (as_gdf / cells_as_gdf). Install with
 
 from databricks.labs.gbx.vizx._cog import plot_cog
 from databricks.labs.gbx.vizx._interactive import plot_interactive
-from databricks.labs.gbx.vizx._pmtiles import plot_pmtiles
 from databricks.labs.gbx.vizx._raster import plot_file, plot_mask_layers, plot_raster
 from databricks.labs.gbx.vizx._static_map import plot_static
 from databricks.labs.gbx.vizx._vector import as_gdf, cells_as_gdf, grid_as_gdf
+
+def __getattr__(name):
+    """Lazy import for optional pmtiles module."""
+    if name == "plot_pmtiles":
+        from databricks.labs.gbx.vizx._pmtiles import plot_pmtiles
+        return plot_pmtiles
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "plot_raster",
