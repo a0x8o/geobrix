@@ -103,10 +103,29 @@ def download_overture_aoi(bbox, out_dir, themes=None, release=None,
   `transportation/{connector,segment}`. `themes=None` selects everything; a list narrows it.
 - **Release handling:** `release=None` resolves the latest Overture release from the catalog;
   an explicit string pins it.
-- **Distribution:** download fans out with `repartition(N, F.col(...))` hashed by a unique
-  asset key — never number-only `repartition(N)` (AQE-coalesced to serial on Serverless). No
-  `spark.conf` / cache / `.rdd`. Discovery (catalog traversal) runs on the driver; only the
-  file downloads are distributed.
+- **Distribution (Serverless is the first-class target, not Classic):** the distribution
+  strategy is designed for Serverless and must drive aggressive parallelism, modeled on the
+  h3-rasterize example (fan the work into many fine-grained, balanced units rather than tuning
+  cluster knobs). Concretely:
+  - **Performant default — distributed read + AOI rewrite.** STAC resolves the release and the
+    set of Overture GeoParquet paths for the bbox; the heavy I/O is then a *distributed Spark
+    read* of those parquet files over the cloud path (`s3://overturemaps-us-west-2/...` /
+    `abfs://...`) with **`bbox`-struct predicate pushdown** so only AOI rows are read, written
+    distributed to the Volume (+ the metadata Delta table). The bytes move on workers, in
+    parallel — the AOI subset, not whole continental files.
+  - **Fallback — asset-level parallel download.** When only an `https` href is available (no
+    direct cloud read), fan whole-file downloads out with `repartition(N, F.col(<asset key>))`.
+  - **Avoid the file-count bottleneck.** A bbox may intersect only a few very large parquet
+    files; to keep parallelism high (one balanced unit per core, h3-rasterize style), fan finer
+    than file granularity — by parquet **row-group / byte-range** — rather than letting a
+    handful of files cap task count.
+  - **Serverless constraints (hard):** only `repartition(N, column)` for parallelism — never
+    number-only `repartition(N)` (AQE-coalesced to serial); **no** `spark.conf` / cache /
+    persist / checkpoint / `.rdd` / `sparkContext`. Verify partitions are not coalesced
+    (`getNumPartitions`) when iterating the plan locally. `CREATE TEMP TABLE` materialization
+    (used to pin a distributed result) is Serverless / DBR 18.1+ only.
+  - **No driver bottleneck:** catalog traversal/discovery is driver-side but lightweight
+    (metadata only); all asset I/O is distributed.
 - **Validation:** `validate=True` means the downloaded parquet opens (pyarrow/geopandas),
   not rasterio-decodable. Idempotent skip when the target exists and is valid.
 - **Output targets (both supported):** (1) asset **files on a UC Volume** under `out_dir`;
@@ -275,3 +294,7 @@ ample plotting sections.
   static-only (decide during SP2 implementation).
 - CDN pin vs vendored copy for maplibre-gl / pmtiles JS (pin a specific version for
   reproducibility).
+- Confirm Serverless can read Overture's public cloud paths directly (`s3://overturemaps-us-west-2`
+  / `abfs://...overturemapswestus2...`) — including any requester-pays / credential config — since
+  the performant distributed-read default depends on it; otherwise the asset-level HTTP-href
+  download fallback becomes the primary path. Validate during SP1.
