@@ -189,6 +189,10 @@ def plot_cog(path, *, band=None, **kw):
   would hang the notebook; instead decode tiles with the Python `pmtiles` reader and composite
   — raster PMTiles → reuse `plot_raster`; vector PMTiles → decode MVT to geometries → reuse
   `plot_static`. Mirrors `plot_interactive`'s scale-safe philosophy.
+- **Static rendering uses `contextily` basemaps (continued).** The vector static fallback and
+  `plot_cog` lay their layers over a `contextily` basemap, consistent with the existing
+  `plot_static` (`basemap=True`, `basemap_source=...`). `contextily` is already a `[vizx]`
+  dependency — no new dep — so the static path stays visually consistent with the rest of VizX.
 - **Vector vs raster detection:** read the PMTiles header `tile_type` (PNG/JPEG/WebP/MVT) via
   the inspector (below).
 
@@ -212,7 +216,8 @@ useful and is needed by both the viewer and the static fallback. Implemented wit
 ### Dependencies / CI lock
 
 - No new Python deps for the interactive path (CDN JS); `pmtiles` + `rasterio` already present.
-- `plot_cog` uses `rasterio` (present); `rio-tiler` optional for nicer overview selection.
+- `plot_cog` uses `rasterio` (present) over a `contextily` basemap (present); `rio-tiler`
+  optional for nicer overview selection.
 - CI-lock: `vizx` test dir already registered; only add new deps if `plot_cog` adopts
   `rio-tiler`.
 
