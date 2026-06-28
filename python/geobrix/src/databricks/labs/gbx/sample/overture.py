@@ -464,6 +464,10 @@ class OvertureClient:
 
         def _read_paths(paths):
             # union-read each per-asset path (recursive parquet under each)
+            if not paths:
+                raise ValueError(
+                    f"read: no asset paths found in {source!r}; nothing to read"
+                )
             dfs = [spark.read.parquet(p) for p in paths]
             out = dfs[0]
             for d in dfs[1:]:

@@ -7,6 +7,7 @@ pyspark = pytest.importorskip("pyspark")
 from test.sample._fake_overture_catalog import open_fake_overture  # noqa: E402
 
 from pyspark.sql import Row  # noqa: E402
+from pyspark.sql import functions as F  # noqa: E402
 from pyspark.sql.types import (  # noqa: E402
     ArrayType,
     DoubleType,
@@ -337,8 +338,6 @@ def test_read_from_metadata_dataframe(spark, tmp_path):
     target = str(tmp_path / "assetdir")
 
     spark.createDataFrame([Row(id=7)]).write.mode("overwrite").parquet(target)
-    from pyspark.sql import functions as F
-
     meta = spark.createDataFrame([(target,)], ["source"]).withColumn(
         "path", F.col("source")
     )
@@ -412,3 +411,51 @@ def test_download_routes_http_to_fallback(spark, tmp_path):
     assert os.path.exists(row["source"])
     assert row["source"] == row["path"]
     assert spark.read.parquet(row["source"]).count() == 2
+
+
+def test_read_empty_metadata_raises(spark, tmp_path):
+    """read() with an empty metadata DataFrame raises a clear ValueError.
+
+    _read_paths([]) would IndexError without the guard; a ValueError with an
+    actionable message is required (offline, no Delta).
+    """
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+    empty_meta = spark.createDataFrame(
+        [], StructType([StructField("source", StringType())])
+    )
+    with pytest.raises(ValueError, match="no asset paths found"):
+        client.read(empty_meta)
+
+
+def test_read_from_table_name(spark, tmp_path):
+    """read() with a Delta table name reads the underlying asset parquet rows.
+
+    Gated on delta-spark being importable (skips cleanly offline).
+    """
+    pytest.importorskip("delta")
+    # Verify Delta write actually works on this local SparkSession; skip if not.
+    try:
+        spark.range(1).write.format("delta").mode("overwrite").save(
+            str(tmp_path / "_delta_probe")
+        )
+    except Exception:
+        pytest.skip("Delta not enabled on this local SparkSession")
+
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+
+    # Write a tiny parquet asset that client.read() will load.
+    asset_dir = str(tmp_path / "tbl_asset")
+    spark.createDataFrame([Row(id=42)]).write.mode("overwrite").parquet(asset_dir)
+
+    # Build a minimal metadata DataFrame and persist it as a Delta table.
+    table_name = "overture_read_test_tbl"
+    meta_df = spark.createDataFrame([(asset_dir, asset_dir)], ["source", "path"])
+    meta_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+
+    try:
+        df = client.read(table_name)
+        rows = df.collect()
+        assert len(rows) == 1, f"Expected 1 row, got {len(rows)}"
+        assert rows[0]["id"] == 42
+    finally:
+        spark.sql(f"DROP TABLE IF EXISTS {table_name}")
