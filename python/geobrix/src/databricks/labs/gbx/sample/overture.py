@@ -58,8 +58,6 @@ class OvertureClient:
         self._get_fn = _get_fn
 
     def _open_catalog(self):
-        if self._catalog_opener is not None:
-            return self._catalog_opener()
         import pystac
 
         return pystac.Catalog.from_file(self.catalog)
