@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from typing import Union
 
+from pmtiles.reader import MemorySource, all_tiles  # noqa: E402
+
 # Pinned CDN versions for reproducibility (asserted by tests).
 _MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
 _MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
@@ -133,3 +135,27 @@ const map = new maplibregl.Map({{
 map.fitBounds([[{minlon}, {minlat}], [{maxlon}, {maxlat}]], {{padding: 20, duration: 0}});
 </script>
 </body></html>"""
+
+
+def _lowest_zoom_tile(data: bytes):
+    """Return (z, x, y, payload) for the lowest-zoom tile (the coarsest overview).
+
+    ``all_tiles`` yields ``((z, x, y), payload)`` — the ZXY triple is already
+    decoded by the reader's ``traverse`` helper, so no secondary
+    ``tileid_to_zxy`` call is needed here.
+    """
+    best = None
+    for (z, x, y), payload in all_tiles(MemorySource(data)):
+        if best is None or z < best[0]:
+            best = (z, x, y, payload)
+    return best
+
+
+def _static_raster_fallback(data: bytes, info: dict, **plot_kw) -> None:
+    """Decode the coarsest raster tile and render it via plot_raster."""
+    from databricks.labs.gbx.vizx import plot_raster
+
+    tile = _lowest_zoom_tile(data)
+    if tile is None:
+        raise ValueError("plot_pmtiles: archive has no tiles to render")
+    plot_raster(tile[3], **plot_kw)

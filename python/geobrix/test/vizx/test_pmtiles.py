@@ -2,8 +2,13 @@
 
 import io
 
+import matplotlib
+import numpy as np
+from matplotlib.image import imsave
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pmtiles.writer import Writer
+
+matplotlib.use("Agg")
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
@@ -165,3 +170,27 @@ def test_build_html_raster_layer_zoom_range():
     html = p._build_pmtiles_html("QUJD", _info("png", min_zoom=2, max_zoom=5))
     assert '"minzoom": 2' in html
     assert '"maxzoom": 5' in html
+
+
+def _real_png_tile():
+    # A real 8x8 RGB PNG so plot_raster's rasterio MemoryFile can decode it.
+    buf = io.BytesIO()
+    imsave(buf, (np.random.rand(8, 8, 3)), format="png")
+    return buf.getvalue()
+
+
+def test_static_raster_fallback_calls_plot_raster(monkeypatch):
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    png = _real_png_tile()
+    archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
+    captured = {}
+    monkeypatch.setattr(
+        "databricks.labs.gbx.vizx.plot_raster",
+        lambda raster_bytes, **kw: captured.update(n=len(raster_bytes)),
+    )
+    info = __import__(
+        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
+    ).pmtiles_info(archive)
+    p._static_raster_fallback(archive, info)
+    assert captured["n"] == len(png)  # the decoded lowest-zoom tile bytes
