@@ -12,8 +12,9 @@ import io
 import json
 from typing import Optional, Sequence
 
+import mapbox_vector_tile as mvt
 import pandas as pd
-from pmtiles.tile import Compression, zxy_to_tileid
+from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pmtiles.writer import Writer
 from pyspark.sql import Column, SparkSession  # noqa: F401
 from pyspark.sql import functions as f  # noqa: F401
@@ -30,6 +31,35 @@ _MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 _LIGHT_REGISTERED = False
 
 
+def _merge_mvt_blobs(blobs: list[bytes], extent: int = 4096) -> bytes:
+    """Decode multiple single-feature MVT blobs and union features per layer name.
+
+    Geometry stays in tile-local [0, extent] integer space — no reprojection
+    (each blob is already tile-local for the same (z,x,y); decode/encode round-trips
+    the local coords). Attributes are preserved per feature.
+
+    Returns one merged MVT blob. If the list has a single blob, returns it directly
+    to avoid a decode/encode round-trip for the common single-feature case.
+    """
+    if len(blobs) == 1:
+        return blobs[0]
+    layers: dict[str, list] = {}
+    for blob in blobs:
+        try:
+            decoded = mvt.decode(blob)
+        except Exception:
+            # Malformed blob: skip rather than crashing the whole group.
+            continue
+        for layer_name, layer_data in decoded.items():
+            layers.setdefault(layer_name, []).extend(layer_data.get("features", []))
+    if not layers:
+        return blobs[0]  # nothing decoded cleanly; fall back to first
+    tile_spec = [{"name": name, "features": feats} for name, feats in layers.items()]
+    return mvt.encode(
+        tile_spec, default_options={"extents": extent, "y_coord_down": True}
+    )
+
+
 def _assemble_archive(
     data: Sequence,
     zs: Sequence,
@@ -39,11 +69,15 @@ def _assemble_archive(
 ) -> Optional[bytes]:
     """Fold a group's (bytes, z, x, y) tiles into one PMTiles v3 archive (bytes).
 
-    Null payloads are skipped; an all-null/empty group returns None. Tiles are
-    written in ascending Hilbert TileID order; duplicate (z,x,y) keep the first.
+    Null payloads are skipped; an all-null/empty group returns None. For vector
+    (MVT) tiles, multiple blobs for the same (z,x,y) are merged into one
+    multi-feature tile (decode each, union features per layer, re-encode).
+    For raster (PNG/JPEG/WebP), first-write-wins is preserved. Tiles are
+    written in ascending Hilbert TileID order.
     """
-    tiles = []
-    seen = set()
+    # Phase 1: accumulate all non-null payloads per tileid.
+    tileid_payloads: dict[int, list[bytes]] = {}
+    tileid_coords: dict[int, tuple[int, int, int]] = {}
     total = 0
     first_payload = None
     for d, z, x, y in zip(data, zs, xs, ys):
@@ -57,16 +91,28 @@ def _assemble_archive(
                 "split into more groups or fewer tiles per archive"
             )
         tileid = zxy_to_tileid(int(z), int(x), int(y))
-        if tileid in seen:
-            continue
-        seen.add(tileid)
         if first_payload is None:
             first_payload = b
-        tiles.append((int(z), int(x), int(y), tileid, b))
-    if not tiles:
+        tileid_payloads.setdefault(tileid, []).append(b)
+        tileid_coords[tileid] = (int(z), int(x), int(y))
+
+    if not tileid_payloads:
         return None
 
     tile_type = sniff_tile_type(first_payload)
+    is_vector = tile_type == TileType.MVT
+
+    # Phase 2: resolve each tileid to one output blob.
+    tiles = []
+    for tileid in sorted(tileid_payloads.keys()):
+        z, x, y = tileid_coords[tileid]
+        payloads = tileid_payloads[tileid]
+        if is_vector and len(payloads) > 1:
+            resolved = _merge_mvt_blobs(payloads)
+        else:
+            resolved = payloads[0]
+        tiles.append((z, x, y, tileid, resolved))
+
     info = build_header_info(
         [(z, x, y) for (z, x, y, _, _) in tiles],
         SlippyGrid(),
@@ -76,7 +122,7 @@ def _assemble_archive(
     )
     buf = io.BytesIO()
     writer = Writer(buf)
-    for _, _, _, tileid, b in sorted(tiles, key=lambda t: t[3]):
+    for _, _, _, tileid, b in tiles:  # already sorted by tileid
         writer.write_tile(tileid, b)
     writer.finalize(info.header_dict(), info.metadata)
     return buf.getvalue()
