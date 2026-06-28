@@ -3,6 +3,19 @@
   text-align: center;
   position: relative;
   overflow: hidden;
+  /* Deep teal — the complement of the Databricks Labs logo's red-orange
+     (#FF5F46) — so the logo pops while white hero text stays readable. */
+  background: linear-gradient(135deg, #0c414c 0%, #15616e 100%);
+  color: #ffffff;
+}
+
+.heroLogo {
+  display: block;
+  width: 88px;
+  height: 88px;
+  margin: 0 auto 1.25rem;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
 }
 
 .buttons {
