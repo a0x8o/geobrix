@@ -112,9 +112,14 @@ One HTML page, N sources + N layers, server-less. Per-layer adapter → MapLibre
 | raster (COG / array) | georeferenced **image source** (4-corner coords), decimated to `max_px` |
 | pmtiles | `pmtiles://` protocol source (base64 `FileSource`, or URL `FetchSource`) |
 
-Default basemap is a hosted raster style (e.g. CARTO Positron), configurable, with a `none`
-option. The current single-archive `_pmtiles.py` HTML builder generalizes into this multi-source
-builder; `_interactive.py` (folium) is replaced by it.
+Default basemap is **CARTO Positron** (hosted raster style), configurable, with a `none` option —
+it must work under **normal Serverless conditions** (browser has outbound internet). The current
+single-archive `_pmtiles.py` HTML builder generalizes into this multi-source builder;
+`_interactive.py` (folium) is replaced by it.
+
+**contextily keeps its place — on the static path.** The interactive engine (MapLibre) uses hosted
+basemap tiles; the **static** surface (`plot_static`, `plot_cog`, and the static fallback) stays
+matplotlib, and that is where contextily provides the basemap. Complementary, not redundant.
 
 ---
 
@@ -123,15 +128,22 @@ builder; `_interactive.py` (folium) is replaced by it.
 `displayHTML` output runs in a sandboxed iframe served from `databricksusercontent.com` — a
 **different origin** from the workspace API. Findings that constrain the design:
 
-- The Databricks Files API supports HTTP Range, but a `fetch`/range from the iframe to it is
-  **cross-origin and CORS-blocked**; the same wall blocks `driver-proxy`. So **pmtiles.js cannot
-  range-read a Volume archive directly in a notebook today.**
+- **Empirically confirmed (2026-06-28, CLI probe of the AWS workspace Files API):** the gateway
+  returns `Access-Control-Allow-Origin: *` and allows the `Authorization` header cross-origin, **but
+  its `Access-Control-Allow-Headers` does NOT include `Range`.** pmtiles.js range reads send a
+  `Range` header, so the browser **preflight fails on that header** and the request is blocked. So
+  the block is not the origin — it is specifically the `Range` request header not being permitted
+  cross-origin. The same wall blocks `driver-proxy`. **pmtiles.js cannot range-read a Volume via the
+  Files API from the notebook iframe.**
 - Copying a Volume archive to a **driver temp path does not help** — the browser cannot read a
   driver-local file; bytes still have to be either embedded in the page or served over a
   CORS-reachable URL the driver can't provide to the iframe.
-- The only notebook route to indefinite single-archive size is a **presigned object-store URL**
-  (range-read straight from S3/ADLS/GCS), gated on the backing bucket's CORS allowing the
-  iframe origin — **conditional and spike-gated** (often not controllable for UC-managed storage).
+- Given the Files-API result, the **only** remaining notebook route to indefinite single-archive
+  size is a **presigned object-store URL** (range-read straight from S3/ADLS/GCS, bypassing the
+  gateway so the *bucket's* CORS governs, not the API gateway's), gated on that bucket's CORS
+  allowing the iframe origin **and the `Range` header** — **conditional and spike-gated** (often not
+  controllable for UC-managed storage; minting a presigned URL for a managed Volume file is itself
+  uncertain). This is what **Spike A** tests conclusively.
 - The durable answer for indefinite single-archive streaming is the **Phase-2 App** (same-origin).
 
 ### Budget is measured on the *prepared artifact* bytes, not raw input
@@ -167,10 +179,18 @@ They compose (shard *and* simplify).
 One engine, one spec, two materialization modes. The spec is plain JSON/dict (consistent with
 `grid_conf`), so it is the single source of truth and serializes cleanly.
 
+**Two flavors of the engine (decided): split by input rather than overload one function with two
+modes.** Combining "re-tile from source" and "trim an existing archive" in one signature is
+confusing, so:
+
 ```python
-simplify_tiles(source_or_volume_path, *, spec=<dict>, out_path=None) -> bytes | path   # engine
-plot_interactive(layers, *, simplify_tiles_spec=<dict|None>, ...)                       # same engine, inline
+simplify_tiles_from_source(source, *, spec=<dict>, out_path=None) -> bytes | path    # re-tile (tippecanoe / distributed)
+simplify_tiles_from_archive(pmtiles_path, *, spec=<dict>, out_path=None) -> bytes | path  # tile-join down-zoom/trim
+plot_interactive(layers, *, simplify_tiles_spec=<dict|None>, ...)                    # inline, picks the right flavor by layer input
 ```
+
+`plot_interactive` routes to the right flavor automatically based on whether the layer carries
+source data or an existing archive path. Both flavors consume the **same** `spec`.
 
 ### Spec schema
 
@@ -286,10 +306,20 @@ kernel) — the static category-2 fallback covers that surface; and it is a mean
   `plot_interactive(layers)` on MapLibre (folium retired); the `>64 MB` ladder; `simplify_tiles()`
   + `simplify_tiles_spec` (ephemeral/durable modes, tippecanoe/distributed/rasterio engine policy);
   the repo-wide notebook/doc audit + Helios NB02/NB03 rewiring + prose fix.
-- **Phase 1.5 (gating spike, early):** AnyWidget comm on Serverless. Pass → dynamic zoom cut-over.
-  Fail → documented; cut-over degrades to overview-only-interactive.
+- **Phase 1.5 (gating spike, run BEFORE planning):** AnyWidget comm on Serverless (Spike B) and the
+  presigned-URL CORS/range path (Spike A). **Spike B pass → the dynamic zoom cut-over is built as an
+  immediate follow-on within this effort** (not deferred to Phase 2). Spike B fail → documented;
+  cut-over degrades to overview-only-interactive + cell-driven re-render. Spike A pass → wire the
+  presigned-URL helper into ladder step 1 for indefinite-size Volume archives; fail → indefinite
+  single-archive is Phase-2 only.
 - **Phase 2 (roadmap only):** Databricks App tile server for unconditional dynamic / indefinite
   single-archive streaming.
+
+> **Spikes run before the plan** (per direction): the CORS Files-API probe is **done** (Range header
+> blocked — see above). Spike A (presigned-URL) and Spike B (AnyWidget) are browser/notebook-frontend
+> behaviors that require a human run on a live Serverless notebook; harnesses are provided. Their
+> results finalize whether the cut-over and the indefinite-size ladder rung are in or out before
+> task-by-task planning begins.
 
 ---
 
@@ -307,12 +337,41 @@ new-Spark-function changes.
 
 ---
 
+## Documentation (red-carpet — this is a halo surface)
+
+Rendering data "that doesn't quite fit in a notebook cell" is something many users struggle to
+noodle out on their own. That makes this a **halo capability**, and the docs get first-class
+treatment, not a reference-table afterthought:
+
+- **A dedicated narrative page** (`docs/docs/api/vizx-layers.mdx` or a prominent expansion of
+  `vizx.mdx`) that *teaches the problem and the ladder*: "I have more tile data than a notebook cell
+  can hold — here's how to see it anyway." Walk the decision tree (embed → simplify → URL → shard →
+  static) in plain language with runnable examples for each rung.
+- **Multi-layer worked examples** for both renderers (static composite and interactive MapLibre),
+  using real sample data — vector + raster + grid in one map.
+- **The ephemeral-vs-durable story made explicit**: when to `plot_interactive(simplify_tiles_spec=…)`
+  vs. when to materialize with `simplify_tiles_from_source(out_path=…)` and reuse — with a
+  copy-paste "promote your preview to a durable artifact" snippet.
+- **Honest scale guidance**: the `>64 MB` behavior, the sharding alternative (link to Helios NB04),
+  and the Phase-2 App as the path for truly indefinite single-archive interactivity — so users are
+  never surprised by a fallback.
+- **Visual-first**: screenshots/GIFs of multi-layer output; a decision-tree diagram (a new
+  `resources/images/diagrams/vizx/` asset following the established diagram-generator pattern).
+- Doc code is **executable doc-tests** (the repo's single-source rule), so every example is proven.
+
+The audit-and-migrate of existing notebooks/docs (below) is part of this: every VizX usage across
+the docs site reads consistently against the new surface.
+
 ## Dependencies & supply chain
 
 - **tippecanoe** (PyPI manylinux wheel), **anywidget** (Phase-1.5 spike only), MapLibre GL JS +
   pmtiles.js (vendored/CDN as today). folium **removed** from `[vizx]`.
 - All execution-env packages **exact-version + hash-pinned** (`--require-hashes`), per the repo's
   supply-chain rule. Add to the `[vizx]` extra and the CI lock.
+- The MapLibre GL JS + pmtiles.js the viewer injects must be **vendored or loaded with Subresource
+  Integrity** (`integrity="sha384-…" crossorigin="anonymous"`), not bare CDN `<script>` tags — same
+  supply-chain posture as the Python deps. (The spike harnesses use bare CDN for expediency; the
+  product must not.)
 - **Verify** the tippecanoe cp312/manylinux wheel and ipywidgets comm on the real **Serverless**
   environment before depending on them (two small spikes).
 
@@ -349,14 +408,30 @@ new-Spark-function changes.
 7. tippecanoe is the default **viz** vector tiler/simplifier (driver), with GeoBrix distributed
    tiling as the scale path and the product's tiling story; rasterio overviews for raster.
 8. Helios NB02/NB03 rewiring + prose fix and a repo-wide notebook/doc VizX-usage audit are in scope.
+9. **Basemap default = CARTO Positron** (hosted), must work under normal Serverless conditions;
+   **contextily retained** for the static path.
+10. **Dynamic zoom cut-over is an immediate follow-on within this effort** if the AnyWidget spike
+    (Spike B) passes — not deferred to Phase 2.
+11. **Two flavors of the simplify engine** (`simplify_tiles_from_source` / `simplify_tiles_from_archive`)
+    rather than one overloaded function; `plot_interactive` routes by layer input.
+12. **Docs get red-carpet treatment** — this is a halo surface (see the Documentation section).
+13. **CORS finding is empirical:** the Files API blocks the cross-origin `Range` header → no
+    in-notebook Volume range reads via the gateway; presigned-S3 (Spike A) is the only remaining
+    in-notebook candidate; the App is the durable answer.
 
 ---
 
-## Open questions for review
+## Spikes to run before planning (per direction)
 
-- **Basemap default** for `plot_interactive` — CARTO Positron (hosted) acceptable, or prefer a
-  different default / a bundled offline-friendly style?
-- **AnyWidget appetite:** if the Serverless comm spike passes, build the dynamic cut-over in this
-  effort, or split it into an immediate follow-on once Phase-1 lands?
-- **`simplify_tiles()` existing-archive input via `tile-join`** vs always re-tiling from source —
-  support both (recommended) with source preferred, or archive-only to start?
+- **CORS Files-API probe — DONE.** Files API: `ACAO: *`, `Authorization` allowed, **`Range` not in
+  `Access-Control-Allow-Headers`** → ranged pmtiles.js fetch fails preflight. In-notebook Volume
+  range via the gateway is ruled out.
+- **Spike A — presigned-S3 URL (CORS + range + render).** Can we mint a browser-reachable presigned
+  URL to a Volume archive's backing object, and does a `databricksusercontent.com` iframe
+  successfully range-read + render it? Pass → indefinite-size ladder rung 1; fail → Phase-2 only.
+- **Spike B — AnyWidget on Serverless (JS↔kernel comm round-trip) + tippecanoe `%pip` install.**
+  Pass → dynamic cut-over built as an immediate follow-on; also confirms the tippecanoe
+  manylinux/cp312 wheel installs on the Serverless env.
+
+Spikes A and B are browser/notebook-frontend behaviors; harnesses are provided to run on a live
+Serverless notebook. Results finalize the plan's scope.
