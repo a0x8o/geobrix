@@ -20,8 +20,13 @@ def _strip_scheme(path: str) -> str:
     return path
 
 
-def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_source):
-    """Render a decimated COG array (bands, h, w) over a contextily basemap."""
+def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_source, ax=None):
+    """Render a decimated COG array (bands, h, w) over a contextily basemap.
+
+    When *ax* is provided the caller owns the figure; this function draws onto
+    it and returns it without calling ``plt.show``.  When *ax* is ``None`` a
+    new figure is created (original behaviour).
+    """
     import matplotlib.pyplot as plt
     from rasterio.plot import plotting_extent, show
 
@@ -32,7 +37,9 @@ def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_s
 
     if _needs_percentile_stretch(data):
         data = _percentile_stretch(data)
-    _, ax = plt.subplots(1, figsize=(fig_w, fig_h))
+    owns_fig = ax is None
+    if owns_fig:
+        _, ax = plt.subplots(1, figsize=(fig_w, fig_h))
     if data.shape[0] == 1:
         band = data[0]
         ax.imshow(band, extent=plotting_extent(band, transform), cmap="viridis")
@@ -53,6 +60,7 @@ def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_s
     if title:
         ax.set_title(title)
     ax.set_axis_off()
+    return ax
 
 
 def plot_cog(
@@ -65,6 +73,7 @@ def plot_cog(
     basemap=True,
     basemap_source=None,
     title=None,
+    ax=None,
     **kw,
 ):
     """Render a Cloud-Optimized GeoTIFF inline over a contextily basemap.
@@ -99,7 +108,7 @@ def plot_cog(
         else:
             data, transform, _ = _decimated_read(src, max_pixels)
         crs = src.crs
-    _render_cog(
+    return _render_cog(
         data,
         transform,
         crs=crs,
@@ -108,4 +117,5 @@ def plot_cog(
         title=title or "COG",
         basemap=basemap,
         basemap_source=basemap_source,
+        ax=ax,
     )
