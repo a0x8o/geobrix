@@ -286,6 +286,28 @@ ample plotting sections.
 - The Overture path is a downloader (light-only); add a light bench only if a reader/writer
   surfaces that warrants the "bench each reader/writer" convention. No heavy comparison expected.
 
+### Performance methodology & knowledge capture (standing practice for all tiling work)
+
+Every tiling operation exercised by this work is a chance to improve the underlying function.
+Whenever a tiling-path improvement is found (light/Serverless is the target), it MUST be:
+
+1. **Propagated by assessment, not assumed.** Evaluate and record the gain's applicability to
+   (a) other *similar* light-tier functions, and (b) the *same and similar* heavy-tier
+   functions. Record the verdict even when "not applicable" (and why).
+2. **Captured as a reusable pattern in two homes** so we stop rediscovering best practices:
+   - **Developer-facing engineering corpus** — `docs/superpowers/performance/` (version-controlled,
+     in-repo). One file per pattern: problem → symptom/signature → the fix → applicability
+     matrix (light-similar / heavy-same+similar) → evidence/bench numbers → canonical code refs.
+   - **Agent memory** — a thin pointer memory (slug + one-line) that `[[links]]` to the canonical
+     corpus file, so future sessions recall fast without bloating `MEMORY.md`.
+3. **Kept distinct from the user-facing doc.** `docs/docs/api/performance.mdx` stays user-facing
+   (execution shapes + function classification + where the light tier wins). The corpus is the
+   internal "how/why we got the gain" engineering record; the two cross-reference but do not merge.
+
+The three-layer knowledge structure and the seeding of the corpus from existing perf memories are
+specified in their own precursor design (see `docs/superpowers/performance/README.md` once seeded);
+this Helios work both follows the practice and contributes new patterns to it.
+
 ### Docs voice
 
 - All user-facing docs (README, `helios.mdx`) avoid internal planning vocabulary (no wave
