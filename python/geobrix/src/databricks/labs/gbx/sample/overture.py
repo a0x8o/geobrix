@@ -450,6 +450,84 @@ class OvertureClient:
             meta = self._merge_metadata(meta, table)
         return meta
 
+    def read(self, source, theme=None, type=None, bbox=None) -> "DataFrame":
+        """Load downloaded GeoParquet back into Spark with an optional bbox AOI filter.
+
+        source may be a Volume directory, a metadata Delta table NAME, or a
+        metadata DataFrame carrying a source/path column pointing at per-asset paths.
+        """
+        from pyspark.sql import DataFrame as _DF
+        from pyspark.sql import SparkSession
+        from pyspark.sql import functions as F
+
+        spark = SparkSession.getActiveSession()
+
+        def _read_paths(paths):
+            # union-read each per-asset path (recursive parquet under each)
+            dfs = [spark.read.parquet(p) for p in paths]
+            out = dfs[0]
+            for d in dfs[1:]:
+                out = out.unionByName(d, allowMissingColumns=True)
+            return out
+
+        def _looks_like_table_name(s):
+            """True iff the string could be a catalog/schema.table identifier.
+
+            A table name never starts with "/" or a cloud scheme prefix, and
+            never contains path separators — those are filesystem paths, not
+            SQL identifiers. Without this guard, spark.catalog.tableExists()
+            raises ParseException on a bare path string.
+            """
+            import os
+
+            _CLOUD_PREFIXES = (
+                "s3://",
+                "s3a://",
+                "abfs://",
+                "abfss://",
+                "gs://",
+                "wasbs://",
+            )
+            if s.startswith("/") or any(s.startswith(p) for p in _CLOUD_PREFIXES):
+                return False
+            if os.sep in s or "/" in s:
+                return False
+            return True
+
+        if isinstance(source, _DF):
+            col = "source" if "source" in source.columns else "path"
+            paths = [r[col] for r in source.select(col).distinct().collect()]
+            df = _read_paths(paths)
+        elif (
+            isinstance(source, str)
+            and _looks_like_table_name(source)
+            and spark.catalog.tableExists(source)
+        ):
+            meta = spark.table(source)
+            col = "source" if "source" in meta.columns else "path"
+            paths = [r[col] for r in meta.select(col).distinct().collect()]
+            df = _read_paths(paths)
+        else:
+            # a Volume directory: read parquet recursively (per theme/type subdirs)
+            import os
+
+            base = source
+            if theme is not None and type is not None:
+                base = os.path.join(source, theme, type)
+            df = spark.read.option("recursiveFileLookup", "true").parquet(base)
+
+        if bbox is not None and "bbox" in df.columns:
+            from databricks.labs.gbx.sample._overture_discover import normalize_bbox
+
+            minx, miny, maxx, maxy = normalize_bbox(bbox)
+            df = df.filter(
+                (F.col("bbox.xmin") <= F.lit(maxx))
+                & (F.col("bbox.xmax") >= F.lit(minx))
+                & (F.col("bbox.ymin") <= F.lit(maxy))
+                & (F.col("bbox.ymax") >= F.lit(miny))
+            )
+        return df
+
     def discover(self, bbox, themes=None, release=None) -> "DataFrame":
         """One row per intersecting GeoParquet asset for the AOI.
 

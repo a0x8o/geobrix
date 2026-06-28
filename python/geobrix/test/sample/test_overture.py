@@ -315,6 +315,37 @@ def test_download_table_merge_idempotent(spark, tmp_path):
     spark.sql(f"DROP TABLE IF EXISTS {table}")
 
 
+def test_read_from_volume_dir(spark, tmp_path):
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+    out_dir = str(tmp_path / "rd")
+    target = os.path.join(out_dir, "buildings", "building")
+
+    spark.createDataFrame(
+        [Row(id=1, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76))]
+    ).write.mode("overwrite").parquet(target)
+    df = client.read(out_dir)
+    assert df.count() == 1
+    # bbox filter retains the in-AOI row
+    df2 = client.read(out_dir, bbox=(-122.45, 37.74, -122.40, 37.78))
+    assert df2.count() == 1
+    df3 = client.read(out_dir, bbox=(0, 0, 1, 1))  # disjoint
+    assert df3.count() == 0
+
+
+def test_read_from_metadata_dataframe(spark, tmp_path):
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+    target = str(tmp_path / "assetdir")
+
+    spark.createDataFrame([Row(id=7)]).write.mode("overwrite").parquet(target)
+    from pyspark.sql import functions as F
+
+    meta = spark.createDataFrame([(target,)], ["source"]).withColumn(
+        "path", F.col("source")
+    )
+    df = client.read(meta)
+    assert df.collect()[0]["id"] == 7
+
+
 def test_download_routes_http_to_fallback(spark, tmp_path):
     """download() with an http:// href routes to _download_fallback (not distributed).
 
