@@ -11,7 +11,7 @@ pull ``pandas`` at package-import time and break those heavy imports with
 merely importing ``databricks.labs.gbx.pmtiles[.functions]`` (heavy tier) does not.
 """
 
-__all__ = ["register_pmtiles_agg"]
+__all__ = ["register_pmtiles_agg", "pmtiles_info"]
 
 
 def __getattr__(name):
@@ -19,4 +19,8 @@ def __getattr__(name):
         from databricks.labs.gbx.pmtiles._agg_light import register_pmtiles_agg
 
         return register_pmtiles_agg
+    if name == "pmtiles_info":
+        from databricks.labs.gbx.pmtiles._inspect import pmtiles_info
+
+        return pmtiles_info
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
