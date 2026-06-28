@@ -1,8 +1,8 @@
 # Helios — Distributed Tiling to PMTiles
 
-A three-notebook series that takes one San Francisco bounding box and turns it into three fully self-contained [PMTiles](https://protomaps.com/docs/pmtiles) archives — one per data modality — using [GeoBrix](https://databrickslabs.github.io/geobrix/) on Databricks.
+A four-notebook series that takes one San Francisco bounding box and turns it into self-contained [PMTiles](https://protomaps.com/docs/pmtiles) archives — one per data modality — then shards a layer into a multi-archive mosaic for web-scale delivery, using [GeoBrix](https://databrickslabs.github.io/geobrix/) on Databricks.
 
-The notebooks follow a solar site-selection narrative: identify candidate rooftops (vector, NB01), overlay an aerial basemap for visual validation (raster, NB02), and layer terrain-derived slope, aspect, and hillshade to score each candidate by sun exposure (elevation, NB03). All three archives feed a single `plot_pmtiles` / `plot_cog` viewer at the end.
+The notebooks follow a solar site-selection narrative: identify candidate rooftops (vector, NB01), overlay an aerial basemap for visual validation (raster, NB02), and layer terrain-derived slope, aspect, and hillshade to score each candidate by sun exposure (elevation, NB03). A final notebook re-publishes the vector layer as a distributed, sharded PMTiles mosaic — many archives plus a catalog and manifest — for web-scale delivery (NB04). The single-archive outputs feed a single `plot_pmtiles` / `plot_cog` viewer at the end.
 
 > **Lightweight tier (Serverless) by default.** The series uses the lightweight tier — pure Python/PySpark bindings (`databricks.labs.gbx.pyrx`, `pyvx`) plus the `geobrix[light,stac,vizx,overture]` wheel installed by `config_nb` — so it runs on Serverless with no JAR. STAC discovery and download are handled by `StacClient` from `databricks.labs.gbx.stac` (see [STAC Client](https://databrickslabs.github.io/geobrix/docs/api/stac)); building footprints are fetched via `OvertureClient` from `databricks.labs.gbx.sample.overture`; visualization helpers come from `databricks.labs.gbx.vizx`. To run heavyweight instead, flip the commented *option-2* (`rasterx`) in `config_nb.ipynb` and attach the GeoBrix JAR + [GDAL init script](https://databrickslabs.github.io/geobrix/docs/installation) to a classic x86 cluster. See [Execution Tiers](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers).
 
@@ -36,6 +36,14 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 - **Terrain analytics at scale** — `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` derive terrain layers in parallel across all DEM tiles; `gbx_rst_xyzpyramid` + `gbx_pmtiles_agg` package the hillshade into `sf_hillshade.pmtiles` for the combined view.
 - **Databricks-native solar scoring** — `gbx_rst_h3_rastertogridavg` bins slope and aspect rasters into H3 cells; the resulting per-cell values are joined and scored with native Databricks SQL expressions to produce a `solar_score` column. `h3_centeraswkb` reconstructs geometry for map rendering — all without leaving the warehouse.
 
+### 04 — Distributed Sharding & Mosaic
+
+![Notebook 04 — MVT pyramid → shard by parent tile → per-shard PMTiles archives → mosaic catalog + manifest](../../../resources/images/helios-04.png)
+
+- **Spatial sharding into parallel work units** — each pyramid tile is assigned to a coarse parent tile (z11) via `shiftright(x, z-11)`, then `groupBy(shard).agg(gbx_pmtiles_agg(...))` fans archive packing out across the cluster — one `.pmtiles` per shard instead of one monolithic file. The SF AOI splits into four shards.
+- **Shard catalog + mosaic manifest** — a `sf_building_shards` Delta table maps each shard key to its archive path and bounds (`pmtiles_info`), and a `mosaic.json` manifest lets a client discover and assemble the shards with no tile server.
+- **Web-scale delivery pattern** — buffering the source query while keeping output tiles non-overlapping across shards keeps boundaries clean and avoids double-rendering; the mosaic pattern scales a single AOI into the per-file size range that object stores and CDNs serve efficiently.
+
 ---
 
 ## Files
@@ -46,6 +54,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 | `01. Vector Engine (MVT).ipynb` | Loads SF building footprints via `OvertureClient`, computes roof area and H3 roof density with Databricks built-in ST/H3 functions, encodes MVT tiles with `gbx_st_asmvt` + `gbx_st_asmvt_pyramid`, and packages the result into `sf_buildings.pmtiles` with `gbx_pmtiles_agg`. |
 | `02. Visual Basemap (XYZ).ipynb` | Downloads NAIP aerial imagery for the SF AOI, reprojects to Web Mercator with `gbx_rst_to_webmercator`, generates an XYZ tile pyramid with `gbx_rst_xyzpyramid`, and writes `sf_naip.pmtiles` with `gbx_pmtiles_agg`. |
 | `03. Analytical Core (COG + STAC).ipynb` | Downloads 3DEP (or SRTM) DEMs, converts them to COGs with `gbx_rst_cog_convert`, builds a STAC Delta catalog, derives slope/aspect/hillshade, packages `sf_hillshade.pmtiles`, and computes a per-H3-cell `solar_score` with `gbx_rst_h3_rastertogridavg` + native Databricks SQL. |
+| `04. Distributed Sharding & Mosaic.ipynb` | Re-publishes the SF buildings vector layer as a **multi-archive** PMTiles mosaic: assigns each pyramid tile to a coarse parent shard (z11), packs one `.pmtiles` per shard with `groupBy(shard).agg(gbx_pmtiles_agg)`, and writes a `sf_building_shards` Delta catalog + `mosaic.json` manifest (bounds via `pmtiles_info`) for client-side mosaic assembly. Includes an offline fallback so it runs without network access. |
 
 ---
 
@@ -61,7 +70,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 ## Run order
 
 1. Open `config_nb.ipynb`, set `catalog_name` / `schema_name`, and verify the Volume exists.
-2. Run notebooks in numeric order: **01 → 02 → 03**. Each notebook starts with `%run ./config_nb` so the shared state is re-established every time.
+2. Run notebooks in numeric order: **01 → 02 → 03 → 04**. Each notebook starts with `%run ./config_nb` so the shared state is re-established every time. NB04 reuses NB01's building footprints (and falls back to an offline synthetic set if NB01 hasn't run).
 
 Each notebook is safe to re-run — outputs are written with skip-guards so already-built files are not re-downloaded or re-tiled. Set `FORCE_REBUILD = True` in a cell right after `%run ./config_nb` to force a full rebuild of that notebook's outputs.
 
@@ -105,7 +114,7 @@ This series defaults to the lightweight tier so it runs on **Serverless** — se
 
 ## Key GeoBrix / Databricks functions shown
 
-- **GeoBrix VectorX** (`pyvx` / SQL): `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_pmtiles_agg`.
+- **GeoBrix VectorX** (`pyvx` / SQL): `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_pmtiles_agg` (single-archive, and grouped `groupBy(shard).agg(gbx_pmtiles_agg)` for a sharded mosaic in NB04).
 - **GeoBrix RasterX** (`pyrx` / SQL): `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, `gbx_rst_slope`, `gbx_rst_aspect`, `gbx_rst_hillshade`, `gbx_rst_h3_rastertogridavg`.
 - **GeoBrix STAC + Overture**: `OvertureClient.discover` / `download` / `read`; `StacClient` (search, download, repair).
 - **GeoBrix VizX**: `plot_pmtiles`, `plot_cog`, `pmtiles_info`, `show_pmtiles`.

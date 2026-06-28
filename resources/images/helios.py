@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generate the three Helios notebook conceptual diagrams.
+"""Generate the four Helios notebook conceptual diagrams.
 
-One SVG per notebook (01–03). Each is a four-stage data→tile→PMTiles→view
+One SVG per notebook (01–04). Each is a four-stage data→tile→PMTiles→view
 pipeline diagram with a custom hero glyph per stage and a footer of GeoBrix /
 Databricks function chips that the notebook actually uses.
 
 Re-render after editing this script:
 
     python3 resources/images/helios.py
-    for n in 01 02 03; do
+    for n in 01 02 03 04; do
       # window-size is wider/taller than the SVG to absorb Chrome's default
       # body margin; the bbox-trim step below crops it back to SVG bounds.
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
@@ -21,7 +21,7 @@ Re-render after editing this script:
       [Image.open(p).convert('RGB').crop(ImageChops.difference( \\
         Image.open(p).convert('RGB'), \\
         Image.new('RGB', Image.open(p).size, (255,255,255))).getbbox()).save(p) \\
-       for p in [f'resources/images/helios-{n}.png' for n in ('01','02','03')]]"
+       for p in [f'resources/images/helios-{n}.png' for n in ('01','02','03','04')]]"
 """
 import math
 import os
@@ -43,6 +43,7 @@ THEMES = {
     1: {"accent": "#1F6FB5", "tint": "#E3EEF8"},   # blue   — vector engine
     2: {"accent": "#E04E2A", "tint": "#FCE9E2"},   # orange — raster basemap
     3: {"accent": "#0F8E8B", "tint": "#D5ECEC"},   # teal   — analytical core
+    4: {"accent": "#6B4FA0", "tint": "#EDE8F5"},   # violet — distributed sharding
 }
 
 # --- Layout -------------------------------------------------------------------
@@ -484,6 +485,192 @@ def g_cog_catalog(cx, cy, color, tint):
     return "".join(out)
 
 
+def g_shard_grid(cx, cy, color, tint):
+    """Tile grid partitioned into 4 coarse parent shards — conveys shiftright binning."""
+    out = []
+    # Outer boundary of the whole grid
+    tw, th = 140, 120
+    tx = cx - tw / 2
+    ty = cy - th / 2
+    out.append(
+        f'<rect x="{tx}" y="{ty}" rx="8" ry="8" width="{tw}" height="{th}" '
+        f'fill="#FFFFFF" stroke="{color}" stroke-width="2.4"/>'
+    )
+    # Four quadrant shards — each tinted a slightly different shade
+    shard_fills = [
+        (tint, "0.95"),   # top-left    — 11_326_791
+        (tint, "0.65"),   # top-right   — 11_327_791
+        (tint, "0.75"),   # bottom-left — 11_326_792
+        (tint, "0.50"),   # bottom-right— 11_327_792
+    ]
+    hw, hh = tw / 2, th / 2
+    quadrants = [
+        (tx,      ty,      hw, hh, shard_fills[0]),  # TL
+        (tx + hw, ty,      hw, hh, shard_fills[1]),  # TR
+        (tx,      ty + hh, hw, hh, shard_fills[2]),  # BL
+        (tx + hw, ty + hh, hw, hh, shard_fills[3]),  # BR
+    ]
+    for (qx, qy, qw, qh, (fill, opacity)) in quadrants:
+        out.append(
+            f'<rect x="{qx}" y="{qy}" width="{qw}" height="{qh}" '
+            f'fill="{fill}" fill-opacity="{opacity}"/>'
+        )
+    # Fine sub-tile grid lines within each quadrant (3×3 sub-tiles per quadrant)
+    sub = 3
+    for qi in range(sub - 1):
+        # Vertical sub-lines in each quadrant column
+        for col in [0, 1]:
+            lx = tx + col * hw + (qi + 1) * hw / sub
+            out.append(
+                f'<line x1="{lx:.1f}" y1="{ty + 2}" x2="{lx:.1f}" y2="{ty + th - 2}" '
+                f'stroke="{color}" stroke-width="0.6" stroke-opacity="0.25"/>'
+            )
+        # Horizontal sub-lines in each quadrant row
+        for row in [0, 1]:
+            ly = ty + row * hh + (qi + 1) * hh / sub
+            out.append(
+                f'<line x1="{tx + 2}" y1="{ly:.1f}" x2="{tx + tw - 2}" y2="{ly:.1f}" '
+                f'stroke="{color}" stroke-width="0.6" stroke-opacity="0.25"/>'
+            )
+    # Bold shard-boundary dividers (the two main cross-lines)
+    out.append(
+        f'<line x1="{cx}" y1="{ty + 4}" x2="{cx}" y2="{ty + th - 4}" '
+        f'stroke="{color}" stroke-width="2" stroke-opacity="0.7"/>'
+        f'<line x1="{tx + 4}" y1="{cy}" x2="{tx + tw - 4}" y2="{cy}" '
+        f'stroke="{color}" stroke-width="2" stroke-opacity="0.7"/>'
+    )
+    # Small shard-id labels in each quadrant
+    labels = [
+        (tx + hw * 0.5, ty + hh * 0.5, "326/791"),
+        (tx + hw * 1.5, ty + hh * 0.5, "327/791"),
+        (tx + hw * 0.5, ty + hh * 1.5, "326/792"),
+        (tx + hw * 1.5, ty + hh * 1.5, "327/792"),
+    ]
+    for (lx, ly, lbl) in labels:
+        out.append(
+            f'<text x="{lx:.1f}" y="{ly + 4:.1f}" text-anchor="middle" '
+            f'font-family="ui-monospace, Menlo, monospace" font-size="9" '
+            f'font-weight="700" fill="{color}" fill-opacity="0.85">{lbl}</text>'
+        )
+    # z11 badge (matches style of g_vector_tile_grid)
+    out.append(
+        f'<rect x="{cx + tw/2 - 28}" y="{ty - 16}" rx="8" width="28" height="16" '
+        f'fill="{color}"/>'
+        f'<text x="{cx + tw/2 - 14}" y="{ty - 4}" text-anchor="middle" '
+        f'font-family="ui-monospace, Menlo, monospace" font-size="10" '
+        f'font-weight="700" fill="#FFFFFF">z11</text>'
+    )
+    return "".join(out)
+
+
+def g_multi_archive(cx, cy, color, tint):
+    """Row of 4 small PMTiles archive icons — one archive per shard."""
+    out = []
+    # 4 small archive icons arranged in a 2×2 grid
+    positions = [(-52, -28), (8, -28), (-52, 28), (8, 28)]
+    aw, ah = 56, 38
+    for (dx, dy) in positions:
+        ax = cx + dx
+        ay = cy + dy - 10
+        # Back shadow layer
+        out.append(
+            f'<rect x="{ax + 4}" y="{ay + 4}" rx="5" ry="5" width="{aw}" height="{ah}" '
+            f'fill="{tint}" fill-opacity="0.6" stroke="{color}" stroke-width="1"/>'
+        )
+        # Main archive body
+        out.append(
+            f'<rect x="{ax}" y="{ay}" rx="5" ry="5" width="{aw}" height="{ah}" '
+            f'fill="#FFFFFF" stroke="{color}" stroke-width="1.8"/>'
+        )
+        # Header bar
+        out.append(
+            f'<rect x="{ax}" y="{ay}" rx="5" ry="5" width="{aw}" height="12" '
+            f'fill="{color}"/>'
+            f'<rect x="{ax}" y="{ay + 7}" width="{aw}" height="5" fill="{color}"/>'
+        )
+        # .pmtiles label in header
+        out.append(
+            f'<text x="{ax + aw/2}" y="{ay + 9}" text-anchor="middle" '
+            f'font-family="ui-monospace, Menlo, monospace" font-size="7" '
+            f'font-weight="800" fill="#FFFFFF">.pmtiles</text>'
+        )
+        # Two content lines
+        for li in range(2):
+            lx = ax + 5
+            ly = ay + 19 + li * 9
+            out.append(
+                f'<line x1="{lx}" y1="{ly}" x2="{ax + aw - 5}" y2="{ly}" '
+                f'stroke="{color}" stroke-opacity="0.35" stroke-width="1.2"/>'
+            )
+    # Central label
+    out.append(
+        f'<text x="{cx}" y="{cy + 66}" text-anchor="middle" '
+        f'font-family="ui-monospace, Menlo, monospace" font-size="10" '
+        f'font-weight="700" fill="{color}">4 shards</text>'
+    )
+    return "".join(out)
+
+
+def g_mosaic_catalog(cx, cy, color, tint):
+    """Reassembled mosaic tiles + mosaic.json label — shard catalog glyph."""
+    out = []
+    # Four shard tile squares arranged as a 2×2 mosaic map
+    tile_s = 48
+    gap = 4
+    half = tile_s + gap / 2
+    tiles = [
+        (cx - half, cy - half - 8, tint, "0.90", "326\n791"),
+        (cx + gap/2, cy - half - 8, tint, "0.65", "327\n791"),
+        (cx - half, cy + gap/2 - 8, tint, "0.75", "326\n792"),
+        (cx + gap/2, cy + gap/2 - 8, tint, "0.50", "327\n792"),
+    ]
+    for (tx, ty, fill, opacity, lbl) in tiles:
+        out.append(
+            f'<rect x="{tx:.1f}" y="{ty:.1f}" rx="5" ry="5" '
+            f'width="{tile_s}" height="{tile_s}" '
+            f'fill="{fill}" fill-opacity="{opacity}" stroke="{color}" stroke-width="1.8"/>'
+        )
+        # Small grid lines inside each tile (3×3 sub-tiles)
+        for si in range(1, 3):
+            sx = tx + si * tile_s / 3
+            sy_h = ty + si * tile_s / 3
+            out.append(
+                f'<line x1="{sx:.1f}" y1="{ty + 2:.1f}" x2="{sx:.1f}" y2="{ty + tile_s - 2:.1f}" '
+                f'stroke="{color}" stroke-opacity="0.2" stroke-width="0.8"/>'
+                f'<line x1="{tx + 2:.1f}" y1="{sy_h:.1f}" x2="{tx + tile_s - 2:.1f}" y2="{sy_h:.1f}" '
+                f'stroke="{color}" stroke-opacity="0.2" stroke-width="0.8"/>'
+            )
+        # Shard label (two-line: zone/row)
+        rows = lbl.split("\n")
+        for ri, row in enumerate(rows):
+            out.append(
+                f'<text x="{tx + tile_s/2:.1f}" y="{ty + tile_s/2 + (ri - 0.5) * 11:.1f}" '
+                f'text-anchor="middle" font-family="ui-monospace, Menlo, monospace" '
+                f'font-size="9" font-weight="700" fill="{color}" fill-opacity="0.9">{row}</text>'
+            )
+    # Divider lines between quadrants
+    mid_x = cx
+    mid_y = cy - 8
+    out.append(
+        f'<line x1="{mid_x}" y1="{mid_y - half - 2}" x2="{mid_x}" y2="{mid_y + half + tile_s - 2}" '
+        f'stroke="{color}" stroke-width="2" stroke-opacity="0.5"/>'
+        f'<line x1="{mid_x - half - 2}" y1="{mid_y}" x2="{mid_x + half + tile_s - 2}" y2="{mid_y}" '
+        f'stroke="{color}" stroke-width="2" stroke-opacity="0.5"/>'
+    )
+    # mosaic.json badge below the grid
+    badge_y = cy + tile_s + gap / 2 - 8 + 8
+    badge_w = 96
+    badge_h = 18
+    out.append(
+        f'<rect x="{cx - badge_w/2}" y="{badge_y}" rx="5" ry="5" '
+        f'width="{badge_w}" height="{badge_h}" fill="{color}"/>'
+        f'<text x="{cx}" y="{badge_y + 13}" text-anchor="middle" '
+        f'font-family="ui-monospace, Menlo, monospace" font-size="10" '
+        f'font-weight="800" fill="#FFFFFF">mosaic.json</text>'
+    )
+    return "".join(out)
+
+
 def g_hillshade_relief(cx, cy, color, tint):
     """Hillshade relief visualization — shaded terrain grid."""
     cells = 8
@@ -627,7 +814,7 @@ def render_header(num, title, subtitle, accent):
     out.append(text(tx, by + 28, title, size=28, weight=800, fill=C_INK))
     out.append(text(tx, by + 54, subtitle, size=14, fill=C_MUTED))
     # Series pill (top-right)
-    pill_text = f"Helios Series  ·  Notebook {num} of 3"
+    pill_text = f"Helios Series  ·  Notebook {num} of 4"
     pw = int(len(pill_text) * 6.6) + 24
     out.append(
         f'<rect x="{CANVAS_W - PAD - pw}" y="{PAD + 12}" rx="13" ry="13" '
@@ -738,6 +925,32 @@ NOTEBOOKS = {
             "gbx_rst_xyzpyramid", "plot_cog", "plot_pmtiles",
         ],
     },
+    4: {
+        "title": "Distributed Sharding & Mosaic",
+        "subtitle": "MVT pyramid → shard by parent tile → per-shard PMTiles archives → mosaic catalog + inline map",
+        "stages": [
+            Stage(title="MVT tile pyramid",
+                  subtitle="gbx_st_asmvt_pyramid encodes SF building footprints into z11–z16 Mapbox Vector Tile rows",
+                  glyph=g_vector_tile_grid,
+                  chip_text="gbx_st_asmvt_pyramid"),
+            Stage(title="Shard assignment",
+                  subtitle="shiftright(x, z−11) maps every tile to a coarse z11 parent — four non-overlapping SF shards",
+                  glyph=g_shard_grid,
+                  chip_text="shiftright(x, z−shard_z)"),
+            Stage(title="Per-shard archives",
+                  subtitle="groupBy(shard).agg(gbx_pmtiles_agg) produces one bounded .pmtiles archive per shard key",
+                  glyph=g_multi_archive,
+                  chip_text="gbx_pmtiles_agg"),
+            Stage(title="Mosaic catalog + map",
+                  subtitle="pmtiles_info populates sf_building_shards (Delta) + mosaic.json; plot_pmtiles renders each shard inline",
+                  glyph=g_mosaic_catalog,
+                  chip_text="plot_pmtiles"),
+        ],
+        "footer_chips": [
+            "gbx_st_asmvt_pyramid", "gbx_pmtiles_agg",
+            "pmtiles_info", "plot_pmtiles",
+        ],
+    },
 }
 
 # --- Main render --------------------------------------------------------------
@@ -795,7 +1008,7 @@ def render_notebook(num):
 
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
-    for num in (1, 2, 3):
+    for num in (1, 2, 3, 4):
         out = os.path.join(here, f"helios-{num:02d}.svg")
         with open(out, "w") as f:
             f.write(render_notebook(num))
