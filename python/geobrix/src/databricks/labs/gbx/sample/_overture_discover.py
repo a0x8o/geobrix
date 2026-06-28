@@ -51,3 +51,34 @@ def expand_themes(themes: Optional[List[str]]) -> List[Tuple[str, str]]:
             )
         pairs.extend((name, t) for t in OVERTURE_THEMES[name])
     return pairs
+
+
+def traverse_catalog(opener, bbox, theme_pairs):
+    """Walk a static STAC catalog and return one dict per intersecting GeoParquet asset.
+
+    opener() returns a pystac.Catalog-shaped object. Items are filtered by AOI
+    bbox intersection and restricted to the requested (theme, type) pairs.
+    """
+    aoi = normalize_bbox(bbox)
+    wanted = set(theme_pairs)
+    rows = []
+    catalog = opener()
+    for collection in catalog.get_children():
+        for item in collection.get_items():
+            props = item.properties or {}
+            pair = (props.get("theme"), props.get("type"))
+            if pair not in wanted:
+                continue
+            item_bbox = list(item.bbox)
+            if not bbox_intersects(aoi, tuple(item_bbox)):
+                continue
+            for asset in item.assets.values():
+                rows.append(
+                    {
+                        "theme": pair[0],
+                        "type": pair[1],
+                        "href": asset.href,
+                        "asset_bbox": [float(v) for v in item_bbox],
+                    }
+                )
+    return rows

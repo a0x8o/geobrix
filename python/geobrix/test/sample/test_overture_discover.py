@@ -61,3 +61,24 @@ def test_expand_themes_subset():
 def test_expand_themes_unknown_raises():
     with pytest.raises(ValueError):
         expand_themes(["weather"])
+
+
+from databricks.labs.gbx.sample._overture_discover import traverse_catalog
+from test.sample._fake_overture_catalog import open_fake_overture
+
+
+def test_traverse_catalog_bbox_filters_disjoint():
+    sf_bbox = (-122.45, 37.74, -122.40, 37.78)
+    rows = traverse_catalog(open_fake_overture, sf_bbox, [("buildings", "building")])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["theme"] == "buildings"
+    assert r["type"] == "building"
+    assert r["href"].endswith("sf.parquet")
+    assert r["asset_bbox"] == [-122.52, 37.70, -122.36, 37.83]
+
+
+def test_traverse_catalog_skips_unrequested_pairs():
+    # AOI covers the whole world, but we only ask for places -> the SF building drops out
+    rows = traverse_catalog(open_fake_overture, (-180, -90, 180, 90), [("places", "place")])
+    assert [r["type"] for r in rows] == ["place"]
