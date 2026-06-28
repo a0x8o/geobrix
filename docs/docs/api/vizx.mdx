@@ -4,6 +4,8 @@ title: VizX Function Reference
 ---
 
 import VizXIcon from '../../../resources/images/VizX.png';
+import CodeFromTest from '@site/src/components/CodeFromTest';
+import vizxViewers from '!!raw-loader!../../tests/python/api/vizx_viewers.py';
 
 # <img src={VizXIcon} alt="VizX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
 
@@ -36,10 +38,13 @@ from databricks.labs.gbx.vizx import (
     plot_mask_layers,
     plot_static,
     plot_interactive,
+    plot_pmtiles,
+    plot_cog,
     as_gdf,
     cells_as_gdf,
     grid_as_gdf,
 )
+from databricks.labs.gbx.pmtiles import pmtiles_info
 ```
 
 ## Raster rendering
@@ -362,6 +367,119 @@ When the input is many small geometries (so the `max_rows` cap fires on the
 `fast` path), `plot_interactive` advises pre-aggregating with `st_union_agg` /
 `rst_h3_rasterize_agg` so the frame stays few-rows-many-vertices and the cap
 never truncates coverage.
+
+## PMTiles viewers
+
+These helpers render a `.pmtiles` archive or a Cloud-Optimized GeoTIFF in a notebook — driver-side, no tile server, no distributed op.
+
+### `pmtiles_info`
+
+```python
+from databricks.labs.gbx.pmtiles import pmtiles_info
+pmtiles_info(path_or_bytes) -> dict
+```
+
+Parse a `.pmtiles` archive header and count tiles. `path` is a filesystem path (Volume/DBFS scheme prefixes are stripped automatically) or the archive bytes. Returns a plain dict:
+
+| Key | Type | Description |
+|---|---|---|
+| `tile_type` | `str` | `"mvt"`, `"png"`, `"jpeg"`, `"webp"`, `"avif"`, or `"unknown"` |
+| `tile_compression` | `str` | `"none"`, `"gzip"`, `"brotli"`, `"zstd"`, or `"unknown"` |
+| `min_zoom` / `max_zoom` | `int` | Zoom range of the archive |
+| `bounds` | `tuple` | `(min_lon, min_lat, max_lon, max_lat)` in degrees |
+| `center` | `tuple` | `(lon, lat, zoom)` |
+| `tile_count` | `int` | Total number of tiles in the archive |
+| `metadata` | `dict` | Archive metadata (e.g. `vector_layers`) |
+
+<CodeFromTest
+  code={vizxViewers}
+  language="python"
+  title="Inspect a PMTiles archive"
+  source="docs/tests/python/api/vizx_viewers.py"
+  testFile="docs/tests/python/api/test_vizx_viewers.py"
+  functionName="pmtiles_info_example"
+/>
+
+### `plot_pmtiles`
+
+```python
+plot_pmtiles(
+    path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **map_kwargs
+)
+```
+
+Render a `.pmtiles` archive inline in a Databricks or Jupyter notebook.
+
+**Interactive path (default):** when the archive fits within `max_embed_mb` (base64-inflated size), builds a self-contained MapLibre GL JS + pmtiles.js page with the archive embedded inline as an in-browser `FileSource`. No tile server, no remote range requests. Vector (MVT) archives render as a vector layer; raster archives (PNG/JPEG/WebP/AVIF) render as a raster layer — auto-detected from the archive header.
+
+**Static fallback:** when the embedded archive would exceed `max_embed_mb` and `fallback=True` (the default), decodes tiles on the driver instead — raster archives → `plot_raster`; vector archives → decode MVT to geometries and `plot_static` over a contextily basemap. Pass `max_embed_mb=0` to always take the static path (useful for GitHub-renderable notebooks where interactive HTML renders blank).
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path_or_bytes` | `str` or `bytes` | — | Path to a `.pmtiles` file (Volume/DBFS scheme stripped) or the archive bytes. |
+| `max_embed_mb` | `float` | `64` | Budget for the base64-embedded archive. Exceeding it triggers the static fallback. `0` forces the static path. |
+| `fallback` | `bool` | `True` | When `False`, raise instead of falling back to the static render. |
+| `style` | `dict` or `None` | `None` | Override the auto-generated MapLibre style on the interactive path. |
+| `**map_kwargs` | | | Forwarded to the static plotter (`plot_raster` or `plot_static`). |
+
+The interactive page pins CDN versions for reproducibility: MapLibre GL JS 4.7.1 and pmtiles.js 3.2.1.
+
+<CodeFromTest
+  code={vizxViewers}
+  language="python"
+  title="Render a PMTiles archive — static path (offline)"
+  source="docs/tests/python/api/vizx_viewers.py"
+  testFile="docs/tests/python/api/test_vizx_viewers.py"
+  functionName="plot_pmtiles_static_example"
+/>
+
+For a large archive you want to inspect interactively, omit `max_embed_mb` (or raise it) and the viewer embeds the full archive in the HTML page — no server required:
+
+```python
+from databricks.labs.gbx.vizx import plot_pmtiles
+
+# Interactive map — archive embedded inline, no tile server
+plot_pmtiles("/Volumes/main/my_schema/my_vol/tiles.pmtiles")
+
+# Larger archives: raise the embed budget or accept the static fallback
+plot_pmtiles(archive_bytes, max_embed_mb=256)
+```
+
+### `plot_cog`
+
+```python
+plot_cog(
+    path, *, band=None, max_pixels=2000, fig_w=10, fig_h=10,
+    basemap=True, basemap_source=None, title=None,
+)
+```
+
+Render a Cloud-Optimized GeoTIFF over a contextily basemap as a static matplotlib figure. Reads the file decimated so the longest edge is at most `max_pixels` — COG overviews are used when present. Volume/DBFS scheme prefixes are stripped automatically.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `path` | `str` | — | Path to a GeoTIFF/COG (Volume/DBFS scheme stripped). |
+| `band` | `int` or `None` | `None` | 1-based band index. `None` reads all bands: 1 band → viridis, 3+ bands → RGB composite. |
+| `max_pixels` | `int` | `2000` | Decimate above this longest-edge pixel count before rendering. |
+| `fig_w` / `fig_h` | `float` | `10` | Figure dimensions in inches. |
+| `basemap` | `bool` | `True` | Fetch and overlay a contextily basemap (requires network). Pass `False` for deterministic, offline renders. |
+| `basemap_source` | | `None` | Override the default `contextily.providers.CartoDB.Positron`. |
+| `title` | `str` or `None` | `None` | Axes title (defaults to `"COG"`). |
+
+Requires the `[vizx]` extra plus `rasterio`. Integer rasters with values above 255 (typical for EO data — Sentinel-2 UInt16 reflectance, Landsat, etc.) are automatically stretched to the 2nd–98th percentile range so the visible range is not clipped.
+
+<CodeFromTest
+  code={vizxViewers}
+  language="python"
+  title="Render a GeoTIFF with plot_cog"
+  source="docs/tests/python/api/vizx_viewers.py"
+  testFile="docs/tests/python/api/test_vizx_viewers.py"
+  functionName="plot_cog_example"
+/>
 
 ## Escape hatches
 

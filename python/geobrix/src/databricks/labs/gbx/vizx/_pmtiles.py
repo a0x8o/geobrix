@@ -159,6 +159,9 @@ def _static_raster_fallback(data: bytes, info: dict, **plot_kw) -> None:
     tile = _lowest_zoom_tile(data)
     if tile is None:
         raise ValueError("plot_pmtiles: archive has no tiles to render")
+    # plot_raster does not accept a basemap kwarg (raster tiles are already
+    # georeferenced imagery; there is no separate tile fetch step).
+    plot_kw.pop("basemap", None)
     plot_raster(tile[3], **plot_kw)
 
 
