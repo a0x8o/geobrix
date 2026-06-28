@@ -159,3 +159,52 @@ def _static_raster_fallback(data: bytes, info: dict, **plot_kw) -> None:
     if tile is None:
         raise ValueError("plot_pmtiles: archive has no tiles to render")
     plot_raster(tile[3], **plot_kw)
+
+
+def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
+    """Decode one MVT tile to (shapely_geom, props) pairs in WGS-84 (EPSG:4326).
+
+    MVT features are tile-local pixel coords [0, extent] with the NW origin
+    (y down), matching what pyvx writes; invert that transform back to lon/lat
+    using the same tile-bounds math.
+    """
+    import mapbox_vector_tile as mvt
+    from shapely.geometry import shape
+    from shapely.ops import transform
+
+    from databricks.labs.gbx.pyvx._mvt import _tile_bounds
+
+    decoded = mvt.decode(payload)
+    out = []
+    for layer in decoded.values():
+        extent = layer.get("extent", 4096)
+        minx, miny, maxx, maxy = _tile_bounds(z, x, y)
+        sx = (maxx - minx) / extent
+        sy = (maxy - miny) / extent
+
+        def _to_lonlat(px, py, zc=None, _minx=minx, _maxy=maxy, _sx=sx, _sy=sy):
+            return (_minx + px * _sx, _maxy - py * _sy)
+
+        for feat in layer.get("features", []):
+            geom = shape(feat["geometry"])
+            if geom.is_empty:
+                continue
+            out.append((transform(_to_lonlat, geom), feat.get("properties", {})))
+    return out
+
+
+def _static_vector_fallback(data: bytes, info: dict, **plot_kw):
+    """Decode MVT tiles to geometries and render via plot_static (contextily)."""
+    import geopandas as gpd
+
+    from databricks.labs.gbx.vizx import plot_static
+
+    geoms, rows = [], []
+    for (z, x, y), payload in all_tiles(MemorySource(data)):
+        for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
+            geoms.append(geom)
+            rows.append(props)
+    if not geoms:
+        raise ValueError("plot_pmtiles: vector archive decoded to no geometries")
+    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
+    return plot_static(gdf, **plot_kw)

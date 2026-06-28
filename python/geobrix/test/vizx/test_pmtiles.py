@@ -194,3 +194,51 @@ def test_static_raster_fallback_calls_plot_raster(monkeypatch):
     ).pmtiles_info(archive)
     p._static_raster_fallback(archive, info)
     assert captured["n"] == len(png)  # the decoded lowest-zoom tile bytes
+
+
+def _real_mvt_tile(z, x, y):
+    # Encode a polygon in tile-local pixel space for tile (z,x,y) (origin NW),
+    # the same convention pyvx writes, so the fallback reprojects it back to 4326.
+    import mapbox_vector_tile as mvt
+    from shapely.geometry import box
+
+    return mvt.encode(
+        {
+            "name": "demo",
+            "features": [
+                {"geometry": box(1000, 1000, 3000, 3000), "properties": {"v": 1}}
+            ],
+        },
+        default_options={"extents": 4096, "y_coord_down": True},
+    )
+
+
+def test_static_vector_fallback_builds_gdf_and_plots(monkeypatch):
+    import geopandas as gpd
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    z, x, y = 10, 163, 395  # an SF-area tile
+    blob = _real_mvt_tile(z, x, y)
+    archive = _build_archive([(z, x, y, blob)], TileType.MVT)
+    info = __import__(
+        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
+    ).pmtiles_info(archive)
+
+    captured = {}
+
+    def _fake_plot_static(gdf, **kw):
+        captured["gdf"] = gdf
+        captured["kw"] = kw
+        return "AX"
+
+    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
+    out = p._static_vector_fallback(archive, info, basemap=False)
+    assert out == "AX"
+    gdf = captured["gdf"]
+    assert isinstance(gdf, gpd.GeoDataFrame)
+    assert len(gdf) >= 1
+    assert gdf.crs.to_epsg() == 4326
+    # geometry reprojected into the SF tile's lon/lat extent
+    minx, miny, maxx, maxy = gdf.total_bounds
+    assert -123 < minx < maxx < -121 and 37 < miny < maxy < 39
