@@ -359,6 +359,48 @@ class OvertureClient:
         )
         return fetched
 
+    _CLOUD_SCHEMES = ("s3://", "s3a://", "abfs://", "abfss://", "gs://", "wasbs://")
+
+    def download(
+        self,
+        assets_df,
+        out_dir,
+        *,
+        bbox=None,
+        table=None,
+        validate=True,
+        max_tries=5,
+        partitions=None,
+    ) -> "DataFrame":
+        """Distributed download of discovered assets to out_dir (a Volume).
+
+        Default path: distributed read + AOI rewrite with bbox-struct pushdown
+        (when assets are cloud-readable). Fallback: whole-file HTTP-href download.
+        table=<name> UPSERTs the metadata to a Delta table keyed by
+        (theme, type, source). Serverless-safe; idempotent skip on valid targets.
+        """
+        assets = assets_df.select(*_DISCOVER_COLS)
+        n = partitions if partitions is not None else max(1, assets.count())
+
+        hrefs = [r["href"] for r in assets.select("href").distinct().collect()]
+        is_cloud = bool(hrefs) and all(
+            any(h.startswith(s) for s in self._CLOUD_SCHEMES)
+            or h.startswith("/")  # local Volume / FUSE path is Spark-readable
+            for h in hrefs
+        )
+
+        if is_cloud:
+            meta = self._download_distributed(
+                assets, out_dir, bbox=bbox, validate=validate, partitions=n
+            )
+        else:
+            meta = self._download_fallback(
+                assets, out_dir, validate=validate, max_tries=max_tries, partitions=n
+            )
+
+        # table= MERGE is added in Task 8; accept the kwarg but defer the merge.
+        return meta
+
     def discover(self, bbox, themes=None, release=None) -> "DataFrame":
         """One row per intersecting GeoParquet asset for the AOI.
 

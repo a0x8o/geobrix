@@ -207,3 +207,60 @@ def test_download_fallback_injected_fetcher(spark, tmp_path):
     assert os.path.exists(row["source"])
     assert row["source"] == row["path"]
     assert spark.read.parquet(row["source"]).count() == 2
+
+
+def test_download_routes_cloud_to_distributed(spark, tmp_path):
+    src = str(tmp_path / "cloudish.parquet")
+
+    # simulate a cloud asset with a local path that LOOKS like a cloud read target
+    spark.createDataFrame(
+        [Row(id=1, bbox=Row(xmin=-122.42, ymin=37.75, xmax=-122.41, ymax=37.76))]
+    ).write.mode("overwrite").parquet(src)
+    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    # local file path -> not a cloud scheme, so it routes to distributed-read anyway
+    # only when the caller forces it; here use a real local path and assert columns + idempotency
+    assets = spark.createDataFrame(
+        [
+            (
+                "buildings",
+                "building",
+                src,
+                [-122.52, 37.70, -122.36, 37.83],
+                "2024-07-01",
+            )
+        ],
+        schema,
+    )
+    out_dir = str(tmp_path / "dl")
+    meta = client.download(
+        assets, out_dir, bbox=(-122.45, 37.74, -122.40, 37.78), partitions=4
+    )
+    assert meta.columns == [
+        "theme",
+        "type",
+        "source",
+        "path",
+        "out_file_sz",
+        "is_out_file_valid",
+        "last_update",
+        "asset_bbox",
+        "release",
+        "href",
+    ]
+    first = meta.collect()
+    assert len(first) == 1 and first[0]["is_out_file_valid"] is True
+    # idempotent re-run: same target, still valid, no error
+    meta2 = client.download(
+        assets, out_dir, bbox=(-122.45, 37.74, -122.40, 37.78), partitions=4
+    )
+    assert meta2.collect()[0]["is_out_file_valid"] is True
