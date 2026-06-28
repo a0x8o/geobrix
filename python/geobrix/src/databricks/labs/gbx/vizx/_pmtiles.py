@@ -218,72 +218,27 @@ def _static_vector_fallback(data: bytes, info: dict, **plot_kw):
 
 
 def plot_pmtiles(
-    path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **map_kwargs
+    path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **kw
 ):
     """Render a .pmtiles archive inline in a Databricks/Jupyter notebook.
 
-    Interactive path (default, when the archive fits): a MapLibre GL JS +
-    pmtiles.js page (CDN-pinned) with the archive base64-embedded as an
-    in-browser FileSource, rendered via displayHTML — no tile server, no remote
-    range requests. Vector (MVT) -> a vector layer; raster (PNG/JPEG/WebP/AVIF)
-    -> a raster layer, auto-detected from the archive header.
+    Thin delegator to :func:`~databricks.labs.gbx.vizx._interactive.plot_interactive`
+    with a single :func:`~databricks.labs.gbx.vizx._layers.pmtiles_layer` wrapping
+    the archive. The ``style`` kwarg is forwarded to ``pmtiles_layer``; remaining
+    ``**kw`` (``basemap``, ``center``, ``zoom``, etc.) are forwarded to
+    ``plot_interactive``.
 
-    Static fallback (when the base64-embedded archive would exceed
-    ``max_embed_mb`` — base64 bloats ~33% — and ``fallback=True``, the default):
-    decode tiles on the driver and composite. Raster -> plot_raster; vector ->
-    decode MVT to geometries and plot_static over a contextily basemap.
-    ``fallback=False`` raises instead of degrading; ``max_embed_mb=0``
-    deliberately forces the static render (for GitHub-renderable notebooks).
-    ``style`` overrides the auto MapLibre style on the interactive path.
-    Archives with unsupported tile types raise ``ValueError`` immediately.
-    Requires the [vizx] extra for the static fallback.
-
-    On the static path, ``**map_kwargs`` are forwarded to the matching static
-    plotter: ``plot_raster`` for raster archives (PNG/JPEG/WebP/AVIF) or
-    ``plot_static`` for vector archives (MVT). Only keyword arguments valid for
-    that plotter are accepted — for example, ``basemap``, ``column``, ``cmap``,
-    ``title``, ``fig_w``/``fig_h`` are valid for ``plot_static``; ``plot_raster``
-    does not accept ``basemap`` (which is silently stripped). Passing an
-    unrecognised keyword for the matched plotter raises ``TypeError``.
-    ``map_kwargs`` are ignored on the interactive path.
+    Interactive path (default, when the archive fits within ``max_embed_mb``):
+    a MapLibre GL JS page with the archive base64-embedded — no tile server, no
+    remote range requests. Static fallback when oversized (``fallback=True``,
+    the default) or ``max_embed_mb=0`` to force it.
     """
-    from databricks.labs.gbx.pmtiles import pmtiles_info
-    from databricks.labs.gbx.vizx._interactive import _notebook_display_html
+    from databricks.labs.gbx.vizx._interactive import plot_interactive
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
 
-    data = _archive_bytes(path_or_bytes)
-    info = pmtiles_info(data)
-
-    tile_type = info["tile_type"]
-    if tile_type not in _SUPPORTED_TILE_TYPES:
-        raise ValueError(
-            f"plot_pmtiles: unsupported tile type {tile_type!r}. "
-            "Supported types: mvt, png, jpeg, webp, avif."
-        )
-
-    # Interactive by default. base64 inflates ~33%; compare the *embedded* size
-    # against the budget and only then degrade to the static render.
-    embed_mb = (len(data) * 4 / 3) / (1024 * 1024)
-    if embed_mb > max_embed_mb:
-        if not fallback:
-            raise ValueError(
-                f"plot_pmtiles: archive embeds to ~{embed_mb:.1f} MB which "
-                f"exceeds max_embed_mb={max_embed_mb}; pass fallback=True for a "
-                "static render or raise max_embed_mb (max_embed_mb=0 forces static)."
-            )
-        if _is_raster_type(info["tile_type"]):
-            return _static_raster_fallback(data, info, **map_kwargs)
-        return _static_vector_fallback(data, info, **map_kwargs)
-
-    archive_b64 = base64.b64encode(data).decode("ascii")
-    html = _build_pmtiles_html(archive_b64, info, style=style)
-    dh = _notebook_display_html()
-    if dh is not None:
-        dh(html)
-        return None
-    try:
-        from IPython.display import HTML, display
-
-        display(HTML(html))
-        return None
-    except Exception:  # noqa: BLE001 — no IPython: return the HTML string
-        return html
+    return plot_interactive(
+        [pmtiles_layer(path_or_bytes, style=style)],
+        max_embed_mb=max_embed_mb,
+        fallback=fallback,
+        **kw,
+    )

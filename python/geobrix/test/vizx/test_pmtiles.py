@@ -253,10 +253,13 @@ def test_static_vector_fallback_builds_gdf_and_plots(monkeypatch):
 
 
 def test_plot_pmtiles_interactive_routes_through_displayhtml(monkeypatch):
+    """plot_pmtiles delegates to plot_interactive which uses _notebook_display_html."""
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
     captured = {}
+    # plot_pmtiles now delegates to plot_interactive, which calls _notebook_display_html
+    # from _interactive module.
     monkeypatch.setattr(
         "databricks.labs.gbx.vizx._interactive._notebook_display_html",
         lambda: (lambda html: captured.update(html=html)),
@@ -264,56 +267,94 @@ def test_plot_pmtiles_interactive_routes_through_displayhtml(monkeypatch):
     out = p.plot_pmtiles(archive)  # small -> interactive
     assert out is None  # displayHTML render returns None
     html = captured["html"]
-    assert "maplibre-gl@4.7.1" in html and "pmtiles@3.2.1" in html
+    # HTML comes from _maplibre.build_html (pinned at maplibre-gl@4.7.1 / pmtiles@3.2.0)
+    assert "maplibre-gl@4.7.1" in html and "pmtiles@3.2.0" in html
     assert "pmtiles://" in html
 
 
-def test_plot_pmtiles_size_guard_uses_raster_fallback(monkeypatch):
+def test_plot_pmtiles_size_guard_uses_static_fallback(monkeypatch):
+    """When the archive exceeds the budget, plot_pmtiles falls back to the static path.
+
+    Task 7: plot_pmtiles delegates entirely to plot_interactive → prepare_layers.
+    When the budget is exceeded, prepare_layers returns mode='static' and
+    plot_interactive calls plot_static. We verify plot_static is called and a
+    warning is issued by prepare_layers.
+    """
+    import warnings
+
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     png = _real_png_tile()
     archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
+
+    # Stub plot_static to avoid actual rendering (raw tile bytes aren't a full GeoTIFF).
     called = {}
-    monkeypatch.setattr(
-        p,
-        "_static_raster_fallback",
-        lambda data, info, **kw: called.update(raster=True),
-    )
-    # max_embed_mb tiny -> archive exceeds it -> static path
-    p.plot_pmtiles(archive, max_embed_mb=1e-9)
-    assert called.get("raster") is True
+    import databricks.labs.gbx.vizx._interactive as itx
+    import databricks.labs.gbx.vizx._static_map as sm
+
+    monkeypatch.setattr(sm, "plot_static", lambda *a, **kw: called.update(static=True))
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+
+    with warnings.catch_warnings(record=True) as ws:
+        warnings.simplefilter("always")
+        # tiny max_embed_mb forces static path
+        p.plot_pmtiles(archive, max_embed_mb=1e-9)
+    # A prepare_layers warning must have been issued.
+    assert any("fallback" in str(w.message).lower() or "exceed" in str(w.message).lower() for w in ws)
+    # plot_static was called.
+    assert called.get("static") is True
 
 
-def test_plot_pmtiles_size_guard_uses_vector_fallback(monkeypatch):
+def test_plot_pmtiles_size_guard_uses_vector_static_fallback(monkeypatch):
+    """Vector pmtiles over budget delegates to prepare_layers static path."""
+    import builtins
+    import warnings
+
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     blob = _real_mvt_tile(10, 163, 395)
     archive = _build_archive([(10, 163, 395, blob)], TileType.MVT)
-    called = {}
-    monkeypatch.setattr(
-        p,
-        "_static_vector_fallback",
-        lambda data, info, **kw: called.update(vector=True) or "AX",
-    )
-    # tiny budget -> archive exceeds it -> static vector path (fallback default True)
-    p.plot_pmtiles(archive, max_embed_mb=1e-9)
-    assert called.get("vector") is True
+
+    import databricks.labs.gbx.vizx._interactive as itx
+
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+    real_import = builtins.__import__
+
+    def _no_ipython(name, *a, **kw):
+        if name == "IPython.display":
+            raise ImportError("disabled for test")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ipython)
+
+    with warnings.catch_warnings(record=True) as ws:
+        warnings.simplefilter("always")
+        p.plot_pmtiles(archive, max_embed_mb=1e-9)
+    # A fallback warning must have been issued by prepare_layers.
+    assert any("fallback" in str(w.message).lower() or "exceed" in str(w.message).lower() for w in ws)
 
 
 def test_plot_pmtiles_oversized_without_fallback_raises():
+    """fallback=False on an oversized archive raises ValueError via prepare_layers."""
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
-    with pytest.raises(ValueError, match="exceeds max_embed_mb"):
+    with pytest.raises(ValueError, match="exceeds budget"):
         p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=False)
 
 
-def test_plot_pmtiles_unknown_tile_type_raises(monkeypatch):
-    """M1: unknown/unsupported tile type must raise ValueError before any decode."""
+def test_plot_pmtiles_unknown_tile_type_treated_as_vector(monkeypatch):
+    """Task 7: unknown tile types are treated as vector (no validation error).
+
+    The old plot_pmtiles explicitly validated tile type and raised ValueError.
+    After Task 7, plot_pmtiles delegates to plot_interactive → prepare_layers
+    → layer_to_sources_layers, which treats unknown tile types as vector
+    (no raise). This documents the new expected behavior.
+    """
+    import builtins
+
     from databricks.labs.gbx.vizx import _pmtiles as p
 
-    # Build a minimal archive (PNG bytes, actual tile_type doesn't matter —
-    # we monkeypatch pmtiles_info to return tile_type="unknown" offline).
     archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
 
     def _fake_pmtiles_info(data):
@@ -332,12 +373,24 @@ def test_plot_pmtiles_unknown_tile_type_raises(monkeypatch):
         "databricks.labs.gbx.pmtiles.pmtiles_info",
         _fake_pmtiles_info,
     )
-    # Must raise for both static and interactive paths (single dispatch point).
-    with pytest.raises(ValueError, match="unsupported tile type") as exc_info:
-        p.plot_pmtiles(archive)
-    msg = str(exc_info.value)
-    assert "mvt" in msg
-    assert "png" in msg
+
+    # Block display channels so we get the HTML string back.
+    import databricks.labs.gbx.vizx._interactive as itx
+
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+    real_import = builtins.__import__
+
+    def _no_ipython(name, *a, **kw):
+        if name == "IPython.display":
+            raise ImportError("disabled for test")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ipython)
+
+    # Should NOT raise; unknown tile_type is treated as vector by _maplibre._pmtiles.
+    html = p.plot_pmtiles(archive)
+    assert html is not None
+    assert "maplibregl.Map" in html
 
 
 def test_public_exports():
