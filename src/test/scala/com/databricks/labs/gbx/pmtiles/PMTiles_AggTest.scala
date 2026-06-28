@@ -240,11 +240,13 @@ class PMTiles_AggTest extends PlanTest with SilentSparkSession {
         }
 
         // Additionally assert the two polygon origins are recovered near their input positions.
+        // Polygon 1 has x in [100, 200], polygon 2 has x in [300, 400].
+        // Use a gap midpoint (250) to separate the two polygons when scanning sorted x values.
         val sortedMinX = allCoords.map(_.x).sorted
         assert(math.abs(sortedMinX.head - 100.0) <= tolerance,
             s"first polygon minX expected ~100; got ${sortedMinX.head}")
-        assert(math.abs(sortedMinX.dropWhile(_ < 200.0).head - 300.0) <= tolerance,
-            s"second polygon minX expected ~300; got ${sortedMinX.dropWhile(_ < 200.0).head}")
+        assert(math.abs(sortedMinX.dropWhile(_ < 250.0).head - 300.0) <= tolerance,
+            s"second polygon minX expected ~300; got ${sortedMinX.dropWhile(_ < 250.0).head}")
     }
 
     // ── Raster duplicate-tileid regression (malformed-archive fix) ──────────────
