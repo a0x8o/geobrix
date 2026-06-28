@@ -89,8 +89,17 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   # -- GeoBrix: lightweight tier (option-1, default). Installed here so nothing is
   #    assumed pre-staged. For the heavyweight tier (option-2 below) attach the
   #    GeoBrix JAR + GDAL init script to a classic x86 cluster.
+  #
+  # Resilient two-step install (for WHL refreshes in the SAME session) — keep BOTH
+  # lines; do not collapse to one. Step 1 force-reinstalls WITHOUT deps so a freshly
+  # rebuilt wheel's bytes always replace the cached install even when the version
+  # string is unchanged (pip would otherwise treat same-version as "already satisfied"
+  # and skip it). Step 2 installs the EXTRAS without --no-deps so light/stac/vizx/
+  # overture dependencies resolve — a bare --no-deps install drops the extras and
+  # surfaces as ModuleNotFound at import. A `%restart_python` (next cell) then loads
+  # the fresh bytes. Same pattern as the eo-series / h3-rasterize examples.
   %pip install --quiet --disable-pip-version-check --force-reinstall --no-deps "geobrix @ file:///Volumes/geospatial_docs/geobrix/sample-data/geobrix-0.4.0-py3-none-any.whl"
-  %pip install --quiet "geobrix[light,stac,vizx] @ file:///Volumes/geospatial_docs/geobrix/sample-data/geobrix-0.4.0-py3-none-any.whl"
+  %pip install --quiet "geobrix[light,stac,vizx,overture] @ file:///Volumes/geospatial_docs/geobrix/sample-data/geobrix-0.4.0-py3-none-any.whl"
   %pip install --quiet rich
   ```
 
