@@ -4,6 +4,7 @@ import io
 
 import matplotlib
 import numpy as np
+import pytest
 from matplotlib.image import imsave
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
 from pmtiles.writer import Writer
@@ -242,3 +243,59 @@ def test_static_vector_fallback_builds_gdf_and_plots(monkeypatch):
     # geometry reprojected into the SF tile's lon/lat extent
     minx, miny, maxx, maxy = gdf.total_bounds
     assert -123 < minx < maxx < -121 and 37 < miny < maxy < 39
+
+
+def test_plot_pmtiles_interactive_routes_through_displayhtml(monkeypatch):
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
+    captured = {}
+    monkeypatch.setattr(
+        "databricks.labs.gbx.vizx._interactive._notebook_display_html",
+        lambda: (lambda html: captured.update(html=html)),
+    )
+    out = p.plot_pmtiles(archive)  # small -> interactive
+    assert out is None  # displayHTML render returns None
+    html = captured["html"]
+    assert "maplibre-gl@4.7.1" in html and "pmtiles@3.2.1" in html
+    assert "pmtiles://" in html
+
+
+def test_plot_pmtiles_size_guard_uses_raster_fallback(monkeypatch):
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    png = _real_png_tile()
+    archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
+    called = {}
+    monkeypatch.setattr(
+        p,
+        "_static_raster_fallback",
+        lambda data, info, **kw: called.update(raster=True),
+    )
+    # max_embed_mb tiny -> archive exceeds it -> static path
+    p.plot_pmtiles(archive, max_embed_mb=1e-9)
+    assert called.get("raster") is True
+
+
+def test_plot_pmtiles_size_guard_uses_vector_fallback(monkeypatch):
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    blob = _real_mvt_tile(10, 163, 395)
+    archive = _build_archive([(10, 163, 395, blob)], TileType.MVT)
+    called = {}
+    monkeypatch.setattr(
+        p,
+        "_static_vector_fallback",
+        lambda data, info, **kw: called.update(vector=True) or "AX",
+    )
+    # tiny budget -> archive exceeds it -> static vector path (fallback default True)
+    p.plot_pmtiles(archive, max_embed_mb=1e-9)
+    assert called.get("vector") is True
+
+
+def test_plot_pmtiles_oversized_without_fallback_raises():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
+    with pytest.raises(ValueError, match="exceeds max_embed_mb"):
+        p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=False)

@@ -12,6 +12,7 @@ static fallback. Driver-side only.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Union
 
@@ -208,3 +209,59 @@ def _static_vector_fallback(data: bytes, info: dict, **plot_kw):
         raise ValueError("plot_pmtiles: vector archive decoded to no geometries")
     gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
     return plot_static(gdf, **plot_kw)
+
+
+def plot_pmtiles(
+    path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **map_kwargs
+):
+    """Render a .pmtiles archive inline in a Databricks/Jupyter notebook.
+
+    Interactive path (default, when the archive fits): a MapLibre GL JS +
+    pmtiles.js page (CDN-pinned) with the archive base64-embedded as an
+    in-browser FileSource, rendered via displayHTML — no tile server, no remote
+    range requests. Vector (MVT) -> a vector layer; raster (PNG/JPEG/WebP/AVIF)
+    -> a raster layer, auto-detected from the archive header.
+
+    Static fallback (when the base64-embedded archive would exceed
+    ``max_embed_mb`` — base64 bloats ~33% — and ``fallback=True``, the default):
+    decode tiles on the driver and composite. Raster -> plot_raster; vector ->
+    decode MVT to geometries and plot_static over a contextily basemap.
+    ``fallback=False`` raises instead of degrading; ``max_embed_mb=0``
+    deliberately forces the static render (for GitHub-renderable notebooks).
+    ``map_kwargs`` flow to the chosen static plotter. ``style`` overrides the
+    auto MapLibre style on the interactive path. Requires the [vizx] extra for
+    the static fallback.
+    """
+    from databricks.labs.gbx.pmtiles import pmtiles_info
+    from databricks.labs.gbx.vizx._interactive import _notebook_display_html
+
+    data = _archive_bytes(path_or_bytes)
+    info = pmtiles_info(data)
+
+    # Interactive by default. base64 inflates ~33%; compare the *embedded* size
+    # against the budget and only then degrade to the static render.
+    embed_mb = (len(data) * 4 / 3) / (1024 * 1024)
+    if embed_mb > max_embed_mb:
+        if not fallback:
+            raise ValueError(
+                f"plot_pmtiles: archive embeds to ~{embed_mb:.1f} MB which "
+                f"exceeds max_embed_mb={max_embed_mb}; pass fallback=True for a "
+                "static render or raise max_embed_mb (max_embed_mb=0 forces static)."
+            )
+        if _is_raster_type(info["tile_type"]):
+            return _static_raster_fallback(data, info, **map_kwargs)
+        return _static_vector_fallback(data, info, **map_kwargs)
+
+    archive_b64 = base64.b64encode(data).decode("ascii")
+    html = _build_pmtiles_html(archive_b64, info, style=style)
+    dh = _notebook_display_html()
+    if dh is not None:
+        dh(html)
+        return None
+    try:
+        from IPython.display import HTML, display
+
+        display(HTML(html))
+        return None
+    except Exception:  # noqa: BLE001 — no IPython: return the HTML string
+        return html
