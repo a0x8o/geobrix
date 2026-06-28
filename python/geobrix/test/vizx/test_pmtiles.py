@@ -299,3 +299,12 @@ def test_plot_pmtiles_oversized_without_fallback_raises():
     archive = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
     with pytest.raises(ValueError, match="exceeds max_embed_mb"):
         p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=False)
+
+
+def test_public_exports():
+    import databricks.labs.gbx.vizx as vizx
+
+    assert hasattr(vizx, "plot_pmtiles")
+    assert hasattr(vizx, "plot_cog")
+    assert "plot_pmtiles" in vizx.__all__
+    assert "plot_cog" in vizx.__all__
