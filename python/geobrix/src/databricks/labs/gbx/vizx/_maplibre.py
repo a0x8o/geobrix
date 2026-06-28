@@ -344,15 +344,34 @@ def _raster(
 # ---------------------------------------------------------------------------
 
 
+def _extract_vector_layer_names(metadata: dict) -> list[str]:
+    """Extract declared vector-layer names from TileJSON-style metadata.
+
+    The standard TileJSON ``vector_layers`` key holds a list of objects each
+    with an ``"id"`` string.  Returns that list of ids (preserving order).
+    Falls back to an empty list when the key is absent or malformed.
+    """
+    layers = metadata.get("vector_layers", [])
+    if not isinstance(layers, list):
+        return []
+    names = []
+    for entry in layers:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+            names.append(entry["id"])
+    return names
+
+
 def _resolve_pmtiles_bytes_or_url(layer) -> dict:
     """Return a sidecar info dict for the pmtiles layer.
 
     Returns one of:
-    - ``{"mode": "url", "url": <str>, "tile_type": <str>}`` — when
-      ``layer.data`` is an ``http(s)://`` URL (no local bytes needed).
-    - ``{"mode": "embed", "bytes": <bytes>, "tile_type": <str>}`` — when
-      ``layer.data`` is a path or bytes archive; ``pmtiles_info`` is called
-      to detect the tile type.
+    - ``{"mode": "url", "url": <str>, "tile_type": <str>, "vector_layer_names": <list>}``
+      — when ``layer.data`` is an ``http(s)://`` URL (no local bytes needed).
+      ``vector_layer_names`` is empty because we cannot inspect a remote archive
+      without fetching it.
+    - ``{"mode": "embed", "bytes": <bytes>, "tile_type": <str>, "vector_layer_names": <list>}``
+      — when ``layer.data`` is a path or bytes archive; ``pmtiles_info`` is called
+      to detect the tile type and extract declared vector layer names from metadata.
     """
     from databricks.labs.gbx.pmtiles import pmtiles_info
 
@@ -365,20 +384,30 @@ def _resolve_pmtiles_bytes_or_url(layer) -> dict:
         # We cannot call pmtiles_info on a remote URL without fetching it.
         # Report tile_type as "unknown" for the url mode; the Task-5 HTML builder
         # can default to "vector" or the caller can supply a style.
-        return {"mode": "url", "url": data, "tile_type": "unknown"}
+        return {"mode": "url", "url": data, "tile_type": "unknown", "vector_layer_names": []}
 
     # Path on disk.
     if isinstance(data, str):
         with open(data, "rb") as f:
             raw = f.read()
         info = pmtiles_info(raw)
-        return {"mode": "embed", "bytes": raw, "tile_type": info["tile_type"]}
+        return {
+            "mode": "embed",
+            "bytes": raw,
+            "tile_type": info["tile_type"],
+            "vector_layer_names": _extract_vector_layer_names(info.get("metadata", {})),
+        }
 
     # Already bytes.
     if isinstance(data, (bytes, bytearray)):
         raw = bytes(data)
         info = pmtiles_info(raw)
-        return {"mode": "embed", "bytes": raw, "tile_type": info["tile_type"]}
+        return {
+            "mode": "embed",
+            "bytes": raw,
+            "tile_type": info["tile_type"],
+            "vector_layer_names": _extract_vector_layer_names(info.get("metadata", {})),
+        }
 
     raise TypeError(
         f"_resolve_pmtiles_bytes_or_url: unsupported data type "
@@ -415,12 +444,18 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
             }
         ]
     else:
+        # Derive the source-layer name from the archive's TileJSON metadata.
+        # `vector_layer_names` lists ids in declaration order; use the first.
+        # Fall back to "buildings" only when metadata carries no layer names
+        # (e.g. url-mode archives that cannot be pre-inspected).
+        vector_names = info.get("vector_layer_names", [])
+        source_layer = vector_names[0] if vector_names else "buildings"
         layers = [
             {
                 "id": f"{sid}-fill",
                 "type": "fill",
                 "source": sid,
-                "source-layer": "buildings",
+                "source-layer": source_layer,
                 "paint": {
                     "fill-color": layer.color or "#c33",
                     "fill-opacity": layer.opacity if layer.opacity is not None else 0.5,

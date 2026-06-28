@@ -48,8 +48,14 @@ def _tiny_geotiff_path(tmp_path):
     return str(p)
 
 
-def _build_pmtiles_archive(tile_type_str="mvt"):
-    """Build a minimal PMTiles archive with one dummy tile."""
+def _build_pmtiles_archive(tile_type_str="mvt", layer_name="buildings"):
+    """Build a minimal PMTiles archive with one dummy tile.
+
+    Args:
+        tile_type_str: ``"mvt"`` or ``"png"``.
+        layer_name:    The vector-layer id embedded in TileJSON metadata
+                       (ignored for raster archives but harmless to pass).
+    """
     from pmtiles.tile import Compression, TileType, zxy_to_tileid
     from pmtiles.writer import Writer
 
@@ -76,7 +82,7 @@ def _build_pmtiles_archive(tile_type_str="mvt"):
         "center_lat_e7": int(37.76 * 1e7),
     }
     w.write_tile(zxy_to_tileid(0, 0, 0), payload)
-    w.finalize(header, {"name": "test", "vector_layers": [{"id": "buildings"}]})
+    w.finalize(header, {"name": "test", "vector_layers": [{"id": layer_name}]})
     return buf.getvalue()
 
 
@@ -358,5 +364,39 @@ def test_unknown_kind_raises():
 
     layer = object.__new__(Layer)
     object.__setattr__(layer, "kind", "unknown_kind")
-    with pytest.raises((ValueError, AttributeError)):
+    with pytest.raises(ValueError):
         layer_to_sources_layers(layer, 0)
+
+
+# ---------------------------------------------------------------------------
+# pmtiles — source-layer derived from archive metadata (Fix 1)
+# ---------------------------------------------------------------------------
+
+
+def test_pmtiles_vector_source_layer_from_metadata():
+    """source-layer must be derived from the archive's vector_layers metadata,
+    not hardcoded.  Build an archive whose layer is named 'roads' and assert
+    the MapLibre fill layer carries source-layer='roads'."""
+    archive = _build_pmtiles_archive("mvt", layer_name="roads")
+    sources, layers, _ = layer_to_sources_layers(pmtiles_layer(archive), 0)
+    fill_layers = [l for l in layers if l.get("type") == "fill"]
+    assert fill_layers, "expected at least one fill layer for a vector PMTiles"
+    assert fill_layers[0]["source-layer"] == "roads", (
+        f"source-layer should be 'roads' (from archive metadata), "
+        f"got {fill_layers[0]['source-layer']!r}"
+    )
+
+
+def test_extract_vector_layer_names_unit():
+    """Unit test for _extract_vector_layer_names with a TileJSON-shaped dict."""
+    from databricks.labs.gbx.vizx._maplibre import _extract_vector_layer_names
+
+    assert _extract_vector_layer_names({}) == []
+    assert _extract_vector_layer_names({"vector_layers": []}) == []
+    assert _extract_vector_layer_names(
+        {"vector_layers": [{"id": "parks"}, {"id": "water"}]}
+    ) == ["parks", "water"]
+    # Malformed entries (no 'id') are skipped.
+    assert _extract_vector_layer_names(
+        {"vector_layers": [{"name": "bad"}, {"id": "good"}]}
+    ) == ["good"]
