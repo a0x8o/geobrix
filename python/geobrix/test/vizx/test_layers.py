@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 from databricks.labs.gbx.vizx._layers import (
     Layer, vector_layer, raster_layer, grid_layer, pmtiles_layer, as_layers,
@@ -25,3 +26,19 @@ def test_as_layers_coerces_single_and_list():
 def test_as_layers_bare_pmtiles_path():
     [lyr] = as_layers("/data/x.pmtiles")
     assert lyr.kind == "pmtiles"
+
+def test_as_layers_bare_pmtiles_magic_bytes():
+    [lyr] = as_layers(b"PMTiles\x03\x00\x00")
+    assert lyr.kind == "pmtiles"
+
+def test_as_layers_bare_raster_path():
+    [lyr] = as_layers("/data/scene.tif")
+    assert lyr.kind == "raster"
+
+def test_as_layers_bare_ndarray_is_raster():
+    [lyr] = as_layers(np.zeros((4, 4)))
+    assert lyr.kind == "raster"
+
+def test_as_layers_empty_list_raises():
+    with pytest.raises(ValueError):
+        as_layers([])

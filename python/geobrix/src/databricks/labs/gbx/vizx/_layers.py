@@ -1,5 +1,5 @@
 """Layer model for the unified VizX viewers (vector / raster / grid / pmtiles)."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 _VALID = {"vector", "raster", "grid", "pmtiles"}
@@ -59,6 +59,8 @@ def _looks_pmtiles(obj) -> bool:
 
 def as_layers(obj) -> list:
     """Coerce a Layer / list[Layer] / bare input into list[Layer]."""
+    if isinstance(obj, (list, tuple)) and len(obj) == 0:
+        raise ValueError("as_layers: no layers provided")
     if isinstance(obj, Layer):
         return [obj]
     if isinstance(obj, (list, tuple)) and obj and all(isinstance(x, Layer) for x in obj):
