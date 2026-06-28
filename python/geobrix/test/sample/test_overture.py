@@ -17,6 +17,7 @@ from pyspark.sql.types import (  # noqa: E402
     TimestampType,
 )
 
+import databricks.labs.gbx.sample.overture as ov  # noqa: E402
 from databricks.labs.gbx.sample.overture import (  # noqa: E402
     _META_COLS,
     OvertureClient,
@@ -463,8 +464,6 @@ def test_read_from_table_name(spark, tmp_path):
 
 def test_download_overture_aoi_one_shot(spark, tmp_path, monkeypatch):
     # Force the convenience fn's default client to use the fake opener (offline).
-    import databricks.labs.gbx.sample.overture as ov
-
     src = str(tmp_path / "aoi.parquet")
 
     spark.createDataFrame(

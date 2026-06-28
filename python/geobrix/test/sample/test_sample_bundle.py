@@ -36,6 +36,7 @@ def test_sample_package_all():
     assert hasattr(sample, "run_complete_bundle")
     assert set(sample.__all__) == {
         "OvertureClient",
+        "download_overture_aoi",
         "get_temp_dir",
         "get_volumes_path",
         "run_complete_bundle",

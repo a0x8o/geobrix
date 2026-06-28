@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from databricks.labs.gbx.ds.vector import VectorGbxReader, _ShapefileReader
+from databricks.labs.gbx.ds.vector import VectorGbxReader
 
 
 def _make_reader(path: str, driver: str = "ESRI Shapefile") -> VectorGbxReader:
@@ -48,9 +48,10 @@ def test_members_recursive_shapefiles(tmp_path):
     members = reader._members()
 
     basenames = {os.path.basename(m) for m in members}
-    assert basenames == {"a.shp", "b.shp"}, (
-        f"Expected {{a.shp, b.shp}} but got {basenames}; full members={members}"
-    )
+    assert basenames == {
+        "a.shp",
+        "b.shp",
+    }, f"Expected {{a.shp, b.shp}} but got {basenames}; full members={members}"
 
 
 def test_members_recursive_deeply_nested(tmp_path):
@@ -62,9 +63,9 @@ def test_members_recursive_deeply_nested(tmp_path):
     reader = _make_reader(str(tmp_path))
     members = reader._members()
 
-    assert any(m.endswith("deep.shp") for m in members), (
-        f"Expected deep.shp in members but got {members}"
-    )
+    assert any(
+        m.endswith("deep.shp") for m in members
+    ), f"Expected deep.shp in members but got {members}"
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +93,9 @@ def test_members_sidecars_excluded(tmp_path):
     members = reader._members()
 
     # Only the .shp file should be in members; sidecars are filtered out
-    assert all(m.endswith(".shp") or m.endswith(".shz") or m.endswith(".zip") for m in members), (
-        f"Unexpected sidecar in members: {members}"
-    )
+    assert all(
+        m.endswith(".shp") or m.endswith(".shz") or m.endswith(".zip") for m in members
+    ), f"Unexpected sidecar in members: {members}"
     assert any(m.endswith("only.shp") for m in members)
 
 
@@ -129,9 +130,7 @@ def test_members_gdb_dir_returns_self(tmp_path):
     reader = _make_reader(str(gdb), driver="OpenFileGDB")
     members = reader._members()
 
-    assert members == [str(gdb)], (
-        f"Expected [{gdb}] but got {members}"
-    )
+    assert members == [str(gdb)], f"Expected [{gdb}] but got {members}"
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +152,7 @@ def test_members_empty_dir_falls_back_to_path(tmp_path):
 # ---------------------------------------------------------------------------
 # Task B2 — schema-divergence error on multi-member shapefile directory
 # ---------------------------------------------------------------------------
+
 
 def _fake_info(fields, ogr_types):
     """Minimal pyogrio read_info dict for schema-check unit testing."""

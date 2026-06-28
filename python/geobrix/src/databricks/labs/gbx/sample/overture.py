@@ -271,8 +271,6 @@ class OvertureClient:
         )
 
         get_fn = self._get_fn  # None in production; injectable for tests
-        _validate = validate
-        _max_tries = max_tries
 
         row_schema = StructType(
             [
@@ -302,7 +300,7 @@ class OvertureClient:
             if os.path.exists(outpath) and _is_valid_parquet(outpath):
                 sz = os.path.getsize(outpath)
                 return (theme, type_, outpath, sz, True, asset_bbox, release, href)
-            for _ in range(max(1, _max_tries)):
+            for _ in range(max(1, max_tries)):
                 tmpd = tempfile.mkdtemp(prefix="gbx_overture_")
                 try:
                     local = os.path.join(tmpd, basename)
@@ -312,7 +310,7 @@ class OvertureClient:
                         for chunk in resp.iter_content(1024 * 1024):
                             if chunk:
                                 fh.write(chunk)
-                    ok = (not _validate) or _is_valid_parquet(local)
+                    ok = (not validate) or _is_valid_parquet(local)
                     if ok:
                         shutil.copyfile(local, outpath)
                         sz = os.path.getsize(outpath)
