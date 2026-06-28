@@ -192,6 +192,47 @@ def _resolve_gdf(
     return gpd.GeoDataFrame(pdf, geometry=geoms, crs=(srid or 4326))
 
 
+def _draw_one_layer(lyr, ax, *, max_rows=10_000, sample_seed=None, srid=None,
+                    legend=True):
+    """Draw a single Layer onto an existing matplotlib Axes (already in EPSG:3857).
+
+    Dispatches by lyr.kind:
+    - 'vector' / 'grid': resolve via _resolve_gdf, reproject to 3857, plot.
+    - 'raster': delegate to plot_cog (Task 2) with basemap=False.
+    """
+    if lyr.kind in ("vector", "grid"):
+        gdf = _resolve_gdf(
+            lyr.data,
+            lyr.geom_col if lyr.kind == "vector" else lyr.cellid_col,
+            lyr.grid_system if lyr.kind == "grid" else None,
+            max_rows,
+            srid,
+            lyr.grid_conf,
+            sample_seed,
+        )
+        plot_gdf = gdf.to_crs(3857) if gdf.crs is not None else gdf
+        alpha = lyr.opacity if lyr.opacity is not None else 0.8
+        kwargs = {"ax": ax, "alpha": alpha, "edgecolor": "face"}
+        if lyr.color is not None:
+            # Scalar color: geopandas disallows 'cmap' + 'color' together.
+            kwargs["color"] = lyr.color
+        else:
+            kwargs["cmap"] = lyr.cmap
+        if lyr.column is not None:
+            kwargs["column"] = lyr.column
+            kwargs["legend"] = legend
+        if lyr.width is not None:
+            kwargs["linewidth"] = lyr.width
+        if not lyr.fill:
+            kwargs["facecolor"] = "none"
+        plot_gdf.plot(**kwargs)
+    elif lyr.kind == "raster":
+        from databricks.labs.gbx.vizx._cog import plot_cog
+
+        plot_cog(lyr.data, band=lyr.band, basemap=False, ax=ax)
+    # 'pmtiles' not supported in the static compositor; silently skip.
+
+
 def plot_static(
     data,
     *,
@@ -217,11 +258,16 @@ def plot_static(
 ):
     """Render geometries / DGGS cells over a basemap as a static figure.
 
-    ``data`` is a Spark DataFrame or a geopandas.GeoDataFrame. Geometry columns
-    accept WKT/EWKT/WKB/EWKB and native GEOMETRY/GEOGRAPHY (decoded via the
-    shared parse_geom); set ``grid_system`` to treat the column as DGGS cell ids
-    instead -- ``'h3'`` / ``'quadbin'`` (lon/lat) or ``'bng'`` (EPSG:27700),
-    string or long. ``grid_system='custom'`` additionally requires
+    ``data`` accepts a Spark DataFrame, a geopandas.GeoDataFrame, a
+    :class:`~databricks.labs.gbx.vizx.Layer`, or a ``list[Layer]`` for
+    multi-layer compositing. When a list of Layers is given every layer is drawn
+    in order on a single :class:`matplotlib.axes.Axes` and the function returns
+    that axes.
+
+    Geometry columns accept WKT/EWKT/WKB/EWKB and native GEOMETRY/GEOGRAPHY
+    (decoded via the shared parse_geom); set ``grid_system`` to treat the column
+    as DGGS cell ids instead -- ``'h3'`` / ``'quadbin'`` (lon/lat) or ``'bng'``
+    (EPSG:27700), string or long. ``grid_system='custom'`` additionally requires
     ``grid_conf=`` (the grid-spec Row/dict that defines the custom grid); its CRS
     comes from the grid's ``srid`` (a custom grid with ``srid<=0`` has no CRS, so
     the basemap is skipped). The contextily basemap is rendered when
@@ -242,11 +288,48 @@ def plot_static(
     [vizx] extra.
     """
     from databricks.labs.gbx.vizx._env import assert_viz_available
+    from databricks.labs.gbx.vizx._layers import Layer, as_layers
 
     assert_viz_available()
 
     import matplotlib.pyplot as plt
 
+    # --- Layer-list path ---
+    # Detect a Layer / list[Layer] input and route through the multi-layer loop.
+    # A bare GeoDataFrame / Spark DataFrame / other coercible passes through
+    # as_layers too (wraps to a single vector_layer), so the legacy keyword
+    # arguments (column, geom_col, etc.) are applied onto that single layer.
+    is_layer_input = isinstance(data, Layer) or (
+        isinstance(data, (list, tuple)) and data and isinstance(data[0], Layer)
+    )
+
+    if is_layer_input:
+        lyrs = as_layers(data)
+        created = ax is None
+        if created:
+            _, ax = plt.subplots(1, figsize=(fig_w, fig_h))
+        for lyr in lyrs:
+            _draw_one_layer(lyr, ax, max_rows=max_rows, sample_seed=sample_seed,
+                            srid=srid, legend=legend)
+        if basemap:
+            try:
+                import contextily as cx
+
+                source = basemap_source or cx.providers.CartoDB.Positron
+                cx.add_basemap(ax, source=source, crs="EPSG:3857")
+            except Exception as exc:  # noqa: BLE001
+                warnings.warn(
+                    f"plot_static: basemap unavailable ({type(exc).__name__}: {exc}); "
+                    "rendering without basemap.",
+                    stacklevel=2,
+                )
+        # Compositor owns the title — set unconditionally so a per-layer plot_cog
+        # default ("COG") never leaks onto the composite.
+        ax.set_title(title or "")
+        ax.set_axis_off()
+        return ax
+
+    # --- Legacy single-data path (Spark DataFrame / GeoDataFrame / bare) ---
     gdf = _resolve_gdf(
         data, geom_col, grid_system, max_rows, srid, grid_conf, sample_seed
     )
