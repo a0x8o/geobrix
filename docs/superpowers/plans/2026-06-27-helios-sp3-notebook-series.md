@@ -24,6 +24,8 @@ These apply to every task; do not restate them per step, but honor them everywhe
 - **Notebooks validated in Docker** via `gbx:test:notebooks --path examples/helios/<file>.ipynb` (cell-by-cell, no kernel; the container must be started with `start_docker_with_volumes.sh` so `/Volumes` is mounted). Doc tests are the documentation source convention applies to `docs/tests/` code, not these example notebooks — but every notebook must execute green cell-by-cell in Docker against real sample data, with real asserted artifacts (a PMTiles archive exists on the Volume and `pmtiles_info` parses it; a plot returns a figure).
 - **Commit hygiene** — subject ≤72 chars, a WHY body for non-trivial commits, end with the `Co-authored-by: Isaac` trailer. One commit per task. Hold pushes (commit locally; push on the user's go).
 - **No placeholders / TODOs** in committed notebooks. Every cell has real narrative or real runnable code.
+- **Shipped default `INTERACTIVE_PLOTS = False`** (GitHub-renderable static images); `True` for live folium/MapLibre. All notebook plot calls route through the toggle-aware `config_nb` helpers (`show_pmtiles`, `show_cog`, and any demo plot wrappers), so the committed `.ipynb` renders fast static images on GitHub by default and flips to the interactive experience with one variable.
+- **Compose with Databricks-native spatial where natural.** GeoBrix tiling is an on-ramp to Databricks-native `ST_*` / H3; NB01 and NB03 weave native functions into the solar narrative where it reads naturally (roof geometry / H3 roof-density and slope-per-cell aggregation), NB02 deliberately does not (a pure raster basemap step). Factual framing, no marketing, no internal vocabulary.
 
 ---
 
@@ -53,7 +55,7 @@ These apply to every task; do not restate them per step, but honor them everywhe
 
 **Interfaces:**
 - *Consumes:* `from databricks.labs.gbx.sample.overture import OvertureClient` (`OvertureClient()`); `from databricks.labs.gbx.stac import StacClient`; `from databricks.labs.gbx.vizx import plot_pmtiles, plot_cog` + existing `plot_raster, plot_file, plot_static, cells_as_gdf`; `from databricks.labs.gbx.pmtiles import pmtiles_info`; `from databricks.labs.gbx.pyrx import functions as rx`, `from databricks.labs.gbx.pyvx import functions as vx`, `from databricks.labs.gbx.ds.register import register`.
-- *Produces (notebook globals every later NB relies on, by exact name):* `overture = OvertureClient()`, `stac_client = StacClient()`, `rx`, `vx`, `register`, `plot_pmtiles`, `plot_cog`, `pmtiles_info`, `set_conf_safe`, `FORCE_REBUILD`, `catalog_name="geospatial_docs"`, `schema_name="helios"`, `ETL_DIR=/Volumes/<cat>/<schema>/data`, `HELIOS_DIR=${ETL_DIR}/sf`, `SF_AOI_BBOX`, `SF_CITY_BBOX`, and series helpers `solar_score(...)`, `finalize_delta(...)`, `show_pmtiles(...)`, `show_cog(...)`.
+- *Produces (notebook globals every later NB relies on, by exact name):* `overture = OvertureClient()`, `stac_client = StacClient()`, `rx`, `vx`, `register`, `plot_pmtiles`, `plot_cog`, `pmtiles_info`, `plot_static`, `plot_interactive`, `set_conf_safe`, `FORCE_REBUILD`, `INTERACTIVE_PLOTS`, `catalog_name="geospatial_docs"`, `schema_name="helios"`, `ETL_DIR=/Volumes/<cat>/<schema>/data`, `HELIOS_DIR=${ETL_DIR}/sf`, `SF_AOI_BBOX`, `SF_CITY_BBOX`, and series helpers `solar_score(...)`, `finalize_delta(...)`, `show_pmtiles(...)`, `show_cog(...)`, `show_raster(...)`.
 
 Build the notebook cell-by-cell. Use real cell content (markdown text + python code) exactly as written below.
 
@@ -175,8 +177,13 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 
 - [ ] **Step 11 — code cell (viz + inspector imports):**
   ```python
-  # -- visualization: PMTiles + COG viewers (net-new), plus the raster helpers --
-  from databricks.labs.gbx.vizx import plot_pmtiles, plot_cog, plot_raster, plot_file, plot_static, cells_as_gdf
+  # -- visualization: PMTiles + COG viewers (net-new), plus the raster + vector helpers.
+  #    plot_static / plot_interactive back the INTERACTIVE_PLOTS toggle (static images for
+  #    GitHub by default; folium pan/zoom maps when True). See the helper cells below.
+  from databricks.labs.gbx.vizx import (
+      plot_pmtiles, plot_cog, plot_raster, plot_file, plot_static, plot_interactive,
+      cells_as_gdf,
+  )
   from databricks.labs.gbx.pmtiles import pmtiles_info       # driver-side PMTiles header inspector
   ```
 
@@ -185,6 +192,10 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   # -- rebuild control: when True, force re-create of tables / re-download by feeding
   #    the do_overwrite / skip-guards below. Set per-notebook after %run ./config_nb.
   FORCE_REBUILD = False
+
+  # Interactive folium maps are slow to render and heavy in result size.
+  # False (default; jobs + docs) -> fast static images. True -> interactive folium maps.
+  INTERACTIVE_PLOTS = False
 
   catalog_name = "geospatial_docs"
   schema_name = "helios"
@@ -226,8 +237,13 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
     suitability score for the terrain step (notebook 03).
   - `finalize_delta(df, tbl_name, ...)` — idempotent managed-Delta materializer
     (write-once unless `FORCE_REBUILD`), the Serverless-safe alternative to `.cache()`.
-  - `show_pmtiles(path)` / `show_cog(path)` — thin demo wrappers that print
-    `pmtiles_info(...)` header metadata before rendering with `plot_pmtiles` / `plot_cog`.
+  - `show_pmtiles(path)` / `show_cog(path)` / `show_raster(...)` — thin demo wrappers
+    that print `pmtiles_info(...)` header metadata then render through the
+    `INTERACTIVE_PLOTS` toggle: **False** (default; GitHub-renderable static images) calls
+    `plot_pmtiles(path, max_embed_mb=0, ...)` / `plot_cog(...)` / `plot_static(...)`;
+    **True** calls the interactive `plot_pmtiles(path, ...)` (MapLibre) and
+    `plot_interactive(...)` (folium) paths. Set `INTERACTIVE_PLOTS = True` in a notebook
+    (after `%run ./config_nb`) for live pan/zoom maps.
   ```
 
 - [ ] **Step 15 — code cell (`solar_score`):**
@@ -267,22 +283,39 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
       return out
   ```
 
-- [ ] **Step 17 — code cell (`show_pmtiles` / `show_cog`):**
+- [ ] **Step 17 — code cell (toggle-aware viewers: `show_pmtiles` / `show_cog` / `show_raster`):**
   ```python
   def show_pmtiles(path, **kw):
-      """Print the PMTiles header (tile_type, zoom range, bounds), then render inline."""
+      """Print the PMTiles header, then render through the INTERACTIVE_PLOTS toggle.
+
+      INTERACTIVE_PLOTS=False (default): plot_pmtiles(path, max_embed_mb=0, ...) forces
+      the GitHub-renderable static image. True: the interactive MapLibre map (default
+      plot_pmtiles path, base64-embedded in-browser FileSource).
+      """
       info = pmtiles_info(path)
       print(f"... pmtiles: type={info.get('tile_type')} "
             f"zoom={info.get('min_zoom')}-{info.get('max_zoom')} "
             f"bounds={info.get('bounds')}")
-      return plot_pmtiles(path, **kw)
+      if INTERACTIVE_PLOTS:
+          return plot_pmtiles(path, **kw)               # interactive MapLibre (default)
+      return plot_pmtiles(path, max_embed_mb=0, **kw)   # static render (max_embed_mb=0)
 
   def show_cog(path, **kw):
-      """Render a COG with plot_cog (rasterio overview read)."""
+      """Render a COG. plot_cog is static (rasterio overview read over a contextily
+      basemap) in both modes; the toggle is honored for API symmetry with show_pmtiles."""
       return plot_cog(path, **kw)
-  ```
 
-- [ ] **Step 18 (VALIDATION):** `gbx:test:notebooks --path examples/helios/config_nb.ipynb --log helios-config.log` in the Docker container (started with `start_docker_with_volumes.sh`). Note the `%pip`/`%restart_python` cells run in the runner's venv; the cell-by-cell runner pre-installs the light deps. Expected: every cell reports OK; the final cell defines `solar_score`, `finalize_delta`, `show_pmtiles`, `show_cog` without error; `SF_CITY_BBOX` printed. If `%pip` from the Volume wheel can't resolve in the runner venv (the runner pre-installs light deps), confirm the runner picks up `OvertureClient`/`plot_pmtiles` from the installed `geobrix` — if not, the env-lock work in SP1/SP2 must register the new modules; record the gap and proceed (config_nb is %run-only, exercised end-to-end in Task 4's full-series validation).
+  def show_raster(df_or_path, **kw):
+      """Render a raster/vector overlay through the toggle: plot_static (False, default)
+      or plot_interactive (True, folium). Accepts a Spark DataFrame of cells/geoms or a
+      file path, matching the underlying vizx helpers."""
+      if INTERACTIVE_PLOTS:
+          return plot_interactive(df_or_path, **kw)
+      return plot_static(df_or_path, **kw)
+  ```
+  > NOTE: `show_cog` honors `INTERACTIVE_PLOTS` only for call-site symmetry — per SP2, `plot_cog` is static-only by design (a COG is not a PMTiles archive; an interactive remote-raster source would need range requests, the very thing PMTiles base64 embedding avoids). Keep `show_cog` static in both modes; do not invent an interactive COG path.
+
+- [ ] **Step 18 (VALIDATION):** `gbx:test:notebooks --path examples/helios/config_nb.ipynb --log helios-config.log` in the Docker container (started with `start_docker_with_volumes.sh`). Note the `%pip`/`%restart_python` cells run in the runner's venv; the cell-by-cell runner pre-installs the light deps. Expected: every cell reports OK; the final cell defines `solar_score`, `finalize_delta`, `show_pmtiles`, `show_cog`, `show_raster` without error; `INTERACTIVE_PLOTS` defaults to `False` and `SF_CITY_BBOX` is printed. If `%pip` from the Volume wheel can't resolve in the runner venv (the runner pre-installs light deps), confirm the runner picks up `OvertureClient`/`plot_pmtiles` from the installed `geobrix` — if not, the env-lock work in SP1/SP2 must register the new modules; record the gap and proceed (config_nb is %run-only, exercised end-to-end in Task 4's full-series validation).
 - [ ] **Step 19 (commit):** `git add notebooks/examples/helios/config_nb.ipynb && git commit` — subject `feat(helios): add config_nb spine for SF solar tiling series`; body: WHY (shared %run setup: light tier, Overture+STAC clients, SF AOI, ETL dirs, series-only solar/Delta/viewer helpers). Trailer.
 
 ---
@@ -293,7 +326,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 - Create: `notebooks/examples/helios/01. Vector Engine (MVT).ipynb`
 
 **Interfaces:**
-- *Consumes (from `%run ./config_nb`):* `overture` (`OvertureClient`), `vx`, `register`, `plot_pmtiles`/`show_pmtiles`, `pmtiles_info`, `HELIOS_DIR`, `SF_CITY_BBOX`, `finalize_delta`, `FORCE_REBUILD`. Overture API: `overture.discover(SF_CITY_BBOX, themes=["buildings"])` → DataFrame `theme,type,href,asset_bbox,release`; `overture.download(assets_df, out_dir, *, table="overture_buildings_meta", validate=True, partitions=...)` → `theme,type,source,path,out_file_sz,is_out_file_valid,last_update,asset_bbox,release,href`; `overture.read(source, theme="buildings", type="building", bbox=SF_CITY_BBOX)` → GeoParquet rows with a geometry column. SQL: `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_pmtiles_agg`.
+- *Consumes (from `%run ./config_nb`):* `overture` (`OvertureClient`), `vx`, `register`, `plot_pmtiles`/`show_pmtiles`, `pmtiles_info`, `HELIOS_DIR`, `SF_CITY_BBOX`, `finalize_delta`, `FORCE_REBUILD`. Overture API: `overture.discover(SF_CITY_BBOX, themes=["buildings"])` → DataFrame `theme,type,href,asset_bbox,release`; `overture.download(assets_df, out_dir, *, table="overture_buildings_meta", validate=True, partitions=...)` → `theme,type,source,path,out_file_sz,is_out_file_valid,last_update,asset_bbox,release,href`; `overture.read(source, theme="buildings", type="building", bbox=SF_CITY_BBOX)` → GeoParquet rows with a geometry column. GeoBrix SQL: `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_pmtiles_agg`. Databricks-native SQL (the on-ramp composition): `st_geomfromwkb`, `st_area`, `st_centroid`, `st_x`, `st_y`, `h3_longlatash3`.
 - *Produces:* Volume dir `${HELIOS_DIR}/overture/` (downloaded GeoParquet), Delta table `overture_buildings_meta` (asset catalog), Delta table `sf_buildings_mvt_tiles` (per `(z,x,y)` MVT bytes), and the vector PMTiles archive `${HELIOS_DIR}/tiles/sf_buildings.pmtiles`.
 
 - [ ] **Step 1 — markdown cell (title + meta-narrative):**
@@ -309,6 +342,10 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   the whole pyramid into one **PMTiles** archive with `gbx_pmtiles_agg`, and views it
   inline with `plot_pmtiles`. The result is a single self-contained vector basemap of
   every candidate roof — the geometry layer the later notebooks score for solar yield.
+
+  Along the way we compose with **Databricks-native** `ST_*` and `H3` functions — GeoBrix
+  tiling is an on-ramp into the native spatial engine, not a replacement for it — to
+  quantify roof area and bin roofs into an H3 roof-density surface.
 
   > Runs on the **lightweight tier (Serverless)** by default. See `config_nb` for the
   > heavyweight switch.
@@ -382,6 +419,48 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   display(buildings.limit(5))
   ```
 
+- [ ] **Step 9b — markdown cell (native ST/H3: roof area + H3 roof density):**
+  ```markdown
+  ## 3b. Quantify candidate roof space with Databricks-native ST + H3
+
+  Before tiling, we use **Databricks-native** spatial functions on the same footprints —
+  GeoBrix tiling composes directly with the native engine. Native `st_area` /
+  `st_centroid` (over `st_geomfromwkb`) give each roof's **available area** and a point
+  to index; native `h3_longlatash3` bins those centroids into H3 cells so we can
+  aggregate **roof density and total roof area per cell** — a coarse "where are the
+  candidate solar surfaces concentrated?" view that complements the per-building tiles.
+  ```
+
+- [ ] **Step 9c — code cell (native ST roof metrics):**
+  ```python
+  # Native ST: parse WKB -> GEOMETRY, then area (m^2, planar in the layer CRS) + centroid.
+  # GeoBrix readers hand us a WKB geometry column; st_geomfromwkb bridges to native ST.
+  roofs = buildings.selectExpr(
+      "feature_id",
+      "geometry",
+      "st_area(st_geomfromwkb(geometry)) AS roof_area_m2",
+      "st_x(st_centroid(st_geomfromwkb(geometry))) AS lon",
+      "st_y(st_centroid(st_geomfromwkb(geometry))) AS lat",
+  )
+  display(roofs.orderBy(F.col("roof_area_m2").desc()).limit(5))
+  ```
+  > NOTE: `st_geomfromwkb`, `st_area`, `st_centroid`, `st_x`, `st_y` are Databricks-native ST built-ins (already used across GeoBrix docs, e.g. `docs/tests/python/api/sql_api.py`). Confirm the GeoBrix reader's geometry column is WKB (not EWKB/WKT); if it is already a native `GEOMETRY`, drop the `st_geomfromwkb(...)` wrapper. ST area is planar in the column CRS — for true m² either work in a projected CRS or use `GEOGRAPHY`/`st_area` semantics per the Databricks ST reference; this didactic step reports relative roof size. No placeholder — wire the real geometry encoding during implementation.
+
+- [ ] **Step 9d — code cell (native H3 roof-density aggregation):**
+  ```python
+  # Native H3: index each roof centroid to an H3 cell (res 11 ~ city-block scale) and
+  # aggregate roof count + total area per cell -> a roof-density surface.
+  H3_RES = 11
+  roof_density = (
+      roofs.selectExpr("*", f"h3_longlatash3(lon, lat, {H3_RES}) AS h3_cell")
+           .groupBy("h3_cell")
+           .agg(F.count("*").alias("n_roofs"),
+                F.sum("roof_area_m2").alias("total_roof_area_m2"))
+  )
+  display(roof_density.orderBy(F.col("total_roof_area_m2").desc()).limit(10))
+  ```
+  > NOTE: `h3_longlatash3(lng, lat, res)` is the Databricks-native point->H3 built-in (arg order is longitude, latitude; see the Databricks H3 reference / `docs/docs/databricks-spatial.mdx` H3_POINT_INDEX). Confirm the exact name + arg order against the H3 functions reference during implementation (`h3_longlatash3` is the standard; some surfaces expose `h3_pointash3` over a geometry). Native H3 requires Photon or Databricks SQL (Pro/Serverless). No placeholder.
+
 - [ ] **Step 10 — markdown cell (MVT pyramid):**
   ```markdown
   ## 4. Encode + pyramid to vector tiles
@@ -436,9 +515,11 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ```markdown
   ## 6. View the vector PMTiles inline
 
-  `plot_pmtiles` auto-detects the vector archive and renders the buildings as an
-  interactive MapLibre layer (streamed in-browser, no tile server). `pmtiles_info`
-  prints the header first.
+  `show_pmtiles` prints the `pmtiles_info` header, then renders through the
+  `INTERACTIVE_PLOTS` toggle (set in `config_nb`): the default **False** produces a
+  fast static image that renders on GitHub and the docs site; set `INTERACTIVE_PLOTS =
+  True` for an interactive MapLibre layer (streamed in-browser, no tile server).
+  `plot_pmtiles` auto-detects the vector archive in either mode.
   ```
 
 - [ ] **Step 15 — code cell (view):**
@@ -453,11 +534,13 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   - `overture_buildings_meta` (Delta) — the queryable asset catalog of downloaded GeoParquet.
   - `sf_buildings_mvt_tiles` (Delta) — one row per `(z, x, y)` vector tile.
   - `sf_buildings.pmtiles` (Volume) — a self-contained vector basemap of every candidate roof.
+  - A native **ST roof-area** table and an **H3 roof-density** aggregation — showing the
+    tiles compose directly with Databricks-native spatial.
 
   Next: **notebook 02** drapes NAIP aerial imagery behind these footprints as a visual basemap.
   ```
 
-- [ ] **Step 17 (VALIDATION):** `gbx:test:notebooks --path "examples/helios/01. Vector Engine (MVT).ipynb" --log helios-01.log` in Docker (with `/Volumes`). Because the runner remaps absolute Volume paths under a temp workdir by default, run with `--allow-absolute-reads --allow-absolute-writes` only if the Overture/sample data must come from the real Volume; otherwise rely on the remap + sample data. Expected: cells execute green; `sf_buildings.pmtiles` exists and `pmtiles_info(PMTILES_PATH)["tile_type"]` is the MVT type; `show_pmtiles` returns a rendered object (HTML or figure). If the network Overture catalog is unreachable in Docker, gate the discover/download cells behind an env check and fall back to a small committed sample GeoParquet under sample-data; record the assumption and keep the tiling+PMTiles+view cells live.
+- [ ] **Step 17 (VALIDATION):** `gbx:test:notebooks --path "examples/helios/01. Vector Engine (MVT).ipynb" --log helios-01.log` in Docker (with `/Volumes`). Because the runner remaps absolute Volume paths under a temp workdir by default, run with `--allow-absolute-reads --allow-absolute-writes` only if the Overture/sample data must come from the real Volume; otherwise rely on the remap + sample data. Expected: cells execute green; `sf_buildings.pmtiles` exists and `pmtiles_info(PMTILES_PATH)["tile_type"]` is the MVT type; `show_pmtiles` returns a rendered object (static image by default since `INTERACTIVE_PLOTS=False`); the native-ST roof-metrics + H3 roof-density cells produce non-empty results. If the network Overture catalog is unreachable in Docker, gate the discover/download cells behind an env check and fall back to a small committed sample GeoParquet under sample-data; record the assumption and keep the tiling+PMTiles+view cells live. NOTE: native `st_*`/`h3_longlatash3` need Databricks ST/H3 (Photon / Databricks SQL); the cell-by-cell Docker runner may lack them — if so, gate the native-ST/H3 cells behind a capability check (try the expr; skip with a printed note on failure) so tiling stays green, and record the gap. Resolve the exact native names in Task 7 Step 3.
 - [ ] **Step 18 (commit):** `git add "notebooks/examples/helios/01. Vector Engine (MVT).ipynb" && git commit` — subject `feat(helios): add NB01 Overture buildings to vector PMTiles`; body WHY. Trailer.
 
 ---
@@ -556,7 +639,9 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ## 2. Preview the source imagery
 
   `plot_file` renders the staged GeoTIFF straight from the Volume (auto-decimation,
-  per-band percentile stretch).
+  per-band percentile stretch). This is a static source preview (a raw source raster has
+  no tiled interactive form); the tiled PMTiles **product** is what the `INTERACTIVE_PLOTS`
+  toggle governs at the view step below.
   ```
 
 - [ ] **Step 7 — code cell (preview):**
@@ -642,6 +727,10 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 - [ ] **Step 16 — markdown cell (view):**
   ```markdown
   ## 7. View the raster PMTiles inline
+
+  `show_pmtiles` renders through the `INTERACTIVE_PLOTS` toggle — a static image by
+  default (GitHub/docs-renderable), or an interactive MapLibre raster layer when
+  `INTERACTIVE_PLOTS = True`.
   ```
 
 - [ ] **Step 17 — code cell (view):**
@@ -671,8 +760,8 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 - Create: `notebooks/examples/helios/03. Analytical Core (COG + STAC).ipynb`
 
 **Interfaces:**
-- *Consumes (from `%run ./config_nb`):* `rx`, `register`, `stac_client`, `plot_cog`/`show_cog`, `plot_pmtiles`/`show_pmtiles`, `pmtiles_info`, `solar_score`, `finalize_delta`, `HELIOS_DIR`, `SF_CITY_BBOX`, `FORCE_REBUILD`. SQL: `gbx_rst_cog_convert`, terrain `rst_terrainslope`/`rst_terrainaspect`/`rst_hillshade` (confirm registered names), `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_pmtiles_agg`.
-- *Produces:* Volume dir `${HELIOS_DIR}/dem/` (staged 3DEP DEM), Volume dir `${HELIOS_DIR}/cog/` (COGs), Delta table `sf_cog_catalog` (STAC catalog of the COGs), Delta table `sf_terrain` (slope/aspect/solar_score per tile), raster PMTiles `${HELIOS_DIR}/tiles/sf_hillshade.pmtiles`.
+- *Consumes (from `%run ./config_nb`):* `rx`, `register`, `stac_client`, `plot_cog`/`show_cog`, `plot_pmtiles`/`show_pmtiles`, `pmtiles_info`, `solar_score`, `finalize_delta`, `HELIOS_DIR`, `SF_CITY_BBOX`, `FORCE_REBUILD`. GeoBrix SQL: `gbx_rst_cog_convert`, terrain `rst_terrainslope`/`rst_terrainaspect`/`rst_hillshade` (confirm registered names), `gbx_rst_h3_rastertogridavg`, `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_pmtiles_agg`. Databricks-native SQL (the on-ramp composition): `h3_centeraswkb` (companions `h3_boundaryaswkb`/`h3_hexring`).
+- *Produces:* Volume dir `${HELIOS_DIR}/dem/` (staged 3DEP DEM), Volume dir `${HELIOS_DIR}/cog/` (COGs), Delta table `sf_cog_catalog` (STAC catalog of the COGs), Delta table `sf_terrain` (slope/aspect/hillshade tiles), Delta table `sf_solar_cells` (per-H3-cell avg slope/aspect + `solar_score` + native H3 cell geometry), raster PMTiles `${HELIOS_DIR}/tiles/sf_hillshade.pmtiles`.
 
 - [ ] **Step 1 — markdown cell (title + meta-narrative):**
   ```markdown
@@ -684,9 +773,15 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   **slope** and **aspect** (south-facing, gently sloped wins). This notebook stages a
   **USGS 3DEP** DEM for San Francisco, converts it to **Cloud-Optimized GeoTIFFs** with
   `gbx_rst_cog_convert`, **catalogs the COGs into a queryable STAC Delta table** with
-  `StacClient`, derives slope/aspect/hillshade, applies a `solar_score`, and renders the
-  hillshade as PMTiles. The COG + STAC catalog is the analysis-ready, time-travel-friendly
-  artifact; the hillshade PMTiles is the human-readable relief view.
+  `StacClient`, derives slope/aspect/hillshade, aggregates them into a per-**H3-cell**
+  `solar_score` index (composing with Databricks-native H3), and renders the hillshade as
+  PMTiles. The COG + STAC catalog is the analysis-ready, time-travel-friendly artifact;
+  the H3 solar-suitability cells are the grid-indexed analytical layer; the hillshade
+  PMTiles is the human-readable relief view.
+
+  > GeoBrix tiling and raster→grid aggregation are an on-ramp into Databricks-native
+  > spatial: the H3 `cellid` we produce is a standard native id you can join and render
+  > with native H3 functions.
 
   > Runs on the **lightweight tier (Serverless)** by default.
   ```
@@ -843,11 +938,53 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   )
   sf_terrain = finalize_delta(terrain, "sf_terrain", do_display=True)
   print("... slope / aspect / hillshade tiles materialized")
-  # Per-pixel solar scoring is a downstream step on tessellated/gridded slope+aspect;
-  # solar_score(slope_col, aspect_col) is wired for the gridded form (see notebook 01's
-  # grid join pattern). Shown here as the scoring expression we'd apply per cell.
+  # solar_score(slope_col, aspect_col) is applied per H3 cell in the next step (5b),
+  # where slope+aspect are aggregated onto an H3 grid via gbx_rst_h3_rastertogridavg.
   ```
   > NOTE: confirm the registered terrain function names (`rst_terrainslope`/`rst_slope`, `rst_terrainaspect`/`rst_aspect`, `rst_hillshade`) and whether they take a CRS-scale arg, against `docs/docs/api/raster-functions.mdx`. The repo memory "Terrain CRS-scale GDAL-normal" notes slope/hillshade auto-scale from CRS — no manual `-s`. Wire the real names; no placeholder.
+
+- [ ] **Step 13b — markdown cell (native H3 solar-suitability index):**
+  ```markdown
+  ## 5b. Aggregate slope + aspect into a per-H3-cell solar-suitability index
+
+  GeoBrix raster→grid aggregation bins the slope and aspect rasters onto **H3 cells**
+  (`rst_h3_rastertogridavg`), emitting a standard H3 integer `cellid` per cell. Because
+  that `cellid` is a native H3 id, the result joins and renders directly with
+  **Databricks-native H3** functions — `h3_centeraswkb` / `h3_boundaryaswkb` for cell
+  geometry, `h3_hexring` for neighborhoods. We apply `solar_score(slope, aspect)` (from
+  `config_nb`) per cell to get a coarse south-facing-gentle-slope suitability surface.
+  This is the analytical payoff: a queryable, grid-indexed solar-suitability layer that
+  composes with native H3 and the NB01 roof-density cells on the same index.
+  ```
+
+- [ ] **Step 13c — code cell (raster→H3 grid + solar score + native H3 geometry):**
+  ```python
+  H3_RES = 11
+  # GeoBrix raster->H3 grid aggregation: mean slope + mean aspect per H3 cell.
+  cog.createOrReplaceTempView("sf_cog_tile")
+  cells = spark.sql(f"""
+      SELECT s.cellID AS cellid, s.measure AS avg_slope, a.measure AS avg_aspect
+      FROM (SELECT t.cellID, t.measure
+              FROM sf_cog_tile,
+                   LATERAL gbx_rst_h3_rastertogridavg(rst_terrainslope(tile), {H3_RES}) t) s
+      JOIN (SELECT t.cellID, t.measure
+              FROM sf_cog_tile,
+                   LATERAL gbx_rst_h3_rastertogridavg(rst_terrainaspect(tile), {H3_RES}) t) a
+        ON s.cellID = a.cellID
+  """)
+  # solar_score expects degree columns; alias to its defaults.
+  scored = cells.select(
+      "cellid", "avg_slope", "avg_aspect",
+      solar_score(slope_col="avg_slope", aspect_col="avg_aspect").alias("solar_score"),
+  )
+  # Native H3: cellid is a standard H3 id -> native cell geometry for joins/rendering.
+  scored = scored.selectExpr(
+      "*", "h3_centeraswkb(cellid) AS cell_center_wkb"
+  )
+  sf_solar_cells = finalize_delta(scored, "sf_solar_cells")
+  display(sf_solar_cells.orderBy(F.col("solar_score").desc()).limit(10))
+  ```
+  > NOTE: confirm the GeoBrix raster→H3 grid function name + LATERAL output columns (`gbx_rst_h3_rastertogridavg` and its `cellID`/`measure` fields) against `docs/docs/api/raster-functions.mdx` (the `rst_h3_rastertogrid*` family) and the registered terrain names (`rst_terrainslope`/`rst_terrainaspect`). `h3_centeraswkb(cellid)` is the Databricks-native H3 cell-center built-in (companion: `h3_boundaryaswkb`, `h3_hexring`); confirm the exact native name + that it accepts an integer cell id against the Databricks H3 functions reference. Native H3 requires Photon or Databricks SQL. No placeholder — wire the real signatures.
 
 - [ ] **Step 14 — markdown cell (hillshade → PMTiles):**
   ```markdown
@@ -888,7 +1025,9 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ## What we built — and the full picture
 
   - `sf_cog_catalog` (Delta) — the queryable STAC catalog of analysis-ready COGs.
-  - `sf_terrain` (Delta) — slope / aspect / hillshade tiles, ready for `solar_score`.
+  - `sf_terrain` (Delta) — slope / aspect / hillshade tiles.
+  - `sf_solar_cells` (Delta) — per-H3-cell avg slope/aspect + `solar_score`, with native
+    H3 cell geometry — joins directly with the NB01 roof-density cells on the same index.
   - `sf_hillshade.pmtiles` (Volume) — the relief view.
 
   Across the series we built three PMTiles layers over one SF AOI — **buildings**
@@ -899,7 +1038,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   all on Databricks.
   ```
 
-- [ ] **Step 18 (VALIDATION):** `gbx:test:notebooks --path "examples/helios/03. Analytical Core (COG + STAC).ipynb" --log helios-03.log` in Docker. Expected: green cells; `sf_dem_cog.tif` exists and `plot_cog` renders; `sf_cog_catalog`/`sf_terrain` tables exist; `sf_hillshade.pmtiles` exists and `pmtiles_info` reports a raster type. The DEM staging helper already falls back to the staged SRTM tile offline, so this notebook should validate fully in Docker against the committed sample DEM.
+- [ ] **Step 18 (VALIDATION):** `gbx:test:notebooks --path "examples/helios/03. Analytical Core (COG + STAC).ipynb" --log helios-03.log` in Docker. Expected: green cells; `sf_dem_cog.tif` exists and `plot_cog` renders; `sf_cog_catalog`/`sf_terrain`/`sf_solar_cells` tables exist (`sf_solar_cells` has a `solar_score` column and a native-H3 `cell_center_wkb`); `sf_hillshade.pmtiles` exists and `pmtiles_info` reports a raster type. The DEM staging helper already falls back to the staged SRTM tile offline, so this notebook should validate fully in Docker against the committed sample DEM. NOTE: native H3 (`h3_centeraswkb`) needs Photon / Databricks SQL; the cell-by-cell Docker runner may not have native H3 registered — if so, gate the native-H3 columns behind a capability check (try the expr, fall back to skipping the `cell_center_wkb` column) so the rest of the notebook stays green, and record the gap. The GeoBrix raster→grid aggregation + `solar_score` run in either environment.
 - [ ] **Step 19 (commit):** `git add "notebooks/examples/helios/03. Analytical Core (COG + STAC).ipynb" && git commit` — subject `feat(helios): add NB03 DEM to COG+STAC + hillshade PMTiles`; body WHY. Trailer.
 
 ---
@@ -915,13 +1054,13 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   - **Title + one-paragraph intro** — "Helios — Distributed Tiling to PMTiles" framing: one SF AOI, three layers (buildings/MVT, NAIP/XYZ, terrain/COG+STAC), all to PMTiles, solar site-selection narrative. Link to GeoBrix docs.
   - **Lightweight-tier blockquote** — light `[light,stac,vizx]` default on Serverless; heavyweight switch via option-2; link Execution Tiers. (Copy the phrasing pattern from h3-rasterize/eo-series.)
   - **Data-source blockquote** — Overture Maps (buildings) via `OvertureClient`; NAIP + USGS 3DEP via notebook helpers from Planetary Computer / AWS Open Data, with the SRTM offline fallback; all staged to the Volume idempotently.
-  - **Notebooks at a glance** — three `###` subsections (01/02/03), each with `![...](../../../resources/images/helios-0N.png)` and 3 bullet highlights (distributed fan-out, the key functions, the produced PMTiles artifact). Stress the distributed parallelism advantage over single-node tile generation (factual).
+  - **Notebooks at a glance** — three `###` subsections (01/02/03), each with `![...](../../../resources/images/helios-0N.png)` and 3 bullet highlights (distributed fan-out, the key functions, the produced PMTiles artifact). Stress the distributed parallelism advantage over single-node tile generation (factual). For NB01 and NB03, one highlight notes the **Databricks-native** composition (NB01: ST roof area + H3 roof density; NB03: H3 per-cell `solar_score`) — the on-ramp framing, factual, not marketing.
   - **Files** table — `config_nb.ipynb` + the three numbered notebooks + their one-line purpose (mirror the eo-series Files table wording).
   - **Prerequisites** — DBR 17.3/18 LTS or Serverless (env v5+); GeoBrix 0.4.0 `[light,stac,vizx]` wheel; UC `catalog_name`/`schema_name` + a `data` Volume; heavyweight x86 + JAR + GDAL note.
-  - **Run order** — open config_nb, set catalog/schema, run 01→02→03; each starts `%run ./config_nb`; `FORCE_REBUILD=True` to rebuild.
+  - **Run order** — open config_nb, set catalog/schema, run 01→02→03; each starts `%run ./config_nb`; `FORCE_REBUILD=True` to rebuild. One line: the notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast static maps on GitHub — set `INTERACTIVE_PLOTS = True` (in `config_nb` or after `%run`) for interactive folium/MapLibre maps.
   - **Data flow** — an ASCII flow (the catchy data→tile→PMTiles spine), see Step 2.
   - **Serverless execution strategy** — copy the eo-series section's substance (no `spark.conf` tuning outside `set_conf_safe`, `repartition(N, col)` not number-only, no `.cache()` → write Delta, sequential Volume I/O), trimmed to this series.
-  - **Key GeoBrix / Databricks functions shown** — `OvertureClient.discover/download/read`; `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`; `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, terrain; `gbx_pmtiles_agg`; `plot_pmtiles`, `plot_cog`, `pmtiles_info`; `StacClient`.
+  - **Key GeoBrix / Databricks functions shown** — `OvertureClient.discover/download/read`; `gbx_st_asmvt`, `gbx_st_asmvt_pyramid`; `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, `gbx_rst_h3_rastertogridavg`, terrain; `gbx_pmtiles_agg`; `plot_pmtiles`, `plot_cog`, `pmtiles_info`; `StacClient`. Composed with **Databricks-native** spatial (the on-ramp): `st_geomfromwkb`/`st_area`/`st_centroid` for roof metrics (NB01), `h3_longlatash3` for roof density (NB01), `h3_centeraswkb` for H3 solar-suitability cell geometry (NB03).
   - **Gotchas** — PMTiles read is driver-side only (no Spark read); Overture cloud-path read vs HTTP-href fallback; NAIP/3DEP network reachability + SRTM fallback; base64 embed size guard on `plot_pmtiles` (>64 MB → static); Serverless repartition-by-column.
   - **Related resources** — links to the [Helios docs page], [EO-Series], [H3 Rasterize], RasterX/VectorX/VizX/PMTiles API pages.
 - [ ] **Step 2:** Embed this ASCII data flow:
@@ -962,7 +1101,8 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   - `# Helios — Distributed Tiling to PMTiles` + the one-paragraph intro (SF AOI, three layers, solar narrative, on-ramp-to-Databricks-native framing where natural).
   - `:::tip View on GitHub` admonition → `https://github.com/databrickslabs/geobrix/tree/main/notebooks/examples/helios`.
   - `:::info Runs on the lightweight tier (Serverless) by default` admonition (copy the eo-series wording; light `[light,stac,vizx]`, heavyweight option-2 switch, `set_conf_safe`, Execution Tiers link).
-  - `:::note` on the PMTiles viewer (driver-side render, base64 in-browser FileSource, >64 MB static fallback) — link the [VizX](../api/vizx) and [PMTiles](../api/pmtiles-functions) pages.
+  - `:::note` on the PMTiles viewer (driver-side render, base64 in-browser FileSource, >64 MB static fallback) — link the [VizX](../api/vizx) and [PMTiles](../api/pmtiles-functions) pages. Add a one-line note that the notebooks ship with `INTERACTIVE_PLOTS = False` for GitHub-renderable static maps and that readers can set `INTERACTIVE_PLOTS = True` for interactive folium/MapLibre maps.
+  - `:::tip` (or a sentence in `## Run order`) — GeoBrix tiling composes with Databricks-native `ST_*`/H3 (the on-ramp): NB01 uses native ST roof area + H3 roof density, NB03 builds a per-H3-cell `solar_score`. Factual, no internal vocabulary.
   - `## Notebooks at a glance` — three `###` subsections with `![...](../../../resources/images/helios-0N.png)` and 3 bullets each (same content as the README highlights).
   - `## Files` table (config_nb + 3 notebooks).
   - `## Prerequisites`, `## Run order`, `## Data flow` (the same ASCII flow as the README), `## Key GeoBrix / Databricks functions shown`, `## Gotchas` — all mirroring eo-series.mdx, trimmed to Helios.
@@ -987,7 +1127,7 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
   ```
   Tail each log; assert every cell reports OK and the three `*.pmtiles` archives + the COG exist. NOTE: the cell-by-cell runner does not chain `%run` across separate invocations — if a numbered notebook depends on config_nb globals, the runner must `exec` config_nb first (it handles `%run` by inlining). Confirm the runner inlines `%run ./config_nb`; if it does not, add a `notebooks/tests/examples/` thin pytest harness that execs config_nb then the notebook in one interpreter (mirror an existing harness) — fix the harness, do not work around in the notebook.
 - [ ] **Step 2 (doc-voice final sweep):** `grep -rniE "wave [0-9]+|wave-[0-9]+" docs/docs/notebooks/helios.mdx` **must be empty**. Also sweep the notebooks + README: `grep -rniE "wave [0-9]+|subagent|dispatch|\bSP[0-9]\b|sub-project|orchestrator" notebooks/examples/helios/ docs/docs/notebooks/helios.mdx` — empty. Fix any leak inline and amend the owning task's commit (or a small `docs(helios): scrub internal vocabulary` commit).
-- [ ] **Step 3 (binding/registered-name confirmation):** Confirm every SQL name used in the notebooks exists in `docs/tests-function-info/registered_functions.txt` (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, `gbx_pmtiles_agg`, and the terrain names) and that the pyrx/pyvx Python wrappers used (`rx.rst_fromcontent`, `rx.rst_to_webmercator`, `rx.rst_cog_convert`, `rx.rst_terrainslope`/etc., `vx.*`) match real bindings. Where a NOTE in Tasks 2–4 flagged an unconfirmed signature, resolve it now against the API mdx + registration source and patch the notebook cell to the real signature. No placeholder ships.
+- [ ] **Step 3 (binding/registered-name confirmation):** Confirm every **GeoBrix** SQL name used in the notebooks exists in `docs/tests-function-info/registered_functions.txt` (`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`, `gbx_rst_to_webmercator`, `gbx_rst_xyzpyramid`, `gbx_rst_cog_convert`, `gbx_rst_h3_rastertogridavg`, `gbx_pmtiles_agg`, and the terrain names) and that the pyrx/pyvx Python wrappers used (`rx.rst_fromcontent`, `rx.rst_to_webmercator`, `rx.rst_cog_convert`, `rx.rst_terrainslope`/etc., `vx.*`) match real bindings. Separately confirm the **Databricks-native** names the on-ramp cells call (`st_geomfromwkb`, `st_area`, `st_centroid`, `st_x`, `st_y`, `h3_longlatash3`, `h3_centeraswkb`) against the Databricks ST / H3 SQL functions reference and `docs/docs/databricks-spatial.mdx` — these are Databricks built-ins, NOT in `registered_functions.txt`, so the binding-parity check does not cover them; verify name + arg order (esp. `h3_longlatash3(lng, lat, res)`) and the geometry encoding the GeoBrix reader emits (WKB vs already-native GEOMETRY). Where a NOTE in Tasks 2–4 flagged an unconfirmed signature (GeoBrix or native), resolve it now and patch the notebook cell to the real signature. No placeholder ships.
 - [ ] **Step 4 (capture validated gains — standing practice):** If building/validating any notebook surfaced a tiling-path improvement (e.g. an XYZ/MVT pyramid or `pmtiles_agg` speedup, a Serverless repartition fix, a COG-convert windowing win), capture it per the spec's performance methodology:
   - Create (if absent) `docs/superpowers/performance/README.md` (index) and one pattern file `docs/superpowers/performance/<slug>.md` with: problem → symptom/signature → the fix → applicability matrix (light-similar fns / heavy same+similar fns, verdict recorded even when "not applicable") → evidence/bench numbers → canonical code refs.
   - Add a paired thin pointer memory (slug + one line) `[[linking]]` to that corpus file (keep `MEMORY.md` index entries one line; the file is over the size limit, so do not bloat it).
@@ -999,8 +1139,15 @@ Build the notebook cell-by-cell. Use real cell content (markdown text + python c
 
 ## Self-review against the spec (SP3 + cross-cutting)
 
-- **Coverage:** config_nb spine ✓ (Task 1), NB01 MVT ✓ (Task 2), NB02 XYZ ✓ (Task 3), NB03 COG+STAC ✓ (Task 4), README ✓ (Task 5), helios.mdx + sidebar ✓ (Task 6), full-series Docker validation + doc-voice grep + gains capture ✓ (Task 7), diagrams ✓ (Task 0). One SF AOI ✓; solar narrative ✓; per-notebook data→tile→PMTiles diagram ✓ (Task 0 generates the committed PNGs); ample plotting ✓ (`plot_file`/`plot_cog`/`show_pmtiles` in each NB); series-only helpers in config_nb ✓ (`solar_score`, `finalize_delta`, `show_pmtiles`/`show_cog`); no SP1/SP2 re-implementation ✓ (consumed only).
-- **Type consistency with pinned SP1/SP2 signatures:** `OvertureClient().discover(bbox, themes=...)`, `.download(assets_df, out_dir, *, table=..., validate=..., partitions=...)` returning `theme,type,source,path,...`, `.read(source, theme=, type=, bbox=)` — used verbatim in NB01. `plot_pmtiles(path, ...)`, `plot_cog(path, ...)`, `pmtiles_info(path)` — used verbatim. MERGE key `(theme,type,source)` referenced in NB01 narrative.
-- **Placeholder scan:** every cell has real narrative + real code; the few unconfirmed SQL signatures are flagged with an explicit "confirm + wire the real signature, no placeholder" NOTE and are resolved in Task 7 Step 3 before ship.
-- **Doc voice:** README + mdx avoid internal vocabulary; Task 5/6/7 grep gates enforce it (QC `internals-leak`).
-- **Validation rigor:** each notebook task ends in a concrete Docker `gbx:test:notebooks` run with asserted artifacts (PMTiles archive exists + `pmtiles_info` parses + plot renders), not just "should work."
+- **Coverage:** config_nb spine ✓ (Task 1), NB01 MVT ✓ (Task 2), NB02 XYZ ✓ (Task 3), NB03 COG+STAC ✓ (Task 4), README ✓ (Task 5), helios.mdx + sidebar ✓ (Task 6), full-series Docker validation + doc-voice grep + gains capture ✓ (Task 7), diagrams ✓ (Task 0). One SF AOI ✓; solar narrative ✓; per-notebook data→tile→PMTiles diagram ✓ (Task 0 generates the committed PNGs); ample plotting ✓ (`plot_file`/`plot_cog`/`show_pmtiles` in each NB); series-only helpers in config_nb ✓ (`solar_score`, `finalize_delta`, `show_pmtiles`/`show_cog`/`show_raster`); no SP1/SP2 re-implementation ✓ (consumed only).
+- **Type consistency with pinned SP1/SP2 signatures:** `OvertureClient().discover(bbox, themes=...)`, `.download(assets_df, out_dir, *, table=..., validate=..., partitions=...)` returning `theme,type,source,path,...`, `.read(source, theme=, type=, bbox=)` — used verbatim in NB01. `plot_pmtiles(path, ...)`, `plot_cog(path, ...)`, `pmtiles_info(path)` — used verbatim; the toggle helpers use the pinned `plot_pmtiles(path, max_embed_mb=0, ...)` static form from SP2 (where `max_embed_mb=0` forces the static render) and `plot_cog` stays static-only per the SP2 decision. `plot_static`/`plot_interactive` imported from vizx for the `show_raster` toggle.
+- **`INTERACTIVE_PLOTS` toggle (Refinement 1):** added to `config_nb` Step 12 (rebuild-control cell, next to `FORCE_REBUILD`), default `False` with the exact required comment. Viz imports (Step 11) add `plot_interactive`. Toggle-aware helpers (`show_pmtiles`/`show_cog`/`show_raster`, Step 17) branch on it — static (`plot_pmtiles(..., max_embed_mb=0)` / `plot_static` / `plot_cog`) by default, interactive (`plot_pmtiles(...)` MapLibre / `plot_interactive` folium) when `True`. NB01 view (Step 14 md + Step 15 `show_pmtiles`) and NB02 view (Step 16 md + Step 17 `show_pmtiles`) and NB03 views (`show_cog`/`show_pmtiles`) all route through the helpers; `plot_file` source-previews are intentionally left static (a raw source raster has no tiled interactive form, noted in NB02 Step 6). Global Constraint + README Run-order line + helios.mdx `:::note` carry the one-line reader instruction.
+- **Native ST/H3 injection (Refinement 2) — where, and where NOT:**
+  - **NB01 (injected):** native `st_geomfromwkb` + `st_area`/`st_centroid`/`st_x`/`st_y` for roof area + centroid (Step 9c, "available roof space"), and native `h3_longlatash3` to bin roof centroids into an H3 **roof-density** aggregation (Step 9d). On-ramp framing in the intro + recap.
+  - **NB03 (injected):** GeoBrix `gbx_rst_h3_rastertogridavg` aggregates slope+aspect onto H3 cells, `solar_score` applied per cell, and native `h3_centeraswkb` gives the native H3 cell geometry (Step 13c → `sf_solar_cells`); the `cellid` is a standard native H3 id that joins NB01's roof-density cells on the same index. On-ramp framing in intro + recap.
+  - **NB02 (deliberately NOT):** a pure NAIP raster basemap step — no natural ST/H3 fit, so none was forced (per the "don't force it" instruction).
+  - **config_nb AOI (deliberately NOT):** the SF AOI stays a plain bbox tuple — Overture/NAIP/3DEP staging helpers consume `(minx,miny,maxx,maxy)` directly; expressing it as a native ST geometry / H3 cell set would not simplify any downstream cell, so it was left as-is.
+- **Native function names flagged for confirmation (Task 7 Step 3):** `st_geomfromwkb`/`st_area`/`st_centroid`/`st_x`/`st_y` are confirmed in-repo (used in `docs/tests/python/api/sql_api.py` etc.); `h3_longlatash3` (arg order lng,lat,res) and `h3_centeraswkb` (+ companions `h3_boundaryaswkb`/`h3_hexring`) are flagged with NOTE blocks to confirm exact name + arg order against the Databricks H3 SQL reference / `databricks-spatial.mdx`. The reader-geometry encoding (WKB vs native GEOMETRY) is flagged too. All native cells carry a "gate behind a capability check, skip with a printed note if native ST/H3 unavailable in the Docker runner" instruction so tiling stays green; binding-parity does NOT cover native built-ins (not in `registered_functions.txt`).
+- **Placeholder scan:** every cell has real narrative + real code; the few unconfirmed SQL signatures (GeoBrix and native) are flagged with an explicit "confirm + wire the real signature, no placeholder" NOTE and are resolved in Task 7 Step 3 before ship.
+- **Doc voice:** README + mdx avoid internal vocabulary; the native-spatial framing is factual on-ramp language (no marketing); Task 5/6/7 grep gates enforce it (QC `internals-leak`).
+- **Validation rigor:** each notebook task ends in a concrete Docker `gbx:test:notebooks` run with asserted artifacts (PMTiles archive exists + `pmtiles_info` parses + plot renders + native-derived tables non-empty / capability-gated), not just "should work."
