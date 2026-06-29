@@ -315,8 +315,9 @@ def test_plot_pmtiles_static_raster_no_rasterioioerror(monkeypatch):
 
     Regression for NB02 crash: the dead _static_raster_fallback passed raw tile bytes
     to plot_raster/rasterio (not georeferenced), which raised RasterioIOError.
-    The live path (_decode_pmtiles_for_static in _maplibre.py) mosaics min-zoom tiles
-    via PIL and returns raster_layer(ndarray) -> _draw_one_layer -> ax.imshow (no rasterio).
+    The live path (_decode_pmtiles_for_static in _maplibre.py) mosaics the finest-zoom
+    tiles via PIL and returns raster_layer(ndarray) -> _draw_one_layer -> ax.imshow
+    (no rasterio).
     """
     import matplotlib.pyplot as plt
     from rasterio.errors import RasterioIOError
@@ -386,4 +387,47 @@ def test_plot_pmtiles_static_vector_min_zoom_only(monkeypatch):
     assert decoded_zooms, "spy never called — _decode_mvt_to_geoms not reached"
     assert all(z == z_min for z in decoded_zooms), (
         f"Expected only z={z_min}, got zoom levels {set(decoded_zooms)}"
+    )
+
+
+def _solid_png(size, value):
+    """A solid-color RGB PNG of (size x size) with all channels == value."""
+    buf = io.BytesIO()
+    arr = np.full((size, size, 3), value / 255.0, dtype=np.float64)
+    imsave(buf, arr, format="png")
+    return buf.getvalue()
+
+
+def test_plot_pmtiles_static_raster_uses_finest_zoom(monkeypatch):
+    """Static raster overview mosaics the FINEST zoom, not the coarsest (min) zoom.
+
+    Regression for the NB02 "washed-out" basemap: raster pyramid levels are
+    independently resampled, so the coarsest overview averages source pixels and
+    lowers contrast. _decode_pmtiles_for_static must pick the finest zoom that fits
+    the tile budget. We tag each zoom's tile with a distinct solid value and assert
+    the returned raster_layer ndarray carries the FINEST-zoom value.
+    """
+    import databricks.labs.gbx.vizx._interactive as itx
+    import databricks.labs.gbx.vizx._maplibre as mlib
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+
+    # z=0 single coarse tile (value 40); z=2 finer tile (value 210). The mosaic
+    # must come from z=2 (finest), so the decoded array's max channel ~= 210.
+    coarse = _solid_png(64, 40)
+    fine = _solid_png(64, 210)
+    archive = _build_archive(
+        [(0, 0, 0, coarse), (2, 1, 1, fine)], TileType.PNG
+    )
+
+    layer = pmtiles_layer(archive)
+    decoded = mlib._decode_pmtiles_for_static(layer)
+
+    assert decoded.kind == "raster"
+    rgb = decoded.data[..., :3]
+    # Finest tile is value ~210; coarsest is ~40. Assert we got the finest.
+    assert rgb.max() > 150, (
+        f"Expected finest-zoom tile (value ~210), got max channel {rgb.max()} "
+        "— static raster path likely still uses the coarsest (washed-out) zoom"
     )
