@@ -1012,6 +1012,30 @@ git commit -m "docs(vizx): red-carpet multi-layer + ladder page with executable 
 
 ---
 
+## Task 14b: Capture real interactive screenshots + embed in docs/README/notebooks
+
+Real screenshots of the interactive MapLibre viewer in action — so `vizx-layers.mdx`, the
+`README.md`, and the notebooks (which render static by default) all *preview* the interactive
+experience. **Runs AFTER Task 14 (owns `vizx-layers.mdx`) and Task 16 (finalizes the Helios
+notebook cells)** so screenshots embed into finished files, not race them.
+
+**Files:**
+- Create: `resources/images/diagrams/vizx/screenshots/*.png` (the captures) + a small capture script (host-only, git-ignored or under `resources/images/generators/`).
+- Modify: `docs/docs/api/vizx-layers.mdx`, `notebooks/examples/helios/README.md` (+ `docs/docs/notebooks/helios.mdx`), and the Helios notebooks NB01–04 (add a ~50%-width screenshot in a markdown cell directly ABOVE each conditional `plot_interactive`/`show_pmtiles` cell).
+
+**Interfaces:** `plot_interactive([...])` returns the self-contained HTML string (Task 7); the chrome-devtools MCP renders + screenshots.
+
+**Capture pipeline:**
+- [ ] **Step 1 (de-risk PROTOTYPE):** build ONE small multi-layer interactive HTML via `plot_interactive([vector + raster + grid], …)` (return the HTML string; write to a temp `.html` under the repo so it's host-reachable). Via the chrome-devtools MCP: `new_page` → `navigate_page` to the `file://` URL → **`wait_for` the MapLibre canvas to actually paint** (wait on the rendered `.maplibregl-canvas` / a network-idle, NOT a fixed sleep) → `take_screenshot`. Read the PNG back and CONFIRM it shows a rendered map (not blank/loading). If headless can't paint the WebGL map even after waiting: fall back to (a) a real-browser capture, or (b) screenshot the static composite (`plot_static`) and label it as the static preview — and report the limitation. **Do not proceed to embedding until a non-blank capture is confirmed.**
+- [ ] **Step 2:** produce the final captures — a full-size view for `vizx-layers.mdx`/README (the multi-layer overlay) and the per-notebook captures (one per notebook's interactive cell, content matching that notebook: NB01 buildings, NB02 buildings+NAIP, NB03 hillshade+buildings(+solar grid), NB04 a shard). Save under `resources/images/diagrams/vizx/screenshots/`.
+- [ ] **Step 3:** embed — `vizx-layers.mdx` (a hero screenshot near the interactive section) + `README.md` + each Helios notebook (a markdown cell with the ~50%-width image immediately above the conditional interactive cell, captioned "Interactive view (INTERACTIVE_PLOTS=True)"). Use the repo-relative image path convention the other docs use.
+- [ ] **Step 4:** verify the notebooks still parse (nbformat) + the cell-by-cell harness reaches its config ceiling unchanged; the mdx/README render references resolve. `grep` for internal vocab in any touched user-facing doc → none.
+- [ ] **Step 5: Commit** the screenshots + the doc/notebook edits: `docs(vizx): real interactive viewer screenshots in docs, README, notebooks` (≤72; trailer `Co-authored-by: Isaac`).
+
+**Note:** the capture script + headless render are HOST-only (Chrome). Screenshots need CDN + CARTO-basemap internet to paint; the host has it.
+
+---
+
 ## Task 15: Audit, migrate, AND showcase the new viewer in the example notebooks
 
 This task does two things per notebook: (a) migrate any usage the folium-retirement or
