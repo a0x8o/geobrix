@@ -115,6 +115,7 @@ def plot_interactive(
     center=None,
     zoom=None,
     dry_run: bool = False,
+    debug_mode: int = 1,
 ) -> "str | None | dict":
     """Render one or more layers as an interactive MapLibre GL map.
 
@@ -142,6 +143,11 @@ def plot_interactive(
         zoom:                 Initial zoom level override.
         dry_run:              When ``True``, return the audit dict without rendering
                               (no ``displayHTML``, no HTML string).
+        debug_mode:           ``[vizx]`` status verbosity: ``0`` silent (no status
+                              lines; genuine fallback warnings still fire), ``1``
+                              (default) concise notes (audit verdict, cap-raise),
+                              ``2`` adds diagnostics (per-layer sizes, display
+                              channel, budget math).
 
     Returns:
         ``dry_run=True``: the audit dict (see :func:`audit_layers`).
@@ -152,6 +158,7 @@ def plot_interactive(
     """
     from databricks.labs.gbx.vizx._layers import as_layers
     from databricks.labs.gbx.vizx._maplibre import (
+        _emit,
         _resolve_embed_budget,
         build_html,
         prepare_layers,
@@ -166,9 +173,25 @@ def plot_interactive(
         fallback=fallback,
     )
 
-    # Always print the one-line audit before rendering.
+    # The one-line audit (level 1), then per-layer diagnostics (level 2).
     audit = result.get("audit", {})
-    print(_format_audit_line(audit, max_embed_mb))
+    _emit(_format_audit_line(audit, max_embed_mb), level=1, debug_mode=debug_mode)
+    if debug_mode >= 2:
+        for entry in audit.get("layers", []):
+            _emit(
+                f"[vizx]   layer {entry.get('label', '?')}: "
+                f"kind={entry.get('kind')} "
+                f"embed={entry.get('embed_bytes', 0) / 1_048_576:.2f}MB",
+                level=2,
+                debug_mode=debug_mode,
+            )
+        _emit(
+            f"[vizx]   budget={max_embed_mb}MB "
+            f"total={audit.get('total_embed_bytes', 0) / 1_048_576:.2f}MB "
+            f"fits={audit.get('fits')} verdict={audit.get('verdict')}",
+            level=2,
+            debug_mode=debug_mode,
+        )
 
     if dry_run:
         return audit
@@ -177,11 +200,21 @@ def plot_interactive(
         # Interactive embed only: raise the Serverless cell-output cap to its max so
         # the base64-embedded map isn't truncated. Graceful no-op off Serverless.
         if set_cell_max_output and _raise_cell_output_cap():
-            from databricks.labs.gbx.vizx._maplibre import CELL_OUTPUT_CAP_MAX_MB
-
-            print(
-                f"[vizx] raised cell output cap to {CELL_OUTPUT_CAP_MAX_MB} MB "
-                "for interactive embed (set_cell_max_output=False to skip)"
+            _emit(
+                "[vizx] set_cell_max_output=False to skip adjusting output size",
+                level=1,
+                debug_mode=debug_mode,
+            )
+        if debug_mode >= 2:
+            _emit(
+                "[vizx]   display channel: "
+                + (
+                    "displayHTML"
+                    if _notebook_display_html() is not None
+                    else "IPython.display/none"
+                ),
+                level=2,
+                debug_mode=debug_mode,
             )
         html = build_html(
             result["prepared"],

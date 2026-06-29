@@ -70,6 +70,20 @@ CELL_OUTPUT_CAP_MAX_MB: int = 20
 # render; 14 and 18 both embedded-then-truncated.)
 MAX_EMBED_MB_CAP_RAISED: float = 6
 
+# Default verbosity for the [vizx] status lines the plot entrypoints emit.
+DEFAULT_DEBUG_MODE: int = 1
+
+
+def _emit(msg: str, *, level: int = 1, debug_mode: int = DEFAULT_DEBUG_MODE) -> None:
+    """Print a ``[vizx]`` status line only when ``debug_mode >= level``.
+
+    debug_mode: 0 = silent (no status lines; genuine warnings still fire),
+    1 = concise notes (default), 2 = + diagnostics. ``level`` is the minimum
+    debug_mode at which this message shows (1 = a normal note, 2 = a diagnostic).
+    """
+    if debug_mode >= level:
+        print(msg)
+
 
 def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
     """Resolve the effective embed budget in MB.

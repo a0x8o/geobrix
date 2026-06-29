@@ -102,6 +102,7 @@ def plot_pmtiles(
     fallback=True,
     interactive_fit="downzoom",
     style=None,
+    debug_mode=1,
     **kw,
 ):
     """Render a .pmtiles archive inline in a Databricks notebook.
@@ -157,7 +158,7 @@ def plot_pmtiles(
 
     from databricks.labs.gbx.vizx._interactive import plot_interactive
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
-    from databricks.labs.gbx.vizx._maplibre import _resolve_embed_budget
+    from databricks.labs.gbx.vizx._maplibre import _emit, _resolve_embed_budget
 
     # Resolve the embed budget up front so the downzoom autofit + the audit all use
     # the same value (6 MB when set_cell_max_output raises the cap, else 3 MB).
@@ -174,11 +175,15 @@ def plot_pmtiles(
         if report["dropped_zooms"]:
             # Concise one-line emit: we down-zoomed to make it fit. A small archive
             # that already fits drops nothing and stays silent.
-            print(
+            _emit(
                 f"[vizx] downzoomed to fit {max_embed_mb:.0f} MB: dropped zoom level(s) "
                 f"{report['dropped_zooms']} (kept z<={report['kept_max_zoom']}); "
-                "stage at an https:// URL for full-detail interactivity."
+                "stage at an https:// URL for full-detail interactivity.",
+                level=1,
+                debug_mode=debug_mode,
             )
+        if debug_mode >= 2:
+            _emit(f"[vizx]   autofit report: {report}", level=2, debug_mode=debug_mode)
         archive = reduced
 
     return plot_interactive(
@@ -186,5 +191,6 @@ def plot_pmtiles(
         max_embed_mb=max_embed_mb,
         set_cell_max_output=set_cell_max_output,
         fallback=fallback,
+        debug_mode=debug_mode,
         **kw,
     )

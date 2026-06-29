@@ -131,3 +131,56 @@ def test_plot_interactive_skips_cap_on_static_path(monkeypatch):
     out = IV.plot_interactive(_LYRS, set_cell_max_output=True)
     assert out == "STATIC"
     assert calls == [], "static fallback must not raise the cap"
+
+
+# --------------------------------------------------------------------------- #
+# debug_mode: 0 silent / 1 concise (default) / 2 diagnostics                   #
+# --------------------------------------------------------------------------- #
+def _rich_result(mode):
+    return {
+        "mode": mode,
+        "prepared": [],
+        "warnings": [],
+        "audit": {
+            "layers": [{"label": "L", "kind": "pmtiles", "embed_bytes": 1_048_576}],
+            "total_embed_bytes": 1_048_576,
+            "fits": True,
+            "verdict": "embed",
+        },
+    }
+
+
+def _patch_interactive(monkeypatch):
+    monkeypatch.setattr(
+        M, "prepare_layers", lambda *a, **k: _rich_result("interactive")
+    )
+    monkeypatch.setattr(M, "build_html", lambda *a, **k: "<div>map</div>")
+    monkeypatch.setattr(IV, "_notebook_display_html", lambda: None)
+    monkeypatch.setattr(IV, "_raise_cell_output_cap", lambda: True)
+
+
+def test_debug_mode_0_silences_all_vizx_lines(monkeypatch, capsys):
+    _patch_interactive(monkeypatch)
+    IV.plot_interactive(_LYRS, set_cell_max_output=True, debug_mode=0)
+    assert "[vizx]" not in capsys.readouterr().out
+
+
+def test_debug_mode_1_emits_audit_and_short_cap_note(monkeypatch, capsys):
+    _patch_interactive(monkeypatch)
+    IV.plot_interactive(_LYRS, set_cell_max_output=True, debug_mode=1)
+    out = capsys.readouterr().out
+    assert "[vizx]" in out
+    # The cap note is the shortened phrasing (no "raised cell output cap to 20 MB").
+    assert "set_cell_max_output=False to skip adjusting output size" in out
+    assert "raised cell output cap to" not in out
+    # Level-2 diagnostics must NOT appear at level 1.
+    assert "display channel" not in out
+
+
+def test_debug_mode_2_emits_diagnostics(monkeypatch, capsys):
+    _patch_interactive(monkeypatch)
+    IV.plot_interactive(_LYRS, set_cell_max_output=True, debug_mode=2)
+    out = capsys.readouterr().out
+    assert "display channel" in out
+    assert "budget=" in out
+    assert "layer L" in out
