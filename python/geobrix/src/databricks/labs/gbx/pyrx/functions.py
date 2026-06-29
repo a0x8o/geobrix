@@ -2518,7 +2518,11 @@ class _RstXyzPyramidUDTF:
     tile-count guards fire up front before any tile is rendered or yielded.
     """
 
-    def eval(self, tile, min_z, max_z, format, size, resampling):
+    def eval(self, tile, min_z, max_z, format=None, size=None, resampling=None):
+        # Defaults make format/size/resampling optional in the SQL UDTF call
+        # (gbx_rst_xyzpyramid(tile, min_z, max_z)) — matching the documented
+        # signature and the rst_xyzpyramid binding. The body below maps None to
+        # the PNG/256/bilinear defaults.
         if tile is None or tile["raster"] is None:
             return
         from databricks.labs.gbx.pyrx import _env
