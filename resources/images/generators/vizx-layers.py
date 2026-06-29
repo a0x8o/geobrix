@@ -41,6 +41,9 @@ PAD = 32
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 SANS = "Inter, -apple-system, system-ui, sans-serif"
 
+STRIPE_W = 10   # full-height accent stripe width on layer cards
+BAND_H   = 12   # top band height on Compositor
+
 
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -64,19 +67,98 @@ def arrow_h(x1, y, x2, *, color=C_MUTED3, head=9):
 
 
 def render():
+    # -----------------------------------------------------------------------
+    # Layout constants — compute card positions up-front so we can build
+    # all <defs> in one block at the top of the SVG.
+    # -----------------------------------------------------------------------
+    LY_X   = PAD
+    LY_W   = 220
+    LY_TOP = 102
+    LY_H   = 64
+    LY_GAP = 14
+
+    layer_defs = [
+        ("vector_layer(data)",          ACCENT_BLUE,   TINT_BLUE,   "GeoDataFrame / Spark DF / WKT"),
+        ("raster_layer(data)",          ACCENT_ORANGE, TINT_ORANGE, "Path / bytes / ndarray"),
+        ("grid_layer(data, grid_system=)", ACCENT_TEAL, TINT_TEAL, "H3 / BNG / Quadbin cell ids"),
+        ("pmtiles_layer(data)",         ACCENT_VIOLET, TINT_VIOLET, ".pmtiles bytes, path, or URL"),
+    ]
+
+    # Pre-compute card Y positions
+    card_ys = [LY_TOP + i * (LY_H + LY_GAP) for i in range(len(layer_defs))]
+
+    # Compositor geometry (needed for clipPath definition)
+    COMP_X  = LY_X + LY_W + 80
+    COMP_W  = 180
+    COMP_CY = LY_TOP + (len(layer_defs) * LY_H + (len(layer_defs) - 1) * LY_GAP) // 2
+    COMP_H  = 110
+    COMP_Y  = COMP_CY - COMP_H // 2
+
+    # Ladder geometry
+    LADDER_X   = COMP_X + COMP_W + 70
+    LADDER_W   = 280
+    LADDER_TOP = 102
+    RUNG_H     = 70
+    RUNG_GAP   = 12
+
+    rungs_data = [
+        ("URL stream", "FetchSource -- range-read (any size)", ACCENT_GREEN,  TINT_GREEN,  "indefinite size"),
+        ("Embed",      "Embed inline (base64 FileSource)",     ACCENT_BLUE,   TINT_BLUE,   "no server needed"),
+        ("Simplify",   "tippecanoe -> budget PMTiles",         ACCENT_ORANGE, TINT_ORANGE, "scale to budget"),
+        ("Static",     "plot_static (matplotlib / PNG)",       C_MUTED,       "#F1F4F8",   "always works"),
+    ]
+    rung_ys = [LADDER_TOP + i * (RUNG_H + RUNG_GAP) for i in range(len(rungs_data))]
+    rung_centers_y = [ry + RUNG_H // 2 for ry in rung_ys]
+
+    # Output geometry
+    OUT_X          = LADDER_X + LADDER_W + 70
+    OUT_W          = 200
+    OUT_Y_INTER    = LADDER_TOP
+    OUT_H_INTER    = 100
+    STATIC_GAP     = 24
+    OUT_Y_STATIC   = OUT_Y_INTER + OUT_H_INTER + STATIC_GAP
+    OUT_H_STATIC   = 80
+
+    # Group box padding
+    GRP_PAD = 8
+
+    # -----------------------------------------------------------------------
+    # Build SVG — single top-level <defs> with all clipPaths
+    # -----------------------------------------------------------------------
     parts = []
     parts.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {CANVAS_W} {CANVAS_H}" '
                  f'width="{CANVAS_W}" height="{CANVAS_H}" '
                  f'style="font-family:{SANS};">')
-    parts.append('''<defs>
+
+    # All defs in one block
+    defs_parts = ['''<defs>
   <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
     <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#0F1B2A" flood-opacity="0.07"/>
   </filter>
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0" stop-color="#FAFBFC"/>
     <stop offset="1" stop-color="#F1F4F8"/>
-  </linearGradient>
-</defs>''')
+  </linearGradient>''']
+
+    # clipPaths for the 4 layer card stripes (fix a — full-height accent stripe)
+    for i, cy in enumerate(card_ys):
+        defs_parts.append(
+            f'  <clipPath id="stripe_clip_{i}">'
+            f'<rect x="{LY_X}" y="{cy}" rx="8" ry="8" width="{LY_W}" height="{LY_H}"/>'
+            f'</clipPath>'
+        )
+
+    # clipPath for Compositor top band (fix b — full-width top band)
+    defs_parts.append(
+        f'  <clipPath id="comp_top_clip">'
+        f'<rect x="{COMP_X}" y="{COMP_Y}" rx="14" ry="14" width="{COMP_W}" height="{COMP_H}"/>'
+        f'</clipPath>'
+    )
+
+    defs_parts.append('</defs>')
+    parts.append("\n".join(defs_parts))
+
+    # Background
     parts.append(f'<rect x="0" y="0" width="{CANVAS_W}" height="{CANVAS_H}" fill="url(#bg)"/>')
 
     # -----------------------------------------------------------------------
@@ -84,53 +166,49 @@ def render():
     # -----------------------------------------------------------------------
     parts.append(text(CANVAS_W // 2, 46, "VizX Multi-Layer Compositor",
                       size=26, weight=800, fill=C_INK))
-    parts.append(text(CANVAS_W // 2, 72, "Layer types  ->  unified renderer  ->  embed-size ladder  ->  output",
+    parts.append(text(CANVAS_W // 2, 72,
+                      "Layer types  ->  unified renderer  ->  embed-size ladder  ->  output",
                       size=14, fill=C_MUTED))
 
     # -----------------------------------------------------------------------
-    # Left panel: Layer types (4 cards stacked)
+    # Left panel: Layer types (4 cards stacked)  [fix a: full-height stripe]
     # -----------------------------------------------------------------------
-    LY_X = PAD
-    LY_W = 220
-    LY_TOP = 102
-    LY_H = 64
-    LY_GAP = 14
+    layer_card_right_centers = []
 
-    layer_defs = [
-        ("vector_layer(data)", ACCENT_BLUE, TINT_BLUE, "GeoDataFrame / Spark DF / WKT"),
-        ("raster_layer(data)", ACCENT_ORANGE, TINT_ORANGE, "Path / bytes / ndarray"),
-        ("grid_layer(data, grid_system=)", ACCENT_TEAL, TINT_TEAL, "H3 / BNG / Quadbin cell ids"),
-        ("pmtiles_layer(data)", ACCENT_VIOLET, TINT_VIOLET, ".pmtiles bytes, path, or URL"),
-    ]
-
-    layer_card_centers = []
     for i, (fn, accent, tint, desc) in enumerate(layer_defs):
-        cy = LY_TOP + i * (LY_H + LY_GAP)
+        cy = card_ys[i]
+        # Card background
         parts.append(f'<rect x="{LY_X}" y="{cy}" rx="8" ry="8" width="{LY_W}" height="{LY_H}" '
                      f'fill="{tint}" stroke="{accent}" stroke-width="1.5" filter="url(#sh)"/>')
-        # Color stripe on left edge
-        parts.append(f'<rect x="{LY_X}" y="{cy}" rx="8" ry="8" width="6" height="{LY_H}" fill="{accent}"/>')
-        parts.append(f'<rect x="{LY_X+6}" y="{cy}" width="6" height="{LY_H}" fill="{accent}"/>')
-        parts.append(text(LY_X + LY_W // 2 + 6, cy + 22, fn,
-                          size=11, weight=700, fill=accent, family=MONO))
-        parts.append(text(LY_X + LY_W // 2 + 6, cy + 40, desc,
-                          size=10, fill=C_MUTED))
-        layer_card_centers.append((LY_X + LY_W, cy + LY_H // 2))
+        # Full-height accent stripe clipped to rounded card corners
+        parts.append(f'<rect x="{LY_X}" y="{cy}" width="{STRIPE_W}" height="{LY_H}" '
+                     f'fill="{accent}" clip-path="url(#stripe_clip_{i})"/>')
+        # Text starts after stripe
+        tx = LY_X + STRIPE_W + (LY_W - STRIPE_W) // 2
+        parts.append(text(tx, cy + 22, fn, size=11, weight=700, fill=accent, family=MONO))
+        parts.append(text(tx, cy + 40, desc, size=10, fill=C_MUTED))
+        layer_card_right_centers.append((LY_X + LY_W, cy + LY_H // 2))
+
+    # Dashed group box around all 4 layer cards (single connector group)
+    grp_top  = card_ys[0] - GRP_PAD
+    grp_bot  = card_ys[-1] + LY_H + GRP_PAD
+    grp_h    = grp_bot - grp_top
+    grp_mid_y = grp_top + grp_h // 2
+    grp_right = LY_X + LY_W + GRP_PAD
+
+    parts.append(f'<rect x="{LY_X - GRP_PAD}" y="{grp_top}" rx="12" ry="12" '
+                 f'width="{LY_W + GRP_PAD * 2}" height="{grp_h}" '
+                 f'fill="none" stroke="{C_MUTED3}" stroke-width="1.5" stroke-dasharray="5,4"/>')
 
     # -----------------------------------------------------------------------
-    # Center: compositor box
+    # Center: compositor box  [fix b: full-width top band]
     # -----------------------------------------------------------------------
-    COMP_X = LY_X + LY_W + 60
-    COMP_W = 180
-    # Center the compositor box on the average Y of the 4 layer cards
-    all_ys = [y for _, y in layer_card_centers]
-    COMP_CY = int(sum(all_ys) / len(all_ys))
-    COMP_H = 110
-    COMP_Y = COMP_CY - COMP_H // 2
-
     parts.append(rect(COMP_X, COMP_Y, COMP_W, COMP_H, fill="#FFFFFF", stroke=C_BORDER, r=14))
-    parts.append(f'<rect x="{COMP_X}" y="{COMP_Y}" rx="14" ry="14" width="{COMP_W}" height="6" fill="{C_INK}"/>')
-    parts.append(f'<rect x="{COMP_X}" y="{COMP_Y+6}" width="{COMP_W}" height="6" fill="{C_INK}"/>')
+
+    # Full-width top band clipped to compositor's rounded rect
+    parts.append(f'<rect x="{COMP_X}" y="{COMP_Y}" width="{COMP_W}" height="{BAND_H}" '
+                 f'fill="{C_INK}" clip-path="url(#comp_top_clip)"/>')
+
     parts.append(text(COMP_X + COMP_W // 2, COMP_Y + 38, "Compositor",
                       size=16, weight=800, fill=C_INK))
     parts.append(text(COMP_X + COMP_W // 2, COMP_Y + 56, "plot_static /",
@@ -140,29 +218,14 @@ def render():
     parts.append(text(COMP_X + COMP_W // 2, COMP_Y + 94, "Layers drawn in list order",
                       size=9, fill=C_MUTED3))
 
-    # Arrows from each layer card to compositor
-    for lx, ly in layer_card_centers:
-        parts.append(arrow_h(lx + 6, ly, COMP_X, color=ACCENT_BLUE))
+    # Single arrow: layer group → compositor
+    parts.append(arrow_h(grp_right + 2, grp_mid_y, COMP_X, color=ACCENT_BLUE))
 
     # -----------------------------------------------------------------------
-    # Center-right: embed-size ladder
+    # Center-right: embed-size ladder  [fix c: no leading numbers in labels]
     # -----------------------------------------------------------------------
-    LADDER_X = COMP_X + COMP_W + 60
-    LADDER_W = 280
-    LADDER_TOP = 102
-    RUNG_H = 70
-    RUNG_GAP = 12
-
-    rungs = [
-        ("1  http(s):// URL", "FetchSource -- range-read (any size)", ACCENT_GREEN, TINT_GREEN, "indefinite size"),
-        ("2  fits <= 64 MB",  "Embed inline (base64 FileSource)",   ACCENT_BLUE,   TINT_BLUE,   "no server needed"),
-        ("3  simplify_tiles_spec=", "tippecanoe -> budget PMTiles",  ACCENT_ORANGE, TINT_ORANGE,  "scale to budget"),
-        ("4  static fallback",  "plot_static (matplotlib / PNG)",   C_MUTED,       "#F1F4F8",    "always works"),
-    ]
-
-    rung_centers_y = []
-    for i, (label, desc, accent, tint, note) in enumerate(rungs):
-        ry = LADDER_TOP + i * (RUNG_H + RUNG_GAP)
+    for i, (label, desc, accent, tint, note) in enumerate(rungs_data):
+        ry = rung_ys[i]
         parts.append(rect(LADDER_X, ry, LADDER_W, RUNG_H, fill=tint, stroke=accent, r=10))
         # Number badge
         bsize = 28
@@ -170,41 +233,48 @@ def render():
                      f'width="{bsize}" height="{bsize}" fill="{accent}"/>')
         parts.append(text(LADDER_X + 10 + bsize // 2, ry + 10 + bsize // 2 + 4,
                           str(i + 1), size=13, weight=800, fill="#FFFFFF"))
+        # Label text only (no "N. " prefix) — fix c
         parts.append(text(LADDER_X + 50, ry + 26, label, size=12, weight=700,
                           fill=accent, anchor="start"))
         parts.append(text(LADDER_X + 50, ry + 44, desc, size=10, fill=C_MUTED, anchor="start"))
-        # Note pill on right
-        pill_txt = note
-        pw = int(len(pill_txt) * 6.6) + 16
+        # Note pill
+        pw = int(len(note) * 6.6) + 16
         parts.append(f'<rect x="{LADDER_X+LADDER_W-pw-8}" y="{ry+RUNG_H-22}" '
                      f'rx="9" width="{pw}" height="18" fill="{accent}" fill-opacity="0.15" '
                      f'stroke="{accent}" stroke-width="0.8"/>')
         parts.append(text(LADDER_X + LADDER_W - pw // 2 - 8, ry + RUNG_H - 10,
-                          pill_txt, size=9, fill=accent, family=SANS))
-        rung_centers_y.append(ry + RUNG_H // 2)
+                          note, size=9, fill=accent, family=SANS))
 
-    # Vertical dashed connectors between rungs (fallback direction)
-    for i in range(len(rungs) - 1):
-        y1 = LADDER_TOP + i * (RUNG_H + RUNG_GAP) + RUNG_H
-        y2 = y1 + RUNG_GAP
+    # Vertical dashed "else" connectors between rungs
+    for i in range(len(rungs_data) - 1):
+        y1    = rung_ys[i] + RUNG_H
+        y2    = y1 + RUNG_GAP
         mid_x = LADDER_X - 22
         parts.append(f'<line x1="{mid_x}" y1="{y1}" x2="{mid_x}" y2="{y2}" '
                      f'stroke="{C_MUTED3}" stroke-width="1.5" stroke-dasharray="3,3"/>')
         parts.append(text(mid_x, y1 + RUNG_GAP // 2 + 4, "else", size=9, fill=C_MUTED3))
 
-    # Arrow from compositor to ladder
+    # Single arrow: compositor → ladder (enter at left-center of ladder)
     parts.append(arrow_h(COMP_X + COMP_W + 6, COMP_CY, LADDER_X, color=C_INK))
 
     # -----------------------------------------------------------------------
-    # Right panel: outputs
+    # Right panel: output boxes + grouped connector boxes
     # -----------------------------------------------------------------------
-    OUT_X = LADDER_X + LADDER_W + 60
-    OUT_W = 200
-    OUT_Y_STATIC = LADDER_TOP + 50
-    OUT_Y_INTER  = LADDER_TOP + 200
+    # plot_interactive output
+    parts.append(rect(OUT_X, OUT_Y_INTER, OUT_W, OUT_H_INTER,
+                      fill=TINT_VIOLET, stroke=ACCENT_VIOLET, r=10))
+    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 26, "plot_interactive",
+                      size=14, weight=700, fill=ACCENT_VIOLET, family=MONO))
+    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 46, "MapLibre GL HTML",
+                      size=11, fill=C_MUTED))
+    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 62, "self-contained, no server",
+                      size=10, fill=C_MUTED3))
+    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 78, "Serverless / classic DBR",
+                      size=10, fill=C_MUTED3))
 
-    # Static output
-    parts.append(rect(OUT_X, OUT_Y_STATIC, OUT_W, 80, fill=TINT_BLUE, stroke=ACCENT_BLUE, r=10))
+    # plot_static output
+    parts.append(rect(OUT_X, OUT_Y_STATIC, OUT_W, OUT_H_STATIC,
+                      fill=TINT_BLUE, stroke=ACCENT_BLUE, r=10))
     parts.append(text(OUT_X + OUT_W // 2, OUT_Y_STATIC + 26, "plot_static",
                       size=14, weight=700, fill=ACCENT_BLUE, family=MONO))
     parts.append(text(OUT_X + OUT_W // 2, OUT_Y_STATIC + 46, "matplotlib Axes",
@@ -212,37 +282,40 @@ def render():
     parts.append(text(OUT_X + OUT_W // 2, OUT_Y_STATIC + 62, "GitHub-renderable PNG",
                       size=10, fill=C_MUTED3))
 
-    # Interactive output
-    parts.append(rect(OUT_X, OUT_Y_INTER, OUT_W, 100, fill=TINT_VIOLET, stroke=ACCENT_VIOLET, r=10))
-    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 26, "plot_interactive",
-                      size=14, weight=700, fill=ACCENT_VIOLET, family=MONO))
-    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 46, "MapLibre GL HTML",
-                      size=11, fill=C_MUTED))
-    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 62, "self-contained, no server",
-                      size=10, fill=C_MUTED3))
-    parts.append(text(OUT_X + OUT_W // 2, OUT_Y_INTER + 80, "Serverless / classic DBR",
-                      size=10, fill=C_MUTED3))
+    # Dashed group box around rungs 1-3 (interactive group)
+    inter_grp_top = rung_ys[0] - GRP_PAD
+    inter_grp_bot = rung_ys[2] + RUNG_H + GRP_PAD
+    inter_grp_h   = inter_grp_bot - inter_grp_top
+    inter_grp_mid = inter_grp_top + inter_grp_h // 2
+    parts.append(f'<rect x="{LADDER_X - GRP_PAD}" y="{inter_grp_top}" rx="12" ry="12" '
+                 f'width="{LADDER_W + GRP_PAD * 2}" height="{inter_grp_h}" '
+                 f'fill="none" stroke="{ACCENT_VIOLET}" stroke-width="1.2" '
+                 f'stroke-dasharray="5,4"/>')
 
-    # Arrow from ladder rung 4 (static) to plot_static
+    # Single arrow: rungs 1-3 group right edge → plot_interactive (mid-y of group)
+    inter_arrow_x = LADDER_X + LADDER_W + GRP_PAD + 2
+    inter_target_y = OUT_Y_INTER + OUT_H_INTER // 2
+    # Straight horizontal at group mid-y, then we rely on vertical alignment being close.
+    # Use a bent elbow: horizontal to OUT_X at inter_grp_mid level, but output may not
+    # align. Simplest readable: draw at rung_centers_y[1] (middle rung's center ~ group mid).
+    parts.append(arrow_h(inter_arrow_x, inter_grp_mid, OUT_X, color=ACCENT_VIOLET))
+
+    # Single arrow: rung 4 right edge → plot_static
     parts.append(arrow_h(LADDER_X + LADDER_W + 6, rung_centers_y[3],
                          OUT_X, color=ACCENT_BLUE))
-    # Arrow from center of rungs 1-3 to plot_interactive
-    mid_inter_y = (rung_centers_y[0] + rung_centers_y[1] + rung_centers_y[2]) // 3
-    parts.append(arrow_h(LADDER_X + LADDER_W + 6, mid_inter_y,
-                         OUT_X, color=ACCENT_VIOLET))
 
     # -----------------------------------------------------------------------
     # Bottom strip: audit_layers / dry_run proactive check
     # -----------------------------------------------------------------------
-    STRIP_Y = LADDER_TOP + len(rungs) * (RUNG_H + RUNG_GAP) + 10
+    STRIP_Y = LADDER_TOP + len(rungs_data) * (RUNG_H + RUNG_GAP) + 10
     STRIP_H = 60
     STRIP_W = LADDER_X + LADDER_W - LY_X
     parts.append(rect(LY_X, STRIP_Y, STRIP_W, STRIP_H, fill="#FFFFF0",
                       stroke="#C8B800", r=10, stroke_w=1))
     parts.append(text(LY_X + 20, STRIP_Y + 22, "Proactive check -- run before rendering:",
                       size=12, weight=700, fill="#7A6800", anchor="start"))
-    code_txt = "audit_layers(layers)  or  plot_interactive(layers, dry_run=True)"
-    parts.append(text(LY_X + 20, STRIP_Y + 44, code_txt,
+    parts.append(text(LY_X + 20, STRIP_Y + 44,
+                      "audit_layers(layers)  or  plot_interactive(layers, dry_run=True)",
                       size=11, fill="#7A6800", family=MONO, anchor="start"))
 
     # -----------------------------------------------------------------------
