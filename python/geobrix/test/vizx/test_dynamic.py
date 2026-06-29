@@ -158,8 +158,9 @@ def test_prefetch_coalesces_stale():
         # Not all stale neighbors were cached (coalescing dropped at least some).
         cached_stale = [k for k in stale_only_neighbors if cache.get(k) is not None]
         all_stale = len(stale_only_neighbors)
-        assert len(cached_stale) < all_stale, (
-            "No stale prefetch was coalesced/skipped — generation token not working"
+        assert len(cached_stale) == 0, (
+            f"Stale-generation ring DID populate the cache — generation token not working. "
+            f"Stale entries found: {cached_stale}"
         )
     finally:
         worker.shutdown()
@@ -275,3 +276,107 @@ def test_custom_on_viewport_below_seam_not_called():
     )
     w._gbx_handle_msg({"bbox": [-122.5, 37.7, -122.4, 37.8], "zoom": 7})
     assert calls == [], "on_viewport must not fire below the seam"
+
+
+def test_handle_msg_cache_hit_skips_callback():
+    """On a _handle_msg cache hit, the user callback is NOT invoked."""
+    import math
+
+    gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
+    callback_calls = []
+
+    def counting_callback(bbox, zoom):
+        callback_calls.append((bbox, zoom))
+        return b"FAKE_PMTILES"
+
+    w = plot_interactive_dynamic(
+        [vector_layer(gdf)],
+        simplify_tiles_spec={"max_z": 8},
+        on_viewport=counting_callback,
+    )
+
+    # Compute which tile key _handle_msg will derive for zoom=12, bbox centred at (-122.45, 37.75).
+    zoom = 12
+    bbox = [-122.5, 37.7, -122.4, 37.8]
+    west, south, east, north = bbox
+    cx = (west + east) / 2  # -122.45
+    cy = (south + north) / 2  # 37.75
+    z = int(zoom)
+    lat_rad = math.radians(max(-85.0511, min(85.0511, cy)))
+    n = 2 ** z
+    tx = int((cx + 180.0) / 360.0 * n)
+    ty = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
+    key = (z, tx, ty)
+
+    # Pre-seed the cache (accessed via the widget's internal cache through the worker).
+    # We can't access _cache directly, so we drive a first msg to populate it.
+    w._gbx_handle_msg({"bbox": bbox, "zoom": zoom})
+    assert len(callback_calls) == 1, "First call should hit the callback (cache miss)"
+
+    # Reset calls — now send the same message again (cache hit path).
+    callback_calls.clear()
+    w._gbx_handle_msg({"bbox": bbox, "zoom": zoom})
+    # The callback must NOT be called on a cache hit.
+    assert len(callback_calls) == 0, (
+        f"Callback was called {len(callback_calls)} times on a cache hit — "
+        "cache-first path not working in _handle_msg"
+    )
+
+
+def test_tile_bbox_z0_whole_world():
+    """At z=0, tile (0,0,0) must cover the whole Web Mercator world."""
+    from databricks.labs.gbx.vizx._dynamic import _tile_bbox
+    min_lon, min_lat, max_lon, max_lat = _tile_bbox(0, 0, 0)
+    assert abs(min_lon - (-180.0)) < 1e-9
+    assert abs(max_lon - 180.0) < 1e-9
+    # Web Mercator clips at ~±85.05°.
+    assert min_lat < -80.0
+    assert max_lat > 80.0
+
+
+def test_tile_bbox_neighbors_have_distinct_bboxes():
+    """Neighboring tiles must produce non-overlapping, distinct bounding boxes."""
+    from databricks.labs.gbx.vizx._dynamic import _tile_bbox
+    bb_center = _tile_bbox(10, 512, 512)
+    bb_right = _tile_bbox(10, 513, 512)
+    bb_below = _tile_bbox(10, 512, 513)
+    # Center and right tiles share a lon edge but have different min/max lons.
+    assert bb_center != bb_right
+    assert bb_center != bb_below
+    # Adjacency: max_lon of center == min_lon of right.
+    assert abs(bb_center[2] - bb_right[0]) < 1e-9
+
+
+def test_tiler_for_prefetch_uses_distinct_bboxes():
+    """Each neighbor tile must be fetched with a DISTINCT bbox (not all identical)."""
+    from databricks.labs.gbx.vizx._dynamic import _tile_bbox
+
+    # Capture the bbox args passed to the default_callback via _tiler_for_prefetch
+    # by checking that _tile_bbox produces distinct results for each neighbor.
+    z, x, y = 12, 100, 100
+    neighbors = [
+        (z, x + dx, y + dy)
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        if not (dx == 0 and dy == 0)
+    ]
+    bboxes = [_tile_bbox(*n) for n in neighbors]
+    # All 8 bboxes must be distinct.
+    assert len(set(bboxes)) == 8, (
+        f"Expected 8 distinct bboxes for 8 neighbors, got {len(set(bboxes))}: {bboxes}"
+    )
+
+
+def test_put_if_absent_does_not_demote_viewed():
+    """put_if_absent must NOT downgrade a viewed tile to prefetched."""
+    cache = _TileCache(max_entries=64)
+    key = (10, 5, 5)
+    cache.put(key, b"original", viewed=True)
+    # A prefetch arriving later must not demote to viewed=False.
+    cache.put_if_absent(key, b"prefetch-attempt")
+    # The tile must still be in the viewed dict (get still returns original bytes).
+    assert cache.get(key) == b"original"
+    # Directly verify viewed dict contains the key (not evicted or demoted).
+    with cache._lock:
+        assert key in cache._viewed, "Viewed tile was demoted by put_if_absent"
+        assert key not in cache._prefetched

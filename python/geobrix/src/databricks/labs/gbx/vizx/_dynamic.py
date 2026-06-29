@@ -107,6 +107,26 @@ class _TileCache:
                     # All entries are viewed — evict LRU viewed.
                     self._viewed.popitem(last=False)
 
+    def put_if_absent(self, key: _TileKey, value: bytes) -> None:
+        """Insert *key* as a prefetched (viewed=False) entry only if it is not
+        already present in either the viewed or prefetched dict.
+
+        This prevents a background prefetch from downgrading a tile that the
+        main thread has already served (viewed=True) to viewed=False.
+        """
+        with self._lock:
+            if key in self._viewed or key in self._prefetched:
+                return
+            self._prefetched[key] = value
+            self._prefetched.move_to_end(key)
+
+            # Evict if over capacity: unviewed first, then viewed (LRU within each).
+            while len(self._viewed) + len(self._prefetched) > self._max:
+                if self._prefetched:
+                    self._prefetched.popitem(last=False)
+                else:
+                    self._viewed.popitem(last=False)
+
     def __contains__(self, key: _TileKey) -> bool:
         with self._lock:
             return key in self._viewed or key in self._prefetched
@@ -185,7 +205,7 @@ class _PrefetchWorker:
                     with self._lock:
                         still_current = self._gen == gen
                     if still_current:
-                        self._cache.put(key, data, viewed=False)
+                        self._cache.put_if_absent(key, data)
                 except Exception:
                     pass
 
@@ -247,6 +267,7 @@ def _default_on_viewport(
 
     The viewport is tiled via ``simplify_tiles_from_source`` using
     ``min_z=max_z+1`` so the detail level is always above the overview seam.
+    The bbox is passed through so only features within the viewport are tiled.
 
     Args:
         source: The original data source (GeoDataFrame, path, etc.) to tile from.
@@ -260,14 +281,14 @@ def _default_on_viewport(
     """
 
     def _tile_viewport(bbox: list[float], zoom: float) -> bytes:
-        # bbox is currently unused: full-source re-tile at min_z=max_z+1 (no
-        # viewport clipping yet).  Kept in signature for future viewport-clipping.
         detail_min_z = max_z + 1
         detail_max_z = max(int(zoom), detail_min_z)
         viewport_spec = dict(spec)
         viewport_spec["min_z"] = detail_min_z
         viewport_spec["max_z"] = detail_max_z
-        return simplify_tiles_from_source(source, spec=viewport_spec)
+        # Pass the bbox so only features within the viewport are tiled.
+        clip_bbox = tuple(bbox) if bbox else None
+        return simplify_tiles_from_source(source, spec=viewport_spec, bbox=clip_bbox)
 
     return _tile_viewport
 
@@ -432,6 +453,35 @@ export default {{ render }};
 
 
 # ---------------------------------------------------------------------------
+# Slippy-map tile → geographic bbox helper
+# ---------------------------------------------------------------------------
+
+
+def _tile_bbox(z: int, x: int, y: int) -> tuple:
+    """Return the geographic bounding box of slippy-map tile ``(z, x, y)``.
+
+    Uses the standard Web Mercator / OSM tile formula:
+    https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames#Tile_numbers_to_lon./lat.
+
+    Returns:
+        ``(min_lon, min_lat, max_lon, max_lat)`` in WGS-84 degrees.
+    """
+    import math
+
+    n = 2 ** z
+    min_lon = x / n * 360.0 - 180.0
+    max_lon = (x + 1) / n * 360.0 - 180.0
+
+    def _tile_lat(tile_y: int) -> float:
+        lat_rad = math.atan(math.sinh(math.pi * (1.0 - 2.0 * tile_y / n)))
+        return math.degrees(lat_rad)
+
+    max_lat = _tile_lat(y)
+    min_lat = _tile_lat(y + 1)
+    return (min_lon, min_lat, max_lon, max_lat)
+
+
+# ---------------------------------------------------------------------------
 # Widget class
 # ---------------------------------------------------------------------------
 
@@ -540,8 +590,10 @@ def _build_dynamic_widget(
     _default_callback = _default_on_viewport(first_source, max_z, spec)
 
     def _tiler_for_prefetch(z: int, x: int, y: int) -> bytes:
-        # Prefetch with a synthetic bbox; the default tiler ignores bbox currently.
-        return _default_callback([], float(z))
+        # Compute the geographic bbox for this tile so each neighbor gets
+        # its own spatially-clipped archive (not a full-source re-tile).
+        tile_bounds = _tile_bbox(z, x, y)
+        return _default_callback(list(tile_bounds), float(z))
 
     _prefetch_worker: Optional[_PrefetchWorker] = (
         _PrefetchWorker(cache=_cache, tiler=_tiler_for_prefetch) if prefetch else None

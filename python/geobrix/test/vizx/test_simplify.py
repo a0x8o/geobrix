@@ -226,6 +226,43 @@ def test_archive_budget_escalation_retiles_from_source(tmp_path):
     ), f"Result max tile {max_result_tile_size} bytes should be <= source {src_max} bytes (escalation should reduce sizes)"
 
 
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
+def test_bbox_clip_produces_distinct_archives(tmp_path):
+    """Two non-overlapping bboxes tile to different archives, proving clip took effect."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_source
+
+    # Two clusters of points in non-overlapping regions.
+    gdf = gpd.GeoDataFrame(
+        {"v": [1, 2, 3, 4]},
+        geometry=[
+            Point(-10, 0),  # west cluster
+            Point(-9, 0),
+            Point(10, 0),   # east cluster
+            Point(11, 0),
+        ],
+        crs="EPSG:4326",
+    )
+
+    west_bbox = (-15.0, -5.0, -5.0, 5.0)   # covers only the west cluster
+    east_bbox = (5.0, -5.0, 15.0, 5.0)     # covers only the east cluster
+
+    west_bytes = simplify_tiles_from_source(gdf, spec={"max_z": 4}, bbox=west_bbox)
+    east_bytes = simplify_tiles_from_source(gdf, spec={"max_z": 4}, bbox=east_bbox)
+
+    # Both must be valid PMTiles.
+    assert isinstance(west_bytes, bytes) and west_bytes[:7] == b"PMTiles"
+    assert isinstance(east_bytes, bytes) and east_bytes[:7] == b"PMTiles"
+    # The two archives must differ (different spatial content).
+    assert west_bytes != east_bytes, (
+        "bbox clip had no effect — west and east archives are identical"
+    )
+
+
 def test_simplify_raster_path(tmp_path):
     """Raster source (GeoTIFF path) → COG output exists and is a valid GeoTIFF."""
     import struct

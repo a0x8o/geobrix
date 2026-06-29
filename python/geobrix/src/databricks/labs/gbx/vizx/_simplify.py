@@ -361,26 +361,34 @@ def _run_tippecanoe(argv: list) -> None:
     log.debug("tippecanoe stdout: %s", result.stdout)
 
 
-def _simplify_vector(source, spec: dict, out_path: str | None) -> Union[bytes, str]:
+def _simplify_vector(source, spec: dict, out_path: str | None, bbox: tuple | None = None) -> Union[bytes, str]:
     """Vector branch: GeoDataFrame / path / Spark DF → PMTiles bytes or path."""
     bin_path = _ensure_tippecanoe()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Resolve source → GeoJSON path
+        # Resolve source → GeoDataFrame or GeoJSON path
         if _is_spark_dataframe(source):
             from databricks.labs.gbx.vizx._vector import as_gdf
 
             gdf = as_gdf(source)
-            in_geojson = _gdf_to_geojson(gdf, tmp_dir)
         elif _is_geodataframe(source):
-            in_geojson = _gdf_to_geojson(source, tmp_dir)
+            gdf = source
         elif _is_vector_path(source):
-            in_geojson = _vector_path_to_geojson(source, tmp_dir)
+            import geopandas as gpd
+            gdf = gpd.read_file(str(source))
         else:
             raise TypeError(
                 f"Cannot interpret source as a vector: {type(source).__name__}. "
                 "Pass a GeoDataFrame, Spark DataFrame, or path to a vector file."
             )
+
+        # Apply bbox clip if requested.
+        if bbox is not None:
+            import shapely.geometry
+            clip_box = shapely.geometry.box(*bbox)
+            gdf = gdf[gdf.intersects(clip_box)]
+
+        in_geojson = _gdf_to_geojson(gdf, tmp_dir)
 
         out_pmtiles = str(Path(tmp_dir) / "out.pmtiles")
         argv = _build_tippecanoe_argv(bin_path, in_geojson, out_pmtiles, spec)
@@ -528,6 +536,7 @@ def simplify_tiles_from_source(
     *,
     spec: dict | None = None,
     out_path: str | None = None,
+    bbox: tuple | None = None,
 ) -> Union[bytes, str]:
     """Re-tile a vector or raster SOURCE into a budget-bounded PMTiles overview.
 
@@ -545,6 +554,11 @@ def simplify_tiles_from_source(
                 rasterio (raster).
         out_path: If given, the output is written to this path and the path
             string is returned. If None, the raw bytes are returned.
+        bbox: Optional ``(min_lon, min_lat, max_lon, max_lat)`` tuple in
+            WGS-84 degrees.  When given, the source is spatially clipped to
+            this bounding box before tiling; features wholly outside the box
+            are dropped.  Only applied to GeoDataFrame / vector sources;
+            ignored for raster sources.  ``None`` → no clipping (default).
 
     Returns:
         bytes: the PMTiles (vector) or COG (raster) archive, when out_path=None.
@@ -569,7 +583,7 @@ def simplify_tiles_from_source(
         or _is_spark_dataframe(source)
         or _is_vector_path(source)
     ):
-        return _simplify_vector(source, merged, out_path)
+        return _simplify_vector(source, merged, out_path, bbox=bbox)
     elif _is_raster_source(source):
         return _simplify_raster(source, merged, out_path)
     else:
