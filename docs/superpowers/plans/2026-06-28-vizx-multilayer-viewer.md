@@ -807,6 +807,37 @@ git commit -m "feat(vizx): wire simplify into ladder; archive budget-escalates t
 
 ---
 
+## Task 11b: Proactive embed-size audit + report (no surprises)
+
+The 64 MB embed budget should never be a *surprise* fallback — the per-layer + total size and the
+chosen path must be auditable up front, before (and as part of) rendering.
+
+**Files:**
+- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py` (`prepare_layers` returns an `audit`; add `audit_layers`), `_interactive.py` (`plot_interactive` reports the audit + a `dry_run` arg)
+- Test: `python/geobrix/test/vizx/test_ladder.py` (add audit tests)
+
+**Interfaces:**
+- Consumes: `layer_to_sources_layers`, `build_html`, `prepare_layers` (Tasks 4-6,11).
+- Produces:
+  - `audit_layers(layers, *, max_embed_mb=64, simplify_tiles_spec=None) -> dict` — a DRY pre-flight (no `displayHTML`, no render): `{"layers":[{"label","kind","embed_bytes","max_tile_bytes"(archives only, else None)}], "total_embed_bytes", "max_embed_bytes", "fits": bool, "verdict": "embed"|"simplify"|"url"|"static"}`.
+  - `prepare_layers(...)` adds the same `audit` dict to its return.
+  - `plot_interactive(..., dry_run=False)`: always **prints a concise audit line** before rendering (e.g. `"[vizx] buildings 12.0MB + naip 40.0MB = 52.0MB ≤ 64MB → embedding inline"` or `"... 80MB > 64MB → simplifying"` / `"→ static fallback"`); `dry_run=True` returns the audit dict WITHOUT rendering.
+
+**Budget clarity (document + enforce):** the audited **total assembled-HTML size** is the embed-budget authority (the thing that can surprise); `simplify_tiles_spec.budget_mb` is the tippecanoe **per-tile** cap (rename its schema doc-comment from "total archive ceiling" to "per-tile byte cap"), and the ladder's post-simplify HTML-total re-check (Task 6) is what guarantees the embed fits. The audit reports BOTH the total (vs `max_embed_mb`) and per-archive max tile size so neither is a surprise.
+
+- [ ] **Step 1: Failing tests** — `audit_layers([small vector])` returns `fits=True`, `verdict="embed"`, with a `total_embed_bytes` and a per-layer entry; `plot_interactive([...], dry_run=True)` returns the audit dict and does NOT render (no HTML string with `maplibregl.Map`). An oversize case → `fits=False`, `verdict in {"simplify","static"}`.
+- [ ] **Step 2: Run → FAIL.**
+- [ ] **Step 3: Implement** — factor the size computation in `prepare_layers` into an `audit` dict (it already measures the assembled HTML size); expose `audit_layers`; have `plot_interactive` print the one-line summary and honor `dry_run`. Fix the `budget_mb` doc-comment in `_simplify.py` `normalize_spec` (per-tile, not total).
+- [ ] **Step 4: Run → PASS.** Full vizx suite.
+- [ ] **Step 5: Commit**
+
+```bash
+git add python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py python/geobrix/src/databricks/labs/gbx/vizx/_interactive.py python/geobrix/src/databricks/labs/gbx/vizx/_simplify.py python/geobrix/test/vizx/test_ladder.py
+git commit -m "feat(vizx): proactive embed-size audit + report (audit_layers, dry_run)"
+```
+
+---
+
 ## Task 12: Exports, extras, SRI pinning, back-compat
 
 **Files:**
@@ -886,6 +917,41 @@ def test_viewport_payload_only_fires_above_seam():
 ```bash
 git add python/geobrix/src/databricks/labs/gbx/vizx/_dynamic.py python/geobrix/test/vizx/test_dynamic.py
 git commit -m "feat(vizx): Phase-1.5 dynamic zoom cut-over (AnyWidget overview+stream)"
+```
+
+> Task 13 lands the **reactive** loop only (moveend → prepare current viewport → refresh). Predictive prefetch is the separate Task 13b below — build it on top once the reactive comm is proven.
+
+---
+
+## Task 13b: Predictive tile prefetch for the dynamic viewer
+
+A polish layer on Task 13: render the initial viewport, then a background thread pre-prepares
+adjacent tiles before the user pans/zooms to them, served from cache for instant response.
+
+**Files:**
+- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/_dynamic.py` (cache + prefetch thread)
+- Test: `python/geobrix/test/vizx/test_dynamic.py` (add)
+
+**Interfaces:**
+- Consumes: the Task-13 AnyWidget viewport callback + the viewport tiler (`simplify_tiles_from_source`/the per-viewport prepare).
+- Produces: a bounded driver-side **LRU tile cache** keyed by `(z, x, y)`; a `threading`-based prefetch worker that, after each viewport request, prepares the **ring of adjacent parent tiles** at the current zoom (and optionally `z+1`) into the cache; cache-hit serving so a pan to a prepared neighbor returns with no re-tile. The on-demand path checks the cache first (hit → instant), miss → prepare + return + trigger neighbor prefetch.
+
+**Constraints / guardrails:**
+- **Bounded cache** (LRU, a configurable max entry count / total bytes) — prefetched tiles must not grow driver memory unbounded; evict oldest.
+- Prefetch runs on a **background `threading` worker** (daemon), never blocking the comm callback; heavy tiling (tippecanoe subprocess) is fine off-thread on the Serverless driver.
+- **Coalesce / cancel**: a rapid sequence of viewport changes should not pile up stale prefetch work — cancel or skip prefetch for viewports the user has already left.
+- Start with **neighbor-ring** prefetch; pan-velocity direction prediction is a later refinement (note, don't build).
+- No `spark.conf`/`.rdd` (Serverless-safe); cache is pure driver-side Python.
+
+- [ ] **Step 1: Failing tests** — (a) a `_TileCache` LRU: insert beyond capacity evicts the oldest; get returns a hit/miss. (b) after a viewport request, the prefetch worker populates the neighbor-ring cache entries (test with a stub tiler + a join/flush on the worker so the test is deterministic — no real sleeps). (c) a second request for a prefetched neighbor is served from cache (the tiler is NOT called again).
+- [ ] **Step 2: Run → FAIL.**
+- [ ] **Step 3: Implement** the `_TileCache` (LRU, bounded), the prefetch worker (daemon thread, coalescing), and cache-first serving in the viewport callback. Make the worker test-injectable (pass the tiler + allow a synchronous flush) so tests are deterministic.
+- [ ] **Step 4: Run → PASS.** Full vizx suite. (End-to-end pan-prefetch UX is verified manually like the rest of the dynamic tier.)
+- [ ] **Step 5: Commit**
+
+```bash
+git add python/geobrix/src/databricks/labs/gbx/vizx/_dynamic.py python/geobrix/test/vizx/test_dynamic.py
+git commit -m "feat(vizx): predictive neighbor-ring tile prefetch for the dynamic viewer"
 ```
 
 ---
