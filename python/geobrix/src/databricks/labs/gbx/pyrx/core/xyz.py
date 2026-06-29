@@ -213,16 +213,21 @@ def intersecting_tiles(ds, min_z, max_z) -> list:
     return out
 
 
-def iter_pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear"):
+def iter_pyramid(
+    ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear", rescale="auto"
+):
     """Render every intersecting (z, x, y) tile across [min_z, max_z], streaming.
 
     Yields ``(z, x, y, bytes)`` tuples one tile at a time — never buffers the full
-    pyramid (large-fan-out OOM guard). Validates zoom guards, the render args, and
-    the tile-count guard BEFORE rendering (and yielding) any tile.
+    pyramid (large-fan-out OOM guard). Validates zoom guards, the render args, the
+    rescale arg, and the tile-count guard BEFORE rendering any tile. The rescale
+    ``in_range`` is resolved ONCE so every tile shares one 8-bit mapping (no seams)
+    and source statistics are read a single time.
     """
     lo, hi = _validate_zoom_range(min_z, max_z)
     # Validate render args up front (so bad format/size fails fast, not per-tile).
     _validate(fmt, size, resampling)
+    in_range = _resolve_in_range(ds, rescale)  # once; also validates rescale
     west, south, east, north = _wgs84_bounds(ds)
 
     # Count guard first — never materialize a giant list to count.
@@ -234,11 +239,15 @@ def iter_pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear"):
 
     for z in range(lo, hi + 1):
         for t in _TMS.tiles(west, south, east, north, [z]):
-            b = render_tile(ds, t.z, t.x, t.y, fmt, size, resampling)
+            b = render_tile(
+                ds, t.z, t.x, t.y, fmt, size, resampling, in_range=in_range
+            )
             yield (t.z, t.x, t.y, b)
 
 
-def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> list:
+def pyramid(
+    ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear", rescale="auto"
+) -> list:
     """Render every intersecting (z, x, y) tile across [min_z, max_z].
 
     Returns a list of ``{"z","x","y","bytes"}`` dicts. List-materializing wrapper
@@ -246,7 +255,9 @@ def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> lis
     """
     return [
         {"z": z, "x": x, "y": y, "bytes": b}
-        for z, x, y, b in iter_pyramid(ds, min_z, max_z, fmt, size, resampling)
+        for z, x, y, b in iter_pyramid(
+            ds, min_z, max_z, fmt, size, resampling, rescale
+        )
     ]
 
 

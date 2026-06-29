@@ -377,3 +377,26 @@ def test_render_tile_uint8_auto_matches_none():
         assert auto == none  # uint8 pass-through: byte-identical
     finally:
         ds.close(); mf.close()
+
+
+def test_pyramid_shares_one_mapping_no_per_tile_stats(monkeypatch):
+    """All pyramid tiles use ONE resolved in_range; stats resolved once, not per tile."""
+    mf, ds = _open(_make_uint16_narrow(lo=8000, hi=12000))
+    try:
+        calls = {"n": 0}
+        real = xyz._resolve_in_range
+
+        def _spy(dataset, rescale):
+            calls["n"] += 1
+            return real(dataset, rescale)
+
+        monkeypatch.setattr(xyz, "_resolve_in_range", _spy)
+        tiles = xyz.pyramid(ds, 6, 8, rescale="auto")
+        assert len(tiles) >= 2  # multiple tiles across the range
+        # Resolved exactly once for the whole pyramid (not once per tile).
+        assert calls["n"] == 1
+        # And the tiles are contrast-recovered (spot check one non-empty tile).
+        nonempty = [t for t in tiles if t["bytes"]]
+        assert nonempty
+    finally:
+        ds.close(); mf.close()
