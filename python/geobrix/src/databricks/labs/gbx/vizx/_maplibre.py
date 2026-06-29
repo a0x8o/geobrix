@@ -662,10 +662,25 @@ def prepare_layers(
             continue
 
         # ------------------------------------------------------------------ #
+        # Rung 3 -- simplify hook (Task 11).                                 #
+        # Runs BEFORE the raw-oversize bail so an over-budget archive gets a  #
+        # chance to be reduced under budget and stay interactive.             #
+        # URL-mode pmtiles skip simplify (remote archive, zero embed cost).   #
+        # ------------------------------------------------------------------ #
+        spec = simplify_tiles_spec or getattr(layer, "simplify", None)
+        # The url-mode clause is defensive: URL-mode pmtiles already `continue`d
+        # at Rung 1, so they never reach here -- the guard just documents intent.
+        if spec is not None and not (kind == "pmtiles" and _pmtiles_is_url(layer)):
+            layer = _simplify_layer(layer, spec)
+            simplified_labels.append(_layer_label(layer, idx))
+
+        # ------------------------------------------------------------------ #
         # Rung 2 (pre-check) -- for embedded pmtiles, guard against archives  #
         # whose raw bytes already exceed the budget.  This avoids calling     #
         # pmtiles_info on potentially-invalid archives and keeps the error    #
-        # boundary clean.                                                     #
+        # boundary clean.  Measured on the (possibly-simplified) archive so   #
+        # that a spec that reduces the archive under budget falls through to   #
+        # normal interactive preparation below.                               #
         # ------------------------------------------------------------------ #
         if kind == "pmtiles":
             raw = _pmtiles_raw_bytes(layer)
@@ -674,15 +689,6 @@ def prepare_layers(
                 # Placeholder so indices stay aligned for the static-path pass.
                 prepared.append(None)
                 continue
-
-        # ------------------------------------------------------------------ #
-        # Rung 3 -- simplify hook (Task 11).                                 #
-        # Only invoked when a spec is actually passed.                        #
-        # ------------------------------------------------------------------ #
-        spec = simplify_tiles_spec or getattr(layer, "simplify", None)
-        if spec is not None:
-            layer = _simplify_layer(layer, spec)
-            simplified_labels.append(_layer_label(layer, idx))
 
         # ------------------------------------------------------------------ #
         # Rung 2 (normal) -- prepare via layer_to_sources_layers.            #

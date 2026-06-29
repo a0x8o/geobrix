@@ -166,3 +166,60 @@ def test_audit_max_tile_bytes_for_archive():
     assert (
         entry["max_tile_bytes"] > 0
     ), f"max_tile_bytes should be positive, got {entry['max_tile_bytes']}"
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: simplify rung must run BEFORE the over-budget raw-bytes bail.
+# ---------------------------------------------------------------------------
+
+
+def test_oversize_pmtiles_with_simplify_spec_stays_interactive(monkeypatch):
+    """Regression: over-budget pmtiles + simplify_tiles_spec must produce mode='interactive'.
+
+    Before the fix, prepare_layers would detect the raw archive exceeds budget,
+    append early_oversize_labels, and `continue` BEFORE calling _simplify_layer,
+    so simplify_tiles_spec was dead exactly when needed. The reorder ensures
+    _simplify_layer is called first; if it reduces the archive under budget the
+    layer stays interactive.
+    """
+    import databricks.labs.gbx.vizx._maplibre as _ml
+
+    # A real valid small PMTiles archive (under the 1 MB budget) used as the
+    # "simplified" replacement returned by the monkeypatched _simplify_layer.
+    try:
+        small_valid = _build_pmtiles_archive_for_ladder()
+    except Exception as e:
+        pytest.skip(f"pmtiles writer not available: {e}")
+
+    # An archive whose raw bytes exceed a 1 MB budget (padded far beyond small_valid).
+    BIG_ARCHIVE = small_valid + b"\x00" * (2 * 1024 * 1024)
+
+    # Track whether _simplify_layer was actually invoked.
+    simplify_called = []
+
+    def fake_simplify_layer(layer, spec):
+        simplify_called.append(True)
+        return pmtiles_layer(small_valid, label=getattr(layer, "label", None))
+
+    monkeypatch.setattr(_ml, "_simplify_layer", fake_simplify_layer)
+
+    big_layer = pmtiles_layer(BIG_ARCHIVE, label="big")
+    spec = {"max_z": 4, "budget_mb": 0.5}
+    out = prepare_layers(
+        [big_layer], max_embed_mb=1, simplify_tiles_spec=spec, fallback=True
+    )
+
+    assert (
+        simplify_called
+    ), "_simplify_layer was never called — simplify rung did not run"
+    assert (
+        out["mode"] == "interactive"
+    ), f"Expected 'interactive' after simplify reduced archive under budget, got {out['mode']!r}"
+
+
+def test_oversize_pmtiles_no_spec_still_static():
+    """Over-budget pmtiles WITHOUT a spec must still fall back to static (no regression)."""
+    BIG_ARCHIVE = b"PMTiles" + b"\x03" + b"\x00" * (5 * 1024 * 1024)
+    big_layer = pmtiles_layer(BIG_ARCHIVE, label="big-no-spec")
+    out = prepare_layers([big_layer], max_embed_mb=1, fallback=True)
+    assert out["mode"] == "static"
