@@ -1237,24 +1237,33 @@ def rst_tilexyz(
     format: Union[ColLike, None] = None,
     size: ColLike = 256,
     resampling: Union[ColLike, None] = None,
+    rescale: Union[ColLike, None] = None,
 ) -> Column:
     """Render a single web-mercator XYZ tile to PNG / JPEG / WEBP bytes.
 
     Returns ``BinaryType`` with the encoded tile bytes for ``(z, x, y)``.
     Out-of-extent tiles return a transparent PNG (alpha=0) of the requested
-    size — NOT null. Slippy-map tile servers expect a 200-status non-zero
+    size -- NOT null. Slippy-map tile servers expect a 200-status non-zero
     body even outside source coverage.
 
     Args:
         tile: Raster tile column.
-        z: Zoom level (0 ≤ z ≤ 20).
-        x: Tile X coordinate (0 ≤ x < 2^z).
-        y: Tile Y coordinate (0 ≤ y < 2^z, Y north-down).
-        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+        z: Zoom level (0 <= z <= 20).
+        x: Tile X coordinate (0 <= x < 2^z).
+        y: Tile Y coordinate (0 <= y < 2^z, Y north-down).
+        format: Output image format -- ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
             String literals are auto-wrapped in ``f.lit``.
         size: Output edge length in pixels (default 256).
         resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
             are auto-wrapped in ``f.lit``.
+        rescale: 8-bit encoding contrast -- ``"auto"`` (default) rescales non-8-bit
+            imagery by whole-dataset per-band min/max for display contrast; ``"none"``
+            keeps the raw full-dtype-range mapping; a ``"min,max"`` string (e.g.
+            ``"8000,12000"``) sets explicit bounds applied to every band. An explicit
+            ``(min, max)`` tuple is NOT supported through the Column API -- pass a
+            ``"min,max"`` string literal or use ``f.lit("min,max")``. String literals
+            are auto-wrapped in ``f.lit``. Note: rescale currently affects PNG output
+            only; JPEG/WEBP rescale support is a future follow-up.
 
     Returns:
         Binary column with the encoded image bytes.
@@ -1269,6 +1278,11 @@ def rst_tilexyz(
         if resampling is None
         else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
+    rescale_col = (
+        f.lit("auto")
+        if rescale is None
+        else (f.lit(rescale) if isinstance(rescale, str) else _col(rescale))
+    )
     return f.call_function(
         "gbx_rst_tilexyz",
         _col(tile),
@@ -1278,6 +1292,7 @@ def rst_tilexyz(
         format_col,
         _col(size),
         resampling_col,
+        rescale_col,
     )
 
 
@@ -1288,6 +1303,7 @@ def rst_xyzpyramid(
     format: Union[ColLike, None] = None,
     size: ColLike = 256,
     resampling: Union[ColLike, None] = None,
+    rescale: Union[ColLike, None] = None,
 ) -> Column:
     """Generator: emit one row per intersecting (z, x, y) tile across [min_z, max_z].
 
@@ -1296,15 +1312,23 @@ def rst_xyzpyramid(
     Cell-count is capped at 10^6 candidate tiles across the requested zoom range;
     ``max_z`` is capped at 20.
 
+    The scale mapping is resolved ONCE from the source raster before the tile loop so
+    that every tile in the pyramid shares one 8-bit mapping -- no tile-to-tile seams.
+
     Args:
         tile: Raster tile column.
         min_z: Inclusive minimum zoom level.
-        max_z: Inclusive maximum zoom level (≤ 20).
-        format: Output image format — ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
+        max_z: Inclusive maximum zoom level (<= 20).
+        format: Output image format -- ``"PNG"`` (default), ``"JPEG"``, or ``"WEBP"``.
             String literals are auto-wrapped in ``f.lit``.
         size: Output edge length in pixels (default 256).
         resampling: gdalwarp -r algorithm (default ``"bilinear"``). String literals
             are auto-wrapped in ``f.lit``.
+        rescale: 8-bit encoding contrast -- ``"auto"`` (default) rescales non-8-bit
+            imagery by whole-dataset per-band min/max; ``"none"`` keeps the raw
+            full-dtype-range mapping; a ``"min,max"`` string sets explicit bounds.
+            String literals are auto-wrapped in ``f.lit``. Note: rescale currently
+            affects PNG output only; JPEG/WEBP rescale support is a future follow-up.
 
     Returns:
         Array column of structs (use ``F.explode`` to get one row per tile).
@@ -1319,6 +1343,11 @@ def rst_xyzpyramid(
         if resampling is None
         else (f.lit(resampling) if isinstance(resampling, str) else _col(resampling))
     )
+    rescale_col = (
+        f.lit("auto")
+        if rescale is None
+        else (f.lit(rescale) if isinstance(rescale, str) else _col(rescale))
+    )
     return f.call_function(
         "gbx_rst_xyzpyramid",
         _col(tile),
@@ -1327,6 +1356,7 @@ def rst_xyzpyramid(
         format_col,
         _col(size),
         resampling_col,
+        rescale_col,
     )
 
 
