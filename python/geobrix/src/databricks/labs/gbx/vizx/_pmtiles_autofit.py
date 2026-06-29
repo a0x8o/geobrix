@@ -2,7 +2,7 @@
 
 GeoBrix vizx targets Databricks notebooks, where an interactive map is a single
 base64-embedded HTML cell capped by the Serverless cell-output limit (10 MB
-default, 20 MB max). A large archive cannot embed; ``auto_shard='sample'`` keeps
+default, 20 MB max). A large archive cannot embed; ``interactive_fit='downzoom'`` keeps
 the experience interactive by *investing little*: drop the highest (densest)
 zoom levels until the base64-rendered archive fits the budget. The user gets one
 interactive map of the whole extent at reduced detail.
@@ -12,7 +12,7 @@ from the tiles already present via the same in-memory ``Writer`` /
 ``build_header_info`` assembler used by ``gbx_pmtiles_agg`` -- no re-tiling, no
 tippecanoe, no tile-join.
 
-The full-detail, lossless counterpart -- ``auto_shard='all'`` (spatially shard
+The full-detail, lossless counterpart -- ``interactive_fit='all'`` (spatially shard
 into per-region sub-archives, each under budget, rendered as a multi-shard
 interactive experience) -- is the planned "halo" feature and is not built here.
 """

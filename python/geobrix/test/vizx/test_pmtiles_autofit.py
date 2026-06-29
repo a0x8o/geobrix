@@ -1,4 +1,4 @@
-"""Tests for vizx PMTiles auto-fit reduction (auto_shard='sample').
+"""Tests for vizx PMTiles auto-fit reduction (interactive_fit='downzoom').
 
 The reducer down-zooms an oversized archive (drops the highest zoom levels)
 until the base64-rendered embed size fits the interactive budget, so a single

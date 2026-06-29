@@ -243,7 +243,7 @@ def test_public_exports():
 
 
 # ---------------------------------------------------------------------------
-# auto_shard='sample' — auto-fit an oversized archive to stay interactive
+# interactive_fit='downzoom' — auto-fit an oversized archive to stay interactive
 # ---------------------------------------------------------------------------
 
 
@@ -259,8 +259,8 @@ def _multi_zoom_vector_archive():
     return _build_archive(tiles, TileType.MVT)
 
 
-def test_plot_pmtiles_auto_shard_sample_stays_interactive(monkeypatch):
-    """auto_shard='sample' reduces an over-budget archive so it embeds inline."""
+def test_plot_pmtiles_interactive_fit_downzoom_stays_interactive(monkeypatch):
+    """interactive_fit='downzoom' reduces an over-budget archive so it embeds inline."""
     import builtins
 
     from databricks.labs.gbx.vizx import _pmtiles as p
@@ -280,16 +280,16 @@ def test_plot_pmtiles_auto_shard_sample_stays_interactive(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", _no_ipython)
 
     # Budget below the full archive but above the coarse levels: without
-    # auto_shard this would fall back to static; with 'sample' it down-zooms
+    # interactive_fit this would fall back to static; with 'downzoom' it down-zooms
     # and stays interactive (MapLibre HTML).
     target_mb = (len(archive) * 0.6) / 1_048_576
-    html = p.plot_pmtiles(archive, max_embed_mb=target_mb, auto_shard="sample")
+    html = p.plot_pmtiles(archive, max_embed_mb=target_mb, interactive_fit="downzoom")
     assert html is not None
-    assert "maplibregl.Map" in html, "auto_shard='sample' should stay interactive"
+    assert "maplibregl.Map" in html, "interactive_fit='downzoom' should stay interactive"
 
 
-def test_plot_pmtiles_auto_shard_none_does_not_reduce(monkeypatch):
-    """auto_shard=None (default) over budget must NOT auto-fit: the autofit
+def test_plot_pmtiles_interactive_fit_none_does_not_reduce(monkeypatch):
+    """interactive_fit=None (default) over budget must NOT auto-fit: the autofit
     reducer is never called and the path routes to static fallback (unchanged
     behavior), rather than down-zooming to stay interactive."""
     import databricks.labs.gbx.vizx._pmtiles_autofit as af
@@ -305,30 +305,30 @@ def test_plot_pmtiles_auto_shard_none_does_not_reduce(monkeypatch):
     monkeypatch.setattr(af, "autofit_archive", _spy)
 
     archive = _multi_zoom_vector_archive()
-    # Over budget. Default auto_shard=None -> reducer must NOT run; over-budget
+    # Over budget. Default interactive_fit=None -> reducer must NOT run; over-budget
     # routes to static (which raises on these synthetic non-MVT tiles -- that's
     # fine, it proves we did NOT stay interactive and did NOT auto-fit).
     with pytest.raises(Exception):
         p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=True)
-    assert not called, "auto_shard=None must not invoke the autofit reducer"
+    assert not called, "interactive_fit=None must not invoke the autofit reducer"
 
 
-def test_plot_pmtiles_auto_shard_all_not_yet_implemented():
-    """auto_shard='all' is the planned multi-shard halo feature; until built it
+def test_plot_pmtiles_interactive_fit_all_not_yet_implemented():
+    """interactive_fit='all' is the planned multi-shard halo feature; until built it
     must raise a clear NotImplementedError, not silently degrade."""
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     archive = _multi_zoom_vector_archive()
-    with pytest.raises(NotImplementedError, match="auto_shard='all'"):
-        p.plot_pmtiles(archive, max_embed_mb=1e-9, auto_shard="all")
+    with pytest.raises(NotImplementedError, match="interactive_fit='all'"):
+        p.plot_pmtiles(archive, max_embed_mb=1e-9, interactive_fit="all")
 
 
-def test_plot_pmtiles_auto_shard_rejects_bad_value():
+def test_plot_pmtiles_interactive_fit_rejects_bad_value():
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     archive = _multi_zoom_vector_archive()
-    with pytest.raises(ValueError, match="auto_shard"):
-        p.plot_pmtiles(archive, auto_shard="bogus")
+    with pytest.raises(ValueError, match="interactive_fit"):
+        p.plot_pmtiles(archive, interactive_fit="bogus")
 
 
 # ---------------------------------------------------------------------------
