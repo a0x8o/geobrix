@@ -47,6 +47,21 @@ def _archive_bytes(path_or_bytes: Union[str, bytes, bytearray]) -> bytes:
         return f.read()
 
 
+def _maybe_gunzip(payload: bytes) -> bytes:
+    """Inflate a gzip-compressed tile payload (PMTiles tile_compression=gzip).
+
+    PMTiles stores tiles per the archive's tile_compression and the reader yields
+    the raw stored bytes, so gzipped tiles (gzip magic 0x1f 0x8b) must be inflated
+    before decoding — rasterio's MemoryFile and mapbox_vector_tile.decode both
+    reject gzip-wrapped bytes. Idempotent no-op on already-raw payloads.
+    """
+    import gzip
+
+    if payload and payload[:2] == b"\x1f\x8b":
+        return gzip.decompress(payload)
+    return payload
+
+
 def _lowest_zoom_tile(data: bytes):
     """Return (z, x, y, payload) for the lowest-zoom tile (the coarsest overview).
 
@@ -71,7 +86,7 @@ def _static_raster_fallback(data: bytes, info: dict, **plot_kw) -> None:
     # plot_raster does not accept a basemap kwarg (raster tiles are already
     # georeferenced imagery; there is no separate tile fetch step).
     plot_kw.pop("basemap", None)
-    plot_raster(tile[3], **plot_kw)
+    plot_raster(_maybe_gunzip(tile[3]), **plot_kw)
 
 
 def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
@@ -87,7 +102,7 @@ def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
 
     from databricks.labs.gbx.pyvx._mvt import _tile_bounds
 
-    decoded = mvt.decode(payload)
+    decoded = mvt.decode(_maybe_gunzip(payload))
     out = []
     for layer in decoded.values():
         extent = layer.get("extent", 4096)

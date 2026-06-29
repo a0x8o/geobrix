@@ -412,3 +412,122 @@ def test_static_vector_fallback_decodes_only_min_zoom_without_info(monkeypatch):
     assert out == "AX"
     assert isinstance(rendered["gdf"], gpd.GeoDataFrame)
     assert len(rendered["gdf"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: _maybe_gunzip — gzip-compressed tile decoding (github issue fix)
+# PMTiles archives with tile_compression=gzip yield raw gzip-wrapped bytes from
+# all_tiles/MemorySource; rasterio.MemoryFile and mapbox_vector_tile.decode both
+# reject gzip bytes, so they must be inflated before decoding.
+# ---------------------------------------------------------------------------
+
+
+def test_maybe_gunzip_idempotent_on_raw():
+    """_maybe_gunzip is a no-op when the payload is already raw (not gzip)."""
+    import gzip
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    # Non-gzip passthrough
+    assert p._maybe_gunzip(raw) == raw
+    # Also idempotent on empty bytes
+    assert p._maybe_gunzip(b"") == b""
+
+
+def test_maybe_gunzip_decompresses_gzip():
+    """_maybe_gunzip decompresses a gzip-wrapped payload to the original bytes."""
+    import gzip
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    original = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    compressed = gzip.compress(original)
+    assert compressed[:2] == b"\x1f\x8b", "test pre-condition: gzip magic"
+    result = p._maybe_gunzip(compressed)
+    assert result == original
+
+
+def test_static_raster_fallback_strips_gzip_before_plot_raster(monkeypatch):
+    """_static_raster_fallback de-gzips tiles before passing bytes to plot_raster.
+
+    Regression for: RasterioIOError when tile_compression=gzip — rasterio's
+    MemoryFile rejects gzip-wrapped bytes.  The fix calls _maybe_gunzip(tile[3])
+    before forwarding.  We spy by monkeypatching _lowest_zoom_tile to return a
+    gzip-compressed PNG payload, then assert plot_raster receives raw PNG bytes
+    (magic \\x89PNG), not gzip bytes (magic \\x1f\\x8b).
+    """
+    import gzip
+    import io
+
+    import numpy as np
+    from matplotlib.image import imsave
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    # Build a real 8×8 PNG, then gzip-wrap it (simulating tile_compression=gzip)
+    buf = io.BytesIO()
+    imsave(buf, np.random.rand(8, 8, 3), format="png")
+    raw_png = buf.getvalue()
+    gzipped_png = gzip.compress(raw_png)
+    assert gzipped_png[:2] == b"\x1f\x8b"
+
+    # _lowest_zoom_tile returns (z, x, y, payload) — payload is gzip-wrapped
+    monkeypatch.setattr(p, "_lowest_zoom_tile", lambda data: (0, 0, 0, gzipped_png))
+
+    captured = {}
+
+    def _fake_plot_raster(raster_bytes, **kw):
+        captured["bytes"] = raster_bytes
+
+    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_raster", _fake_plot_raster)
+
+    archive = _build_archive([(0, 0, 0, gzipped_png)], TileType.PNG)
+    info = __import__(
+        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
+    ).pmtiles_info(archive)
+    p._static_raster_fallback(archive, info, basemap=False)
+
+    assert "bytes" in captured, "plot_raster was not called"
+    received = captured["bytes"]
+    # Must be raw PNG, not still-gzipped
+    assert received[:4] == b"\x89PNG", (
+        f"plot_raster received gzip bytes (magic {received[:2]!r}), "
+        "expected raw PNG bytes — _maybe_gunzip not applied"
+    )
+    assert received == raw_png
+
+
+def test_decode_mvt_to_geoms_strips_gzip(monkeypatch):
+    """_decode_mvt_to_geoms de-gzips an MVT payload before passing to mvt.decode.
+
+    Regression for: mapbox_vector_tile.decode rejecting gzip-wrapped MVT bytes
+    when tile_compression=gzip.  We gzip-compress a real encoded MVT payload and
+    assert that _decode_mvt_to_geoms still returns valid geometries.
+    """
+    import gzip
+
+    import mapbox_vector_tile as mvt
+    from shapely.geometry import box
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    # Encode a simple polygon tile
+    raw_mvt = mvt.encode(
+        {
+            "name": "demo",
+            "features": [
+                {"geometry": box(500, 500, 3500, 3500), "properties": {"v": 42}}
+            ],
+        },
+        default_options={"extents": 4096, "y_coord_down": True},
+    )
+    gzipped_mvt = gzip.compress(raw_mvt)
+    assert gzipped_mvt[:2] == b"\x1f\x8b"
+
+    z, x, y = 10, 163, 395
+    result = p._decode_mvt_to_geoms(gzipped_mvt, z, x, y)
+    assert len(result) >= 1, "no geometries decoded from gzip-compressed MVT"
+    geom, props = result[0]
+    assert not geom.is_empty
+    assert props.get("v") == 42
