@@ -747,7 +747,20 @@ Co-authored-by: Isaac"
 **Files:**
 - Test (NEW): `src/test/scala/com/databricks/labs/gbx/rasterx/expressions/web/XYZRescaleParityTest.scala`
 
-**Goal:** Prove both tiers feed the SAME per-band `(min,max)` and produce equivalent value distributions. The heavy side is asserted directly here; the cross-tier equivalence is asserted by reproducing light's resolved `(min,max)` and confirming heavy derives the identical pair from the same source pixels, then asserting the decoded tile's value distribution matches the expected linear `[min,max]→[0,255]` mapping within a tolerance. (A live light-vs-heavy byte comparison is NOT possible inside a Scala suite; the value-distribution-vs-expected-mapping assertion is the in-suite proxy for the documented pixel-level parity contract. The light tier's own tests, Phase 1, already assert its side of the same mapping.)
+> **SCOPE REFINEMENT (from the Task 2 review, binding for Tasks 6 + 7):**
+> The cross-tier parity gate asserts parity for the **`"auto"` path** and the **uint8 pass-through** ONLY.
+> **EXCLUDE `"none"` from cross-tier parity** and document it as a known per-tier-raw difference:
+> heavy `"none"` (bare `gdal_translate -ot Byte`, no `-scale`) **CLIPS** values > 255 to 255,
+> whereas light `"none"` (rio-tiler render with no `in_range`) does NOT clip the same way. This is a
+> PRE-EXISTING difference in each tier's raw passthrough, predates this feature, and does NOT touch the
+> `"auto"` contract (which is the whole point of the feature). Do NOT change heavy `"none"` to force a
+> match — that would break heavy back-compat. Assert heavy `"none"` against HEAVY's real behavior (clip).
+> Also: the spec's claim that light `"none"` yields a proportional `[31,46]` mapping is SUSPECT —
+> rio-tiler `render()` on single-band uint16 with no `in_range` may 16-bit-passthrough, not proportionally
+> squash. Task 7 (cross-language) MUST validate light `"none"` EMPIRICALLY rather than trust that number;
+> Task 6 (in-Scala) does not assert light's `"none"` value at all.
+
+**Goal:** Prove both tiers feed the SAME per-band `(min,max)` and produce equivalent value distributions **on the `"auto"` path** (plus uint8 pass-through). The heavy side is asserted directly here; the cross-tier equivalence is asserted by reproducing light's resolved `(min,max)` and confirming heavy derives the identical pair from the same source pixels, then asserting the decoded tile's value distribution matches the expected linear `[min,max]->[0,255]` mapping within a tolerance. (A live light-vs-heavy byte comparison is NOT possible inside a Scala suite; the value-distribution-vs-expected-mapping assertion is the in-suite proxy for the documented pixel-level parity contract. The light tier's own tests, Phase 1, already assert its side of the same mapping.)
 
 **Design rationale for an in-Scala parity proxy:** the spec's parity contract is "both tiers derive the same `(min,max)` and feed it identically." Light feeds `in_range=[(min,max)]` to rio-tiler; heavy feeds `-scale min max 0 255`. Both are the SAME linear map `v -> round((v-min)/(max-min)*255)`. So a parity gate that (a) confirms heavy's resolved `(min,max)` equals the source's exact whole-dataset min/max (which is what light computes too), and (b) confirms heavy's decoded output matches that linear map within tolerance, proves the contract without crossing the language boundary in one process. A true cross-language byte/value diff belongs in the Python doc-test/bench harness (note below).
 
