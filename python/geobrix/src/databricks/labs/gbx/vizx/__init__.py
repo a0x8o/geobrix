@@ -4,8 +4,8 @@ Raster rendering (plot_raster / plot_file), static and interactive map
 rendering (plot_static / plot_interactive), Spark DataFrame ->
 GeoDataFrame adapters (as_gdf / cells_as_gdf), layer constructors
 (vector_layer, raster_layer, grid_layer, pmtiles_layer), tile simplification
-(simplify_tiles_from_source, simplify_tiles_from_archive), and embed-size
-auditing (audit_layers). Install with ``pip install 'geobrix[vizx]'``.
+(simplify_tiles_from_source), and embed-size auditing (audit_layers). Install
+with ``pip install 'geobrix[vizx]'``.
 """
 
 from databricks.labs.gbx.vizx._cog import plot_cog
@@ -32,10 +32,6 @@ def __getattr__(name):
         from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_source
 
         return simplify_tiles_from_source
-    if name == "simplify_tiles_from_archive":
-        from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_archive
-
-        return simplify_tiles_from_archive
     if name == "plot_interactive_dynamic":
         from databricks.labs.gbx.vizx._dynamic import plot_interactive_dynamic
 
@@ -60,6 +56,5 @@ __all__ = [
     "grid_layer",
     "pmtiles_layer",
     "simplify_tiles_from_source",
-    "simplify_tiles_from_archive",
     "audit_layers",
 ]

@@ -57,9 +57,12 @@ _BASE64_INFLATION = 4.0 / 3.0
 # cell, so when set_cell_max_output is on we raise the cap to its max and size the
 # embed budget for it; otherwise we stay conservative for the 10 MB default cap.
 CELL_OUTPUT_CAP_MAX_MB: int = 20
-# Safe embed budget when the cap is raised to its 20 MB max: 20 / (4/3) ~ 15 MB of
-# archive, minus the MapLibre HTML template overhead -> 14 MB.
-MAX_EMBED_MB_CAP_RAISED: float = 14
+# Safe embed budget when the cap is raised to its 20 MB max. max_embed_mb is compared
+# against the RENDERED size (archive x 4/3), so it is itself in rendered-MB units: set
+# it to the cap minus a ~2 MB template/safety margin (mirrors DEFAULT_MAX_EMBED_MB=8 for
+# the 10 MB cap). 18, not 20/(4/3)=15 -- the inflation is already in the comparison, so
+# dividing again would waste ~4 MB of the headroom the raised cap creates.
+MAX_EMBED_MB_CAP_RAISED: float = 18
 
 
 def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
@@ -67,7 +70,7 @@ def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
 
     An explicit ``max_embed_mb`` always wins. Otherwise the default tracks whether
     the Serverless cell-output cap will be raised: ``MAX_EMBED_MB_CAP_RAISED``
-    (~14 MB, sized for the 20 MB max cap) when ``set_cell_max_output`` is on, else
+    (18 MB, sized for the 20 MB max cap) when ``set_cell_max_output`` is on, else
     the conservative ``DEFAULT_MAX_EMBED_MB`` (8 MB, safe for the 10 MB default cap).
     """
     if max_embed_mb is not None:
@@ -240,41 +243,43 @@ def build_html(
 # ---------------------------------------------------------------------------
 
 
-def _simplify_layer(layer, spec: dict):
-    """Route the layer through the appropriate simplify engine and return a pmtiles_layer."""
+def _simplify_layer(layer, spec: dict, max_embed_mb: float):
+    """Route the layer through the appropriate simplify engine and return a pmtiles_layer.
+
+    Existing PMTiles archives are reduced with the binary-free ``autofit_archive``
+    down-zoom (drop the highest zoom levels until the base64-rendered archive fits
+    ``max_embed_mb``) — no tippecanoe, no tile-join. Source-carrying layers
+    (vector/grid/raster) re-tile from source via ``simplify_tiles_from_source``.
+    """
     from databricks.labs.gbx.vizx._layers import pmtiles_layer as _pmtiles_layer
-    from databricks.labs.gbx.vizx._simplify import (
-        simplify_tiles_from_archive,
-        simplify_tiles_from_source,
-    )
 
     kind = getattr(layer, "kind", None)
 
     if kind == "pmtiles":
-        # Existing archive (bytes or path) — use the archive path (zoom-trim + escalation).
+        # Existing archive: reduce it to the embed budget by dropping the highest
+        # (densest) zoom levels. Binary-free, tier-agnostic (raster or vector tiles).
         data = layer.data
         if isinstance(data, (bytes, bytearray)):
-            import pathlib
-            import tempfile
-
-            with tempfile.NamedTemporaryFile(suffix=".pmtiles", delete=False) as tf:
-                tf.write(bytes(data))
-                tmp_path = tf.name
-            try:
-                simplified = simplify_tiles_from_archive(tmp_path, spec=spec)
-            finally:
-                pathlib.Path(tmp_path).unlink(missing_ok=True)
+            raw = bytes(data)
         elif isinstance(data, str) and not (
             data.startswith("http://") or data.startswith("https://")
         ):
-            simplified = simplify_tiles_from_archive(data, spec=spec)
+            import pathlib
+
+            raw = pathlib.Path(data).read_bytes()
         else:
             # URL mode — can't simplify a remote archive; return as-is.
             return layer
-        return _pmtiles_layer(simplified, label=layer.label)
+
+        from databricks.labs.gbx.vizx._pmtiles_autofit import autofit_archive
+
+        reduced, _report = autofit_archive(raw, max_embed_mb=max_embed_mb)
+        return _pmtiles_layer(reduced, label=layer.label)
     else:
         # vector/grid/raster layer carrying SOURCE data.
         # For vector/grid, extract the GeoDataFrame; for raster, pass layer.data directly.
+        from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_source
+
         if kind in ("vector", "grid"):
             source = _gdf_for(layer).to_crs(4326)
         else:
@@ -461,8 +466,7 @@ def _layer_audit_entry(layer, idx: int, embed_bytes: int) -> dict:
 def _max_tile_bytes(raw: bytes) -> int | None:
     """Return the maximum single-tile decompressed byte size in a pmtiles archive.
 
-    Iterates the archive's actual tiles via ``all_tiles`` (mirrors the
-    size-check logic in ``simplify_tiles_from_archive``).
+    Iterates the archive's actual tiles via ``all_tiles``.
     Returns ``None`` if the archive contains no tiles or cannot be parsed.
     """
     try:
@@ -695,7 +699,7 @@ def prepare_layers(
         "default (20 MB max via %set_cell_max_output_size_in_mb), and the cap "
         "counts the base64-rendered HTML (~4/3x the archive) -- so raising "
         "max_embed_mb alone cannot exceed the cell ceiling; an archive whose "
-        "rendered size tops ~14 MB cannot embed inline on Serverless and must use "
+        "rendered size tops ~18 MB cannot embed inline on Serverless and must use "
         "a URL, a smaller/sharded archive, or the static fallback."
     )
 
@@ -728,7 +732,7 @@ def prepare_layers(
         # The url-mode clause is defensive: URL-mode pmtiles already `continue`d
         # at Rung 1, so they never reach here -- the guard just documents intent.
         if spec is not None and not (kind == "pmtiles" and _pmtiles_is_url(layer)):
-            layer = _simplify_layer(layer, spec)
+            layer = _simplify_layer(layer, spec, max_embed_mb)
             simplified_labels.append(_layer_label(layer, idx))
 
         # ------------------------------------------------------------------ #

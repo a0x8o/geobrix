@@ -139,10 +139,10 @@ When the embed budget is tight, `simplify_tiles_from_source` lets you pre-tile d
   functionName="simplify_durable_example"
 />
 
-If you already have a PMTiles archive and only need to trim its zoom range (for example, to cut a 0–14 archive down to 0–8 for an overview embed), use `simplify_tiles_from_archive(path, spec=…)` directly — it operates on the existing archive without re-tiling from source. When the archive exceeds a byte budget set in `spec`, it automatically falls back to a source re-tile.
+If you already have a PMTiles archive and only need an overview embed (for example, cutting a detailed 0–14 archive down so it fits an interactive cell), you don't need to re-tile from source. Pass the archive to `plot_pmtiles(archive, interactive_fit="downzoom")` — the interactive embedder drops the highest (densest) zoom levels until the rendered archive fits the embed budget. This reduction is binary-free (no `tippecanoe`) and works for both raster and vector tiles, since it rebuilds a smaller archive from the tiles already present.
 
 :::note Requires tippecanoe
-`simplify_tiles_from_source` and `simplify_tiles_from_archive` require the `tippecanoe` binary.
+`simplify_tiles_from_source` requires the `tippecanoe` binary (the `interactive_fit="downzoom"` archive reduction above does not).
 
 `pip install "geobrix[vizx]"` installs the `tippecanoe` Python wheel (manylinux), so **Databricks clusters and Serverless are covered automatically** — no extra step needed.
 

@@ -11,7 +11,6 @@ def test_new_public_symbols_exported():
         "grid_layer",
         "pmtiles_layer",
         "simplify_tiles_from_source",
-        "simplify_tiles_from_archive",
         "audit_layers",
     ):
         assert hasattr(vizx, name), f"missing: {name}"

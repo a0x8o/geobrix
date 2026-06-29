@@ -167,3 +167,46 @@ def test_prepare_layers_static_audit_matches_mode_and_uses_rendered_size():
     assert a["fits"] is False
     # The audit total is the RENDERED (inflated) measure, not the raw archive bytes.
     assert a["total_embed_bytes"] == int(len(archive) * _BASE64_INFLATION)
+
+
+def test_simplify_layer_archive_uses_binary_free_downzoom(monkeypatch):
+    """_simplify_layer on a PMTiles archive must reduce it via the binary-free
+    autofit down-zoom -- NOT via tippecanoe/tile-join (which segfault on x86_64
+    Linux). Verify the result is a reduced pmtiles layer and that no subprocess
+    was ever spawned.
+    """
+    import subprocess
+
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _simplify_layer
+
+    archive = _multi_zoom_archive(payload_size=8192)
+    full_zooms = _tile_zooms(archive)
+    assert full_zooms == [0, 1, 2]
+
+    # Guard: any shell-out (tippecanoe/tile-join) fails the test loudly.
+    def _no_subprocess(*a, **k):  # noqa: ANN001
+        raise AssertionError("simplify archive path must not spawn a subprocess")
+
+    monkeypatch.setattr(subprocess, "run", _no_subprocess)
+
+    layer = pmtiles_layer(archive, label="big")
+    # Budget that forces dropping the densest (z2) level.
+    target_mb = (len(archive) * 0.6) / 1_048_576
+    out = _simplify_layer(layer, {"max_z": 1}, max_embed_mb=target_mb)
+
+    assert out.kind == "pmtiles"
+    assert out.label == "big"
+    reduced_zooms = _tile_zooms(out.data)
+    assert max(reduced_zooms) < max(full_zooms), "top zoom should have been dropped"
+    assert 0 in reduced_zooms, "coarsest zoom must be preserved"
+
+
+def test_simplify_layer_url_archive_returned_unchanged():
+    """A URL-mode pmtiles layer can't be down-zoomed locally -> returned as-is."""
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _simplify_layer
+
+    layer = pmtiles_layer("https://example.com/tiles.pmtiles", label="remote")
+    out = _simplify_layer(layer, {"max_z": 1}, max_embed_mb=1.0)
+    assert out is layer, "URL-mode archive must be returned unchanged"

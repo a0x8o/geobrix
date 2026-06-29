@@ -197,7 +197,7 @@ def test_oversize_pmtiles_with_simplify_spec_stays_interactive(monkeypatch):
     # Track whether _simplify_layer was actually invoked.
     simplify_called = []
 
-    def fake_simplify_layer(layer, spec):
+    def fake_simplify_layer(layer, spec, max_embed_mb):
         simplify_called.append(True)
         return pmtiles_layer(small_valid, label=getattr(layer, "label", None))
 
@@ -234,39 +234,45 @@ def test_default_max_embed_mb_is_serverless_safe():
     """The default embed budget must fit the Serverless cell-output cap.
 
     Serverless notebooks cap cell output at 10 MB default, 20 MB max
-    (%set_cell_max_output_size_in_mb). The default max_embed_mb must be at or
-    below the 20 MB hard ceiling AFTER base64 inflation (~4/3x) -- i.e. the
-    rendered HTML for a default-budget archive must be < 20 MB. The old default
-    of 64 MB rendered to ~85 MB and was silently truncated.
+    (%set_cell_max_output_size_in_mb). max_embed_mb is compared against the
+    base64-RENDERED HTML size (~4/3x the archive), so it is itself a rendered-MB
+    budget. The un-raised DEFAULT_MAX_EMBED_MB applies when the cap is NOT raised,
+    so the rendered HTML it permits must stay under the 10 MB default cap. The old
+    default of 64 MB rendered to ~85 MB and was silently truncated.
     """
     from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
 
-    # Rendered HTML ~ archive * 4/3 (base64) + template. A 20 MB cell ceiling
-    # means the safe archive budget is < ~14 MB; we require the default to be
-    # comfortably under that.
-    assert DEFAULT_MAX_EMBED_MB <= 14, (
-        f"default max_embed_mb={DEFAULT_MAX_EMBED_MB} exceeds the Serverless-safe "
-        "archive budget (~14 MB at the 20 MB cell-output ceiling)"
+    # The budget is the rendered-size budget; un-raised it must clear the 10 MB
+    # default cap with margin (raising the cap to 20 MB shifts the ceiling to
+    # MAX_EMBED_MB_CAP_RAISED=18, covered separately).
+    assert DEFAULT_MAX_EMBED_MB < 10, (
+        f"default max_embed_mb={DEFAULT_MAX_EMBED_MB} does not clear the 10 MB "
+        "default Serverless cell-output cap"
     )
     assert DEFAULT_MAX_EMBED_MB > 0
 
 
 def test_all_entrypoints_share_the_default():
-    """plot_pmtiles / plot_interactive / audit_layers / prepare_layers must all
-    default to the same DEFAULT_MAX_EMBED_MB (no stray 64 left behind)."""
+    """No stray legacy budget (the old 64) left behind in any signature.
+
+    The cap-aware entrypoints (plot_pmtiles / plot_interactive) default
+    max_embed_mb to None -- the sentinel that defers to _resolve_embed_budget so
+    the budget tracks set_cell_max_output (18 when the cap is raised, else 8). The
+    lower-level audit_layers / prepare_layers don't take set_cell_max_output, so
+    they default to the conservative DEFAULT_MAX_EMBED_MB directly.
+    """
     import inspect
 
     from databricks.labs.gbx.vizx import _interactive, _maplibre, _pmtiles
 
     default = _maplibre.DEFAULT_MAX_EMBED_MB
-    for fn in (
-        _pmtiles.plot_pmtiles,
-        _interactive.plot_interactive,
-        _maplibre.audit_layers,
-        _maplibre.prepare_layers,
-    ):
-        sig = inspect.signature(fn)
-        got = sig.parameters["max_embed_mb"].default
+    for fn in (_pmtiles.plot_pmtiles, _interactive.plot_interactive):
+        got = inspect.signature(fn).parameters["max_embed_mb"].default
+        assert (
+            got is None
+        ), f"{fn.__name__} default max_embed_mb={got} != None (resolve sentinel)"
+    for fn in (_maplibre.audit_layers, _maplibre.prepare_layers):
+        got = inspect.signature(fn).parameters["max_embed_mb"].default
         assert got == default, (
             f"{fn.__name__} default max_embed_mb={got} != "
             f"DEFAULT_MAX_EMBED_MB={default}"

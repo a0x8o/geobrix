@@ -158,7 +158,7 @@ def plot_pmtiles(
     from databricks.labs.gbx.vizx._maplibre import _resolve_embed_budget
 
     # Resolve the embed budget up front so the downzoom autofit + the audit all use
-    # the same value (~14 MB when set_cell_max_output raises the cap, else 8 MB).
+    # the same value (18 MB when set_cell_max_output raises the cap, else 8 MB).
     max_embed_mb = _resolve_embed_budget(max_embed_mb, set_cell_max_output)
 
     archive = path_or_bytes
