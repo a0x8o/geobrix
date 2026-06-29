@@ -60,6 +60,76 @@ def _decode(png_bytes):
         return ds.read()
 
 
+def _make_uint16_narrow(width=64, height=64, epsg=4326, lo=8000, hi=12000):
+    """Single-band uint16 raster with values spread across [lo, hi] (narrow band)."""
+    transform = from_origin(10.0, 50.0, 0.03125, 0.03125)
+    profile = dict(
+        driver="GTiff", width=width, height=height, count=1, dtype="uint16",
+        crs=f"EPSG:{epsg}", transform=transform,
+    )
+    ramp = np.linspace(lo, hi, width * height).astype("uint16").reshape(height, width)
+    with MemoryFile() as mf:
+        with mf.open(**profile) as ds:
+            ds.write(ramp, 1)
+        return mf.read()
+
+
+def test_validate_rescale_normalizes():
+    assert xyz._validate_rescale(None) == "auto"
+    assert xyz._validate_rescale("auto") == "auto"
+    assert xyz._validate_rescale("AUTO") == "auto"
+    assert xyz._validate_rescale("none") == "none"
+    assert xyz._validate_rescale((10, 200)) == (10.0, 200.0)
+    assert xyz._validate_rescale([10, 200]) == (10.0, 200.0)
+
+
+def test_validate_rescale_rejects_bad():
+    with pytest.raises(ValueError):
+        xyz._validate_rescale("stretch")
+    with pytest.raises(ValueError):
+        xyz._validate_rescale((1, 2, 3))
+    with pytest.raises(ValueError):
+        xyz._validate_rescale((200, 10))  # min must be < max
+
+
+def test_resolve_in_range_uint8_passthrough_is_none():
+    mf, ds = _open(_make_rgb())  # uint8
+    try:
+        assert xyz._resolve_in_range(ds, "auto") is None
+    finally:
+        ds.close(); mf.close()
+
+
+def test_resolve_in_range_none_is_none():
+    mf, ds = _open(_make_uint16_narrow())
+    try:
+        assert xyz._resolve_in_range(ds, "none") is None
+    finally:
+        ds.close(); mf.close()
+
+
+def test_resolve_in_range_auto_uint16_uses_data_minmax():
+    mf, ds = _open(_make_uint16_narrow(lo=8000, hi=12000))
+    try:
+        rng = xyz._resolve_in_range(ds, "auto")
+        assert rng is not None and len(rng) == 1
+        lo, hi = rng[0]
+        # Whole-dataset min/max ~ [8000, 12000], NOT the dtype range [0, 65535].
+        assert 7900 <= lo <= 8100
+        assert 11900 <= hi <= 12100
+    finally:
+        ds.close(); mf.close()
+
+
+def test_resolve_in_range_explicit_pair_repeats_per_band():
+    mf, ds = _open(_make_rgb())  # 3-band uint8
+    try:
+        rng = xyz._resolve_in_range(ds, (10, 200))
+        assert rng == [(10.0, 200.0), (10.0, 200.0), (10.0, 200.0)]
+    finally:
+        ds.close(); mf.close()
+
+
 # --- render_tile: in-extent -------------------------------------------------
 def test_render_tile_in_extent_png():
     raster = _make_rgb()

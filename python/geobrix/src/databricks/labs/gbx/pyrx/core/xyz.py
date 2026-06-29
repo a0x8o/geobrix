@@ -79,6 +79,67 @@ def _validate(fmt: str, size: int, resampling: str) -> tuple:
     return fmt_u, s, _RESAMPLING_MAP[resamp_l]
 
 
+def _validate_rescale(rescale):
+    """Normalize/validate the rescale arg.
+
+    Returns the string ``"auto"`` / ``"none"``, or a normalized ``(min, max)``
+    float tuple. ``None`` -> ``"auto"``. Raises ValueError on anything else.
+    """
+    if rescale is None:
+        return "auto"
+    if isinstance(rescale, str):
+        r = rescale.lower()
+        if r in ("auto", "none"):
+            return r
+        raise ValueError(
+            f"rst_tilexyz: rescale must be 'auto', 'none', or a (min, max) pair; "
+            f"got string '{rescale}'"
+        )
+    # Sequence -> (min, max)
+    try:
+        lo, hi = rescale  # unpacks exactly two; else ValueError
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"rst_tilexyz: rescale tuple must have exactly two numbers (min, max); "
+            f"got {rescale!r}"
+        )
+    lo, hi = float(lo), float(hi)
+    if not (lo < hi):
+        raise ValueError(
+            f"rst_tilexyz: rescale (min, max) must have min < max; got ({lo}, {hi})"
+        )
+    return (lo, hi)
+
+
+def _resolve_in_range(ds, rescale):
+    """Resolve the per-band ``in_range`` for rio-tiler render, or None for no rescale.
+
+    - ``"none"`` -> None (today's full-dtype-range behavior).
+    - explicit ``(min, max)`` -> that pair repeated for every band.
+    - ``"auto"``:
+        * uint8 source -> None (already display-ready; pass through unchanged).
+        * non-uint8 -> per-band whole-dataset (min, max) via rasterio statistics.
+          A constant band (min == max) is widened to (min, min + 1).
+    """
+    mode = _validate_rescale(rescale)
+    if mode == "none":
+        return None
+    nbands = ds.count
+    if isinstance(mode, tuple):
+        return [mode] * nbands
+    # mode == "auto"
+    if np.dtype(ds.dtypes[0]) == np.uint8:
+        return None
+    out = []
+    for b in range(1, nbands + 1):
+        stats = ds.statistics(b, approx=False)
+        lo, hi = float(stats.min), float(stats.max)
+        if not (lo < hi):
+            hi = lo + 1.0
+        out.append((lo, hi))
+    return out
+
+
 def render_tile(ds, z, x, y, fmt="PNG", size=256, resampling="bilinear") -> bytes:
     """Render a single web-mercator (z, x, y) tile from open dataset ``ds``.
 
