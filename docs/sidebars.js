@@ -97,6 +97,8 @@ const sidebars = {
           link: { type: 'doc', id: 'api/vizx' },
           items: [
             'api/vizx-layers',
+            'api/vizx-pmtiles',
+            'api/vizx-rendering',
           ],
         },
         { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
