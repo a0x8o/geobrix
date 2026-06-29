@@ -141,6 +141,76 @@ class XYZRescaleParityTest extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     // -----------------------------------------------------------------------
+    // Multi-band guard: resolveScale emits a SEPARATE per-band -scale segment
+    // for each band, each reflecting THAT band's own min/max -- not band 1's
+    // range repeated.  This locks in the per-band correctness that was verified
+    // empirically on GDAL 3.11.4 (repeated bare -scale IS per-band-correct;
+    // a single bare -scale gives one-to-all -- proven by indexed -scale_N
+    // cross-check).  The test uses three bands with clearly separated uint16
+    // ranges so any reversion to a global/first-band range would be caught.
+    // -----------------------------------------------------------------------
+    test("multi-band auto emits per-band -scale segments with each band's own min/max") {
+        // Build a 3-band uint16 MEM dataset.  Each band is filled with a
+        // constant whose range is clearly separated from the others:
+        //   band 1: ~5 000  (lo=4000, hi=6000)
+        //   band 2: ~25 000 (lo=24000, hi=26000)
+        //   band 3: ~55 000 (lo=54000, hi=56000)
+        // A pure-constant band has lo==hi, which triggers the lo+1 guard in
+        // resolveScale, so we use a tiny ramp within each band's range instead.
+        val drv = gdal.GetDriverByName("MEM")
+        val ds = drv.Create("/vsimem/parity_multiband", 64, 64, 3, gdalconstConstants.GDT_UInt16)
+        ds.SetGeoTransform(Array(0.0, 45.0 / 64, 0.0, 45.0, 0.0, -45.0 / 64))
+        val sr = new org.gdal.osr.SpatialReference(); sr.ImportFromEPSG(4326)
+        ds.SetProjection(sr.ExportToWkt())
+
+        // Band-specific [lo, hi] ranges (well-separated, all << UInt16 max).
+        val bandRanges = Seq((4000.0, 6000.0), (24000.0, 26000.0), (54000.0, 56000.0))
+        val n = 64 * 64
+        bandRanges.zipWithIndex.foreach { case ((lo, hi), idx) =>
+            val ramp = (0 until n).map(i => lo + (hi - lo) * i / (n - 1)).toArray
+            ds.GetRasterBand(idx + 1).WriteRaster(0, 0, 64, 64, ramp)
+            ds.GetRasterBand(idx + 1).FlushCache()
+        }
+
+        try {
+            val scale = RST_TileXYZ.resolveScale(ds, "auto")
+
+            // The emitted string must contain exactly 3 separate -scale tokens.
+            // Each -scale segment: "-scale <lo> <hi> 0 255"
+            val segments = scale.trim.split("-scale").map(_.trim).filter(_.nonEmpty)
+            withClue(s"Expected 3 -scale segments, got: '$scale'\n") {
+                segments.length shouldBe 3
+            }
+
+            // Parse each segment and assert per-band min/max match band-specific ranges.
+            bandRanges.zipWithIndex.foreach { case ((expectedLo, expectedHi), idx) =>
+                val parts = segments(idx).split("\\s+")
+                withClue(s"Band ${idx + 1} segment '${segments(idx)}' malformed: ") {
+                    parts.length shouldBe 4 // lo hi 0 255
+                }
+                val emittedLo = parts(0).toDouble
+                val emittedHi = parts(1).toDouble
+                withClue(s"Band ${idx + 1}: lo=$emittedLo should match ~$expectedLo (full scale='$scale'): ") {
+                    emittedLo shouldBe (expectedLo +- 5.0)
+                }
+                withClue(s"Band ${idx + 1}: hi=$emittedHi should match ~$expectedHi (full scale='$scale'): ") {
+                    emittedHi shouldBe (expectedHi +- 5.0)
+                }
+                parts(2) shouldBe "0"
+                parts(3) shouldBe "255"
+            }
+
+            // Cross-band sanity: each band's emitted lo must be strictly less than
+            // the next band's lo.  If resolveScale reused band 1's range, all three
+            // would collapse to ~4000/6000 and this would catch it.
+            val emittedLos = segments.map(_.trim.split("\\s+").head.toDouble)
+            emittedLos(0) should be < emittedLos(1)
+            emittedLos(1) should be < emittedLos(2)
+
+        } finally ds.delete()
+    }
+
+    // -----------------------------------------------------------------------
     // Parity assertion (c): uint8 source -> auto == none (byte-identical
     // pass-through within tier; no -scale emitted).
     // -----------------------------------------------------------------------
