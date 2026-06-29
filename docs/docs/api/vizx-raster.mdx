@@ -1,0 +1,98 @@
+---
+sidebar_position: 15
+title: Raster
+---
+
+# Raster
+
+[VizX Overview](./vizx) · [Multi-Layer Compositor](./vizx-layers) · [PMTiles Viewers](./vizx-pmtiles)
+
+## Raster rendering
+
+Both plotters auto-decimate rasters larger than `max_pixels` on either axis, and apply a per-band 2nd–98th percentile stretch to integer rasters whose values exceed 255 (typical for EO data — Sentinel-2 UInt16 reflectance, Landsat, etc.) so the visible range isn't clipped. NoData is honored (masked) and excluded from the stretch statistics.
+
+The `composite` parameter controls how bands are combined into a single image:
+
+| `composite` value | Behaviour |
+|---|---|
+| `"auto"` (default) | 1 band → viridis colormap; 3+ bands → RGB composite |
+| `"depth"` | Per-pixel count of bands covering each pixel, rendered as a viridis gradient; pixels covered by no band are transparent |
+
+`composite="depth"` is intended for multi-band presence-mask stacks (e.g. rasterized H3 cells from several thresholds) where an RGB composite would appear mostly black. For single-band constant-value masks — such as a solid coverage footprint — `composite="auto"` renders the footprint as a solid viridis tone over a light-grey background rather than a blank plot.
+
+### `plot_raster`
+
+```python
+plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto")
+```
+
+Render a raster from its in-memory bytes — e.g. a tile's `raster` field collected from a GeoBrix DataFrame:
+
+```python
+from databricks.labs.gbx.vizx import plot_raster
+
+row = df.select("tile").first()
+plot_raster(row["tile"]["raster"])
+
+# For a multi-band presence-mask stack, show how many bands cover each pixel:
+plot_raster(row["tile"]["raster"], composite="depth")
+```
+
+### `plot_file`
+
+```python
+plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto")
+```
+
+Render a raster from disk (GeoTIFF, VRT, …) with the same decimation + stretch pipeline. A leading `dbfs:` or `file:` scheme is stripped automatically, so scheme-qualified Databricks paths (`dbfs:/Volumes/…`, `file:///Volumes/…`) work as well as the bare FUSE path:
+
+```python
+from databricks.labs.gbx.vizx import plot_file
+
+plot_file("/Volumes/main/geobrix_samples/geobrix-examples/nyc/dem.tif")
+
+# Coverage-depth view of a multi-band stack on disk:
+plot_file("/Volumes/main/my_schema/my_vol/sentinel_stack.tif", composite="depth")
+```
+
+### `plot_mask_layers`
+
+```python
+plot_mask_layers(layers, *, fig_w=10, fig_h=8, max_pixels=2000, colors=None, title="coverage layers")
+```
+
+Overlay several single-band presence-mask tiles on one axes, each drawn as a solid colour with a legend. Useful for multi-threshold coverage views — for example, showing which H3 cells contain data at each of several observation-count thresholds.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `layers` | `list[tuple[str, bytes]]` | — | List of `(label, raster_bytes)` pairs. Each raster must be a single-band presence mask. |
+| `fig_w` | `float` | `10` | Figure width in inches. |
+| `fig_h` | `float` | `8` | Figure height in inches. |
+| `max_pixels` | `int` | `2000` | Decimate above this longest-edge pixel count before rendering. |
+| `colors` | `list` or `None` | `None` | Matplotlib color values, one per layer. Defaults to the `tab10` qualitative cycle. |
+| `title` | `str` | `"coverage layers"` | Axes title. |
+
+All tiles must share the same grid and extent — for example, produced on a shared canvas via [`rst_h3_gridspec`](./raster-functions#h3-grid). Layers are drawn in order: pass the largest footprint first and the smallest last so nested coverage remains visible.
+
+```python
+from databricks.labs.gbx.vizx import plot_mask_layers
+
+# Each raster is a single-band H3 presence mask for a different threshold.
+# Tiles share the same canvas (same gridspec extent).
+plot_mask_layers(
+    [
+        ("≥ 1 observation",  tier1_raster_bytes),
+        ("≥ 10 observations", tier2_raster_bytes),
+        ("≥ 50 observations", tier3_raster_bytes),
+    ],
+    title="NYC observation coverage by threshold",
+)
+```
+
+See the [H3 rasterize notebook](../notebooks/h3-rasterize) for a full worked example of building shared-canvas presence-mask layers.
+
+## Escape hatches
+
+When you need raster math that isn't in the `rst_*` surface, drop down to NumPy / rasterio per tile with the [pyrx escape hatches](./raster-functions#escape-hatches) (`tile_to_numpy`, `rst_apply`).

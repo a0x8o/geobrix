@@ -88,7 +88,7 @@ Run this once before the examples below. It registers GridX (BNG) so you can use
 <CodeFromTest code={gridxFunctionsExamples} functionName="gridx_setup_example" language="python" source="docs/tests/python/api/gridx_functions.py" testFile="docs/tests/python/api/test_gridx_functions.py" outputConstant="gridx_setup_example_output" />
 
 :::tip Map any GridX cell set with `plot_static`
-[`vizx.plot_static`](./vizx#plot_static) renders a column of cell ids straight from a Spark DataFrame as a **static, GitHub-renderable map over a basemap** — and it's the one helper that covers **every** GridX grid: pass `grid_system="quadbin"`, `"bng"`, or `"custom"` (as well as `"h3"`). Each grid's native CRS is handled for you (e.g. BNG's EPSG:27700 is reprojected for the basemap), and `"custom"` takes the same grid spec via `grid_conf=`. It's the quickest way to eyeball the cells the functions below produce. See [`plot_static`](./vizx#plot_static) for the full parameter list.
+[`vizx.plot_static`](./vizx-vector#static-maps) renders a column of cell ids straight from a Spark DataFrame as a **static, GitHub-renderable map over a basemap** — and it's the one helper that covers **every** GridX grid: pass `grid_system="quadbin"`, `"bng"`, or `"custom"` (as well as `"h3"`). Each grid's native CRS is handled for you (e.g. BNG's EPSG:27700 is reprojected for the basemap), and `"custom"` takes the same grid spec via `grid_conf=`. It's the quickest way to eyeball the cells the functions below produce. See [`plot_static`](./vizx-vector#static-maps) for the full parameter list.
 :::
 
 ---

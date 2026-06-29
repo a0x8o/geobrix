@@ -53,9 +53,9 @@ pmtiles==3.7.0
 pyogrio==0.12.1
 pyproj==3.7.2
 contextily==1.6.2
-# vizx interactive maps: folium + mapclassify (the [vizx] extra). plot_interactive
-# imports folium directly; geopandas .explore() needs mapclassify for choropleths.
-folium==0.20.0
+# vizx interactive maps: mapclassify (the [vizx] extra).
+# geopandas .explore() needs mapclassify for choropleths.
+# folium was removed from [vizx]; do not re-add here.
 mapclassify==2.10.0
 
 # --- contour (scikit-image) + viewshed (xarray-spatial) ---

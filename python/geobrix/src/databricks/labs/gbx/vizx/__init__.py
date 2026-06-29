@@ -23,7 +23,7 @@ from databricks.labs.gbx.vizx._vector import as_gdf, cells_as_gdf, grid_as_gdf
 
 
 def __getattr__(name):
-    """Lazy import for optional pmtiles module (requires pmtiles package)."""
+    """Lazy import for optional modules (requires optional extras)."""
     if name == "plot_pmtiles":
         from databricks.labs.gbx.vizx._pmtiles import plot_pmtiles
 
@@ -36,6 +36,10 @@ def __getattr__(name):
         from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_archive
 
         return simplify_tiles_from_archive
+    if name == "plot_interactive_dynamic":
+        from databricks.labs.gbx.vizx._dynamic import plot_interactive_dynamic
+
+        return plot_interactive_dynamic
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -45,6 +49,7 @@ __all__ = [
     "plot_mask_layers",
     "plot_static",
     "plot_interactive",
+    "plot_interactive_dynamic",
     "plot_pmtiles",
     "plot_cog",
     "as_gdf",

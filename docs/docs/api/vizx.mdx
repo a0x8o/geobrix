@@ -56,13 +56,15 @@ from databricks.labs.gbx.pmtiles import pmtiles_info
 |---|---|---|
 | [Multi-Layer Compositor](./vizx-layers) | `plot_static` / `plot_interactive` with multiple layers; embed-size ladder; audit; simplify | Overlaying vector, raster, grid, and PMTiles layers in one map |
 | [PMTiles Viewers](./vizx-pmtiles) | `pmtiles_info`, `plot_pmtiles`, `plot_cog` | Inspecting and rendering PMTiles archives and COGs inline |
-| [Rendering & Adapters](./vizx-rendering) | `plot_raster`, `plot_file`, `plot_mask_layers`, `as_gdf`, `cells_as_gdf`, `grid_as_gdf`, `plot_static` (single-layer), `plot_interactive` (single-layer), escape hatches | Rendering raster tiles, converting DataFrames to GeoDataFrames, single-layer maps |
+| [Vector](./vizx-vector) | `plot_interactive` (single-layer), `plot_static` (single-layer), `as_gdf`, `cells_as_gdf`, `grid_as_gdf` | Interactive and static single-layer maps; converting DataFrames to GeoDataFrames |
+| [Raster](./vizx-raster) | `plot_raster`, `plot_file`, `plot_mask_layers`, escape hatches | Rendering raster tiles from bytes or disk |
 
 ## Next steps
 
 - [Multi-Layer Compositor](./vizx-layers) — layer types, embed-size ladder, ephemeral/durable simplify, scale guidance
 - [PMTiles Viewers](./vizx-pmtiles) — `pmtiles_info`, `plot_pmtiles`, `plot_cog`
-- [Rendering & Adapters](./vizx-rendering) — raster rendering, vector adapters, single-layer maps, escape hatches
+- [Vector](./vizx-vector) — interactive and static single-layer maps, vector adapters
+- [Raster](./vizx-raster) — raster rendering, escape hatches
 - [RasterX Function Reference](./raster-functions)
 - [STAC Client](./stac)
 - [Helios notebooks](../notebooks/helios) — worked end-to-end example using `plot_pmtiles`, `plot_cog`, and `pmtiles_info` to render San Francisco tilesets inline.

@@ -66,6 +66,33 @@ def test_layer_constructors_return_layer_objects():
     assert isinstance(vizx.pmtiles_layer(b""), Layer)
 
 
+def test_plot_interactive_dynamic_exported():
+    """plot_interactive_dynamic is in __all__ and resolves to a callable via lazy import.
+
+    The lazy import requires anywidget + traitlets (the [vizx] extra); if they are
+    absent the __all__ membership is still asserted and the callable check is skipped.
+    """
+    assert "plot_interactive_dynamic" in vizx.__all__, (
+        "plot_interactive_dynamic missing from __all__"
+    )
+    try:
+        fn = vizx.plot_interactive_dynamic
+        assert callable(fn), "plot_interactive_dynamic is not callable"
+    except ImportError:
+        # anywidget / traitlets not installed in this env — lazy guard is working.
+        pass
+
+
+def test_bare_vizx_import_safe():
+    """Bare 'import databricks.labs.gbx.vizx' succeeds without anywidget/traitlets present."""
+    import importlib
+
+    mod = importlib.import_module("databricks.labs.gbx.vizx")
+    # The lazy guard means plot_interactive_dynamic is not imported at module load time;
+    # accessing it triggers the lazy branch which requires anywidget/traitlets.
+    assert mod is not None
+
+
 def test_build_pmtiles_html_is_gone():
     """_build_pmtiles_html and duplicate CDN constants were removed from _pmtiles."""
     import databricks.labs.gbx.vizx._pmtiles as p

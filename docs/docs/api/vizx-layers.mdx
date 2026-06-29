@@ -10,7 +10,7 @@ import vizxLayers from '!!raw-loader!../../tests/python/api/vizx_layers.py';
 
 A single GeoBrix analysis often produces several result layers at once — vector zone boundaries, a raster DEM, discrete H3 grid cells, and a pre-tiled PMTiles archive. `plot_static` and `plot_interactive` accept a **list of layers** and composite them in order, so one function call produces one map.
 
-When the total GeoJSON + PNG payload fits within the 64 MB default embed budget, `plot_interactive` embeds everything inline in the HTML string — no tile server, no separate request. When it doesn't fit, the embed-size ladder picks the right path automatically. The runnable example below composites two vector layers; raster- and grid-layer usage is shown in the [VizX function reference](./vizx#multi-layer-compositor).
+When the total GeoJSON + PNG payload fits within the 64 MB default embed budget, `plot_interactive` embeds everything inline in the HTML string — no tile server, no separate request. When it doesn't fit, the embed-size ladder picks the right path automatically. The runnable example below composites two vector layers; raster- and grid-layer usage is shown in the [Vector](./vizx-vector) and [Raster](./vizx-raster) references.
 
 :::note Opt-in extra
 The compositor requires `geobrix[vizx]`. Install with:
