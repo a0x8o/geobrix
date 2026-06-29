@@ -33,7 +33,7 @@ The notebook uses the **lightweight tier** — pure Python/PySpark bindings (`da
 ## Prerequisites
 
 - **Databricks Runtime 17.3 LTS / 18.1+ or Serverless** (Spark 4 / Python 3.12). Lightweight default runs on Serverless. Session temp tables (Step 4) require Serverless or DBR 18.1+; they are not available on dedicated / single-user clusters.
-- **GeoBrix** (version 0.4.0). The `%pip install` cell installs the `geobrix[light,vizx]` wheel, which pulls in `rasterio` (used for the driver-side DEM read and isoband extraction), `h3` (polyfill), `matplotlib`, `geopandas`, `folium`, and `mapclassify` (visualization). No JAR or GDAL init script is required.
+- **GeoBrix** (version 0.4.0). The `%pip install` cell installs the `geobrix[light,vizx]` wheel, which pulls in `rasterio` (used for the driver-side DEM read and isoband extraction), `h3` (polyfill), `matplotlib`, `geopandas`, and `mapclassify` (visualization). No JAR or GDAL init script is required.
 - **Unity Catalog Volume**: the DEM is staged to `/Volumes/geospatial_docs/geobrix/sample-data/geobrix-examples/sf/elevation/srtm_n37w123.tif`. Update `DEM_PATH` if your Volume layout differs. The Volume root must already exist; the staging cell creates sub-directories but not the root.
 - **Wheel path**: update the `%pip install` cell to point at your staged `geobrix-0.4.0-py3-none-any.whl` if its Volume path differs from the default.
 
@@ -83,8 +83,8 @@ Coverage-depth composite + per-band footprint overlays
 - **`gbx.vizx` helpers** ([Visualization API](../api/vizx)):
   - `plot_mask_layers` — overlays two or more named binary masks on a single figure, each in a distinct colour with a legend, for side-by-side band coverage comparison.
   - `plot_raster(composite="depth")` — renders the stacked tile as a coverage-depth heatmap: per-pixel count of bands that cover that location, transparent where no band covers.
-  - `grid_as_gdf` — converts the `grid` struct from `rst_h3_gridspec` into a single-row GeoDataFrame for folium overlay.
-  - `cells_as_gdf` — converts a `(cellid, ...)` DataFrame into a GeoDataFrame (one hexagon polygon per row) for matplotlib or folium visualization.
+  - `grid_as_gdf` — converts the `grid` struct from `rst_h3_gridspec` into a single-row GeoDataFrame for map overlays.
+  - `cells_as_gdf` — converts a `(cellid, ...)` DataFrame into a GeoDataFrame (one hexagon polygon per row) for matplotlib or interactive map visualization.
 
 ---
 

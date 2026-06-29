@@ -48,7 +48,7 @@ full stack.
   dedicated/single-user clusters.
 - **GeoBrix 0.4.0.** Update the `%pip install` cell to point at your staged
   `geobrix-0.4.0-py3-none-any.whl`. The `[light,vizx]` extras install rasterio,
-  geopandas, folium, matplotlib, and mapclassify — no other dependencies assumed
+  geopandas, matplotlib, and mapclassify — no other dependencies assumed
   pre-staged.
 - **Unity Catalog Volume.** The DEM staging cell writes to
   `/Volumes/geospatial_docs/geobrix/sample-data/geobrix-examples/sf/elevation/`.
@@ -92,7 +92,7 @@ Coverage-depth figure: pixel = count of bands covering that location
 ## Key GeoBrix / Databricks functions shown
 
 - **GeoBrix RasterX** (`rx.*`): `rst_h3_gridspec`, `rst_h3_rasterize_agg`, `rst_frombands_agg`.
-- **GeoBrix viz** (`gbx.vizx`): `plot_file` (raw DEM render), `plot_static` (per-cell H3 footprints over a basemap, GitHub-renderable), `plot_interactive` (interactive folium pan/zoom map of the same cells — scale-safe and Databricks-safe), `cells_as_gdf` (per-cell H3 footprints as a GeoDataFrame; pass `dissolve_by="band_level"` for larger sets to merge each band into one footprint polygon), `grid_as_gdf` (shared-canvas rectangle), `plot_mask_layers` (overlay two mid-coverage bands with distinct colours and a legend), `plot_raster` (stacked raster rendered as `composite="depth"` coverage map).
+- **GeoBrix viz** (`gbx.vizx`): `plot_file` (raw DEM render), `plot_static` (per-cell H3 footprints over a basemap, GitHub-renderable), `plot_interactive` (interactive MapLibre multi-layer map — scale-safe and Databricks-safe), `cells_as_gdf` (per-cell H3 footprints as a GeoDataFrame; pass `dissolve_by="band_level"` for larger sets to merge each band into one footprint polygon), `grid_as_gdf` (shared-canvas rectangle), `plot_mask_layers` (overlay two mid-coverage bands with distinct colours and a legend), `plot_raster` (stacked raster rendered as `composite="depth"` coverage map).
 - **Databricks built-in H3** (used indirectly): `h3.polygon_to_cells`, `h3.str_to_int`.
 - **Full API reference**: [RasterX functions](https://databrickslabs.github.io/geobrix/docs/api/raster-functions) · [Viz helpers](https://databrickslabs.github.io/geobrix/docs/api/vizx).
 
@@ -114,7 +114,7 @@ Coverage-depth figure: pixel = count of bands covering that location
   in this demo.
 - **`cells_as_gdf` at scale.** With tens of thousands of cells the default per-cell
   rendering is slow. Pass `dissolve_by="band_level"` to merge each band into a single
-  footprint geometry before passing to folium — far fewer geometries to render.
+  footprint geometry before passing to `plot_interactive` — far fewer geometries to render.
 - **SRTM elevation range.** The N37W123 tile covers the SF Bay area; the raw DEM
   reports values down to −1967 m (ocean bathymetry artefact) and up to 986 m.
   `MIN_ELEV_M=0` clips the sub-sea-level artefacts; `MAX_ELEV_M=800` caps the

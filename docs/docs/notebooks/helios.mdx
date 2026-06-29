@@ -22,7 +22,7 @@ The series uses the **lightweight tier** — pure Python/PySpark bindings (`data
 :::note PMTiles viewer — inline, no tile server
 `plot_pmtiles` (from [`gbx.vizx`](../api/vizx)) renders a `.pmtiles` archive directly in the notebook by embedding the archive as base64 in a self-contained MapLibre GL JS page (FileSource, base64 up to ~64 MB; larger archives fall back to a static thumbnail). `plot_cog` renders a Cloud-Optimized GeoTIFF over a contextily basemap as a static matplotlib figure. See the [PMTiles function reference](../api/pmtiles-functions) for the archive aggregator and writer.
 
-The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast, GitHub-compatible static maps. Set `INTERACTIVE_PLOTS = True` in `config_nb` or in a cell right after `%run ./config_nb` for interactive folium/MapLibre maps.
+The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast, GitHub-compatible static maps. Set `INTERACTIVE_PLOTS = True` in `config_nb` or in a cell right after `%run ./config_nb` for interactive MapLibre maps.
 :::
 
 ---

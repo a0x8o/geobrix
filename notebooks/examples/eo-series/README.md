@@ -61,7 +61,7 @@ The four main notebooks move from vector area-of-interest → STAC discovery →
 ## Prerequisites
 
 - **Databricks Runtime 17.3 LTS / 18 LTS, or Serverless** (Scala 2.13 / Spark 4 / Python 3.12). The lightweight default runs on Serverless; the heavyweight tweak needs a classic x86 cluster.
-- **GeoBrix** (version 0.4.0). `config_nb.ipynb` `%pip`-installs the `geobrix[light,stac,vizx]` wheel — pure-Python bindings + rasterio + the STAC client dependencies (`pystac-client`, `planetary-computer`, `tenacity`, `requests`) + the visualization extras (`matplotlib`, `geopandas`, `folium`, `mapclassify`) — nothing is assumed pre-staged. For the heavyweight tweak, flip option-2 (`rasterx`) in `config_nb.ipynb` and attach the GeoBrix JAR + GDAL init script to the cluster.
+- **GeoBrix** (version 0.4.0). `config_nb.ipynb` `%pip`-installs the `geobrix[light,stac,vizx]` wheel — pure-Python bindings + rasterio + the STAC client dependencies (`pystac-client`, `planetary-computer`, `tenacity`, `requests`) + the visualization extras (`matplotlib`, `geopandas`, `mapclassify`) — nothing is assumed pre-staged. For the heavyweight tweak, flip option-2 (`rasterx`) in `config_nb.ipynb` and attach the GeoBrix JAR + GDAL init script to the cluster.
 - **Unity Catalog**: edit `config_nb.ipynb` to set `catalog_name` and `schema_name` to your own locations. A Volume named `data` must already exist under `<catalog>/<schema>`. The notebooks create a schema if missing but will not create the Volume for you.
 - **Compute sizing**: the lightweight default runs on Serverless. On classic clusters, the captured heavyweight runs used AWS `m5d.xlarge` (2–16 workers) for search/download and `r6id.2xlarge` (20 workers) for raster processing; an `x86` instance is required for the GDAL natives. For a single county a much smaller cluster is sufficient.
 
@@ -125,7 +125,7 @@ This series defaults to the lightweight tier so it runs on **Serverless** — se
 
 ## Gotchas
 
-- **Antimeridian**: Alaska straddles the 180° meridian, so folium renderings can show results on both sides of the map.
+- **Antimeridian**: Alaska straddles the 180° meridian, so interactive map renderings can show results on both sides of the map.
 - **SRID awareness**: Sentinel-2 tiles arrive in UTM zones (e.g. `32608`, `32609`), not EPSG:4326 — reproject bboxes before plotting on a web map.
 - **Free-tier auth-failure payloads**: Planetary Computer returns a ~550-byte XML error body when SAS tokens expire or rate limits hit. `StacClient.download` validates each file with a rasterio window read, so these truncated/error responses are caught and marked `is_out_file_valid = false`. Call `stac_client.repair("band_b02")` to re-download and merge the repaired rows.
 - **Shuffle partitioning**: `StacClient.search` / `download` set their own parallelism via `partitions=`; for your own steps repartition by a column (`DataFrame.repartition(N, col)`). See **[Serverless execution strategy](#serverless-execution-strategy)** above for why a number-only `repartition(N)` is coalesced on Serverless.
