@@ -264,7 +264,7 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
         MemorySource,
         _decode_mvt_to_geoms,
         _is_raster_type,
-        _lowest_zoom_tile,
+        _maybe_gunzip,
         all_tiles,
     )
 
@@ -281,19 +281,55 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
 
     info = pmtiles_info(raw)
     if _is_raster_type(info["tile_type"]):
-        tile = _lowest_zoom_tile(raw)
-        if tile is None:
+        # Build a coarse OVERVIEW image from the lowest (min) zoom: web-map tiles are
+        # images (PNG/JPEG/WEBP, possibly gzip-wrapped), NOT georeferenced rasters, so
+        # they can't go to plot_cog/rasterio. Mosaic all min-zoom tiles by their (x, y)
+        # grid position, then crop to the non-transparent data extent so a small AOI
+        # doesn't render as a speck in the corner of one coarse tile. plot_static imshows
+        # the resulting ndarray.
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        min_z = info.get("min_zoom")
+        placed = []
+        for (z, x, y), payload in all_tiles(MemorySource(raw)):
+            if min_z is not None and z != min_z:
+                continue
+            img = Image.open(io.BytesIO(_maybe_gunzip(payload))).convert("RGBA")
+            placed.append((x, y, np.asarray(img)))
+        if not placed:
             raise ValueError(
                 "prepare_layers static fallback: raster pmtiles archive has no tiles"
             )
-        # tile is (z, x, y, data_bytes); return a raster layer carrying the tile bytes
-        return raster_layer(tile[3], opacity=layer.opacity)
+        th, tw = placed[0][2].shape[:2]
+        xs = [p[0] for p in placed]
+        ys = [p[1] for p in placed]
+        minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+        canvas = np.zeros(((maxy - miny + 1) * th, (maxx - minx + 1) * tw, 4), np.uint8)
+        for x, y, a in placed:
+            r0, c0 = (y - miny) * th, (x - minx) * tw
+            canvas[r0 : r0 + th, c0 : c0 + tw] = a[:th, :tw]
+        alpha = canvas[..., 3]
+        rows, cols = np.any(alpha > 0, axis=1), np.any(alpha > 0, axis=0)
+        if rows.any() and cols.any():
+            r = np.where(rows)[0][[0, -1]]
+            c = np.where(cols)[0][[0, -1]]
+            canvas = canvas[r[0] : r[1] + 1, c[0] : c[1] + 1]
+        return raster_layer(canvas, opacity=layer.opacity)
     else:
-        # Vector (MVT): decode all tiles to geometries
+        # Vector (MVT): decode ONLY the coarsest (min) zoom — higher zooms re-encode the
+        # same features, so decoding every level renders ~N_levels x the geometries (a
+        # 171k-feature z12-z16 archive took minutes). The static path is a driver-side
+        # overview; the lowest zoom is sufficient.
         import geopandas as gpd
 
+        min_z = info.get("min_zoom")
         geoms, rows = [], []
         for (z, x, y), payload in all_tiles(MemorySource(raw)):
+            if min_z is not None and z != min_z:
+                continue
             for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
                 geoms.append(geom)
                 rows.append(props)

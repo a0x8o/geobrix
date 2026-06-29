@@ -227,9 +227,18 @@ def _draw_one_layer(lyr, ax, *, max_rows=10_000, sample_seed=None, srid=None,
             kwargs["facecolor"] = "none"
         plot_gdf.plot(**kwargs)
     elif lyr.kind == "raster":
-        from databricks.labs.gbx.vizx._cog import plot_cog
+        import numpy as np
 
-        plot_cog(lyr.data, band=lyr.band, basemap=False, ax=ax)
+        if isinstance(lyr.data, np.ndarray):
+            # A decoded image array (e.g. a PMTiles raster overview tile, or any
+            # ndarray raster_layer) — show it directly. Raw web-map tiles are not
+            # georeferenced, so they cannot go through plot_cog/rasterio.
+            ax.imshow(lyr.data, alpha=lyr.opacity if lyr.opacity is not None else 1.0)
+            ax.set_axis_off()
+        else:
+            from databricks.labs.gbx.vizx._cog import plot_cog
+
+            plot_cog(lyr.data, band=lyr.band, basemap=False, ax=ax)
     elif lyr.kind == "pmtiles":
         warnings.warn(
             "plot_static: 'pmtiles' layers are not rendered by the static compositor "

@@ -63,34 +63,10 @@ def test_archive_bytes_passthrough_and_path(tmp_path):
 
 
 def _real_png_tile():
-    # A real 8x8 RGB PNG so plot_raster's rasterio MemoryFile can decode it.
+    # A real 8x8 RGB PNG so PIL Image.open can decode it.
     buf = io.BytesIO()
     imsave(buf, (np.random.rand(8, 8, 3)), format="png")
     return buf.getvalue()
-
-
-def test_static_raster_fallback_calls_plot_raster(monkeypatch):
-    from databricks.labs.gbx.vizx import _pmtiles as p
-
-    png = _real_png_tile()
-    archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
-    captured = {}
-
-    def _fake_plot_raster(raster_bytes, **kw):
-        captured["n"] = len(raster_bytes)
-        captured["kw"] = kw
-
-    monkeypatch.setattr(
-        "databricks.labs.gbx.vizx.plot_raster",
-        _fake_plot_raster,
-    )
-    info = __import__(
-        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
-    ).pmtiles_info(archive)
-    p._static_raster_fallback(archive, info, basemap=False)
-    assert captured["n"] == len(png)  # the decoded lowest-zoom tile bytes
-    # basemap must be stripped before forwarding to plot_raster (which rejects it)
-    assert "basemap" not in captured["kw"]
 
 
 def _real_mvt_tile(z, x, y):
@@ -108,37 +84,6 @@ def _real_mvt_tile(z, x, y):
         },
         default_options={"extents": 4096, "y_coord_down": True},
     )
-
-
-def test_static_vector_fallback_builds_gdf_and_plots(monkeypatch):
-    import geopandas as gpd
-
-    from databricks.labs.gbx.vizx import _pmtiles as p
-
-    z, x, y = 10, 163, 395  # an SF-area tile
-    blob = _real_mvt_tile(z, x, y)
-    archive = _build_archive([(z, x, y, blob)], TileType.MVT)
-    info = __import__(
-        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
-    ).pmtiles_info(archive)
-
-    captured = {}
-
-    def _fake_plot_static(gdf, **kw):
-        captured["gdf"] = gdf
-        captured["kw"] = kw
-        return "AX"
-
-    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
-    out = p._static_vector_fallback(archive, info, basemap=False)
-    assert out == "AX"
-    gdf = captured["gdf"]
-    assert isinstance(gdf, gpd.GeoDataFrame)
-    assert len(gdf) >= 1
-    assert gdf.crs.to_epsg() == 4326
-    # geometry reprojected into the SF tile's lon/lat extent
-    minx, miny, maxx, maxy = gdf.total_bounds
-    assert -123 < minx < maxx < -121 and 37 < miny < maxy < 39
 
 
 def test_plot_pmtiles_interactive_routes_through_displayhtml(monkeypatch):
@@ -292,129 +237,6 @@ def test_public_exports():
 
 
 # ---------------------------------------------------------------------------
-# Static vector fallback — coarsest-zoom-only perf fix
-# ---------------------------------------------------------------------------
-
-def test_static_vector_fallback_decodes_only_min_zoom(monkeypatch):
-    """_static_vector_fallback must only decode tiles at the archive's min zoom.
-
-    A vector pyramid re-encodes identical features at every zoom level; without
-    this guard a z12–z16 archive decodes ~5× the features and rendering can take
-    5+ minutes. We build a two-zoom (z3 and z5) archive, spy on _decode_mvt_to_geoms,
-    and assert only z3 tiles are decoded.
-    """
-    from databricks.labs.gbx.vizx import _pmtiles as p
-
-    # Build an MVT archive with tiles at two zoom levels (z3 and z5).
-    # z3 tile (4,4): a coarse overview tile.
-    # z5 tile (16,16): a finer tile — must NOT be decoded by the fixed path.
-    z_min, x_min, y_min = 3, 4, 4
-    z_fine, x_fine, y_fine = 5, 16, 16
-    blob_min = _real_mvt_tile(z_min, x_min, y_min)
-    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
-    archive = _build_archive(
-        [
-            (z_min, x_min, y_min, blob_min),
-            (z_fine, x_fine, y_fine, blob_fine),
-        ],
-        TileType.MVT,
-    )
-    info = __import__(
-        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
-    ).pmtiles_info(archive)
-    assert info.get("min_zoom") == z_min, "test pre-condition: info must carry min_zoom"
-
-    # Spy: record which zoom levels _decode_mvt_to_geoms is called with.
-    decoded_zooms = []
-    real_decode = p._decode_mvt_to_geoms
-
-    def _spy_decode(payload, z, x, y):
-        decoded_zooms.append(z)
-        return real_decode(payload, z, x, y)
-
-    monkeypatch.setattr(p, "_decode_mvt_to_geoms", _spy_decode)
-
-    # Stub plot_static to avoid rendering overhead in unit tests.
-    import geopandas as gpd
-
-    rendered = {}
-
-    def _fake_plot_static(gdf, **kw):
-        rendered["gdf"] = gdf
-        return "AX"
-
-    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
-
-    out = p._static_vector_fallback(archive, info, basemap=False)
-
-    # Only the coarse zoom was decoded.
-    assert decoded_zooms, "decoder was never called — archive may be empty"
-    assert all(z == z_min for z in decoded_zooms), (
-        f"_decode_mvt_to_geoms called with zoom(s) {set(decoded_zooms)} "
-        f"but expected only min_zoom={z_min}"
-    )
-
-    # A valid GeoDataFrame was produced and forwarded to plot_static.
-    assert out == "AX"
-    gdf = rendered["gdf"]
-    assert isinstance(gdf, gpd.GeoDataFrame)
-    assert len(gdf) >= 1
-    assert gdf.crs.to_epsg() == 4326
-
-
-def test_static_vector_fallback_decodes_only_min_zoom_without_info(monkeypatch):
-    """Fallback must still pick min zoom when info dict has no min_zoom key.
-
-    Exercises the scan-all-tiles fallback path used when the info dict is
-    incomplete (e.g. constructed programmatically without a full header).
-    """
-    from databricks.labs.gbx.vizx import _pmtiles as p
-
-    z_min, x_min, y_min = 2, 2, 2
-    z_fine, x_fine, y_fine = 4, 8, 8
-    blob_min = _real_mvt_tile(z_min, x_min, y_min)
-    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
-    archive = _build_archive(
-        [
-            (z_min, x_min, y_min, blob_min),
-            (z_fine, x_fine, y_fine, blob_fine),
-        ],
-        TileType.MVT,
-    )
-    # Deliberately omit min_zoom from info.
-    info_no_min = {"tile_type": "mvt"}
-
-    decoded_zooms = []
-    real_decode = p._decode_mvt_to_geoms
-
-    def _spy_decode(payload, z, x, y):
-        decoded_zooms.append(z)
-        return real_decode(payload, z, x, y)
-
-    monkeypatch.setattr(p, "_decode_mvt_to_geoms", _spy_decode)
-
-    import geopandas as gpd
-
-    rendered = {}
-
-    def _fake_plot_static(gdf, **kw):
-        rendered["gdf"] = gdf
-        return "AX"
-
-    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
-
-    out = p._static_vector_fallback(archive, info_no_min, basemap=False)
-
-    assert decoded_zooms, "decoder was never called"
-    assert all(z == z_min for z in decoded_zooms), (
-        f"expected only z={z_min}, got {set(decoded_zooms)}"
-    )
-    assert out == "AX"
-    assert isinstance(rendered["gdf"], gpd.GeoDataFrame)
-    assert len(rendered["gdf"]) >= 1
-
-
-# ---------------------------------------------------------------------------
 # Regression: _maybe_gunzip — gzip-compressed tile decoding (github issue fix)
 # PMTiles archives with tile_compression=gzip yield raw gzip-wrapped bytes from
 # all_tiles/MemorySource; rasterio.MemoryFile and mapbox_vector_tile.decode both
@@ -446,56 +268,6 @@ def test_maybe_gunzip_decompresses_gzip():
     assert compressed[:2] == b"\x1f\x8b", "test pre-condition: gzip magic"
     result = p._maybe_gunzip(compressed)
     assert result == original
-
-
-def test_static_raster_fallback_strips_gzip_before_plot_raster(monkeypatch):
-    """_static_raster_fallback de-gzips tiles before passing bytes to plot_raster.
-
-    Regression for: RasterioIOError when tile_compression=gzip — rasterio's
-    MemoryFile rejects gzip-wrapped bytes.  The fix calls _maybe_gunzip(tile[3])
-    before forwarding.  We spy by monkeypatching _lowest_zoom_tile to return a
-    gzip-compressed PNG payload, then assert plot_raster receives raw PNG bytes
-    (magic \\x89PNG), not gzip bytes (magic \\x1f\\x8b).
-    """
-    import gzip
-    import io
-
-    import numpy as np
-    from matplotlib.image import imsave
-
-    from databricks.labs.gbx.vizx import _pmtiles as p
-
-    # Build a real 8×8 PNG, then gzip-wrap it (simulating tile_compression=gzip)
-    buf = io.BytesIO()
-    imsave(buf, np.random.rand(8, 8, 3), format="png")
-    raw_png = buf.getvalue()
-    gzipped_png = gzip.compress(raw_png)
-    assert gzipped_png[:2] == b"\x1f\x8b"
-
-    # _lowest_zoom_tile returns (z, x, y, payload) — payload is gzip-wrapped
-    monkeypatch.setattr(p, "_lowest_zoom_tile", lambda data: (0, 0, 0, gzipped_png))
-
-    captured = {}
-
-    def _fake_plot_raster(raster_bytes, **kw):
-        captured["bytes"] = raster_bytes
-
-    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_raster", _fake_plot_raster)
-
-    archive = _build_archive([(0, 0, 0, gzipped_png)], TileType.PNG)
-    info = __import__(
-        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
-    ).pmtiles_info(archive)
-    p._static_raster_fallback(archive, info, basemap=False)
-
-    assert "bytes" in captured, "plot_raster was not called"
-    received = captured["bytes"]
-    # Must be raw PNG, not still-gzipped
-    assert received[:4] == b"\x89PNG", (
-        f"plot_raster received gzip bytes (magic {received[:2]!r}), "
-        "expected raw PNG bytes — _maybe_gunzip not applied"
-    )
-    assert received == raw_png
 
 
 def test_decode_mvt_to_geoms_strips_gzip(monkeypatch):
@@ -531,3 +303,87 @@ def test_decode_mvt_to_geoms_strips_gzip(monkeypatch):
     geom, props = result[0]
     assert not geom.is_empty
     assert props.get("v") == 42
+
+
+# ---------------------------------------------------------------------------
+# Regression: live static-fallback path (_decode_pmtiles_for_static)
+# ---------------------------------------------------------------------------
+
+
+def test_plot_pmtiles_static_raster_no_rasterioioerror(monkeypatch):
+    """plot_pmtiles(archive, max_embed_mb=0) must not raise RasterioIOError for raster archives.
+
+    Regression for NB02 crash: the dead _static_raster_fallback passed raw tile bytes
+    to plot_raster/rasterio (not georeferenced), which raised RasterioIOError.
+    The live path (_decode_pmtiles_for_static in _maplibre.py) mosaics min-zoom tiles
+    via PIL and returns raster_layer(ndarray) -> _draw_one_layer -> ax.imshow (no rasterio).
+    """
+    import matplotlib.pyplot as plt
+    from rasterio.errors import RasterioIOError
+
+    import databricks.labs.gbx.vizx._interactive as itx
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    png = _real_png_tile()
+    archive = _build_archive([(0, 0, 0, png)], TileType.PNG)
+
+    # Stub display so plot_interactive doesn't try to call displayHTML.
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+
+    # Must not raise RasterioIOError.
+    try:
+        p.plot_pmtiles(archive, max_embed_mb=0)
+    except RasterioIOError as e:
+        pytest.fail(f"plot_pmtiles raised RasterioIOError: {e}")
+    finally:
+        plt.close("all")
+
+
+def test_plot_pmtiles_static_vector_min_zoom_only(monkeypatch):
+    """plot_pmtiles static path decodes only the min-zoom tiles for vector archives.
+
+    Multi-zoom vector archives encode the same features at every zoom level;
+    decoding all zooms yields ~N_levels x features. The live _decode_pmtiles_for_static
+    (in _maplibre.py) filters to min_zoom before calling _decode_mvt_to_geoms.
+
+    _maplibre._decode_pmtiles_for_static uses a local `from _pmtiles import
+    _decode_mvt_to_geoms` inside the function body, so it re-imports from the
+    _pmtiles module at call time. Patching _pmtiles._decode_mvt_to_geoms is
+    sufficient to intercept the call.
+    """
+    import warnings
+
+    import databricks.labs.gbx.vizx._interactive as itx
+    import databricks.labs.gbx.vizx._pmtiles as p_mod
+
+    z_min, x_min, y_min = 3, 4, 4
+    z_fine, x_fine, y_fine = 5, 16, 16
+    blob_min = _real_mvt_tile(z_min, x_min, y_min)
+    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
+    archive = _build_archive(
+        [(z_min, x_min, y_min, blob_min), (z_fine, x_fine, y_fine, blob_fine)],
+        TileType.MVT,
+    )
+
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+
+    decoded_zooms = []
+    real_decode = p_mod._decode_mvt_to_geoms
+
+    def _spy_decode(payload, z, x, y):
+        decoded_zooms.append(z)
+        return real_decode(payload, z, x, y)
+
+    # _maplibre uses `from _pmtiles import _decode_mvt_to_geoms` inside the function
+    # body, so re-importing from _pmtiles at call time. Patch the source module.
+    monkeypatch.setattr(p_mod, "_decode_mvt_to_geoms", _spy_decode)
+
+    # Suppress contextily basemap errors (no network in tests).
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        p_mod.plot_pmtiles(archive, max_embed_mb=0)
+
+    assert decoded_zooms, "spy never called — _decode_mvt_to_geoms not reached"
+    assert all(z == z_min for z in decoded_zooms), (
+        f"Expected only z={z_min}, got zoom levels {set(decoded_zooms)}"
+    )

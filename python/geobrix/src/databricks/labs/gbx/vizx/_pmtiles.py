@@ -62,33 +62,6 @@ def _maybe_gunzip(payload: bytes) -> bytes:
     return payload
 
 
-def _lowest_zoom_tile(data: bytes):
-    """Return (z, x, y, payload) for the lowest-zoom tile (the coarsest overview).
-
-    ``all_tiles`` yields ``((z, x, y), payload)`` — the ZXY triple is already
-    decoded by the reader's ``traverse`` helper, so no secondary
-    ``tileid_to_zxy`` call is needed here.
-    """
-    best = None
-    for (z, x, y), payload in all_tiles(MemorySource(data)):
-        if best is None or z < best[0]:
-            best = (z, x, y, payload)
-    return best
-
-
-def _static_raster_fallback(data: bytes, info: dict, **plot_kw) -> None:
-    """Decode the coarsest raster tile and render it via plot_raster."""
-    from databricks.labs.gbx.vizx import plot_raster
-
-    tile = _lowest_zoom_tile(data)
-    if tile is None:
-        raise ValueError("plot_pmtiles: archive has no tiles to render")
-    # plot_raster does not accept a basemap kwarg (raster tiles are already
-    # georeferenced imagery; there is no separate tile fetch step).
-    plot_kw.pop("basemap", None)
-    plot_raster(_maybe_gunzip(tile[3]), **plot_kw)
-
-
 def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
     """Decode one MVT tile to (shapely_geom, props) pairs in WGS-84 (EPSG:4326).
 
@@ -119,42 +92,6 @@ def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
                 continue
             out.append((transform(_to_lonlat, geom), feat.get("properties", {})))
     return out
-
-
-def _static_vector_fallback(data: bytes, info: dict, **plot_kw):
-    """Decode MVT tiles to geometries and render via plot_static (contextily).
-
-    Only the coarsest (lowest) zoom level is decoded.  A vector pyramid
-    re-encodes the same features at every zoom level, so decoding all zooms
-    produces ~N_levels × the features and makes matplotlib render the full
-    redundant set — on a 171 k-building z12–z16 archive that took 5+ minutes.
-    The static path is a driver-side overview; the coarsest zoom is sufficient.
-    """
-    import geopandas as gpd
-
-    from databricks.labs.gbx.vizx import plot_static
-
-    # Prefer the header's min_zoom (already known); only scan all_tiles as a
-    # fallback when the info dict is incomplete.
-    min_zoom = info.get("min_zoom")
-    if min_zoom is None:
-        tiles_iter = list(all_tiles(MemorySource(data)))
-        min_zoom = min(z for (z, x, y), _ in tiles_iter) if tiles_iter else None
-        tile_source = tiles_iter
-    else:
-        tile_source = all_tiles(MemorySource(data))
-
-    geoms, rows = [], []
-    for (z, x, y), payload in tile_source:
-        if z != min_zoom:
-            continue
-        for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
-            geoms.append(geom)
-            rows.append(props)
-    if not geoms:
-        raise ValueError("plot_pmtiles: vector archive decoded to no geometries")
-    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
-    return plot_static(gdf, **plot_kw)
 
 
 def plot_pmtiles(
