@@ -400,3 +400,43 @@ def test_pyramid_shares_one_mapping_no_per_tile_stats(monkeypatch):
         assert nonempty
     finally:
         ds.close(); mf.close()
+
+
+def test_tilexyz_udf_accepts_rescale_and_recovers_contrast():
+    import io
+    from PIL import Image
+    from databricks.labs.gbx.pyrx import functions as fns
+
+    raster = _make_uint16_narrow(lo=8000, hi=12000)
+    mf, ds = _open(raster)
+    try:
+        z, x, y = _center_tile_zxy(ds)
+    finally:
+        ds.close(); mf.close()
+
+    tile = {"raster": raster}
+    auto = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear", "auto")
+    none = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear", "none")
+
+    def _spread(png):
+        a = np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+        rgb = a[..., :3][a[..., 3] > 0]
+        return 0 if rgb.size == 0 else int(rgb.max()) - int(rgb.min())
+
+    assert _spread(auto) > 100   # contrast recovered
+    assert _spread(none) < 80    # today's crushed behavior preserved
+
+
+def test_tilexyz_udf_rescale_defaults_to_auto():
+    from databricks.labs.gbx.pyrx import functions as fns
+    raster = _make_uint16_narrow(lo=8000, hi=12000)
+    mf, ds = _open(raster)
+    try:
+        z, x, y = _center_tile_zxy(ds)
+    finally:
+        ds.close(); mf.close()
+    tile = {"raster": raster}
+    # rescale omitted -> defaults to auto (contrast recovered)
+    default = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear")
+    explicit_auto = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear", "auto")
+    assert default == explicit_auto
