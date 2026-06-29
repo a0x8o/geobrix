@@ -781,25 +781,28 @@ git commit -m "feat(vizx): simplify_tiles_from_archive (tile-join down-zoom/trim
 
 ---
 
-## Task 11: Wire simplify into the ladder + `plot_interactive`
+## Task 11: Wire simplify into the ladder + budget-escalate the archive path
 
 **Files:**
-- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py` (`_simplify_layer` rung-3 hook)
-- Test: `python/geobrix/test/vizx/test_ladder.py` (add)
+- Modify: `python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py` (`_simplify_layer` rung-3 hook), `python/geobrix/src/databricks/labs/gbx/vizx/_simplify.py` (`simplify_tiles_from_archive` budget escalation)
+- Test: `python/geobrix/test/vizx/test_ladder.py` (add), `python/geobrix/test/vizx/test_simplify.py` (escalation)
 
 **Interfaces:**
-- Consumes: `simplify_tiles_from_source`/`simplify_tiles_from_archive` (Tasks 9-10), `normalize_spec` (Task 8).
+- Consumes: `simplify_tiles_from_source`/`simplify_tiles_from_archive` (Tasks 9-10), `normalize_spec` (Task 8), `_decode_mvt_to_geoms`/`all_tiles` from `_pmtiles.py`.
 - Produces: `_simplify_layer(layer, spec) -> Layer` — routes by layer input (source data → `from_source`; existing archive path → `from_archive`), returns a `pmtiles_layer` of the simplified bytes; used as ladder rung 3.
 
-- [ ] **Step 1: Write the failing test** — with a `simplify_tiles_spec`, an oversize vector layer becomes interactive (rung 3) rather than static; assert `mode == "interactive"` and a "simplified" warning (skip if tippecanoe absent).
-- [ ] **Step 2: Run test to verify it fails** → FAIL.
-- [ ] **Step 3: Write minimal implementation** — implement `_simplify_layer`; call it from `prepare_layers` rung 3.
-- [ ] **Step 4: Run test to verify it passes** (Docker) → PASS.
+**Budget escalation for `simplify_tiles_from_archive` (NEW — makes the archive budget contract real):**
+`tile-join` only trims by zoom, so a zoom-trimmed archive may still have tiles over `budget_mb`. When `budget_mb` is requested and the trim is insufficient, **escalate to a source re-tile**: (1) run the cheap `tile-join` zoom-trim; (2) inspect the trimmed archive's max tile byte size; (3) if a tile still exceeds `budget_mb * 1 MiB`, **decode the archive's highest-zoom (max_z) tiles to a GeoDataFrame** via `_decode_mvt_to_geoms` over `all_tiles` (geographic geoms from z/x/y), then call `simplify_tiles_from_source(gdf, spec=...)` (tippecanoe `--drop-densest-as-needed`) which enforces the byte budget. Replace the prior `warnings.warn("budget_mb ignored")` with: within-budget-after-trim → no warning; escalated → `warnings.warn("budget enforced by re-tiling decoded features — slower; overview-grade precision", UserWarning)`; raster/undecodable archive → keep zoom-trim + the existing ignored-budget warning (no features to re-tile). Escalation is on-overflow only (the cheap trim is the common path).
+
+- [ ] **Step 1: Failing tests** — (a) ladder: an oversize vector layer + `simplify_tiles_spec` → `prepare_layers` returns `mode=="interactive"` with a "simplified" warning (skip if tippecanoe absent). (b) escalation: build a source archive whose tiles exceed a tiny `budget_mb`, `simplify_tiles_from_archive(archive, spec={"budget_mb":<tiny>, "max_z":...})` → assert the result's max tile size is now ≤ budget (i.e. it re-tiled from source, not just zoom-trimmed) and a UserWarning about re-tiling fired.
+- [ ] **Step 2: Run → FAIL.**
+- [ ] **Step 3: Implement** — the `from_archive` escalation in `_simplify.py` (decode→`from_source` on overflow; reuse `_decode_mvt_to_geoms`/`all_tiles`), and `_simplify_layer` in `_maplibre.py` (route source→`from_source`, archive→`from_archive`; return a `pmtiles_layer` of the bytes), called from `prepare_layers` rung 3.
+- [ ] **Step 4: Run → PASS** (Docker, tippecanoe present). Full vizx suite.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py python/geobrix/test/vizx/test_ladder.py
-git commit -m "feat(vizx): wire simplify_tiles into the >64MB ladder rung"
+git add python/geobrix/src/databricks/labs/gbx/vizx/_maplibre.py python/geobrix/src/databricks/labs/gbx/vizx/_simplify.py python/geobrix/test/vizx/test_ladder.py python/geobrix/test/vizx/test_simplify.py
+git commit -m "feat(vizx): wire simplify into ladder; archive budget-escalates to source re-tile"
 ```
 
 ---
