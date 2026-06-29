@@ -5,7 +5,6 @@ import pytest
 from databricks.labs.gbx.sample._overture_discover import (
     OVERTURE_THEMES,
     bbox_intersects,
-    cli_discover,
     expand_themes,
     normalize_bbox,
     resolve_release,
@@ -150,40 +149,20 @@ def test_resolve_release_missing_raises():
         resolve_release(lambda: _EmptyCatalog(), None)
 
 
-def test_cli_discover_absent_returns_none(monkeypatch):
-    # No overturemaps on PATH -> None so the caller falls back to traversal.
-    monkeypatch.setattr(
-        "databricks.labs.gbx.sample._overture_discover.shutil.which",
-        lambda name: None,
-    )
-    assert (
-        cli_discover(
-            (-122.5, 37.7, -122.3, 37.8), [("buildings", "building")], "2024-07-01"
-        )
-        is None
-    )
+def test_traverse_catalog_is_the_discovery_path():
+    """discover() now calls traverse_catalog directly (cli_discover was removed).
 
-
-def test_cli_discover_present_parses_runner(monkeypatch):
-    monkeypatch.setattr(
-        "databricks.labs.gbx.sample._overture_discover.shutil.which",
-        lambda name: "/usr/bin/overturemaps",
-    )
-
-    class _Completed:
-        returncode = 0
-        stdout = (
-            "s3://overturemaps-us-west-2/2024-07-01/buildings/building/part-0.parquet\n"
-        )
-
-    rows = cli_discover(
+    Verify traverse_catalog returns the correct shape and filters by bbox — the
+    same contract OvertureClient.discover() relies on.
+    """
+    rows = traverse_catalog(
+        open_fake_overture,
         (-122.5, 37.7, -122.3, 37.8),
         [("buildings", "building")],
-        "2024-07-01",
-        runner=lambda *a, **k: _Completed(),
+        _item_loader=_sf_building_loader,
     )
     assert len(rows) == 1
     assert rows[0]["theme"] == "buildings"
     assert rows[0]["type"] == "building"
-    assert rows[0]["href"].endswith("part-0.parquet")
-    assert rows[0]["asset_bbox"] == [-122.5, 37.7, -122.3, 37.8]
+    assert rows[0]["href"].endswith("sf.parquet")
+    assert "asset_bbox" in rows[0]

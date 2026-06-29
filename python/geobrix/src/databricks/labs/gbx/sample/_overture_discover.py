@@ -8,8 +8,6 @@ exactly like StacClient's seam.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from typing import List, Optional, Tuple
 
 Bbox = Tuple[float, float, float, float]
@@ -141,45 +139,3 @@ def resolve_release(opener, release: Optional[str] = None) -> str:
     )
 
 
-def cli_discover(bbox, theme_pairs, release, runner=subprocess.run):
-    """Fast-path via the `overturemaps` CLI when present; None otherwise.
-
-    Returns rows shaped like traverse_catalog (theme/type/href/asset_bbox). The
-    asset_bbox is the AOI bbox (the CLI lists paths intersecting the bbox, not
-    per-file extents), which is sufficient for downstream pushdown bookkeeping.
-    """
-    if shutil.which("overturemaps") is None:
-        return None
-    aoi = normalize_bbox(bbox)
-    bbox_arg = ",".join(str(v) for v in aoi)
-    rows = []
-    for theme, type_ in theme_pairs:
-        completed = runner(
-            [
-                "overturemaps",
-                "download",
-                "--bbox",
-                bbox_arg,
-                "--release",
-                release,
-                "--type",
-                type_,
-                "--list-paths",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if getattr(completed, "returncode", 1) != 0:
-            continue
-        for line in (completed.stdout or "").splitlines():
-            href = line.strip()
-            if href:
-                rows.append(
-                    {
-                        "theme": theme,
-                        "type": type_,
-                        "href": href,
-                        "asset_bbox": list(aoi),
-                    }
-                )
-    return rows

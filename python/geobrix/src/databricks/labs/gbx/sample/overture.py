@@ -282,12 +282,14 @@ class OvertureClient:
 
         return _meta_dataframe(spark, meta_rows, partitions)
 
-    def _download_via_cli(self, assets, out_dir, *, bbox, validate) -> "DataFrame":
+    def _download_via_cli(self, assets, out_dir, *, bbox, validate, force=False) -> "DataFrame":
         """Download via the official overturemaps CLI (--stac bbox pushdown).
 
         Runs `overturemaps download --stac --bbox=W,S,E,N -f geoparquet --type <type>`
         for each distinct (theme, type) pair. Sequential, driver-side. Requires bbox.
         Volume-safe: assembles locally then shutil.copyfile to target.
+        Idempotent: skips the CLI when the target already exists and is a valid
+        parquet, unless force=True.
         Returns a metadata DataFrame matching _meta_dataframe schema.
         """
         from pyspark.sql import SparkSession
@@ -312,6 +314,24 @@ class OvertureClient:
             target_dir = os.path.join(out_dir, theme, type_)
             os.makedirs(target_dir, exist_ok=True)
             target = os.path.join(target_dir, f"{type_}.parquet")
+
+            # Idempotent skip: valid existing target is reused unless force=True.
+            if not force and os.path.exists(target) and _is_valid_parquet(target):
+                sz = os.path.getsize(target)
+                valid = True
+                meta_rows.append(
+                    {
+                        "theme": theme,
+                        "type": type_,
+                        "source": target,
+                        "out_file_sz": sz,
+                        "is_out_file_valid": valid,
+                        "asset_bbox": list(normalize_bbox(bbox)),
+                        "release": rel,
+                        "href": "",
+                    }
+                )
+                continue
 
             tmpdir = tempfile.mkdtemp(prefix="gbx_overture_cli_")
             try:
@@ -512,6 +532,7 @@ class OvertureClient:
         validate=True,
         max_tries=5,
         partitions=None,
+        force: bool = False,
     ) -> "DataFrame":
         """Distributed download of discovered assets to out_dir (a Volume).
 
@@ -532,6 +553,11 @@ class OvertureClient:
         ``href``) so the catalog stays queryable and re-runnable without
         accumulating duplicate rows. The returned DataFrame is unchanged.
 
+        force:
+            When True, re-download even if the target already exists and is valid.
+            Only applies to the CLI path; the distributed and fallback paths manage
+            their own idempotency independently.
+
         Serverless-safe; idempotent skip on valid existing targets.
         """
         assets = assets_df.select(*_DISCOVER_COLS)
@@ -539,7 +565,9 @@ class OvertureClient:
 
         # CLI fast-path: bbox present + overturemaps CLI available → server-side pushdown.
         if bbox is not None and _overturemaps_cli_available():
-            meta = self._download_via_cli(assets, out_dir, bbox=bbox, validate=validate)
+            meta = self._download_via_cli(
+                assets, out_dir, bbox=bbox, validate=validate, force=force
+            )
             if table is not None:
                 meta = self._merge_metadata(meta, table)
             return meta
@@ -655,7 +683,6 @@ class OvertureClient:
         from pyspark.sql import SparkSession
 
         from databricks.labs.gbx.sample._overture_discover import (
-            cli_discover,
             expand_themes,
             resolve_release,
             traverse_catalog,
@@ -665,12 +692,7 @@ class OvertureClient:
         rel = resolve_release(opener, release or self.release)
         pairs = expand_themes(themes)
 
-        rows = None
-        # CLI fast-path only in production (no injected opener); offline tests force traversal.
-        if self._catalog_opener is None:
-            rows = cli_discover(bbox, pairs, rel)
-        if not rows:
-            rows = traverse_catalog(opener, bbox, pairs, self._item_loader)
+        rows = traverse_catalog(opener, bbox, pairs, self._item_loader)
 
         for r in rows:
             r["release"] = rel

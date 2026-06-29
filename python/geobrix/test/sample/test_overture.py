@@ -661,6 +661,135 @@ def test_download_via_cli_builds_meta(spark, tmp_path, monkeypatch):
     assert row["href"] == ""
 
 
+def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypatch):
+    """_download_via_cli skips the subprocess when the target already exists and is valid.
+
+    First call (target absent): CLI runner is invoked once.
+    Second call (target present + valid): CLI runner is NOT invoked.
+    Third call with force=True (target present + valid): CLI runner IS invoked again.
+    """
+    src = str(tmp_path / "cli_idem_src.parquet")
+    spark.createDataFrame([Row(id=1)]).coalesce(1).write.mode("overwrite").parquet(src)
+    part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
+    src_file = os.path.join(src, part)
+
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
+
+    call_count = {"n": 0}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        call_count["n"] += 1
+        o_idx = cmd.index("-o")
+        out_path = cmd[o_idx + 1]
+        import shutil as _shutil
+        _shutil.copyfile(src_file, out_path)
+
+        class _Done:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    assets = spark.createDataFrame(
+        [("buildings", "building", "", [-122.52, 37.70, -122.36, 37.83], "2026-06-17.0")],
+        schema,
+    )
+    client = OvertureClient(
+        release="2026-06-17.0",
+        _catalog_opener=open_fake_overture,
+        _item_loader=_fake_item_loader,
+    )
+    out_dir = str(tmp_path / "cli_idem_out")
+    bbox = (-122.45, 37.74, -122.40, 37.78)
+
+    # First call — target absent; CLI must run.
+    client._download_via_cli(assets, out_dir, bbox=bbox, validate=False)
+    assert call_count["n"] == 1, f"Expected 1 CLI call on first download, got {call_count['n']}"
+
+    # Second call — target present + valid; CLI must NOT run.
+    client._download_via_cli(assets, out_dir, bbox=bbox, validate=False)
+    assert call_count["n"] == 1, f"Expected still 1 CLI call after idempotent skip, got {call_count['n']}"
+
+    # Third call with force=True — must re-invoke the CLI even though target is valid.
+    client._download_via_cli(assets, out_dir, bbox=bbox, validate=False, force=True)
+    assert call_count["n"] == 2, f"Expected 2 CLI calls after force=True, got {call_count['n']}"
+
+
+def test_download_via_cli_force_via_download_api(spark, tmp_path, monkeypatch):
+    """download(..., force=True) is threaded through to _download_via_cli."""
+    src = str(tmp_path / "force_src.parquet")
+    spark.createDataFrame([Row(id=1)]).coalesce(1).write.mode("overwrite").parquet(src)
+    part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
+    src_file = os.path.join(src, part)
+
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
+
+    call_count = {"n": 0}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        call_count["n"] += 1
+        o_idx = cmd.index("-o")
+        out_path = cmd[o_idx + 1]
+        import shutil as _shutil
+        _shutil.copyfile(src_file, out_path)
+
+        class _Done:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    assets = spark.createDataFrame(
+        [("buildings", "building", "", [-122.52, 37.70, -122.36, 37.83], "2026-06-17.0")],
+        schema,
+    )
+    client = OvertureClient(
+        release="2026-06-17.0",
+        _catalog_opener=open_fake_overture,
+        _item_loader=_fake_item_loader,
+    )
+    out_dir = str(tmp_path / "force_out")
+    bbox = (-122.45, 37.74, -122.40, 37.78)
+
+    # First call (no force): CLI runs.
+    client.download(assets, out_dir, bbox=bbox, validate=False)
+    assert call_count["n"] == 1
+
+    # Second call (no force): idempotent skip.
+    client.download(assets, out_dir, bbox=bbox, validate=False)
+    assert call_count["n"] == 1
+
+    # Third call (force=True): CLI runs again.
+    client.download(assets, out_dir, bbox=bbox, validate=False, force=True)
+    assert call_count["n"] == 2
+
+
 def test_download_overture_aoi_one_shot(spark, tmp_path, monkeypatch):
     # Force the convenience fn's default client to use the fake opener (offline).
     src = str(tmp_path / "aoi.parquet")
