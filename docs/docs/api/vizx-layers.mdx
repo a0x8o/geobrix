@@ -43,6 +43,21 @@ from databricks.labs.gbx.vizx import (
 
 Each constructor exposes a `label=` argument used in audit output and map legends.
 
+## The embed-size ladder
+
+When total payload grows beyond the 64 MB default, `plot_interactive` walks through a four-rung ladder to find the right delivery strategy:
+
+![VizX embed-size decision ladder](../../../resources/images/diagrams/vizx/vizx-layers.png)
+
+| Rung | Condition | Delivery |
+|---|---|---|
+| **1 — URL** | `pmtiles_layer` carries an `https://` URL | `FetchSource` range-reads on demand; zero embed cost. |
+| **2 — embed** | Total HTML size ≤ `max_embed_mb` (default 64 MB) | Base64 `FileSource` in-browser; no server, no network at render time. |
+| **3 — simplify** | Over budget, `simplify_tiles_spec=` provided | Runs `tippecanoe` to produce a budget-sized PMTiles archive, then re-embeds. |
+| **4 — static** | Over budget, no simplify path | Falls back to `plot_static`; GitHub-renderable PNG. |
+
+The `max_embed_mb` threshold applies to the assembled HTML byte length, not to individual layer sizes.
+
 ## Multi-layer static composite
 
 `plot_static` draws each layer in order on a single `matplotlib.Axes` and returns it. Layers are reprojected to Web Mercator (EPSG:3857) so they align with one another and with any basemap. Pass `basemap=False` for a deterministic, offline-safe render.
@@ -60,7 +75,7 @@ The static path renders every listed layer type except `pmtiles_layer` (which em
 
 ## Multi-layer interactive map
 
-`plot_interactive` converts each layer to MapLibre GL sources, assembles one self-contained HTML string, and either embeds it inline or streams it from a URL depending on the embed-size ladder below. Use `dry_run=True` to inspect the size audit without rendering.
+`plot_interactive` converts each layer to MapLibre GL sources, assembles one self-contained HTML string, and either embeds it inline or streams it from a URL depending on the embed-size ladder above. Use `dry_run=True` to inspect the size audit without rendering.
 
 <CodeFromTest
   code={vizxLayers}
@@ -72,21 +87,6 @@ The static path renders every listed layer type except `pmtiles_layer` (which em
 />
 
 In a Databricks notebook, omit `dry_run=True` and `plot_interactive` calls `displayHTML` automatically. Outside a notebook (plain Python, tests), it returns the HTML string.
-
-## The embed-size ladder
-
-When total payload grows beyond the 64 MB default, `plot_interactive` walks through a four-rung ladder to find the right delivery strategy:
-
-![VizX embed-size decision ladder](../../../resources/images/diagrams/vizx/vizx-layers.png)
-
-| Rung | Condition | Delivery |
-|---|---|---|
-| **1 — URL** | `pmtiles_layer` carries an `https://` URL | `FetchSource` range-reads on demand; zero embed cost. |
-| **2 — embed** | Total HTML size ≤ `max_embed_mb` (default 64 MB) | Base64 `FileSource` in-browser; no server, no network at render time. |
-| **3 — simplify** | Over budget, `simplify_tiles_spec=` provided | Runs `tippecanoe` to produce a budget-sized PMTiles archive, then re-embeds. |
-| **4 — static** | Over budget, no simplify path | Falls back to `plot_static`; GitHub-renderable PNG. |
-
-The `max_embed_mb` threshold applies to the assembled HTML byte length, not to individual layer sizes.
 
 ## Proactive audit: never a surprise
 
