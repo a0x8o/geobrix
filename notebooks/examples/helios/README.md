@@ -26,14 +26,14 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 - **Distributed Web Mercator reprojection** — `gbx_rst_to_webmercator` reprojects each NAIP scene across the cluster to the standard slippy-map CRS, scaling linearly with tile count rather than running serially on the driver.
 - **Full-resolution XYZ pyramid** — `gbx_rst_xyzpyramid` generates all zoom levels in a single distributed pass, matching the zoom range of the vector layer above.
-- **Raster PMTiles** — `gbx_pmtiles_agg` writes the XYZ tile set into `sf_naip.pmtiles`; `show_pmtiles` overlays it with the buildings layer for a side-by-side visual validation.
+- **Raster PMTiles** — `gbx_pmtiles_agg` writes the XYZ tile set into `sf_naip.pmtiles`; `show_pmtiles` renders it inline. With `INTERACTIVE_PLOTS = True`, `plot_interactive([pmtiles_layer(naip), pmtiles_layer(buildings)])` layers the aerial basemap under the NB01 building footprints in a single MapLibre map (buildings layer degrades gracefully if NB01 has not run).
 
 ### 03 — Analytical Core (COG + STAC)
 
 ![Notebook 03 — 3DEP/SRTM DEM → COGs + STAC Delta → slope/aspect/hillshade → PMTiles → solar score per H3 cell](../../../resources/images/diagrams/helios/helios-03.png)
 
 - **COG conversion + STAC Delta catalog** — `gbx_rst_cog_convert` converts raw 3DEP DEMs to Cloud-Optimized GeoTIFFs in a distributed pass; the resulting COG paths are written to a managed STAC Delta table that `StacClient` can query for incremental updates and downstream notebooks.
-- **Terrain analytics at scale** — `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` derive terrain layers in parallel across all DEM tiles; `gbx_rst_xyzpyramid` + `gbx_pmtiles_agg` package the hillshade into `sf_hillshade.pmtiles` for the combined view.
+- **Terrain analytics at scale** — `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` derive terrain layers in parallel across all DEM tiles; `gbx_rst_xyzpyramid` + `gbx_pmtiles_agg` package the hillshade into `sf_hillshade.pmtiles`. With `INTERACTIVE_PLOTS = True`, `plot_interactive` layers the hillshade and the NB01 building footprints as PMTiles and the H3 `solar_score` as a grid layer — all in one MapLibre map.
 - **Databricks-native solar scoring** — `gbx_rst_h3_rastertogridavg` bins slope and aspect rasters into H3 cells; the resulting per-cell values are joined and scored with native Databricks SQL expressions to produce a `solar_score` column. `h3_centeraswkb` reconstructs geometry for map rendering — all without leaving the warehouse.
 
 ### 04 — Distributed Sharding & Mosaic
@@ -74,7 +74,7 @@ The notebooks follow a solar site-selection narrative: identify candidate roofto
 
 Each notebook is safe to re-run — outputs are written with skip-guards so already-built files are not re-downloaded or re-tiled. Set `FORCE_REBUILD = True` in a cell right after `%run ./config_nb` to force a full rebuild of that notebook's outputs.
 
-The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast static maps on GitHub; set `INTERACTIVE_PLOTS = True` (in `config_nb` or in a cell after `%run`) for interactive folium/MapLibre maps.
+The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast static maps on GitHub; set `INTERACTIVE_PLOTS = True` (in `config_nb` or in a cell after `%run`) for interactive MapLibre multi-layer maps.
 
 ---
 
