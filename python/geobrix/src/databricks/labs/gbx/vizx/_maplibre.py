@@ -52,6 +52,28 @@ DEFAULT_MAX_EMBED_MB: float = 8
 # Base64 inflation factor for embedded payloads (3 raw bytes -> 4 ASCII chars).
 _BASE64_INFLATION = 4.0 / 3.0
 
+# Databricks Serverless caps cell output at 10 MB by default, 20 MB max (raised via
+# the %set_cell_max_output_size_in_mb magic). vizx interactive embeds base64 into one
+# cell, so when set_cell_max_output is on we raise the cap to its max and size the
+# embed budget for it; otherwise we stay conservative for the 10 MB default cap.
+CELL_OUTPUT_CAP_MAX_MB: int = 20
+# Safe embed budget when the cap is raised to its 20 MB max: 20 / (4/3) ~ 15 MB of
+# archive, minus the MapLibre HTML template overhead -> 14 MB.
+MAX_EMBED_MB_CAP_RAISED: float = 14
+
+
+def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
+    """Resolve the effective embed budget in MB.
+
+    An explicit ``max_embed_mb`` always wins. Otherwise the default tracks whether
+    the Serverless cell-output cap will be raised: ``MAX_EMBED_MB_CAP_RAISED``
+    (~14 MB, sized for the 20 MB max cap) when ``set_cell_max_output`` is on, else
+    the conservative ``DEFAULT_MAX_EMBED_MB`` (8 MB, safe for the 10 MB default cap).
+    """
+    if max_embed_mb is not None:
+        return max_embed_mb
+    return MAX_EMBED_MB_CAP_RAISED if set_cell_max_output else DEFAULT_MAX_EMBED_MB
+
 
 # ---------------------------------------------------------------------------
 # security helper

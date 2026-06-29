@@ -18,8 +18,6 @@ from typing import Union
 
 from pmtiles.reader import MemorySource, all_tiles  # noqa: F401
 
-from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
-
 _RASTER_TYPES = frozenset({"png", "jpeg", "webp", "avif"})
 
 
@@ -99,7 +97,8 @@ def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
 def plot_pmtiles(
     path_or_bytes,
     *,
-    max_embed_mb=DEFAULT_MAX_EMBED_MB,
+    max_embed_mb=None,
+    set_cell_max_output=True,
     fallback=True,
     interactive_fit=None,
     style=None,
@@ -156,6 +155,11 @@ def plot_pmtiles(
 
     from databricks.labs.gbx.vizx._interactive import plot_interactive
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _resolve_embed_budget
+
+    # Resolve the embed budget up front so the downzoom autofit + the audit all use
+    # the same value (~14 MB when set_cell_max_output raises the cap, else 8 MB).
+    max_embed_mb = _resolve_embed_budget(max_embed_mb, set_cell_max_output)
 
     archive = path_or_bytes
     if interactive_fit == "downzoom" and max_embed_mb and max_embed_mb > 0:
@@ -182,6 +186,7 @@ def plot_pmtiles(
     return plot_interactive(
         [pmtiles_layer(archive, style=style)],
         max_embed_mb=max_embed_mb,
+        set_cell_max_output=set_cell_max_output,
         fallback=fallback,
         **kw,
     )

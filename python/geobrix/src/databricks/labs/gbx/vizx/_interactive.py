@@ -10,14 +10,32 @@ Requires the [vizx] extra.
 
 from __future__ import annotations
 
-from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
-
 try:
     from IPython import get_ipython
 except Exception:  # noqa: BLE001 — IPython absent (plain Python)
 
     def get_ipython():  # type: ignore[misc]
         return None
+
+
+def _raise_cell_output_cap() -> bool:
+    """Best-effort raise the Databricks cell-output cap to its max for an interactive
+    embed, so a larger base64-embedded map isn't truncated.
+
+    Fires the ``%set_cell_max_output_size_in_mb`` line magic via the notebook kernel.
+    Returns True if it was set, False if not applicable -- no IPython, the magic isn't
+    registered (off Serverless / not Databricks), or anything throws. Never raises.
+    """
+    from databricks.labs.gbx.vizx._maplibre import CELL_OUTPUT_CAP_MAX_MB
+
+    try:
+        ip = get_ipython()
+        if ip is None or not ip.find_line_magic("set_cell_max_output_size_in_mb"):
+            return False
+        ip.run_line_magic("set_cell_max_output_size_in_mb", str(CELL_OUTPUT_CAP_MAX_MB))
+        return True
+    except Exception:  # noqa: BLE001 — graceful skip off-Serverless / any failure
+        return False
 
 
 def _notebook_display_html():
@@ -91,7 +109,8 @@ def plot_interactive(
     *,
     basemap: str = "carto-positron",
     simplify_tiles_spec=None,
-    max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
+    max_embed_mb: float | None = None,
+    set_cell_max_output: bool = True,
     fallback: bool = True,
     center=None,
     zoom=None,
@@ -107,10 +126,15 @@ def plot_interactive(
         basemap:              ``"carto-positron"`` (default) or ``"none"``.
         simplify_tiles_spec:  Optional simplification spec (Task 11, not yet
                               implemented — pass ``None``).
-        max_embed_mb:         Maximum HTML embed size in mebibytes (default
-                              ``DEFAULT_MAX_EMBED_MB``). Sized for the Databricks
-                              Serverless cell-output cap (10 MB default, 20 MB max);
-                              measured against the base64-rendered HTML.
+        max_embed_mb:         Maximum HTML embed size in mebibytes. Default
+                              ``None`` resolves to ~14 MB when ``set_cell_max_output``
+                              is on (sized for the raised 20 MB cap), else 8 MB.
+                              Measured against the base64-rendered HTML.
+        set_cell_max_output:  When ``True`` (default), raise the Databricks Serverless
+                              cell-output cap to its 20 MB max before an interactive
+                              embed (via ``%set_cell_max_output_size_in_mb``) so a
+                              larger map isn't truncated. Graceful no-op off
+                              Serverless. ``False`` leaves the cap untouched.
         fallback:             When ``True`` (default), degrade to
                               :func:`~databricks.labs.gbx.vizx._static_map.plot_static`
                               when the budget is exceeded.  When ``False``, raise.
@@ -127,8 +151,13 @@ def plot_interactive(
         whatever ``plot_static`` returns.
     """
     from databricks.labs.gbx.vizx._layers import as_layers
-    from databricks.labs.gbx.vizx._maplibre import build_html, prepare_layers
+    from databricks.labs.gbx.vizx._maplibre import (
+        _resolve_embed_budget,
+        build_html,
+        prepare_layers,
+    )
 
+    max_embed_mb = _resolve_embed_budget(max_embed_mb, set_cell_max_output)
     lyrs = as_layers(layers)
     result = prepare_layers(
         lyrs,
@@ -145,6 +174,15 @@ def plot_interactive(
         return audit
 
     if result["mode"] == "interactive":
+        # Interactive embed only: raise the Serverless cell-output cap to its max so
+        # the base64-embedded map isn't truncated. Graceful no-op off Serverless.
+        if set_cell_max_output and _raise_cell_output_cap():
+            from databricks.labs.gbx.vizx._maplibre import CELL_OUTPUT_CAP_MAX_MB
+
+            print(
+                f"[vizx] raised cell output cap to {CELL_OUTPUT_CAP_MAX_MB} MB "
+                "for interactive embed (set_cell_max_output=False to skip)"
+            )
         html = build_html(
             result["prepared"],
             basemap=basemap,
