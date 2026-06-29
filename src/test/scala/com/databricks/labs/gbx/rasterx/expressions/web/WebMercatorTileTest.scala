@@ -202,4 +202,22 @@ class WebMercatorTileTest extends AnyFunSuite with BeforeAndAfterAll {
             java.util.Arrays.equals(auto, none) shouldBe true // no -scale emitted for uint8 auto
         } finally ds.delete()
     }
+
+    test("RST_XYZPyramid resolves ONE scale for the source and reuses it per tile") {
+        val ds = makeUint16Narrow()
+        try {
+            // The pyramid resolves the scale once from the source, then renders each tile
+            // with that same string. Simulate the loop: resolve once, render two tiles.
+            val scale = RST_TileXYZ.resolveScale(ds, "auto")
+            scale should not be empty
+            // resolveScale uses repeated -scale (not -scale_N); verify the prefix is present.
+            scale should include("-scale ")
+            val t1 = RST_TileXYZ.executeWithScale(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", scale)
+            val t2 = RST_TileXYZ.executeWithScale(ds, Map.empty[String, String], 3, 4, 2, "PNG", 64, "near", scale)
+            // Both tiles produced with the SAME mapping (no seams). Spot-check one is contrast-recovered.
+            val (lo, hi) = pngBandSpread(t1)
+            (hi - lo) should be > 50
+            t2 should not be null
+        } finally ds.delete()
+    }
 }

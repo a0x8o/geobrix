@@ -17,13 +17,17 @@ import scala.collection.mutable.ArrayBuffer
 /** Generator: explode one source raster into one row per intersecting (z, x, y) tile across
  *  a zoom range.
  *
- *  Pattern-mirrors `RST_MakeTiles` — extends `CollectionGenerator`, single-input row →
+ *  Pattern-mirrors `RST_MakeTiles` -- extends `CollectionGenerator`, single-input row ->
  *  many output rows, codegen-fallback. Output schema is
  *  `STRUCT<z INT, x INT, y INT, bytes BINARY>`.
  *
- *  Internally calls `RST_TileXYZ.execute` per (z, x, y); the resulting bytes are PNG / JPEG /
- *  WEBP per the format argument. The intersection set is computed in WGS84 via
- *  [[BoundingBox.bbox]] → [[TileMath.intersectingTiles]] (Y north-down).
+ *  Internally calls `RST_TileXYZ.executeWithScale` per (z, x, y); the resulting bytes are
+ *  PNG / JPEG / WEBP per the format argument. The intersection set is computed in WGS84 via
+ *  [[BoundingBox.bbox]] -> [[TileMath.intersectingTiles]] (Y north-down).
+ *
+ *  The `rescale` parameter mirrors [[RST_TileXYZ.resolveScale]] semantics and is resolved
+ *  ONCE from the source before the tile loop -- all tiles share one 8-bit mapping (no seams)
+ *  and source stats are read a single time. Defaults to `"auto"`.
  *
  *  Guards:
  *  - `maxZ <= 20` (cell-count explodes beyond that).
@@ -37,13 +41,14 @@ case class RST_XYZPyramid(
     formatExpr: Expression,
     sizeExpr: Expression,
     resamplingExpr: Expression,
+    rescaleExpr: Expression,
     exprConfExpr: Expression = ExpressionConfigExpr()
 ) extends CollectionGenerator
       with Serializable
       with CodegenFallback {
 
     private def rasterType: DataType = RST_ExpressionUtil.rasterType(tileExpr)
-    /** Element schema is a single column "tile" wrapping the (z, x, y, bytes) struct —
+    /** Element schema is a single column "tile" wrapping the (z, x, y, bytes) struct --
      *  mirrors `RST_MakeTiles` so callers `select(rst_xyzpyramid(...).alias("t"))` and
      *  unpack via `t.tile.z`, `t.tile.bytes`, etc. */
     override def dataType: DataType = RST_XYZPyramid.tileStruct
@@ -51,9 +56,9 @@ case class RST_XYZPyramid(
     override def inline: Boolean = false
     override def elementSchema: StructType = RST_XYZPyramid.elementSchemaStatic
     override def children: Seq[Expression] =
-        Seq(tileExpr, minZExpr, maxZExpr, formatExpr, sizeExpr, resamplingExpr, exprConfExpr)
+        Seq(tileExpr, minZExpr, maxZExpr, formatExpr, sizeExpr, resamplingExpr, rescaleExpr, exprConfExpr)
     override def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] =
         RST_ErrorHandler.safeEval(() => doEval(input), input, rasterType)
@@ -77,9 +82,14 @@ case class RST_XYZPyramid(
         val format = Option(formatExpr.eval(input)).map(_.asInstanceOf[UTF8String].toString).getOrElse("PNG")
         val size = readInt(sizeExpr.eval(input), "size")
         val resampling = Option(resamplingExpr.eval(input)).map(_.asInstanceOf[UTF8String].toString).getOrElse("bilinear")
+        val rescale = Option(rescaleExpr.eval(input)).map(_.asInstanceOf[UTF8String].toString).getOrElse("auto")
 
         val (_, ds, options) = RasterSerializationUtil.rowToTile(rawTile, rasterType)
         try {
+            // Resolve the 8-bit rescale mapping ONCE from the source (stats read once; every
+            // tile shares one mapping => no tile-to-tile seams). Mirrors the light tier.
+            val scaleFlags = RST_TileXYZ.resolveScale(ds, rescale)
+
             // Compute source extent in WGS84 (lon/lat) once, then expand across zoom range.
             val bboxGeom = BoundingBox.bbox(ds, GDAL.WSG84)
             val env = bboxGeom.getEnvelopeInternal
@@ -104,7 +114,9 @@ case class RST_XYZPyramid(
             }
 
             // Emit (z, x, y, bytes) rows. We keep a single source `ds` open across all
-            // tiles — RST_TileXYZ.execute does not close it. The finally block releases the source.
+            // tiles -- RST_TileXYZ.executeWithScale does not close it. The finally block
+            // releases the source. The pre-resolved scaleFlags string is passed to every tile
+            // so all tiles share one 8-bit mapping (no seams) and stats are read once.
             val rows = new ArrayBuffer[InternalRow](math.min(total, Int.MaxValue.toLong).toInt)
             var zi = minZ
             while (zi <= maxZ) {
@@ -112,7 +124,7 @@ case class RST_XYZPyramid(
                 var i = 0
                 while (i < tiles.length) {
                     val (zz, xx, yy) = tiles(i)
-                    val bytes = RST_TileXYZ.execute(ds, options, zz, xx, yy, format, size, resampling)
+                    val bytes = RST_TileXYZ.executeWithScale(ds, options, zz, xx, yy, format, size, resampling, scaleFlags)
                     val struct = InternalRow.fromSeq(Seq(zz, xx, yy, bytes))
                     rows += InternalRow.fromSeq(Seq(struct))
                     i += 1
@@ -159,15 +171,16 @@ object RST_XYZPyramid extends WithExpressionInfo {
 
     override def name: String = "gbx_rst_xyzpyramid"
 
-    /** Builder: 3 to 6 args (tile, min_z, max_z, [format, [size, [resampling]]]). */
+    /** Builder: 3 to 7 args (tile, min_z, max_z, [format, [size, [resampling, [rescale]]]]). */
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => {
         c.length match {
-            case 3 => RST_XYZPyramid(c(0), c(1), c(2), Literal("PNG"), Literal(256), Literal("bilinear"))
-            case 4 => RST_XYZPyramid(c(0), c(1), c(2), c(3), Literal(256), Literal("bilinear"))
-            case 5 => RST_XYZPyramid(c(0), c(1), c(2), c(3), c(4), Literal("bilinear"))
-            case 6 => RST_XYZPyramid(c(0), c(1), c(2), c(3), c(4), c(5))
+            case 3 => RST_XYZPyramid(c(0), c(1), c(2), Literal("PNG"), Literal(256), Literal("bilinear"), Literal("auto"))
+            case 4 => RST_XYZPyramid(c(0), c(1), c(2), c(3), Literal(256), Literal("bilinear"), Literal("auto"))
+            case 5 => RST_XYZPyramid(c(0), c(1), c(2), c(3), c(4), Literal("bilinear"), Literal("auto"))
+            case 6 => RST_XYZPyramid(c(0), c(1), c(2), c(3), c(4), c(5), Literal("auto"))
+            case 7 => RST_XYZPyramid(c(0), c(1), c(2), c(3), c(4), c(5), c(6))
             case n => throw new IllegalArgumentException(
-                s"gbx_rst_xyzpyramid takes 3 to 6 arguments (tile, min_z, max_z, [format, [size, [resampling]]]); got $n"
+                s"gbx_rst_xyzpyramid takes 3 to 7 arguments (tile, min_z, max_z, [format, [size, [resampling, [rescale]]]]); got $n"
             )
         }
     }
