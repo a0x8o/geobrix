@@ -344,31 +344,27 @@ def _layer_audit_entry(layer, idx: int, embed_bytes: int) -> dict:
 def _max_tile_bytes(raw: bytes) -> int | None:
     """Return the maximum single-tile decompressed byte size in a pmtiles archive.
 
-    Mirrors the size-check logic in ``simplify_tiles_from_archive``.
-    Returns ``None`` if the archive cannot be parsed.
+    Iterates the archive's actual tiles via ``all_tiles`` (mirrors the
+    size-check logic in ``simplify_tiles_from_archive``).
+    Returns ``None`` if the archive contains no tiles or cannot be parsed.
     """
     try:
-        from databricks.labs.gbx.pmtiles import pmtiles_info
-
-        info = pmtiles_info(raw)
-        # pmtiles_info returns tile data under 'tiles' key (list of dicts with 'data').
-        tiles = info.get("tiles", [])
-        if not tiles:
-            return None
         import gzip
 
+        from pmtiles.reader import MemorySource, all_tiles
+
         max_size = 0
-        for tile in tiles:
-            data = tile.get("data", b"")
-            if not data:
-                continue
-            # Try gzip decompression; fall back to raw size.
-            try:
-                decompressed = gzip.decompress(data)
-                max_size = max(max_size, len(decompressed))
-            except Exception:
-                max_size = max(max_size, len(data))
-        return max_size if max_size > 0 else None
+        found = False
+        for (z, x, y), payload in all_tiles(MemorySource(raw)):
+            found = True
+            data = payload
+            if data[:2] == b"\x1f\x8b":
+                try:
+                    data = gzip.decompress(data)
+                except Exception:
+                    pass
+            max_size = max(max_size, len(data))
+        return max_size if found else None
     except Exception:
         return None
 
@@ -391,11 +387,10 @@ def _build_audit(layers, prepared, total_embed_bytes, max_embed_bytes, simplify_
     if fits:
         verdict = "embed"
     else:
-        # Check if all embedded layers are url-mode (zero cost already accounted for).
-        all_url = all(
-            getattr(layer, "kind", None) == "pmtiles" and _pmtiles_is_url(layer)
-            for layer in layers
-        )
+        # "url" — at least one pmtiles layer exists AND every pmtiles layer is
+        # url-mode (no archive needs embedding; non-pmtiles layers are irrelevant).
+        pmtiles_layers = [l for l in layers if getattr(l, "kind", None) == "pmtiles"]
+        all_url = bool(pmtiles_layers) and all(_pmtiles_is_url(l) for l in pmtiles_layers)
         if all_url:
             verdict = "url"
         elif simplify_tiles_spec or any(

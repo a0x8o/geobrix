@@ -105,9 +105,6 @@ def test_plot_interactive_dry_run_returns_audit_no_render():
     assert "fits" in result
     assert "verdict" in result
     assert "total_embed_bytes" in result
-    # Must NOT be an HTML render
-    if isinstance(result, str):
-        assert "maplibregl.Map" not in result
 
 
 def test_audit_oversize_verdict():
@@ -115,3 +112,58 @@ def test_audit_oversize_verdict():
     result = audit_layers([vector_layer(_small_gdf())], max_embed_mb=0.0001)
     assert result["fits"] is False
     assert result["verdict"] in {"simplify", "static", "url"}
+
+
+def _build_pmtiles_archive_for_ladder():
+    """Minimal PMTiles archive with one real non-empty tile (no tippecanoe needed)."""
+    import io
+
+    from pmtiles.tile import Compression, TileType, zxy_to_tileid
+    from pmtiles.writer import Writer
+
+    payload = b"FAKEMVTDATA_LADDER_TEST"
+    buf = io.BytesIO()
+    w = Writer(buf)
+    header = {
+        "tile_type": TileType.MVT,
+        "tile_compression": Compression.NONE,
+        "internal_compression": Compression.GZIP,
+        "min_zoom": 0,
+        "max_zoom": 2,
+        "min_lon_e7": int(-122.52 * 1e7),
+        "min_lat_e7": int(37.70 * 1e7),
+        "max_lon_e7": int(-122.35 * 1e7),
+        "max_lat_e7": int(37.83 * 1e7),
+        "center_zoom": 0,
+        "center_lon_e7": int(-122.44 * 1e7),
+        "center_lat_e7": int(37.76 * 1e7),
+    }
+    w.write_tile(zxy_to_tileid(0, 0, 0), payload)
+    w.finalize(header, {"name": "ladder-test", "vector_layers": [{"id": "test"}]})
+    return buf.getvalue()
+
+
+def test_audit_max_tile_bytes_for_archive():
+    """audit_layers reports max_tile_bytes as a positive int for an embedded pmtiles archive.
+
+    This test specifically closes the coverage gap where _max_tile_bytes always
+    returned None because it called pmtiles_info (which has no 'tiles' key) instead
+    of iterating tiles via all_tiles.
+    """
+    try:
+        archive = _build_pmtiles_archive_for_ladder()
+    except Exception as e:
+        pytest.skip(f"pmtiles writer not available: {e}")
+
+    layer = pmtiles_layer(archive, label="test-archive")
+    result = audit_layers([layer])
+    assert len(result["layers"]) == 1
+    entry = result["layers"][0]
+    assert entry["kind"] == "pmtiles"
+    assert entry["max_tile_bytes"] is not None, (
+        "_max_tile_bytes returned None — it is not reading real tile data from the archive"
+    )
+    assert isinstance(entry["max_tile_bytes"], int)
+    assert entry["max_tile_bytes"] > 0, (
+        f"max_tile_bytes should be positive, got {entry['max_tile_bytes']}"
+    )
