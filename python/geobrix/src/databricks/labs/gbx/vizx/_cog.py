@@ -40,17 +40,22 @@ def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_s
     owns_fig = ax is None
     if owns_fig:
         _, ax = plt.subplots(1, figsize=(fig_w, fig_h))
+    # Draw the COG ABOVE the basemap (zorder): a basemap added after imshow renders
+    # on top and hides an opaque full-extent raster (a DEM showed only the map).
+    # With the raster on top, the basemap shows through nodata / around a partial COG.
     if data.shape[0] == 1:
         band = data[0]
-        ax.imshow(band, extent=plotting_extent(band, transform), cmap="viridis")
+        ax.imshow(
+            band, extent=plotting_extent(band, transform), cmap="viridis", zorder=2
+        )
     else:
-        show(data, ax=ax, transform=transform)
+        show(data, ax=ax, transform=transform, zorder=2)
     if basemap and crs is not None:
         try:
             import contextily as cx
 
             source = basemap_source or cx.providers.CartoDB.Positron
-            cx.add_basemap(ax, source=source, crs=crs)
+            cx.add_basemap(ax, source=source, crs=crs, zorder=1)
         except Exception as exc:  # noqa: BLE001 — offline/no-egress -> warn + skip
             warnings.warn(
                 f"plot_cog: basemap unavailable ({type(exc).__name__}: {exc}); "
