@@ -54,12 +54,20 @@ object OperatorOptions {
 
         val cos = (coBase ++ coComp).mkString(" ")
 
+        // Optional per-band rescale string (e.g. "-scale_1 min max 0 255 -scale_2 ..."),
+        // supplied by the XYZ tilers for data-aware 8-bit encoding. Empty/absent => no -scale
+        // (today's full-dtype-range behavior). See RST_TileXYZ rescale resolution.
+        // Note: rescale currently affects the PNG byte-output branch only; JPEG/WEBP rescale
+        // is a documented future follow-up.
+        val scaleFlags = writeOptions.getOrElse("scale", "").trim
+        val scaleSuffix = if (scaleFlags.isEmpty) "" else s" $scaleFlags"
+
         format match {
             case _ if command.startsWith("gdalbuildvrt") => command // VRT does not require additional options
             case "VRT"                                   => command
             case "PNM" if isCalc                         => s"$command $ofFlag $format"
             case "PNM"                                   => s"$command $ofFlag $format -ot UInt16 -scale -32768 32767 0 65535"
-            case "PNG"                                   => s"$command $ofFlag $format -ot Byte -a_nodata none" // PNG Byte format, strip NoData to avoid tRNS issues
+            case "PNG"                                   => s"$command $ofFlag $format -ot Byte -a_nodata none$scaleSuffix" // PNG Byte format, strip NoData to avoid tRNS issues
             case "Zarr" if missingGeoRef                 => s"$command $ofFlag $format -to SRC_METHOD=NO_GEOTRANSFORM $cos"
             case f                                       => s"$command $ofFlag $f $cos"
         }

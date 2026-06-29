@@ -106,4 +106,23 @@ class WebMercatorTileTest extends AnyFunSuite with BeforeAndAfterAll {
         }
         total should be > RST_XYZPyramid.MAX_TILE_COUNT
     }
+
+    test("OperatorOptions PNG branch injects -scale when scale option supplied") {
+        val withScale = com.databricks.labs.gbx.rasterx.operator.OperatorOptions.appendOptions(
+          "gdal_translate",
+          Map("format" -> "PNG", "scale" -> "-scale_1 8000 12000 0 255"),
+          srcDs
+        )
+        withScale should include("-ot Byte")
+        withScale should include("-a_nodata none")
+        withScale should include("-scale_1 8000 12000 0 255")
+    }
+
+    test("OperatorOptions PNG branch unchanged when no scale option") {
+        val noScale = com.databricks.labs.gbx.rasterx.operator.OperatorOptions.appendOptions(
+          "gdal_translate", Map("format" -> "PNG"), srcDs
+        )
+        noScale shouldBe "gdal_translate -of PNG -ot Byte -a_nodata none"
+        noScale should not include "-scale"
+    }
 }
