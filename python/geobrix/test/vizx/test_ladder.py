@@ -7,7 +7,7 @@ import pytest
 from shapely.geometry import Point
 
 from databricks.labs.gbx.vizx._layers import pmtiles_layer, vector_layer
-from databricks.labs.gbx.vizx._maplibre import prepare_layers
+from databricks.labs.gbx.vizx._maplibre import audit_layers, prepare_layers
 
 
 def _small_gdf():
@@ -76,3 +76,42 @@ def test_simplify_spec_produces_interactive():
     # Should have a warning mentioning "simplified"
     combined = " ".join(out["warnings"]) + " ".join(str(x.message) for x in w)
     assert "simplified" in combined.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 11b: audit_layers and dry_run tests
+# ---------------------------------------------------------------------------
+
+
+def test_audit_layers_small_is_embed():
+    """audit_layers on a small vector layer returns fits=True, verdict='embed'."""
+    result = audit_layers([vector_layer(_small_gdf())])
+    assert result["fits"] is True
+    assert result["verdict"] == "embed"
+    assert result["total_embed_bytes"] > 0
+    assert len(result["layers"]) == 1
+    entry = result["layers"][0]
+    assert "label" in entry
+    assert "kind" in entry
+    assert "embed_bytes" in entry
+
+
+def test_plot_interactive_dry_run_returns_audit_no_render():
+    """plot_interactive with dry_run=True returns an audit dict, not rendered HTML."""
+    from databricks.labs.gbx.vizx._interactive import plot_interactive
+
+    result = plot_interactive([vector_layer(_small_gdf())], dry_run=True)
+    assert isinstance(result, dict), "dry_run=True must return a dict, not HTML"
+    assert "fits" in result
+    assert "verdict" in result
+    assert "total_embed_bytes" in result
+    # Must NOT be an HTML render
+    if isinstance(result, str):
+        assert "maplibregl.Map" not in result
+
+
+def test_audit_oversize_verdict():
+    """An oversize layer (tiny max_embed_mb) returns fits=False, verdict in {simplify,static}."""
+    result = audit_layers([vector_layer(_small_gdf())], max_embed_mb=0.0001)
+    assert result["fits"] is False
+    assert result["verdict"] in {"simplify", "static", "url"}

@@ -321,6 +321,188 @@ def _pmtiles_raw_bytes(layer):
     return None  # url mode or unrecognised
 
 
+def _layer_audit_entry(layer, idx: int, embed_bytes: int) -> dict:
+    """Return the per-layer dict for the audit structure."""
+    label = getattr(layer, "label", None) or f"layer[{idx}]"
+    kind = getattr(layer, "kind", "unknown")
+    entry: dict = {"label": label, "kind": kind, "embed_bytes": embed_bytes}
+
+    # For embedded pmtiles archives, report the max single-tile size.
+    if kind == "pmtiles":
+        raw = _pmtiles_raw_bytes(layer)
+        if raw is not None:
+            max_tile = _max_tile_bytes(raw)
+            entry["max_tile_bytes"] = max_tile
+        else:
+            entry["max_tile_bytes"] = None
+    else:
+        entry["max_tile_bytes"] = None
+
+    return entry
+
+
+def _max_tile_bytes(raw: bytes) -> int | None:
+    """Return the maximum single-tile decompressed byte size in a pmtiles archive.
+
+    Mirrors the size-check logic in ``simplify_tiles_from_archive``.
+    Returns ``None`` if the archive cannot be parsed.
+    """
+    try:
+        from databricks.labs.gbx.pmtiles import pmtiles_info
+
+        info = pmtiles_info(raw)
+        # pmtiles_info returns tile data under 'tiles' key (list of dicts with 'data').
+        tiles = info.get("tiles", [])
+        if not tiles:
+            return None
+        import gzip
+
+        max_size = 0
+        for tile in tiles:
+            data = tile.get("data", b"")
+            if not data:
+                continue
+            # Try gzip decompression; fall back to raw size.
+            try:
+                decompressed = gzip.decompress(data)
+                max_size = max(max_size, len(decompressed))
+            except Exception:
+                max_size = max(max_size, len(data))
+        return max_size if max_size > 0 else None
+    except Exception:
+        return None
+
+
+def _build_audit(layers, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec) -> dict:
+    """Build the audit dict from layers + their prepared (sources, layers, embed_bytes) entries."""
+    audit_layers_list = []
+    for idx, layer in enumerate(layers):
+        entry = prepared[idx] if idx < len(prepared) else None
+        eb = entry[2] if (entry is not None and len(entry) > 2) else 0
+        audit_layers_list.append(_layer_audit_entry(layer, idx, eb))
+
+    fits = total_embed_bytes <= max_embed_bytes
+
+    # Determine verdict.
+    # "url"      — all over-budget pmtiles have an http(s) URL (zero embed cost).
+    # "embed"    — total fits within budget.
+    # "simplify" — over budget but a simplify spec / layer.simplify is present.
+    # "static"   — over budget, no simplify path.
+    if fits:
+        verdict = "embed"
+    else:
+        # Check if all embedded layers are url-mode (zero cost already accounted for).
+        all_url = all(
+            getattr(layer, "kind", None) == "pmtiles" and _pmtiles_is_url(layer)
+            for layer in layers
+        )
+        if all_url:
+            verdict = "url"
+        elif simplify_tiles_spec or any(
+            getattr(layer, "simplify", None) for layer in layers
+        ):
+            verdict = "simplify"
+        else:
+            verdict = "static"
+
+    return {
+        "layers": audit_layers_list,
+        "total_embed_bytes": total_embed_bytes,
+        "max_embed_bytes": max_embed_bytes,
+        "fits": fits,
+        "verdict": verdict,
+    }
+
+
+def audit_layers(
+    layers,
+    *,
+    max_embed_mb: float = 64,
+    simplify_tiles_spec=None,
+) -> dict:
+    """Dry pre-flight embed-size audit — no render, no displayHTML.
+
+    Coerces *layers* via :func:`~databricks.labs.gbx.vizx._layers.as_layers`,
+    prepares each layer (without simplification), measures the assembled-HTML
+    size, and returns an audit dict:
+
+    .. code-block:: python
+
+        {
+            "layers": [
+                {"label": str, "kind": str, "embed_bytes": int, "max_tile_bytes": int | None},
+                ...
+            ],
+            "total_embed_bytes": int,   # len(build_html(prepared).encode())
+            "max_embed_bytes": int,     # int(max_embed_mb * 1_048_576)
+            "fits": bool,               # total_embed_bytes <= max_embed_bytes
+            "verdict": "embed" | "simplify" | "url" | "static",
+        }
+
+    ``total_embed_bytes`` is the authoritative embed measure — the actual
+    assembled-HTML byte length that the browser must load.  ``max_tile_bytes``
+    is the gzip-decompressed max single-tile size for pmtiles archive layers
+    (``None`` for other layer kinds and url-mode pmtiles).
+
+    ``verdict`` interpretation:
+
+    - ``"embed"``    — total fits within budget; inline embed is viable.
+    - ``"url"``      — all pmtiles layers are remote http(s) URLs (zero embed cost).
+    - ``"simplify"`` — over budget but a ``simplify_tiles_spec`` or per-layer
+                       ``simplify`` dict is present to reduce the payload.
+    - ``"static"``   — over budget with no simplify path; only static render viable.
+
+    Args:
+        layers:              A list of :class:`~databricks.labs.gbx.vizx._layers.Layer`
+                             or any input accepted by
+                             :func:`~databricks.labs.gbx.vizx._layers.as_layers`.
+        max_embed_mb:        HTML size threshold in mebibytes (default ``64``).
+        simplify_tiles_spec: Optional spec dict; its presence drives
+                             ``verdict="simplify"`` when the budget is exceeded.
+
+    Returns:
+        Audit dict as described above.
+    """
+    from databricks.labs.gbx.vizx._layers import as_layers
+
+    lyrs = as_layers(layers) if not isinstance(layers, list) else layers
+    max_embed_bytes = int(max_embed_mb * 1_048_576)
+
+    # Prepare each layer without triggering simplification or fallback.
+    prepared: list = []
+    for idx, layer in enumerate(lyrs):
+        kind = getattr(layer, "kind", None)
+        if kind == "pmtiles" and _pmtiles_is_url(layer):
+            entry = layer_to_sources_layers(layer, idx)
+            prepared.append(entry)
+            continue
+        if kind == "pmtiles":
+            raw = _pmtiles_raw_bytes(layer)
+            if raw is not None and len(raw) > max_embed_bytes:
+                # Over-budget before even assembling HTML — record zero embed bytes
+                # in the prepared list (won't be included in build_html).
+                prepared.append(None)
+                continue
+        try:
+            entry = layer_to_sources_layers(layer, idx)
+            prepared.append(entry)
+        except Exception:
+            prepared.append(None)
+
+    valid_prepared = [e for e in prepared if e is not None]
+    if valid_prepared:
+        total_embed_bytes = len(build_html(valid_prepared).encode())
+    else:
+        # All layers were over-budget individually — treat total as sum of raw bytes.
+        total_embed_bytes = sum(
+            len(_pmtiles_raw_bytes(layer) or b"")
+            for layer in lyrs
+            if getattr(layer, "kind", None) == "pmtiles"
+        )
+
+    return _build_audit(lyrs, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec)
+
+
 def prepare_layers(
     layers,
     *,
@@ -451,10 +633,12 @@ def prepare_layers(
                     msg = f"simplified {lbl}"
                     warn_msgs.append(msg)
                     _warnings.warn(msg, stacklevel=2)
+            audit = _build_audit(layers, prepared, html_bytes, budget_bytes, simplify_tiles_spec)
             return {
                 "mode": "interactive",
                 "prepared": valid_prepared,
                 "warnings": warn_msgs,
+                "audit": audit,
             }
 
         # Over budget -- identify embedded layer(s) for the warning.
@@ -506,7 +690,14 @@ def prepare_layers(
         else:
             static_layers.append(layer)
 
-    return {"mode": "static", "prepared": static_layers, "warnings": warn_msgs}
+    # Build audit for the static-fallback path.
+    total_bytes = html_bytes if html_bytes is not None else sum(
+        len(_pmtiles_raw_bytes(layer) or b"")
+        for layer in layers
+        if getattr(layer, "kind", None) == "pmtiles"
+    )
+    audit = _build_audit(layers, prepared, total_bytes, budget_bytes, simplify_tiles_spec)
+    return {"mode": "static", "prepared": static_layers, "warnings": warn_msgs, "audit": audit}
 
 
 def _pmtiles_register_js(sid: str, info: dict) -> str:

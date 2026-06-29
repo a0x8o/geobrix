@@ -43,7 +43,7 @@ def normalize_spec(spec: dict | None) -> dict:
         ValueError: On validation failure (min_z > max_z, budget_mb <= 0, invalid effort).
     """
     defaults = {
-        "budget_mb": 64,
+        "budget_mb": 64,  # per-tile byte cap (tippecanoe --maximum-tile-bytes); NOT a total archive ceiling
         "min_z": 0,
         "max_z": 10,
         "tolerance": "auto",

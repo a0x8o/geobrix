@@ -29,6 +29,30 @@ def _notebook_display_html():
         return None
 
 
+def _format_audit_line(audit: dict, max_embed_mb: float) -> str:
+    """Return the one-line audit summary for printing before render."""
+    layer_parts = []
+    for entry in audit.get("layers", []):
+        label = entry.get("label", "?")
+        eb = entry.get("embed_bytes", 0)
+        layer_parts.append(f"{label} {eb / 1_048_576:.1f}MB")
+    summary = " + ".join(layer_parts) if layer_parts else "(no layers)"
+    total = audit.get("total_embed_bytes", 0)
+    fits = audit.get("fits", False)
+    verdict = audit.get("verdict", "?")
+    cmp = "≤" if fits else ">"
+    verdict_desc = {
+        "embed": "embedding inline",
+        "url": "streaming from URL",
+        "simplify": "simplifying",
+        "static": "static fallback",
+    }.get(verdict, verdict)
+    return (
+        f"[vizx] {summary} = {total / 1_048_576:.1f}MB "
+        f"{cmp} {max_embed_mb}MB → {verdict_desc}"
+    )
+
+
 def plot_interactive(
     layers,
     *,
@@ -38,7 +62,8 @@ def plot_interactive(
     fallback: bool = True,
     center=None,
     zoom=None,
-) -> "str | None":
+    dry_run: bool = False,
+) -> "str | None | dict":
     """Render one or more layers as an interactive MapLibre GL map.
 
     Args:
@@ -55,8 +80,11 @@ def plot_interactive(
                               when the budget is exceeded.  When ``False``, raise.
         center:               ``[lon, lat]`` map centre override.
         zoom:                 Initial zoom level override.
+        dry_run:              When ``True``, return the audit dict without rendering
+                              (no ``displayHTML``, no HTML string).
 
     Returns:
+        ``dry_run=True``: the audit dict (see :func:`audit_layers`).
         In a Databricks/IPython notebook: calls ``displayHTML`` and returns
         ``None``.  Outside a notebook (e.g. in tests): returns the HTML string
         so callers can assert on it.  On the static-fallback path: returns
@@ -72,6 +100,13 @@ def plot_interactive(
         simplify_tiles_spec=simplify_tiles_spec,
         fallback=fallback,
     )
+
+    # Always print the one-line audit before rendering.
+    audit = result.get("audit", {})
+    print(_format_audit_line(audit, max_embed_mb))
+
+    if dry_run:
+        return audit
 
     if result["mode"] == "interactive":
         html = build_html(
