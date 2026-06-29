@@ -1,5 +1,7 @@
 """Tests for vizx._maplibre.prepare_layers — the >64 MB budget ladder."""
 
+import shutil
+
 import geopandas as gpd
 import pytest
 from shapely.geometry import Point
@@ -44,10 +46,33 @@ def test_warnings_are_list():
     assert isinstance(out["warnings"], list)
 
 
-def test_simplify_stub_raises_not_implemented():
-    """When simplify_tiles_spec is provided, the stub raises NotImplementedError."""
-    from databricks.labs.gbx.vizx._maplibre import _simplify_layer
-    from databricks.labs.gbx.vizx._layers import vector_layer
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
+def test_simplify_spec_produces_interactive():
+    """An oversize vector layer + simplify_tiles_spec → mode='interactive' with 'simplified' warning."""
+    import shutil as _shutil
+    import warnings as _warnings
 
-    with pytest.raises(NotImplementedError, match="Task 11"):
-        _simplify_layer(vector_layer(_small_gdf()), {"max_zoom": 10})
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    # Create a vector layer with some polygons; use a generous budget so it fits
+    # after simplification (simplify is applied first, then budget is checked).
+    gdf = gpd.GeoDataFrame(
+        {"v": range(5)},
+        geometry=[box(i * 0.1, 0, i * 0.1 + 0.1, 0.1) for i in range(5)],
+        crs="EPSG:4326",
+    )
+    lyr = vector_layer(gdf)
+    with _warnings.catch_warnings(record=True) as w:
+        _warnings.simplefilter("always")
+        out = prepare_layers(
+            [lyr],
+            max_embed_mb=100,
+            simplify_tiles_spec={"max_z": 4, "budget_mb": 8},
+        )
+    assert out["mode"] == "interactive"
+    # Should have a warning mentioning "simplified"
+    combined = " ".join(out["warnings"]) + " ".join(str(x.message) for x in w)
+    assert "simplified" in combined.lower()

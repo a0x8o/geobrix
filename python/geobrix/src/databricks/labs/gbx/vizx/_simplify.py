@@ -637,17 +637,6 @@ def simplify_tiles_from_archive(
             str(src),
         ]
 
-        if merged["budget_mb"] != 64:
-            # budget_mb accepted in spec but tile-join has no equivalent flag;
-            # warn so callers know it was ignored.
-            warnings.warn(
-                f"simplify_tiles_from_archive: budget_mb={merged['budget_mb']} is ignored — "
-                "tile-join only trims by zoom, not byte budget. To enforce a byte budget, "
-                "re-tile from source with simplify_tiles_from_source.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         log.debug("tile-join argv: %s", argv)
         result = subprocess.run(argv, capture_output=True, text=True)
         if result.returncode != 0:
@@ -658,11 +647,114 @@ def simplify_tiles_from_archive(
             )
         log.debug("tile-join stdout: %s", result.stdout)
 
-        if out_path is not None:
-            shutil.copy2(out_pmtiles, out_path)
-            log.info("engine=tile-join → %s", out_path)
-            return out_path
-        else:
-            data = Path(out_pmtiles).read_bytes()
-            log.info("engine=tile-join → %d bytes in memory", len(data))
-            return data
+        trimmed_bytes = Path(out_pmtiles).read_bytes()
+
+    # ------------------------------------------------------------------ #
+    # Budget escalation: if budget_mb was explicitly set (non-default),  #
+    # check whether the zoom-trimmed archive's largest tile still exceeds #
+    # the requested budget.  If it does, escalate to source re-tile.     #
+    # ------------------------------------------------------------------ #
+    if merged["budget_mb"] != 64:
+        from pmtiles.reader import MemorySource, all_tiles
+
+        from databricks.labs.gbx.vizx._pmtiles import (
+            _decode_mvt_to_geoms,
+            _is_raster_type,
+        )
+
+        budget_bytes_per_tile = int(merged["budget_mb"] * _MB)
+
+        import gzip as _gzip
+
+        # Find the max tile byte size and the max zoom level in the trimmed archive.
+        # Decompress gzip-compressed tiles for accurate budget comparison.
+        max_tile_size = 0
+        max_z = -1
+        for (z, x, y), payload in all_tiles(MemorySource(trimmed_bytes)):
+            tile_data = payload
+            if tile_data[:2] == b"\x1f\x8b":
+                try:
+                    tile_data = _gzip.decompress(tile_data)
+                except Exception:
+                    pass
+            if len(tile_data) > max_tile_size:
+                max_tile_size = len(tile_data)
+            if z > max_z:
+                max_z = z
+
+        if max_tile_size > budget_bytes_per_tile:
+            # Check if this is a raster archive (cannot re-tile from features).
+            from databricks.labs.gbx.pmtiles import pmtiles_info
+
+            info = pmtiles_info(trimmed_bytes)
+            tile_type = info.get("tile_type", "mvt")
+
+            if _is_raster_type(tile_type):
+                # Raster: can't decode features; keep zoom-trim result + warn.
+                warnings.warn(
+                    f"simplify_tiles_from_archive: budget_mb={merged['budget_mb']} ignored — "
+                    "raster archive cannot be re-tiled from features. "
+                    "The zoom-trimmed result is returned as-is.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                # Vector: decode max_z tiles → GeoDataFrame → re-tile via tippecanoe.
+                import geopandas as gpd
+
+                geoms, rows = [], []
+                for (z, x, y), payload in all_tiles(MemorySource(trimmed_bytes)):
+                    if z == max_z:
+                        # Tiles may be gzip-compressed (tippecanoe default).
+                        tile_data = payload
+                        if tile_data[:2] == b"\x1f\x8b":
+                            try:
+                                tile_data = _gzip.decompress(tile_data)
+                            except Exception:
+                                pass
+                        try:
+                            for geom, props in _decode_mvt_to_geoms(tile_data, z, x, y):
+                                geoms.append(geom)
+                                rows.append(props)
+                        except Exception:
+                            pass
+
+                if not geoms:
+                    # Fallback: cannot decode — keep zoom-trim result + warn.
+                    warnings.warn(
+                        f"simplify_tiles_from_archive: budget_mb={merged['budget_mb']} ignored — "
+                        "decoded no features from archive for re-tiling. "
+                        "The zoom-trimmed result is returned as-is.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
+                    warnings.warn(
+                        f"simplify_tiles_from_archive: re-tiling from decoded features — "
+                        f"zoom-trimmed max tile size ({max_tile_size} bytes) exceeded "
+                        f"budget_mb={merged['budget_mb']} ({budget_bytes_per_tile} bytes); "
+                        "invoking tippecanoe for per-tile budget enforcement.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    result_bytes = simplify_tiles_from_source(gdf, spec=merged)
+                    if out_path is not None:
+                        Path(out_path).write_bytes(result_bytes)
+                        log.info("engine=tile-join+tippecanoe (escalated) → %s", out_path)
+                        return out_path
+                    else:
+                        log.info(
+                            "engine=tile-join+tippecanoe (escalated) → %d bytes in memory",
+                            len(result_bytes),
+                        )
+                        return result_bytes
+        # Within budget after zoom-trim: no warning needed.
+
+    if out_path is not None:
+        Path(out_path).write_bytes(trimmed_bytes)
+        log.info("engine=tile-join → %s", out_path)
+        return out_path
+    else:
+        log.info("engine=tile-join → %d bytes in memory", len(trimmed_bytes))
+        return trimmed_bytes

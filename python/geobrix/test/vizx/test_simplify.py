@@ -107,7 +107,10 @@ def test_distributed_engine_raises():
         simplify_tiles_from_source(gdf, spec={"engine": "distributed"})
 
 
-@pytest.mark.skipif(shutil.which("tile-join") is None, reason="tile-join not installed")
+@pytest.mark.skipif(
+    shutil.which("tile-join") is None or shutil.which("tippecanoe") is None,
+    reason="tile-join and tippecanoe both required",
+)
 def test_archive_downzoom_trims(tmp_path):
     import geopandas as gpd
     from shapely.geometry import Polygon
@@ -125,14 +128,66 @@ def test_archive_downzoom_trims(tmp_path):
     src = tmp_path / "full.pmtiles"
     simplify_tiles_from_source(gdf, spec={"max_z": 8}, out_path=str(src))
     out = tmp_path / "ov.pmtiles"
+    # After the Task-11 change, a small archive that fits within budget after zoom-trim
+    # does NOT warn — the warn-always logic is replaced with conditional (size-based) logic.
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         simplify_tiles_from_archive(
             str(src), spec={"max_z": 4, "budget_mb": 4}, out_path=str(out)
         )
-    # Assert that budget_mb warning was raised
-    assert any("budget_mb" in str(x.message) and issubclass(x.category, UserWarning) for x in w)
+    # Result must be valid PMTiles
     assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
+    # No budget_mb warning expected for a small archive that fits within budget
+    budget_warns = [
+        x for x in w
+        if "budget_mb" in str(x.message) and issubclass(x.category, UserWarning)
+    ]
+    assert len(budget_warns) == 0, (
+        f"Expected no budget_mb warning for a within-budget archive, got: "
+        f"{[str(x.message) for x in budget_warns]}"
+    )
+
+
+@pytest.mark.skipif(
+    shutil.which("tile-join") is None or shutil.which("tippecanoe") is None,
+    reason="tile-join and tippecanoe both required",
+)
+def test_archive_budget_escalation_retiles_from_source(tmp_path):
+    """An archive whose tiles exceed budget_mb → escalated to source re-tile; warning fires."""
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    from databricks.labs.gbx.vizx._simplify import (
+        simplify_tiles_from_archive,
+        simplify_tiles_from_source,
+    )
+    from pmtiles.reader import MemorySource, all_tiles
+
+    # Build a dense source archive at z=8 (many features → tiles will be large)
+    gdf = gpd.GeoDataFrame(
+        {"v": range(200)},
+        geometry=[box(i * 0.005, 0, i * 0.005 + 0.005, 0.005) for i in range(200)],
+        crs="EPSG:4326",
+    )
+    src = tmp_path / "dense.pmtiles"
+    simplify_tiles_from_source(gdf, spec={"max_z": 8, "budget_mb": 64}, out_path=str(src))
+
+    # Use a tiny budget_mb (0.001 MB = ~1 KB) to force escalation
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = simplify_tiles_from_archive(
+            str(src), spec={"max_z": 8, "budget_mb": 0.001}
+        )
+
+    # Must have warned about re-tiling
+    assert any(
+        "re-tiling" in str(x.message).lower() or "re-tile" in str(x.message).lower()
+        for x in w
+    ), f"Expected re-tiling warning, got: {[str(x.message) for x in w]}"
+
+    # Result must be valid PMTiles bytes
+    assert isinstance(result, bytes)
+    assert result[:7] == b"PMTiles"
 
 
 def test_simplify_raster_path(tmp_path):

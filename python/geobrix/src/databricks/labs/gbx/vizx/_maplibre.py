@@ -27,7 +27,6 @@ import json
 import warnings as _warnings
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # security helper
 # ---------------------------------------------------------------------------
@@ -49,6 +48,7 @@ def _json_for_script(obj) -> str:
         .replace(" ", "\\u2028")
         .replace(" ", "\\u2029")
     )
+
 
 # ---------------------------------------------------------------------------
 # SRI-pinned CDN constants — hashes are finalised in Task 12.
@@ -185,11 +185,46 @@ def build_html(
 
 
 def _simplify_layer(layer, spec: dict):
-    """Stub for the Task-11 simplify engine.  Wired but not yet implemented."""
-    raise NotImplementedError(
-        "_simplify_layer: simplify wired in Task 11 — "
-        "pass simplify_tiles_spec=None or omit it for now."
+    """Route the layer through the appropriate simplify engine and return a pmtiles_layer."""
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer as _pmtiles_layer
+    from databricks.labs.gbx.vizx._simplify import (
+        simplify_tiles_from_archive,
+        simplify_tiles_from_source,
     )
+
+    kind = getattr(layer, "kind", None)
+
+    if kind == "pmtiles":
+        # Existing archive (bytes or path) — use the archive path (zoom-trim + escalation).
+        data = layer.data
+        if isinstance(data, (bytes, bytearray)):
+            import pathlib
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".pmtiles", delete=False) as tf:
+                tf.write(bytes(data))
+                tmp_path = tf.name
+            try:
+                simplified = simplify_tiles_from_archive(tmp_path, spec=spec)
+            finally:
+                pathlib.Path(tmp_path).unlink(missing_ok=True)
+        elif isinstance(data, str) and not (
+            data.startswith("http://") or data.startswith("https://")
+        ):
+            simplified = simplify_tiles_from_archive(data, spec=spec)
+        else:
+            # URL mode — can't simplify a remote archive; return as-is.
+            return layer
+        return _pmtiles_layer(simplified, label=layer.label)
+    else:
+        # vector/grid/raster layer carrying SOURCE data.
+        # For vector/grid, extract the GeoDataFrame; for raster, pass layer.data directly.
+        if kind in ("vector", "grid"):
+            source = _gdf_for(layer).to_crs(4326)
+        else:
+            source = layer.data
+        simplified = simplify_tiles_from_source(source, spec=spec)
+        return _pmtiles_layer(simplified, label=layer.label)
 
 
 def _pmtiles_is_url(layer) -> bool:
@@ -246,7 +281,9 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
     if _is_raster_type(info["tile_type"]):
         tile = _lowest_zoom_tile(raw)
         if tile is None:
-            raise ValueError("prepare_layers static fallback: raster pmtiles archive has no tiles")
+            raise ValueError(
+                "prepare_layers static fallback: raster pmtiles archive has no tiles"
+            )
         # tile is (z, x, y, data_bytes); return a raster layer carrying the tile bytes
         return raster_layer(tile[3], opacity=layer.opacity)
     else:
@@ -263,7 +300,9 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
                 "prepare_layers static fallback: vector pmtiles archive decoded to no geometries"
             )
         gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=4326)
-        return vector_layer(gdf, opacity=layer.opacity, color=layer.color, label=layer.label)
+        return vector_layer(
+            gdf, opacity=layer.opacity, color=layer.color, label=layer.label
+        )
 
 
 def _pmtiles_raw_bytes(layer):
@@ -350,6 +389,8 @@ def prepare_layers(
     warn_msgs: list[str] = []
     # Layers that are known-oversize before even trying to process them.
     early_oversize_labels: list[str] = []
+    # Labels of layers that were simplified (for interactive-mode warning).
+    simplified_labels: list[str] = []
 
     for idx, layer in enumerate(layers):
         kind = getattr(layer, "kind", None)
@@ -378,12 +419,13 @@ def prepare_layers(
                 continue
 
         # ------------------------------------------------------------------ #
-        # Rung 3 -- simplify hook (Task 11; stub raises NotImplementedError). #
+        # Rung 3 -- simplify hook (Task 11).                                 #
         # Only invoked when a spec is actually passed.                        #
         # ------------------------------------------------------------------ #
         spec = simplify_tiles_spec or getattr(layer, "simplify", None)
         if spec is not None:
             layer = _simplify_layer(layer, spec)
+            simplified_labels.append(_layer_label(layer, idx))
 
         # ------------------------------------------------------------------ #
         # Rung 2 (normal) -- prepare via layer_to_sources_layers.            #
@@ -404,7 +446,16 @@ def prepare_layers(
         valid_prepared = [e for e in prepared if e is not None]
         html_bytes = len(build_html(valid_prepared).encode())
         if html_bytes <= budget_bytes:
-            return {"mode": "interactive", "prepared": valid_prepared, "warnings": warn_msgs}
+            if simplified_labels:
+                for lbl in simplified_labels:
+                    msg = f"simplified {lbl}"
+                    warn_msgs.append(msg)
+                    _warnings.warn(msg, stacklevel=2)
+            return {
+                "mode": "interactive",
+                "prepared": valid_prepared,
+                "warnings": warn_msgs,
+            }
 
         # Over budget -- identify embedded layer(s) for the warning.
         for i, (lyr, entry) in enumerate(zip(layers, prepared)):
@@ -487,9 +538,7 @@ def _gdf_for(layer) -> Any:
     from databricks.labs.gbx.vizx import _vector
 
     if layer.kind == "grid":
-        return _vector.cells_as_gdf(
-            layer.data, cell_col=layer.cellid_col or "cellid"
-        )
+        return _vector.cells_as_gdf(layer.data, cell_col=layer.cellid_col or "cellid")
     data = layer.data
     # Already a GeoDataFrame (has a .geometry attribute).
     if hasattr(data, "geometry"):
@@ -622,7 +671,7 @@ def _raster_to_image(
         path = data
         for scheme in ("dbfs:", "file:"):
             if path.startswith(scheme):
-                path = path[len(scheme):]
+                path = path[len(scheme) :]
                 break
         if path.startswith("//"):
             path = "/" + path.lstrip("/")
@@ -753,7 +802,9 @@ def _raster(
         "id": f"{sid}-raster",
         "type": "raster",
         "source": sid,
-        "paint": {"raster-opacity": layer.opacity if layer.opacity is not None else 1.0},
+        "paint": {
+            "raster-opacity": layer.opacity if layer.opacity is not None else 1.0
+        },
     }
     embed_bytes = len(png_b64.encode())
     return src, [lyr], embed_bytes
@@ -804,7 +855,12 @@ def _resolve_pmtiles_bytes_or_url(layer) -> dict:
         # We cannot call pmtiles_info on a remote URL without fetching it.
         # Report tile_type as "unknown" for the url mode; the Task-5 HTML builder
         # can default to "vector" or the caller can supply a style.
-        return {"mode": "url", "url": data, "tile_type": "unknown", "vector_layer_names": []}
+        return {
+            "mode": "url",
+            "url": data,
+            "tile_type": "unknown",
+            "vector_layer_names": [],
+        }
 
     # Path on disk.
     if isinstance(data, str):
@@ -860,7 +916,11 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
                 "id": f"{sid}-raster",
                 "type": "raster",
                 "source": sid,
-                "paint": {"raster-opacity": layer.opacity if layer.opacity is not None else 1.0},
+                "paint": {
+                    "raster-opacity": (
+                        layer.opacity if layer.opacity is not None else 1.0
+                    )
+                },
             }
         ]
     else:
