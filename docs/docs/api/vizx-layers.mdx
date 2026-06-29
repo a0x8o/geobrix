@@ -10,7 +10,7 @@ import vizxLayers from '!!raw-loader!../../tests/python/api/vizx_layers.py';
 
 A single GeoBrix analysis often produces several result layers at once — vector zone boundaries, a raster DEM, discrete H3 grid cells, and a pre-tiled PMTiles archive. `plot_static` and `plot_interactive` accept a **list of layers** and composite them in order, so one function call produces one map.
 
-When the total GeoJSON + PNG payload fits within the 64 MB default embed budget, `plot_interactive` embeds everything inline in the HTML string — no tile server, no separate request. When it doesn't fit, the embed-size ladder picks the right path automatically.
+When the total GeoJSON + PNG payload fits within the 64 MB default embed budget, `plot_interactive` embeds everything inline in the HTML string — no tile server, no separate request. When it doesn't fit, the embed-size ladder picks the right path automatically. The runnable example below composites two vector layers; raster- and grid-layer usage is shown in the [VizX function reference](./vizx#multi-layer-compositor).
 
 :::note Opt-in extra
 The compositor requires `geobrix[vizx]`. Install with:
@@ -26,7 +26,7 @@ Each constructor returns a `Layer` object. Pass a list of them to `plot_static` 
 | Constructor | Typical input | Notes |
 |---|---|---|
 | `vector_layer(data)` | `geopandas.GeoDataFrame`, Spark DataFrame, WKT/WKB | Accepts any geometry encoding. |
-| `raster_layer(data)` | File path, bytes, `numpy.ndarray` | Path → rasterio; ndarray → unit-square corners. |
+| `raster_layer(data)` | COG/raster file path, `numpy.ndarray`, or tile struct | Path → rasterio; ndarray → unit-square corners. |
 | `grid_layer(data, grid_system=)` | DataFrame of H3 / BNG / Quadbin cell ids | Requires `grid_system='h3'`, `'bng'`, `'quadbin'`, or `'custom'`. |
 | `pmtiles_layer(data)` | `.pmtiles` bytes, local path, or `https://` URL | URL mode streams from the remote server with zero embed cost. |
 
@@ -139,8 +139,14 @@ When the embed budget is tight, `simplify_tiles_from_source` lets you pre-tile d
   functionName="simplify_durable_example"
 />
 
+If you already have a PMTiles archive and only need to trim its zoom range (for example, to cut a 0–14 archive down to 0–8 for an overview embed), use `simplify_tiles_from_archive(path, spec=…)` directly — it operates on the existing archive without re-tiling from source. When the archive exceeds a byte budget set in `spec`, it automatically falls back to a source re-tile.
+
 :::note Requires tippecanoe
-`simplify_tiles_from_source` requires the `tippecanoe` binary. The `[vizx]` extra does not install it automatically — install it separately (e.g. `brew install tippecanoe` or `apt-get install tippecanoe`).
+`simplify_tiles_from_source` and `simplify_tiles_from_archive` require the `tippecanoe` binary.
+
+`pip install "geobrix[vizx]"` installs the `tippecanoe` Python wheel (manylinux), so **Databricks clusters and Serverless are covered automatically** — no extra step needed.
+
+On **macOS** (especially Apple Silicon) the manylinux wheel may be unavailable or unreliable; use `brew install tippecanoe` as a fallback. The rest of VizX (plotting, compositing, audit) works without tippecanoe.
 :::
 
 Once you have a durable archive, pass it to `pmtiles_layer` and embed it or stream it from a Volume URL:
@@ -167,6 +173,10 @@ The 64 MB default embed budget covers most notebook use cases — a few hundred 
 1. **Pre-tile with `simplify_tiles_from_source`** to generate a compact overview archive, then embed or stream it.
 2. **Stage the archive on a Volumes URL** and use `pmtiles_layer("https://...")` — URL mode has zero embed cost regardless of archive size.
 3. For very large datasets requiring distributed tile generation, the [Helios notebooks](../notebooks/helios) show how to produce multi-shard PMTiles archives with `gbx_pmtiles_agg` and serve them directly.
+
+**Dynamic zoom cut-over (live kernel).** `plot_interactive_dynamic(layers, simplify_tiles_spec=…)` embeds a low-zoom overview of the archive inline and streams higher-zoom detail on pan/zoom (with optional neighbour prefetch). This avoids serving the full archive at once, so it stretches the usable embed budget further. It requires a **live kernel** — it is an ipywidget and does not render in a committed `.ipynb` on GitHub or in the docs site; the static composite covers that surface.
+
+**Beyond the embed budget — Databricks App tile server.** When a single archive is too large even for the dynamic cut-over, or when you need indefinite interactivity for end users outside a notebook, the long-term path is a **Databricks App** that acts as a tile server backed by your PMTiles archive on Volumes. This is a planned capability; for now, URL-mode streaming (`pmtiles_layer("https://...")`) and multi-shard archives via `gbx_pmtiles_agg` cover most production cases.
 
 The static fallback (`plot_static`) is always available as a last resort. It produces a GitHub-renderable PNG that bakes the basemap in at execution time via `contextily` — no network needed at render time, and the output displays correctly on GitHub and in docs.
 
