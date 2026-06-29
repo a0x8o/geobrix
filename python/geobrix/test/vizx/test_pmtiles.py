@@ -285,13 +285,15 @@ def test_plot_pmtiles_interactive_fit_downzoom_stays_interactive(monkeypatch):
     target_mb = (len(archive) * 0.6) / 1_048_576
     html = p.plot_pmtiles(archive, max_embed_mb=target_mb, interactive_fit="downzoom")
     assert html is not None
-    assert "maplibregl.Map" in html, "interactive_fit='downzoom' should stay interactive"
+    assert (
+        "maplibregl.Map" in html
+    ), "interactive_fit='downzoom' should stay interactive"
 
 
 def test_plot_pmtiles_interactive_fit_none_does_not_reduce(monkeypatch):
-    """interactive_fit=None (default) over budget must NOT auto-fit: the autofit
-    reducer is never called and the path routes to static fallback (unchanged
-    behavior), rather than down-zooming to stay interactive."""
+    """Explicit interactive_fit=None over budget must NOT auto-fit: the autofit
+    reducer is never called and the path routes to static fallback, rather than
+    down-zooming to stay interactive. (The default is now 'downzoom'; None opts out.)"""
     import databricks.labs.gbx.vizx._pmtiles_autofit as af
     from databricks.labs.gbx.vizx import _pmtiles as p
 
@@ -305,11 +307,11 @@ def test_plot_pmtiles_interactive_fit_none_does_not_reduce(monkeypatch):
     monkeypatch.setattr(af, "autofit_archive", _spy)
 
     archive = _multi_zoom_vector_archive()
-    # Over budget. Default interactive_fit=None -> reducer must NOT run; over-budget
+    # Over budget with the reducer explicitly OFF -> reducer must NOT run; over-budget
     # routes to static (which raises on these synthetic non-MVT tiles -- that's
     # fine, it proves we did NOT stay interactive and did NOT auto-fit).
     with pytest.raises(Exception):
-        p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=True)
+        p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=True, interactive_fit=None)
     assert not called, "interactive_fit=None must not invoke the autofit reducer"
 
 

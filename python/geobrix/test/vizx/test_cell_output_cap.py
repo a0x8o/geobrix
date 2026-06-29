@@ -27,11 +27,27 @@ _LYRS = [pmtiles_layer(b"x")]
 # --------------------------------------------------------------------------- #
 def test_resolve_embed_budget_tracks_cap_state():
     # No explicit budget -> tracks whether the cap will be raised.
-    assert _resolve_embed_budget(None, True) == MAX_EMBED_MB_CAP_RAISED  # 18
-    assert _resolve_embed_budget(None, False) == DEFAULT_MAX_EMBED_MB  # 8
+    assert _resolve_embed_budget(None, True) == MAX_EMBED_MB_CAP_RAISED  # 14
+    assert _resolve_embed_budget(None, False) == DEFAULT_MAX_EMBED_MB  # 7
     # Explicit budget always wins (including 0 = force static).
     assert _resolve_embed_budget(12, True) == 12
     assert _resolve_embed_budget(0, False) == 0
+
+
+def test_budgets_clear_the_cap_after_both_base64_passes():
+    """The cell counts the payload after TWO base64 passes (build_html embeds the
+    archive, then displayHTML re-base64s the page into its iframe). max_embed_mb is the
+    build_html ceiling, so build_html x 4/3 must still fit the cell cap. Guards against
+    re-setting the raised budget to a value (e.g. 18) that embeds then truncates."""
+    from databricks.labs.gbx.vizx._maplibre import (
+        _BASE64_INFLATION,
+        CELL_OUTPUT_CAP_MAX_MB,
+    )
+
+    # Raised 20 MB cap: a budget-filling embed's cell payload must still fit.
+    assert MAX_EMBED_MB_CAP_RAISED * _BASE64_INFLATION <= CELL_OUTPUT_CAP_MAX_MB
+    # Default 10 MB cap: same, with the cap un-raised.
+    assert DEFAULT_MAX_EMBED_MB * _BASE64_INFLATION <= 10
 
 
 # --------------------------------------------------------------------------- #

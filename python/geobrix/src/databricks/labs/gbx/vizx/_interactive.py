@@ -127,8 +127,8 @@ def plot_interactive(
         simplify_tiles_spec:  Optional simplification spec (Task 11, not yet
                               implemented — pass ``None``).
         max_embed_mb:         Maximum HTML embed size in mebibytes. Default
-                              ``None`` resolves to 18 MB when ``set_cell_max_output``
-                              is on (sized for the raised 20 MB cap), else 8 MB.
+                              ``None`` resolves to 14 MB when ``set_cell_max_output``
+                              is on (sized for the raised 20 MB cap), else 7 MB.
                               Measured against the base64-rendered HTML.
         set_cell_max_output:  When ``True`` (default), raise the Databricks Serverless
                               cell-output cap to its 20 MB max before an interactive

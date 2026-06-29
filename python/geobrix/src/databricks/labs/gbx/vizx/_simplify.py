@@ -266,8 +266,59 @@ def _run_tippecanoe(argv: list) -> None:
     log.debug("tippecanoe stdout: %s", result.stdout)
 
 
+def _spark_df_to_gdf(df, geom_col: str):
+    """Collect a Spark DataFrame with a geometry column into a GeoDataFrame (EPSG:4326).
+
+    Unlike :func:`vizx.as_gdf` (WKT-only, row-capped at 10k for driver-side display),
+    this collects ALL rows -- tiling needs every feature, and a silent cap would drop
+    most of them -- and accepts the geometry column as WKB bytes, WKT strings, or a
+    Spark GEOMETRY/GEOGRAPHY type (normalized to WKB via ST_AsBinary first). The
+    collected frame must fit in driver memory.
+    """
+    import geopandas as gpd
+
+    if geom_col not in df.columns:
+        raise ValueError(
+            f"simplify_tiles_from_source: geom_col {geom_col!r} not in DataFrame "
+            f"columns {df.columns}. Pass geom_col=<your geometry column>."
+        )
+    # A Spark GEOMETRY/GEOGRAPHY type does not round-trip through pandas as bytes; ask
+    # Spark for WKB up front. Binary (WKB) and string (WKT) columns pass through as-is.
+    type_name = df.schema[geom_col].dataType.typeName().lower()
+    if type_name not in ("binary", "string"):
+        from pyspark.sql import functions as F
+
+        df = df.withColumn(geom_col, F.expr(f"ST_AsBinary({geom_col})"))
+
+    pdf = df.toPandas()  # ALL rows -- no cap (tiling needs every feature)
+    col = pdf[geom_col]
+    sample = next((v for v in col if v is not None), None)
+    if isinstance(sample, (bytes, bytearray)):
+        # Spark BinaryType collects as bytearray; shapely.from_wkb wants bytes.
+        wkb = [bytes(v) if v is not None else None for v in col]
+        geom = gpd.GeoSeries.from_wkb(wkb, crs=4326)
+    elif isinstance(sample, str):
+        geom = gpd.GeoSeries.from_wkt(col, crs=4326)
+    elif sample is None:
+        raise ValueError(
+            f"simplify_tiles_from_source: geometry column {geom_col!r} is all-null."
+        )
+    else:
+        raise TypeError(
+            f"simplify_tiles_from_source: geometry column {geom_col!r} collected as "
+            f"{type(sample).__name__}, expected WKB bytes or WKT text. Convert it with "
+            "ST_AsBinary(...) or ST_AsText(...) in Spark first."
+        )
+    attrs = pdf.drop(columns=[geom_col])
+    return gpd.GeoDataFrame(attrs, geometry=geom.values, crs=4326)
+
+
 def _simplify_vector(
-    source, spec: dict, out_path: str | None, bbox: tuple | None = None
+    source,
+    spec: dict,
+    out_path: str | None,
+    bbox: tuple | None = None,
+    geom_col: str = "geometry",
 ) -> Union[bytes, str]:
     """Vector branch: GeoDataFrame / path / Spark DF → PMTiles bytes or path."""
     bin_path = _ensure_tippecanoe()
@@ -275,9 +326,7 @@ def _simplify_vector(
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Resolve source → GeoDataFrame or GeoJSON path
         if _is_spark_dataframe(source):
-            from databricks.labs.gbx.vizx._vector import as_gdf
-
-            gdf = as_gdf(source)
+            gdf = _spark_df_to_gdf(source, geom_col)
         elif _is_geodataframe(source):
             gdf = source
         elif _is_vector_path(source):
@@ -446,6 +495,7 @@ def simplify_tiles_from_source(
     spec: dict | None = None,
     out_path: str | None = None,
     bbox: tuple | None = None,
+    geom_col: str = "geometry",
 ) -> Union[bytes, str]:
     """Re-tile a vector or raster SOURCE into a budget-bounded PMTiles overview.
 
@@ -468,6 +518,11 @@ def simplify_tiles_from_source(
             this bounding box before tiling; features wholly outside the box
             are dropped.  Only applied to GeoDataFrame / vector sources;
             ignored for raster sources.  ``None`` → no clipping (default).
+        geom_col: Name of the geometry column when ``source`` is a Spark
+            DataFrame (default ``"geometry"``). The column may hold WKB bytes,
+            WKT strings, or a Spark GEOMETRY/GEOGRAPHY type. ALL rows are
+            collected to the driver (no row cap) -- tiling needs every feature.
+            Ignored for GeoDataFrame / path / raster sources.
 
     Returns:
         bytes: the PMTiles (vector) or COG (raster) archive, when out_path=None.
@@ -477,6 +532,7 @@ def simplify_tiles_from_source(
         NotImplementedError: if spec contains engine='distributed'.
         ImportError: if tippecanoe binary is missing (vector path).
         TypeError: if source cannot be identified as vector or raster.
+        ValueError: if ``geom_col`` is absent from a Spark DataFrame source.
     """
     merged = normalize_spec(spec)
 
@@ -492,7 +548,7 @@ def simplify_tiles_from_source(
         or _is_spark_dataframe(source)
         or _is_vector_path(source)
     ):
-        return _simplify_vector(source, merged, out_path, bbox=bbox)
+        return _simplify_vector(source, merged, out_path, bbox=bbox, geom_col=geom_col)
     elif _is_raster_source(source):
         return _simplify_raster(source, merged, out_path)
     else:

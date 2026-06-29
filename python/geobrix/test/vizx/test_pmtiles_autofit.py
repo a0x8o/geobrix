@@ -210,3 +210,16 @@ def test_simplify_layer_url_archive_returned_unchanged():
     layer = pmtiles_layer("https://example.com/tiles.pmtiles", label="remote")
     out = _simplify_layer(layer, {"max_z": 1}, max_embed_mb=1.0)
     assert out is layer, "URL-mode archive must be returned unchanged"
+
+
+def test_plot_pmtiles_defaults_to_downzoom():
+    """plot_pmtiles auto-fits by default: interactive_fit defaults to 'downzoom' so an
+    over-budget archive is reduced to fit instead of silently falling to static."""
+    import inspect
+
+    from databricks.labs.gbx.vizx._pmtiles import plot_pmtiles
+
+    default = inspect.signature(plot_pmtiles).parameters["interactive_fit"].default
+    assert (
+        default == "downzoom"
+    ), f"interactive_fit default should be 'downzoom', got {default!r}"

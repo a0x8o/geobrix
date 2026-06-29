@@ -5,6 +5,17 @@ import pytest
 from databricks.labs.gbx.vizx._simplify import normalize_spec
 
 
+@pytest.fixture(scope="module")
+def spark():
+    import logging
+
+    logging.getLogger("py4j").setLevel(logging.ERROR)
+    from pyspark.sql import SparkSession
+
+    s = SparkSession.builder.master("local[2]").appName("simplify-tests").getOrCreate()
+    yield s
+
+
 def test_defaults_applied():
     s = normalize_spec(None)
     assert (
@@ -177,3 +188,63 @@ def test_simplify_raster_path(tmp_path):
     # Verify it's a valid GeoTIFF (TIFF magic)
     magic = out_cog.read_bytes()[:4]
     assert magic in (b"II\x2a\x00", b"MM\x00\x2a"), f"not a TIFF: {magic!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Spark DataFrame source: geom_col + WKB/WKT, and NO silent 10k-row cap.       #
+# --------------------------------------------------------------------------- #
+def test_spark_df_to_gdf_wkb_collects_all_rows(spark):
+    """_spark_df_to_gdf collects ALL rows (no 10k cap) from a WKB geometry column.
+
+    vizx.as_gdf caps at 10_000 for driver-side display; tiling must keep every
+    feature, so the simplify path uses a no-cap collector instead.
+    """
+    from shapely import to_wkb
+    from shapely.geometry import Point
+
+    from databricks.labs.gbx.vizx._simplify import _spark_df_to_gdf
+
+    n = 12_000  # > the old 10k cap
+    rows = [(i, to_wkb(Point(i * 0.0001, 0.0))) for i in range(n)]
+    df = spark.createDataFrame(rows, ["fid", "geometry"])
+    gdf = _spark_df_to_gdf(df, "geometry")
+    assert len(gdf) == n, "row cap must be gone — every feature must survive"
+    assert gdf.crs.to_epsg() == 4326
+    assert "fid" in gdf.columns
+    assert (gdf.geometry.geom_type == "Point").all()
+
+
+def test_spark_df_to_gdf_honors_named_wkt_col(spark):
+    """A WKT string column under a non-'wkt' name is honored via geom_col."""
+    from databricks.labs.gbx.vizx._simplify import _spark_df_to_gdf
+
+    df = spark.createDataFrame(
+        [(1, "POINT (1 2)"), (2, "POINT (3 4)")], ["fid", "geom"]
+    )
+    gdf = _spark_df_to_gdf(df, "geom")
+    assert len(gdf) == 2
+    assert list(gdf.geometry.x) == [1.0, 3.0]
+
+
+def test_spark_df_to_gdf_missing_geom_col_raises(spark):
+    from databricks.labs.gbx.vizx._simplify import _spark_df_to_gdf
+
+    df = spark.createDataFrame([(1, "POINT (1 2)")], ["fid", "geom"])
+    with pytest.raises(ValueError, match="geom_col"):
+        _spark_df_to_gdf(df, "geometry")
+
+
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
+def test_simplify_from_spark_wkb_source(spark):
+    """End-to-end: a Spark DataFrame with a WKB 'geometry' column tiles to PMTiles."""
+    from shapely import to_wkb
+    from shapely.geometry import Point
+
+    from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_source
+
+    rows = [(i, to_wkb(Point(-122.4 + i * 0.001, 37.7))) for i in range(50)]
+    df = spark.createDataFrame(rows, ["fid", "geometry"])
+    out = simplify_tiles_from_source(df, spec={"max_z": 6}, geom_col="geometry")
+    assert isinstance(out, bytes) and out[:7] == b"PMTiles"

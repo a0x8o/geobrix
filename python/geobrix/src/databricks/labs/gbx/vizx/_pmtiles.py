@@ -100,7 +100,7 @@ def plot_pmtiles(
     max_embed_mb=None,
     set_cell_max_output=True,
     fallback=True,
-    interactive_fit=None,
+    interactive_fit="downzoom",
     style=None,
     **kw,
 ):
@@ -123,14 +123,16 @@ def plot_pmtiles(
     cannot embed inline. ``interactive_fit`` controls how to still get an interactive
     experience — an "investment dial":
 
-    - ``None`` (default): no reduction. Embed if it fits; otherwise fall back to
-      a static render (or raise if ``fallback=False``).
-    - ``"downzoom"``: invest little. Auto-fit the single archive to the budget by
-      dropping the highest (densest) zoom levels (see
+    - ``"downzoom"`` (default): fit the single archive to the budget, dropping the
+      highest (densest) zoom levels only if it doesn't already fit (see
       :func:`~databricks.labs.gbx.vizx._pmtiles_autofit.autofit_archive`), then
-      embed. One interactive map of the whole extent at reduced detail. Fast
-      (no re-tiling). If even the coarsest level exceeds the budget, falls back
-      to static.
+      embed. A small archive is embedded as-is (no-op, no message); a large one is
+      auto-fit and a one-line note reports the zoom levels dropped. One interactive
+      map of the whole extent, at reduced detail only when necessary. Fast (no
+      re-tiling). If even the coarsest zoom level exceeds the budget, falls back to
+      static.
+    - ``None``: no reduction. Embed if it fits; otherwise fall back to a static
+      render (or raise if ``fallback=False``).
     - ``"all"``: invest more for full detail — spatially shard into per-region
       sub-archives, each under budget, rendered as a multi-shard interactive
       experience. **Not yet implemented** (planned); raises
@@ -158,7 +160,7 @@ def plot_pmtiles(
     from databricks.labs.gbx.vizx._maplibre import _resolve_embed_budget
 
     # Resolve the embed budget up front so the downzoom autofit + the audit all use
-    # the same value (18 MB when set_cell_max_output raises the cap, else 8 MB).
+    # the same value (14 MB when set_cell_max_output raises the cap, else 7 MB).
     max_embed_mb = _resolve_embed_budget(max_embed_mb, set_cell_max_output)
 
     archive = path_or_bytes
@@ -170,16 +172,12 @@ def plot_pmtiles(
         raw = _archive_bytes(path_or_bytes)
         reduced, report = autofit_archive(raw, max_embed_mb=max_embed_mb)
         if report["dropped_zooms"]:
-            import warnings
-
-            warnings.warn(
-                "plot_pmtiles interactive_fit='downzoom': reduced the archive to fit the "
-                f"{max_embed_mb:.1f} MB embed budget by dropping zoom level(s) "
-                f"{report['dropped_zooms']} (kept z<= {report['kept_max_zoom']}; "
-                f"{report['original_bytes']} -> {report['reduced_bytes']} bytes). "
-                "Detail above the kept zoom is not shown; stage the archive at an "
-                "https:// URL or use interactive_fit='all' (planned) for full detail.",
-                stacklevel=2,
+            # Concise one-line emit: we down-zoomed to make it fit. A small archive
+            # that already fits drops nothing and stays silent.
+            print(
+                f"[vizx] downzoomed to fit {max_embed_mb:.0f} MB: dropped zoom level(s) "
+                f"{report['dropped_zooms']} (kept z<={report['kept_max_zoom']}); "
+                "stage at an https:// URL for full-detail interactivity."
             )
         archive = reduced
 
