@@ -243,6 +243,95 @@ def test_public_exports():
 
 
 # ---------------------------------------------------------------------------
+# auto_shard='sample' — auto-fit an oversized archive to stay interactive
+# ---------------------------------------------------------------------------
+
+
+def _multi_zoom_vector_archive():
+    import os
+
+    tiles = []
+    for z in range(3):
+        n = 2**z
+        for x in range(n):
+            for y in range(n):
+                tiles.append((z, x, y, os.urandom(4096)))
+    return _build_archive(tiles, TileType.MVT)
+
+
+def test_plot_pmtiles_auto_shard_sample_stays_interactive(monkeypatch):
+    """auto_shard='sample' reduces an over-budget archive so it embeds inline."""
+    import builtins
+
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    archive = _multi_zoom_vector_archive()
+
+    import databricks.labs.gbx.vizx._interactive as itx
+
+    monkeypatch.setattr(itx, "_notebook_display_html", lambda: None)
+    real_import = builtins.__import__
+
+    def _no_ipython(name, *a, **kw):
+        if name == "IPython.display":
+            raise ImportError("disabled for test")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ipython)
+
+    # Budget below the full archive but above the coarse levels: without
+    # auto_shard this would fall back to static; with 'sample' it down-zooms
+    # and stays interactive (MapLibre HTML).
+    target_mb = (len(archive) * 0.6) / 1_048_576
+    html = p.plot_pmtiles(archive, max_embed_mb=target_mb, auto_shard="sample")
+    assert html is not None
+    assert "maplibregl.Map" in html, "auto_shard='sample' should stay interactive"
+
+
+def test_plot_pmtiles_auto_shard_none_does_not_reduce(monkeypatch):
+    """auto_shard=None (default) over budget must NOT auto-fit: the autofit
+    reducer is never called and the path routes to static fallback (unchanged
+    behavior), rather than down-zooming to stay interactive."""
+    import databricks.labs.gbx.vizx._pmtiles_autofit as af
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    called = []
+    real = af.autofit_archive
+
+    def _spy(*a, **kw):
+        called.append(True)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(af, "autofit_archive", _spy)
+
+    archive = _multi_zoom_vector_archive()
+    # Over budget. Default auto_shard=None -> reducer must NOT run; over-budget
+    # routes to static (which raises on these synthetic non-MVT tiles -- that's
+    # fine, it proves we did NOT stay interactive and did NOT auto-fit).
+    with pytest.raises(Exception):
+        p.plot_pmtiles(archive, max_embed_mb=1e-9, fallback=True)
+    assert not called, "auto_shard=None must not invoke the autofit reducer"
+
+
+def test_plot_pmtiles_auto_shard_all_not_yet_implemented():
+    """auto_shard='all' is the planned multi-shard halo feature; until built it
+    must raise a clear NotImplementedError, not silently degrade."""
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    archive = _multi_zoom_vector_archive()
+    with pytest.raises(NotImplementedError, match="auto_shard='all'"):
+        p.plot_pmtiles(archive, max_embed_mb=1e-9, auto_shard="all")
+
+
+def test_plot_pmtiles_auto_shard_rejects_bad_value():
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    archive = _multi_zoom_vector_archive()
+    with pytest.raises(ValueError, match="auto_shard"):
+        p.plot_pmtiles(archive, auto_shard="bogus")
+
+
+# ---------------------------------------------------------------------------
 # Regression: _maybe_gunzip — gzip-compressed tile decoding (github issue fix)
 # PMTiles archives with tile_compression=gzip yield raw gzip-wrapped bytes from
 # all_tiles/MemorySource; rasterio.MemoryFile and mapbox_vector_tile.decode both

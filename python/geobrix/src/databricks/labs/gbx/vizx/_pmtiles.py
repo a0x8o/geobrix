@@ -97,9 +97,15 @@ def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
 
 
 def plot_pmtiles(
-    path_or_bytes, *, max_embed_mb=DEFAULT_MAX_EMBED_MB, fallback=True, style=None, **kw
+    path_or_bytes,
+    *,
+    max_embed_mb=DEFAULT_MAX_EMBED_MB,
+    fallback=True,
+    auto_shard=None,
+    style=None,
+    **kw,
 ):
-    """Render a .pmtiles archive inline in a Databricks/Jupyter notebook.
+    """Render a .pmtiles archive inline in a Databricks notebook.
 
     Thin delegator to :func:`~databricks.labs.gbx.vizx._interactive.plot_interactive`
     with a single :func:`~databricks.labs.gbx.vizx._layers.pmtiles_layer` wrapping
@@ -111,12 +117,70 @@ def plot_pmtiles(
     a MapLibre GL JS page with the archive base64-embedded — no tile server, no
     remote range requests. Static fallback when oversized (``fallback=True``,
     the default) or ``max_embed_mb=0`` to force it.
+
+    On Databricks Serverless a notebook cell caps output at 10 MB (20 MB max via
+    ``%set_cell_max_output_size_in_mb``), and the cap counts the base64-rendered
+    HTML (~4/3x the archive). An archive whose rendered size exceeds that ceiling
+    cannot embed inline. ``auto_shard`` controls how to still get an interactive
+    experience — an "investment dial":
+
+    - ``None`` (default): no reduction. Embed if it fits; otherwise fall back to
+      a static render (or raise if ``fallback=False``).
+    - ``"sample"``: invest little. Auto-fit the single archive to the budget by
+      dropping the highest (densest) zoom levels (see
+      :func:`~databricks.labs.gbx.vizx._pmtiles_autofit.autofit_archive`), then
+      embed. One interactive map of the whole extent at reduced detail. Fast
+      (no re-tiling). If even the coarsest level exceeds the budget, falls back
+      to static.
+    - ``"all"``: invest more for full detail — spatially shard into per-region
+      sub-archives, each under budget, rendered as a multi-shard interactive
+      experience. **Not yet implemented** (planned); raises
+      :exc:`NotImplementedError`.
+
+    For an archive of any size with zero embed cost, stage it at an ``https://``
+    URL and pass that URL to ``pmtiles_layer`` / ``plot_pmtiles`` — it streams
+    remotely and is always interactive regardless of the cell cap.
     """
+    if auto_shard not in (None, "sample", "all"):
+        raise ValueError(
+            f"plot_pmtiles: auto_shard must be None, 'sample', or 'all'; "
+            f"got {auto_shard!r}"
+        )
+    if auto_shard == "all":
+        raise NotImplementedError(
+            "plot_pmtiles: auto_shard='all' (multi-shard full-detail interactive "
+            "rendering) is not yet implemented. Use auto_shard='sample' for a "
+            "reduced-detail interactive map now, stage the archive at an https:// "
+            "URL for full detail at zero embed cost, or pre-shard your data."
+        )
+
     from databricks.labs.gbx.vizx._interactive import plot_interactive
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
 
+    archive = path_or_bytes
+    if auto_shard == "sample" and max_embed_mb and max_embed_mb > 0:
+        # Invest-little path: auto-fit by down-zooming until the archive's
+        # rendered size is within budget, then embed the reduced archive.
+        from databricks.labs.gbx.vizx._pmtiles_autofit import autofit_archive
+
+        raw = _archive_bytes(path_or_bytes)
+        reduced, report = autofit_archive(raw, max_embed_mb=max_embed_mb)
+        if report["dropped_zooms"]:
+            import warnings
+
+            warnings.warn(
+                "plot_pmtiles auto_shard='sample': reduced the archive to fit the "
+                f"{max_embed_mb:.1f} MB embed budget by dropping zoom level(s) "
+                f"{report['dropped_zooms']} (kept z<= {report['kept_max_zoom']}; "
+                f"{report['original_bytes']} -> {report['reduced_bytes']} bytes). "
+                "Detail above the kept zoom is not shown; stage the archive at an "
+                "https:// URL or use auto_shard='all' (planned) for full detail.",
+                stacklevel=2,
+            )
+        archive = reduced
+
     return plot_interactive(
-        [pmtiles_layer(path_or_bytes, style=style)],
+        [pmtiles_layer(archive, style=style)],
         max_embed_mb=max_embed_mb,
         fallback=fallback,
         **kw,
