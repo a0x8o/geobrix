@@ -223,3 +223,91 @@ def test_oversize_pmtiles_no_spec_still_static():
     big_layer = pmtiles_layer(BIG_ARCHIVE, label="big-no-spec")
     out = prepare_layers([big_layer], max_embed_mb=1, fallback=True)
     assert out["mode"] == "static"
+
+
+# ---------------------------------------------------------------------------
+# Serverless cell-output cap: default budget + rendered-HTML-aware guard + remedy
+# ---------------------------------------------------------------------------
+
+
+def test_default_max_embed_mb_is_serverless_safe():
+    """The default embed budget must fit the Serverless cell-output cap.
+
+    Serverless notebooks cap cell output at 10 MB default, 20 MB max
+    (%set_cell_max_output_size_in_mb). The default max_embed_mb must be at or
+    below the 20 MB hard ceiling AFTER base64 inflation (~4/3x) -- i.e. the
+    rendered HTML for a default-budget archive must be < 20 MB. The old default
+    of 64 MB rendered to ~85 MB and was silently truncated.
+    """
+    from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
+
+    # Rendered HTML ~ archive * 4/3 (base64) + template. A 20 MB cell ceiling
+    # means the safe archive budget is < ~14 MB; we require the default to be
+    # comfortably under that.
+    assert DEFAULT_MAX_EMBED_MB <= 14, (
+        f"default max_embed_mb={DEFAULT_MAX_EMBED_MB} exceeds the Serverless-safe "
+        "archive budget (~14 MB at the 20 MB cell-output ceiling)"
+    )
+    assert DEFAULT_MAX_EMBED_MB > 0
+
+
+def test_all_entrypoints_share_the_default():
+    """plot_pmtiles / plot_interactive / audit_layers / prepare_layers must all
+    default to the same DEFAULT_MAX_EMBED_MB (no stray 64 left behind)."""
+    import inspect
+
+    from databricks.labs.gbx.vizx import _interactive, _maplibre, _pmtiles
+
+    default = _maplibre.DEFAULT_MAX_EMBED_MB
+    for fn in (
+        _pmtiles.plot_pmtiles,
+        _interactive.plot_interactive,
+        _maplibre.audit_layers,
+        _maplibre.prepare_layers,
+    ):
+        sig = inspect.signature(fn)
+        got = sig.parameters["max_embed_mb"].default
+        assert got == default, (
+            f"{fn.__name__} default max_embed_mb={got} != "
+            f"DEFAULT_MAX_EMBED_MB={default}"
+        )
+
+
+def test_guard_measures_rendered_html_not_archive_bytes():
+    """The over-budget pre-check must compare base64-INFLATED archive size to the
+    budget, not the raw archive bytes.
+
+    A raw archive just under the byte budget still renders to ~4/3x its size in
+    base64; measuring raw bytes lets a too-large embed slip through and get
+    truncated by the cell cap. With an archive whose RAW size is under the budget
+    but whose base64 size exceeds it, the verdict must be over-budget (static),
+    not embed.
+    """
+    # 1.0 MB budget. Raw archive = 0.9 MB (under budget by raw bytes) but base64
+    # inflates to ~1.2 MB (over budget). Must NOT embed.
+    budget_mb = 1.0
+    raw_size = int(0.9 * 1024 * 1024)
+    archive = b"PMTiles" + b"\x03" + b"\x00" * (raw_size - 8)
+    layer = pmtiles_layer(archive, label="base64-inflate")
+    result = audit_layers([layer], max_embed_mb=budget_mb)
+    assert result["fits"] is False, (
+        "guard let a raw-under-budget archive through; it must account for the "
+        "~4/3x base64 inflation of the rendered HTML"
+    )
+    assert result["verdict"] == "static"
+
+
+def test_remedy_message_mentions_serverless_cell_cap():
+    """The over-budget fallback warning must point at the Serverless cell-output
+    cap lever (%set_cell_max_output_size_in_mb) and NOT advise 'just increase
+    max_embed_mb' (which fails -- the cap is a hard platform ceiling)."""
+    BIG_ARCHIVE = b"PMTiles" + b"\x03" + b"\x00" * (5 * 1024 * 1024)
+    big_layer = pmtiles_layer(BIG_ARCHIVE, label="big")
+    out = prepare_layers([big_layer], max_embed_mb=1, fallback=True)
+    assert out["mode"] == "static"
+    combined = " ".join(out["warnings"]).lower()
+    assert (
+        "set_cell_max_output_size_in_mb" in combined
+    ), "remedy must mention the Serverless cell-output cap lever"
+    # Must NOT tell the user the misleading 'increase max_embed_mb' remedy alone.
+    assert "increase max_embed_mb if your notebook" not in combined

@@ -31,6 +31,29 @@ if TYPE_CHECKING:
     from databricks.labs.gbx.vizx._layers import Layer
 
 # ---------------------------------------------------------------------------
+# embed-budget defaults (Serverless cell-output cap aware)
+# ---------------------------------------------------------------------------
+#
+# GeoBrix vizx targets Databricks notebooks ONLY. On current Serverless notebooks
+# (serverless environment 3 / DBR 17.0+) the per-cell output is capped at 10 MB
+# by default and at most 20 MB via ``%set_cell_max_output_size_in_mb`` -- output
+# over the cap is TRUNCATED, which silently breaks a base64-embedded interactive
+# map. The cap is on the RENDERED HTML, not the raw archive: a pmtiles archive
+# base64-embeds at ~4/3x its byte size, plus the MapLibre page template.
+#
+# So the safe ARCHIVE budget at the 20 MB ceiling is ~(20 / (4/3)) ~ 15 MB and at
+# the 10 MB default ~7 MB. We default to 8 MB of archive (~11 MB rendered) so the
+# inline map fits under the 10 MB default cap once the user bumps it toward 20 MB,
+# and stays well under the 20 MB hard ceiling. Larger archives route to the static
+# fallback (or should be staged at a URL / sharded). Callers can still raise
+# ``max_embed_mb`` explicitly, but it cannot exceed what the cell cap allows.
+DEFAULT_MAX_EMBED_MB: float = 8
+
+# Base64 inflation factor for embedded payloads (3 raw bytes -> 4 ASCII chars).
+_BASE64_INFLATION = 4.0 / 3.0
+
+
+# ---------------------------------------------------------------------------
 # security helper
 # ---------------------------------------------------------------------------
 
@@ -490,7 +513,7 @@ def _build_audit(
 def audit_layers(
     layers,
     *,
-    max_embed_mb: float = 64,
+    max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
 ) -> dict:
     """Dry pre-flight embed-size audit — no render, no displayHTML.
@@ -551,7 +574,9 @@ def audit_layers(
             continue
         if kind == "pmtiles":
             raw = _pmtiles_raw_bytes(layer)
-            if raw is not None and len(raw) > max_embed_bytes:
+            # Compare the RENDERED embed size (base64-inflated ~4/3x), not the raw
+            # archive bytes — the Serverless cell-output cap counts rendered HTML.
+            if raw is not None and len(raw) * _BASE64_INFLATION > max_embed_bytes:
                 # Over-budget before even assembling HTML — record zero embed bytes
                 # in the prepared list (won't be included in build_html).
                 prepared.append(None)
@@ -566,11 +591,16 @@ def audit_layers(
     if valid_prepared:
         total_embed_bytes = len(build_html(valid_prepared).encode())
     else:
-        # All layers were over-budget individually — treat total as sum of raw bytes.
-        total_embed_bytes = sum(
-            len(_pmtiles_raw_bytes(layer) or b"")
-            for layer in lyrs
-            if getattr(layer, "kind", None) == "pmtiles"
+        # All layers were over-budget individually — estimate the RENDERED embed
+        # size as the base64-inflated (~4/3x) sum of raw archive bytes, matching
+        # the per-layer guard above (the cell-output cap counts rendered HTML).
+        total_embed_bytes = int(
+            sum(
+                len(_pmtiles_raw_bytes(layer) or b"")
+                for layer in lyrs
+                if getattr(layer, "kind", None) == "pmtiles"
+            )
+            * _BASE64_INFLATION
         )
 
     return _build_audit(
@@ -581,7 +611,7 @@ def audit_layers(
 def prepare_layers(
     layers,
     *,
-    max_embed_mb: float = 64,
+    max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
     fallback: bool = True,
 ) -> dict:
@@ -637,9 +667,14 @@ def prepare_layers(
 
     remedy_msg = (
         "Remedies: (1) stage the archive at a reachable https:// URL and pass it "
-        "to pmtiles_layer(); (2) pre-tile your data to a smaller PMTiles archive "
-        "(reduce AOI or max zoom); (3) increase max_embed_mb if your notebook "
-        "environment supports larger payloads."
+        "to pmtiles_layer() (zero embed cost, always interactive); (2) pre-tile or "
+        "shard your data into a smaller PMTiles archive (reduce AOI or max zoom). "
+        "Note: a Databricks Serverless notebook caps cell output at 10 MB by "
+        "default (20 MB max via %set_cell_max_output_size_in_mb), and the cap "
+        "counts the base64-rendered HTML (~4/3x the archive) -- so raising "
+        "max_embed_mb alone cannot exceed the cell ceiling; an archive whose "
+        "rendered size tops ~14 MB cannot embed inline on Serverless and must use "
+        "a URL, a smaller/sharded archive, or the static fallback."
     )
 
     prepared: list = []
@@ -684,7 +719,9 @@ def prepare_layers(
         # ------------------------------------------------------------------ #
         if kind == "pmtiles":
             raw = _pmtiles_raw_bytes(layer)
-            if raw is not None and len(raw) > budget_bytes:
+            # Compare the RENDERED embed size (base64-inflated ~4/3x), not the raw
+            # archive bytes — the Serverless cell-output cap counts rendered HTML.
+            if raw is not None and len(raw) * _BASE64_INFLATION > budget_bytes:
                 early_oversize_labels.append(_layer_label(layer, idx))
                 # Placeholder so indices stay aligned for the static-path pass.
                 prepared.append(None)

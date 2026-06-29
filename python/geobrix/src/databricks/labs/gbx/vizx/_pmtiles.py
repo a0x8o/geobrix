@@ -18,6 +18,8 @@ from typing import Union
 
 from pmtiles.reader import MemorySource, all_tiles  # noqa: F401
 
+from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
+
 _RASTER_TYPES = frozenset({"png", "jpeg", "webp", "avif"})
 
 
@@ -94,7 +96,9 @@ def _decode_mvt_to_geoms(payload: bytes, z: int, x: int, y: int):
     return out
 
 
-def plot_pmtiles(path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **kw):
+def plot_pmtiles(
+    path_or_bytes, *, max_embed_mb=DEFAULT_MAX_EMBED_MB, fallback=True, style=None, **kw
+):
     """Render a .pmtiles archive inline in a Databricks/Jupyter notebook.
 
     Thin delegator to :func:`~databricks.labs.gbx.vizx._interactive.plot_interactive`

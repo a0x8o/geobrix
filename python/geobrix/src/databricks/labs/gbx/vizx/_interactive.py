@@ -10,6 +10,8 @@ Requires the [vizx] extra.
 
 from __future__ import annotations
 
+from databricks.labs.gbx.vizx._maplibre import DEFAULT_MAX_EMBED_MB
+
 try:
     from IPython import get_ipython
 except Exception:  # noqa: BLE001 — IPython absent (plain Python)
@@ -89,7 +91,7 @@ def plot_interactive(
     *,
     basemap: str = "carto-positron",
     simplify_tiles_spec=None,
-    max_embed_mb: float = 64,
+    max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     fallback: bool = True,
     center=None,
     zoom=None,
@@ -105,7 +107,10 @@ def plot_interactive(
         basemap:              ``"carto-positron"`` (default) or ``"none"``.
         simplify_tiles_spec:  Optional simplification spec (Task 11, not yet
                               implemented — pass ``None``).
-        max_embed_mb:         Maximum HTML embed size in mebibytes (default 64).
+        max_embed_mb:         Maximum HTML embed size in mebibytes (default
+                              ``DEFAULT_MAX_EMBED_MB``). Sized for the Databricks
+                              Serverless cell-output cap (10 MB default, 20 MB max);
+                              measured against the base64-rendered HTML.
         fallback:             When ``True`` (default), degrade to
                               :func:`~databricks.labs.gbx.vizx._static_map.plot_static`
                               when the budget is exceeded.  When ``False``, raise.
