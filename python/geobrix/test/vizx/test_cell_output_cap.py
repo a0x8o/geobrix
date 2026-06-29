@@ -27,27 +27,25 @@ _LYRS = [pmtiles_layer(b"x")]
 # --------------------------------------------------------------------------- #
 def test_resolve_embed_budget_tracks_cap_state():
     # No explicit budget -> tracks whether the cap will be raised.
-    assert _resolve_embed_budget(None, True) == MAX_EMBED_MB_CAP_RAISED  # 14
-    assert _resolve_embed_budget(None, False) == DEFAULT_MAX_EMBED_MB  # 7
+    assert _resolve_embed_budget(None, True) == MAX_EMBED_MB_CAP_RAISED  # 6
+    assert _resolve_embed_budget(None, False) == DEFAULT_MAX_EMBED_MB  # 3
     # Explicit budget always wins (including 0 = force static).
     assert _resolve_embed_budget(12, True) == 12
     assert _resolve_embed_budget(0, False) == 0
 
 
-def test_budgets_clear_the_cap_after_both_base64_passes():
-    """The cell counts the payload after TWO base64 passes (build_html embeds the
-    archive, then displayHTML re-base64s the page into its iframe). max_embed_mb is the
-    build_html ceiling, so build_html x 4/3 must still fit the cell cap. Guards against
-    re-setting the raised budget to a value (e.g. 18) that embeds then truncates."""
-    from databricks.labs.gbx.vizx._maplibre import (
-        _BASE64_INFLATION,
-        CELL_OUTPUT_CAP_MAX_MB,
-    )
+def test_budgets_stay_under_measured_safe_threshold():
+    """max_embed_mb is the build_html ceiling, but displayHTML inflates the actual cell
+    payload to ~2-3.3x that (measured, not modeled -- the (4/3)^2 guess was too low).
 
-    # Raised 20 MB cap: a budget-filling embed's cell payload must still fit.
-    assert MAX_EMBED_MB_CAP_RAISED * _BASE64_INFLATION <= CELL_OUTPUT_CAP_MAX_MB
-    # Default 10 MB cap: same, with the cap un-raised.
-    assert DEFAULT_MAX_EMBED_MB * _BASE64_INFLATION <= 10
+    Calibrated from LIVE Serverless renders (2026-06-29): build_html 6.1 MB EMBEDDED,
+    13 MB TRUNCATED even at the raised 20 MB cap. So the proven-safe build_html ceiling
+    is ~6 MB raised / ~3 MB un-raised. Guards against re-bumping to a value (14, 18) that
+    embeds then truncates -- do not raise without a fresh live render."""
+    assert (
+        MAX_EMBED_MB_CAP_RAISED <= 6
+    ), "raised-cap budget exceeds the measured-safe build_html ceiling (6 MB)"
+    assert DEFAULT_MAX_EMBED_MB <= 3
 
 
 # --------------------------------------------------------------------------- #

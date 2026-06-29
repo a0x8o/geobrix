@@ -40,22 +40,20 @@ if TYPE_CHECKING:
 # over the cap is TRUNCATED, which silently breaks a base64-embedded interactive
 # map.
 #
-# CRUCIAL: there are TWO base64 passes between an archive and the cell-output bytes
-# the cap measures, each ~4/3x:
-#   1. build_html base64-embeds the archive into the page  (archive x 4/3).
-#   2. Databricks' displayHTML re-base64s that whole page into its sandboxed iframe
-#      (a second x 4/3).
-# So the cell counts ~archive x (4/3)^2 ~= 1.78x. (Verified on Serverless: a 12.9 MB
-# archive -> 17.2 MB build_html embedded fine but the cell truncated even at the raised
-# 20 MB cap, because 17.2 x 4/3 ~= 22.9 MB > 20.)
+# CRUCIAL: the cell counts MUCH more than the archive bytes. build_html base64-embeds
+# the archive (archive x 4/3), and then Databricks' displayHTML wraps that whole page
+# into its sandboxed iframe with further encoding -- so the cell payload is MEASURED at
+# ~2-3.3x the build_html size, NOT a clean single (or double) base64. This was pinned by
+# LIVE Serverless renders, not modeled (the (4/3)^2 ~= 1.78x guess was still too low):
+#   - build_html 6.1 MB  -> EMBEDS at the raised 20 MB cap.
+#   - build_html 13.1 MB -> TRUNCATED even at the raised 20 MB cap.
 #
 # The over-budget guard compares archive x _BASE64_INFLATION (the build_html size) to
-# max_embed_mb -- so max_embed_mb is the build_html ceiling. To keep the *cell* payload
-# (build_html x 4/3 again) under the cap, the budget must be cap / (4/3) = cap x 3/4,
-# minus a small margin. Hence ~7 for the 10 MB default cap and ~14 for the raised 20 MB
-# cap. Larger archives route to the static fallback (or should be down-zoomed via
-# interactive_fit, staged at a URL, or sharded).
-DEFAULT_MAX_EMBED_MB: float = 7
+# max_embed_mb, so max_embed_mb IS the build_html ceiling. Set it to the measured
+# proven-safe build_html: ~6 MB at the raised 20 MB cap, and proportionally ~3 MB at the
+# 10 MB default cap. Larger archives auto-fit via interactive_fit='downzoom' (the
+# plot_pmtiles default), route to the static fallback, or should be staged at a URL.
+DEFAULT_MAX_EMBED_MB: float = 3
 
 # Base64 inflation factor for embedded payloads (3 raw bytes -> 4 ASCII chars).
 _BASE64_INFLATION = 4.0 / 3.0
@@ -66,10 +64,11 @@ _BASE64_INFLATION = 4.0 / 3.0
 # embed budget for it; otherwise we stay conservative for the 10 MB default cap.
 CELL_OUTPUT_CAP_MAX_MB: int = 20
 # Safe embed budget when the cap is raised to its 20 MB max. max_embed_mb is the
-# build_html-size ceiling (the guard compares archive x 4/3 to it); the cell then
-# counts build_html x 4/3 AGAIN via the displayHTML iframe, so the budget must stay at
-# cap / (4/3) = 20 x 3/4 = 15, minus margin -> 14 (14 x 4/3 ~= 18.6 MB cell < 20).
-MAX_EMBED_MB_CAP_RAISED: float = 14
+# build_html-size ceiling; the displayHTML iframe then inflates the cell payload to
+# ~2-3.3x that (see above). Calibrated from measured renders: build_html 6.1 MB embeds,
+# 13 MB truncates -> proven-safe ceiling ~6 MB. (Do NOT bump this without a fresh live
+# render; 14 and 18 both embedded-then-truncated.)
+MAX_EMBED_MB_CAP_RAISED: float = 6
 
 
 def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
@@ -703,13 +702,11 @@ def prepare_layers(
         "to pmtiles_layer() (zero embed cost, always interactive); (2) pre-tile or "
         "shard your data into a smaller PMTiles archive (reduce AOI or max zoom). "
         "Note: a Databricks Serverless notebook caps cell output at 10 MB by "
-        "default (20 MB max via %set_cell_max_output_size_in_mb), and the cap "
-        "counts the cell payload AFTER two base64 passes (~(4/3)^2 ~= 1.78x the "
-        "archive: build_html embeds it, then displayHTML re-encodes the page into "
-        "its iframe) -- so raising max_embed_mb alone cannot exceed the cell "
-        "ceiling; an archive over ~11 MB cannot embed inline even at the raised "
-        "20 MB cap and must use a URL, a smaller/sharded archive, or the static "
-        "fallback."
+        "default (20 MB max via %set_cell_max_output_size_in_mb), and displayHTML "
+        "inflates the cell payload to ~2-3x the embedded HTML (measured) -- so "
+        "raising max_embed_mb alone cannot exceed the cell ceiling; an archive "
+        "over ~4-5 MB cannot embed inline even at the raised 20 MB cap and must "
+        "use a URL, a smaller/sharded archive, or the static fallback."
     )
 
     prepared: list = []
