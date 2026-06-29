@@ -289,3 +289,126 @@ def test_public_exports():
     assert hasattr(vizx, "plot_cog")
     assert "plot_pmtiles" in vizx.__all__
     assert "plot_cog" in vizx.__all__
+
+
+# ---------------------------------------------------------------------------
+# Static vector fallback — coarsest-zoom-only perf fix
+# ---------------------------------------------------------------------------
+
+def test_static_vector_fallback_decodes_only_min_zoom(monkeypatch):
+    """_static_vector_fallback must only decode tiles at the archive's min zoom.
+
+    A vector pyramid re-encodes identical features at every zoom level; without
+    this guard a z12–z16 archive decodes ~5× the features and rendering can take
+    5+ minutes. We build a two-zoom (z3 and z5) archive, spy on _decode_mvt_to_geoms,
+    and assert only z3 tiles are decoded.
+    """
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    # Build an MVT archive with tiles at two zoom levels (z3 and z5).
+    # z3 tile (4,4): a coarse overview tile.
+    # z5 tile (16,16): a finer tile — must NOT be decoded by the fixed path.
+    z_min, x_min, y_min = 3, 4, 4
+    z_fine, x_fine, y_fine = 5, 16, 16
+    blob_min = _real_mvt_tile(z_min, x_min, y_min)
+    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
+    archive = _build_archive(
+        [
+            (z_min, x_min, y_min, blob_min),
+            (z_fine, x_fine, y_fine, blob_fine),
+        ],
+        TileType.MVT,
+    )
+    info = __import__(
+        "databricks.labs.gbx.pmtiles", fromlist=["pmtiles_info"]
+    ).pmtiles_info(archive)
+    assert info.get("min_zoom") == z_min, "test pre-condition: info must carry min_zoom"
+
+    # Spy: record which zoom levels _decode_mvt_to_geoms is called with.
+    decoded_zooms = []
+    real_decode = p._decode_mvt_to_geoms
+
+    def _spy_decode(payload, z, x, y):
+        decoded_zooms.append(z)
+        return real_decode(payload, z, x, y)
+
+    monkeypatch.setattr(p, "_decode_mvt_to_geoms", _spy_decode)
+
+    # Stub plot_static to avoid rendering overhead in unit tests.
+    import geopandas as gpd
+
+    rendered = {}
+
+    def _fake_plot_static(gdf, **kw):
+        rendered["gdf"] = gdf
+        return "AX"
+
+    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
+
+    out = p._static_vector_fallback(archive, info, basemap=False)
+
+    # Only the coarse zoom was decoded.
+    assert decoded_zooms, "decoder was never called — archive may be empty"
+    assert all(z == z_min for z in decoded_zooms), (
+        f"_decode_mvt_to_geoms called with zoom(s) {set(decoded_zooms)} "
+        f"but expected only min_zoom={z_min}"
+    )
+
+    # A valid GeoDataFrame was produced and forwarded to plot_static.
+    assert out == "AX"
+    gdf = rendered["gdf"]
+    assert isinstance(gdf, gpd.GeoDataFrame)
+    assert len(gdf) >= 1
+    assert gdf.crs.to_epsg() == 4326
+
+
+def test_static_vector_fallback_decodes_only_min_zoom_without_info(monkeypatch):
+    """Fallback must still pick min zoom when info dict has no min_zoom key.
+
+    Exercises the scan-all-tiles fallback path used when the info dict is
+    incomplete (e.g. constructed programmatically without a full header).
+    """
+    from databricks.labs.gbx.vizx import _pmtiles as p
+
+    z_min, x_min, y_min = 2, 2, 2
+    z_fine, x_fine, y_fine = 4, 8, 8
+    blob_min = _real_mvt_tile(z_min, x_min, y_min)
+    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
+    archive = _build_archive(
+        [
+            (z_min, x_min, y_min, blob_min),
+            (z_fine, x_fine, y_fine, blob_fine),
+        ],
+        TileType.MVT,
+    )
+    # Deliberately omit min_zoom from info.
+    info_no_min = {"tile_type": "mvt"}
+
+    decoded_zooms = []
+    real_decode = p._decode_mvt_to_geoms
+
+    def _spy_decode(payload, z, x, y):
+        decoded_zooms.append(z)
+        return real_decode(payload, z, x, y)
+
+    monkeypatch.setattr(p, "_decode_mvt_to_geoms", _spy_decode)
+
+    import geopandas as gpd
+
+    rendered = {}
+
+    def _fake_plot_static(gdf, **kw):
+        rendered["gdf"] = gdf
+        return "AX"
+
+    monkeypatch.setattr("databricks.labs.gbx.vizx.plot_static", _fake_plot_static)
+
+    out = p._static_vector_fallback(archive, info_no_min, basemap=False)
+
+    assert decoded_zooms, "decoder was never called"
+    assert all(z == z_min for z in decoded_zooms), (
+        f"expected only z={z_min}, got {set(decoded_zooms)}"
+    )
+    assert out == "AX"
+    assert isinstance(rendered["gdf"], gpd.GeoDataFrame)
+    assert len(rendered["gdf"]) >= 1
