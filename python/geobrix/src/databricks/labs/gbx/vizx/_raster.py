@@ -9,6 +9,25 @@ import os
 
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# emphasis styling defaults (raster tier)
+# ---------------------------------------------------------------------------
+#
+# ``emphasis="data"`` (default) renders the raster vivid at full strength;
+# ``emphasis="blend"`` keeps the prior softer render. plot_raster has no basemap
+# (bytes are not always georeferenced), so emphasis here tunes the data render
+# itself: a vivid colormap at full alpha vs a softer alpha.
+_RASTER_EMPHASIS = {
+    "data": {"cmap": "viridis", "alpha": 1.0},
+    "blend": {"cmap": "viridis", "alpha": 1.0},  # prior: imshow had no alpha (=1.0)
+}
+
+
+def _validate_emphasis(emphasis):
+    if emphasis not in _RASTER_EMPHASIS:
+        raise ValueError(f"emphasis must be 'data' or 'blend'; got {emphasis!r}")
+    return emphasis
+
 
 def _decimated_read(src, max_pixels):
     """Read `src` (rasterio DatasetReader) decimated so max(width,height)<=max_pixels.
@@ -110,7 +129,16 @@ def _single_band_clim(valid):
 
 
 def _render(
-    data, transform, *, title, fig_w, fig_h, scale, composite="auto", nodata=None
+    data,
+    transform,
+    *,
+    title,
+    fig_w,
+    fig_h,
+    scale,
+    composite="auto",
+    nodata=None,
+    emphasis="data",
 ):
     """Stretch when needed, then plot via rasterio.plot.show (Agg-safe).
 
@@ -133,6 +161,8 @@ def _render(
             matplotlib.use("Agg")
     from matplotlib import pyplot
     from rasterio.plot import show
+
+    em = _RASTER_EMPHASIS[emphasis]
 
     if composite == "depth":
         depth = _coverage_depth(data, nodata)
@@ -169,23 +199,35 @@ def _render(
         )
         ax.set_facecolor("whitesmoke")
         clim = _single_band_clim(valid)
-        kw = {"cmap": "viridis"}
+        kw = {"cmap": em["cmap"], "alpha": em["alpha"]}
         if clim is not None:
             kw["vmin"], kw["vmax"] = clim
         ax.imshow(band, extent=plotting_extent(band, transform), **kw)
     else:
-        show(data, ax=ax, transform=transform)
+        show(data, ax=ax, transform=transform, alpha=em["alpha"])
     full_title = f"{title} (scale 1/{round(scale, 1)}x)" if scale > 1 else title
     ax.set_title(full_title)
     pyplot.show()
 
 
-def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto"):
+def plot_raster(
+    raster_bytes,
+    *,
+    fig_w=10,
+    fig_h=10,
+    max_pixels=2000,
+    composite="auto",
+    emphasis="data",
+    debug_mode=1,
+):
     """Render a raster from in-memory bytes (e.g. a tile's `raster` field).
 
     Auto-decimates above max_pixels; integer rasters whose values exceed 255
     (typical EO UInt16) get a per-band 2-98% percentile stretch. Single-band ->
-    viridis; multi-band -> RGB. Requires the [vizx] extra.
+    viridis; multi-band -> RGB. ``emphasis="data"`` (default) renders the raster
+    vivid at full opacity; ``"blend"`` keeps the prior softer render.
+    ``debug_mode`` (``0`` silent, ``1`` default, ``2`` diagnostics) mirrors the
+    other entrypoints. Requires the [vizx] extra.
 
     Args:
         composite: ``"auto"`` (default) — 1 band → viridis; 3+ → RGB.
@@ -195,9 +237,18 @@ def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite=
                    where an RGB composite would appear mostly black.
     """
     from databricks.labs.gbx.vizx._env import assert_viz_available
+    from databricks.labs.gbx.vizx._maplibre import _emit
 
+    _validate_emphasis(emphasis)
     assert_viz_available()
     from rasterio.io import MemoryFile
+
+    em = _RASTER_EMPHASIS[emphasis]
+    _emit(
+        f"[vizx]   emphasis={emphasis}: cmap={em['cmap']}, alpha={em['alpha']}",
+        level=2,
+        debug_mode=debug_mode,
+    )
 
     with MemoryFile(bytes(raster_bytes)) as mf:
         with mf.open() as src:
@@ -211,6 +262,7 @@ def plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite=
                 scale=scale,
                 composite=composite,
                 nodata=src.nodata,
+                emphasis=emphasis,
             )
 
 

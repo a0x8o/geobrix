@@ -39,7 +39,7 @@ def vector_layer(
     fill=True,
     color=None,
     width=None,
-    opacity=0.8,
+    opacity=None,
     simplify=None,
     label=None,
 ):

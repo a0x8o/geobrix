@@ -103,6 +103,7 @@ def plot_pmtiles(
     interactive_fit="downzoom",
     style=None,
     debug_mode=1,
+    emphasis="data",
     **kw,
 ):
     """Render a .pmtiles archive inline in a Databricks notebook.
@@ -142,6 +143,11 @@ def plot_pmtiles(
     For an archive of any size with zero embed cost, stage it at an ``https://``
     URL and pass that URL to ``pmtiles_layer`` / ``plot_pmtiles`` — it streams
     remotely and is always interactive regardless of the cell cap.
+
+    ``emphasis="data"`` (default) styles the archive to pop against the
+    full-strength basemap (firmer fill, contrasting dark outline, full raster
+    opacity); ``"blend"`` reproduces the prior soft composite. Forwarded to
+    ``plot_interactive``.
     """
     if interactive_fit not in (None, "downzoom", "all"):
         raise ValueError(
@@ -192,5 +198,6 @@ def plot_pmtiles(
         set_cell_max_output=set_cell_max_output,
         fallback=fallback,
         debug_mode=debug_mode,
+        emphasis=emphasis,
         **kw,
     )

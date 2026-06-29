@@ -20,14 +20,45 @@ def _strip_scheme(path: str) -> str:
     return path
 
 
+# ---------------------------------------------------------------------------
+# emphasis styling defaults (static raster / COG tier)
+# ---------------------------------------------------------------------------
+#
+# ``emphasis="data"`` (default) renders the raster at full strength with a vivid
+# colormap; ``emphasis="blend"`` keeps the prior softer render. The basemap stays
+# full-strength in both modes -- we emphasize the DATA, not the basemap.
+_COG_EMPHASIS = {
+    "data": {"cmap": "viridis", "alpha": 1.0},
+    "blend": {"cmap": "viridis", "alpha": 1.0},  # prior: imshow had no alpha (=1.0)
+}
+
+
+def _validate_emphasis(emphasis):
+    if emphasis not in _COG_EMPHASIS:
+        raise ValueError(f"emphasis must be 'data' or 'blend'; got {emphasis!r}")
+    return emphasis
+
+
 def _render_cog(
-    data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_source, ax=None
+    data,
+    transform,
+    *,
+    crs,
+    fig_w,
+    fig_h,
+    title,
+    basemap,
+    basemap_source,
+    ax=None,
+    emphasis="data",
 ):
     """Render a decimated COG array (bands, h, w) over a contextily basemap.
 
     When *ax* is provided the caller owns the figure; this function draws onto
     it and returns it without calling ``plt.show``.  When *ax* is ``None`` a
-    new figure is created (original behaviour).
+    new figure is created (original behaviour). ``emphasis="data"`` (default)
+    renders the raster vivid at full opacity; ``"blend"`` keeps the prior softer
+    render. The basemap is full-strength in both modes.
     """
     import matplotlib.pyplot as plt
     from rasterio.plot import plotting_extent, show
@@ -37,6 +68,7 @@ def _render_cog(
         _percentile_stretch,
     )
 
+    em = _COG_EMPHASIS[emphasis]
     if _needs_percentile_stretch(data):
         data = _percentile_stretch(data)
     owns_fig = ax is None
@@ -48,10 +80,14 @@ def _render_cog(
     if data.shape[0] == 1:
         band = data[0]
         ax.imshow(
-            band, extent=plotting_extent(band, transform), cmap="viridis", zorder=2
+            band,
+            extent=plotting_extent(band, transform),
+            cmap=em["cmap"],
+            alpha=em["alpha"],
+            zorder=2,
         )
     else:
-        show(data, ax=ax, transform=transform, zorder=2)
+        show(data, ax=ax, transform=transform, zorder=2, alpha=em["alpha"])
     if basemap and crs is not None:
         try:
             import contextily as cx
@@ -81,6 +117,8 @@ def plot_cog(
     basemap_source=None,
     title=None,
     ax=None,
+    emphasis="data",
+    debug_mode=1,
     **kw,
 ):
     """Render a Cloud-Optimized GeoTIFF inline over a contextily basemap.
@@ -88,12 +126,25 @@ def plot_cog(
     Reads ``path`` decimated so the longest edge is <= ``max_pixels`` (uses the
     COG's overviews when present). ``band`` (1-based) selects a single band;
     otherwise all bands render (1 -> viridis, 3+ -> RGB). Volume/DBFS scheme
-    prefixes are stripped. Requires the [vizx] extra plus rasterio.
+    prefixes are stripped. ``emphasis="data"`` (default) renders the raster vivid
+    at full opacity so it pops against the full-strength basemap; ``"blend"``
+    keeps the prior softer render. ``debug_mode`` (``0`` silent, ``1`` default,
+    ``2`` diagnostics) mirrors the other entrypoints. Requires the [vizx] extra
+    plus rasterio.
     """
     from databricks.labs.gbx.vizx._env import assert_viz_available
+    from databricks.labs.gbx.vizx._maplibre import _emit
 
+    _validate_emphasis(emphasis)
     assert_viz_available()
     import rasterio
+
+    em = _COG_EMPHASIS[emphasis]
+    _emit(
+        f"[vizx]   emphasis={emphasis}: cmap={em['cmap']}, alpha={em['alpha']}",
+        level=2,
+        debug_mode=debug_mode,
+    )
 
     from databricks.labs.gbx.vizx._raster import _decimated_read
 
@@ -125,4 +176,5 @@ def plot_cog(
         basemap=basemap,
         basemap_source=basemap_source,
         ax=ax,
+        emphasis=emphasis,
     )

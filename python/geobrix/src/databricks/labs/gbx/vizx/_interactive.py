@@ -116,6 +116,7 @@ def plot_interactive(
     zoom=None,
     dry_run: bool = False,
     debug_mode: int = 1,
+    emphasis: str = "data",
 ) -> "str | None | dict":
     """Render one or more layers as an interactive MapLibre GL map.
 
@@ -147,7 +148,13 @@ def plot_interactive(
                               lines; genuine fallback warnings still fire), ``1``
                               (default) concise notes (audit verdict, cap-raise),
                               ``2`` adds diagnostics (per-layer sizes, display
-                              channel, budget math).
+                              channel, budget math, chosen emphasis values).
+        emphasis:             ``"data"`` (default) styles the data layer to pop
+                              against the full-strength basemap (firmer fill,
+                              contrasting dark outline, bumped line width, full
+                              raster opacity); ``"blend"`` reproduces the prior
+                              soft composite. Explicit per-layer style kwargs
+                              (``color``/``opacity``/``width``) always override.
 
     Returns:
         ``dry_run=True``: the audit dict (see :func:`audit_layers`).
@@ -158,19 +165,31 @@ def plot_interactive(
     """
     from databricks.labs.gbx.vizx._layers import as_layers
     from databricks.labs.gbx.vizx._maplibre import (
+        _MAPLIBRE_EMPHASIS,
         _emit,
         _resolve_embed_budget,
+        _validate_emphasis,
         build_html,
         prepare_layers,
     )
 
+    _validate_emphasis(emphasis)
     max_embed_mb = _resolve_embed_budget(max_embed_mb, set_cell_max_output)
     lyrs = as_layers(layers)
+    _vals = _MAPLIBRE_EMPHASIS[emphasis]
+    _emit(
+        f"[vizx]   emphasis={emphasis}: fill-opacity={_vals['fill_opacity']}, "
+        f"fill-outline-color={_vals['fill_outline_color']}, "
+        f"line-width={_vals['line_width']}, raster-opacity={_vals['raster_opacity']}",
+        level=2,
+        debug_mode=debug_mode,
+    )
     result = prepare_layers(
         lyrs,
         max_embed_mb=max_embed_mb,
         simplify_tiles_spec=simplify_tiles_spec,
         fallback=fallback,
+        emphasis=emphasis,
     )
 
     # The one-line audit (level 1), then per-layer diagnostics (level 2).
@@ -221,6 +240,7 @@ def plot_interactive(
             basemap=basemap,
             center=center,
             zoom=zoom,
+            emphasis=emphasis,
         )
         # Attempt notebook display (Databricks displayHTML via IPython user ns).
         dh = _notebook_display_html()
@@ -241,4 +261,4 @@ def plot_interactive(
     # result["warnings"] were already warn()'d inside prepare_layers; don't re-warn.
     from databricks.labs.gbx.vizx._static_map import plot_static
 
-    return plot_static(result["prepared"])
+    return plot_static(result["prepared"], emphasis=emphasis, debug_mode=debug_mode)

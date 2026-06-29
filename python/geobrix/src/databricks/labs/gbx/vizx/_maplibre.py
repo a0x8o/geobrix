@@ -73,6 +73,71 @@ MAX_EMBED_MB_CAP_RAISED: float = 6
 # Default verbosity for the [vizx] status lines the plot entrypoints emit.
 DEFAULT_DEBUG_MODE: int = 1
 
+# ---------------------------------------------------------------------------
+# emphasis styling defaults (interactive / MapLibre tier)
+# ---------------------------------------------------------------------------
+#
+# ``emphasis="data"`` (default) makes a newly-added data layer visually pop
+# against the full-strength basemap; ``emphasis="blend"`` reproduces the prior
+# soft composite exactly. These are DEFAULTS only -- an explicit user style kwarg
+# (color/opacity/width on the Layer) always wins, so the per-layer builders mark
+# which emphasis-controlled paint keys they left at default and ``build_html``
+# fills those (and only those) per the chosen emphasis.
+_MAPLIBRE_EMPHASIS = {
+    "data": {
+        "fill_opacity": 0.85,  # firmer than blend's prior 0.8; pop is the outline
+        "fill_outline_color": "#222222",
+        "line_width": 2.0,
+        "raster_opacity": 1.0,
+    },
+    "blend": {
+        # EXACTLY prior behavior (the "current look" the user wants preserved):
+        # vector_layer's factory fill-opacity was 0.8, raster default 1.0, no outline.
+        "fill_opacity": 0.8,
+        "fill_outline_color": None,  # no distinct outline (prior behavior)
+        "line_width": 1.0,
+        "raster_opacity": 1.0,
+    },
+}
+
+# Sidecar key recorded on each built MapLibre layer dict: lists the emphasis-
+# controlled paint properties the user did NOT set, so build_html may fill them.
+_GBX_EMPHASIS = "_gbx_emphasis"
+
+
+def _validate_emphasis(emphasis: str) -> str:
+    if emphasis not in _MAPLIBRE_EMPHASIS:
+        raise ValueError(f"emphasis must be 'data' or 'blend'; got {emphasis!r}")
+    return emphasis
+
+
+def _apply_emphasis_paint(layer_dict: dict, emphasis: str) -> dict:
+    """Fill the emphasis-controlled paint keys this layer left at default.
+
+    The per-layer builders record an ``_gbx_emphasis`` sidecar listing which
+    paint keys are emphasis-defaultable (i.e. the user did not set them). This
+    rewrites only those keys per *emphasis* and strips the sidecar. Keys the
+    user set explicitly are left untouched.
+    """
+    pending = layer_dict.pop(_GBX_EMPHASIS, None)
+    if not pending:
+        return layer_dict
+    vals = _MAPLIBRE_EMPHASIS[emphasis]
+    paint = layer_dict.setdefault("paint", {})
+    for key in pending:
+        if key == "fill-opacity":
+            paint["fill-opacity"] = vals["fill_opacity"]
+        elif key == "fill-outline-color":
+            if vals["fill_outline_color"] is not None:
+                paint["fill-outline-color"] = vals["fill_outline_color"]
+            else:
+                paint.pop("fill-outline-color", None)
+        elif key == "line-width":
+            paint["line-width"] = vals["line_width"]
+        elif key == "raster-opacity":
+            paint["raster-opacity"] = vals["raster_opacity"]
+    return layer_dict
+
 
 def _emit(msg: str, *, level: int = 1, debug_mode: int = DEFAULT_DEBUG_MODE) -> None:
     """Print a ``[vizx]`` status line only when ``debug_mode >= level``.
@@ -90,8 +155,8 @@ def _resolve_embed_budget(max_embed_mb, set_cell_max_output: bool) -> float:
 
     An explicit ``max_embed_mb`` always wins. Otherwise the default tracks whether
     the Serverless cell-output cap will be raised: ``MAX_EMBED_MB_CAP_RAISED``
-    (18 MB, sized for the 20 MB max cap) when ``set_cell_max_output`` is on, else
-    the conservative ``DEFAULT_MAX_EMBED_MB`` (8 MB, safe for the 10 MB default cap).
+    (6 MB, sized for the 20 MB max cap) when ``set_cell_max_output`` is on, else
+    the conservative ``DEFAULT_MAX_EMBED_MB`` (3 MB, safe for the 10 MB default cap).
     """
     if max_embed_mb is not None:
         return max_embed_mb
@@ -148,7 +213,11 @@ _DEFAULT_RASTER_MAX_PX = 1024
 
 
 def layer_to_sources_layers(
-    layer, idx: int, *, raster_max_px: int = _DEFAULT_RASTER_MAX_PX
+    layer,
+    idx: int,
+    *,
+    raster_max_px: int = _DEFAULT_RASTER_MAX_PX,
+    emphasis: str = "data",
 ) -> tuple[dict, list[dict], int]:
     """Convert *layer* to MapLibre GL ``(sources, layers, embed_bytes)``.
 
@@ -157,6 +226,11 @@ def layer_to_sources_layers(
         idx:          Integer index; drives the source key ``f"gbx{idx}"`` and
                       layer ids ``f"gbx{idx}-{type}"``.
         raster_max_px: Maximum pixel size (longest edge) for decimated raster PNG.
+        emphasis:     ``"data"`` (default) makes the data layer pop against the
+                      basemap; ``"blend"`` reproduces the prior soft composite.
+                      Each built layer records which emphasis-controlled paint
+                      keys the user did NOT set via a ``_gbx_emphasis`` sidecar;
+                      :func:`build_html` fills those per its own ``emphasis``.
 
     Returns:
         ``(sources, layers, embed_bytes)`` where *sources* is a dict of MapLibre
@@ -164,6 +238,7 @@ def layer_to_sources_layers(
         *embed_bytes* reports the driver-side payload (GeoJSON bytes for vector/grid,
         PNG bytes for raster, archive bytes for pmtiles embed mode, 0 for url mode).
     """
+    _validate_emphasis(emphasis)
     kind = getattr(layer, "kind", None)
     if kind in ("vector", "grid"):
         return _vector_or_grid(layer, idx)
@@ -185,6 +260,7 @@ def build_html(
     basemap: str = "carto-positron",
     center=None,
     zoom=None,
+    emphasis: str = "data",
 ) -> str:
     """Assemble N per-layer adapter outputs into one self-contained HTML viewer.
 
@@ -197,11 +273,17 @@ def build_html(
                   the base layer.  Pass ``"none"`` to render a blank dark canvas.
         center:   ``[lon, lat]`` map centre (default San Francisco ``[-122.43, 37.77]``).
         zoom:     Initial zoom level (default ``11``).
+        emphasis: ``"data"`` (default) fills the emphasis-controlled paint keys so
+                  data layers pop against the basemap; ``"blend"`` reproduces the
+                  prior soft composite. Per-layer ``_gbx_emphasis`` sidecars name
+                  the keys the user left at default — only those are filled, so
+                  explicit user style kwargs always win.
 
     Returns:
         A self-contained HTML string with inline ``<script>`` tags, SRI hashes,
         and base64-embedded PMTiles archives (or URL-referenced ones).
     """
+    _validate_emphasis(emphasis)
     sources: dict = {}
     layers: list = []
     pm_pairs: list[tuple[str, dict]] = []
@@ -218,7 +300,19 @@ def build_html(
                 sources[sid] = clean
             else:
                 sources[sid] = sdef
-        layers.extend(ls)
+        # Apply emphasis to each layer's emphasis-controlled paint keys, then strip
+        # the _gbx_emphasis sidecar (MapLibre rejects unknown layer keys). Copy so
+        # the caller's prepared dicts stay intact across repeated build_html calls
+        # (prepare_layers/audit_layers call build_html for measurement first).
+        for ly in ls:
+            if _GBX_EMPHASIS in ly:
+                ly = {
+                    **ly,
+                    "paint": dict(ly.get("paint", {})),
+                    _GBX_EMPHASIS: ly[_GBX_EMPHASIS],
+                }
+                _apply_emphasis_paint(ly, emphasis)
+            layers.append(ly)
 
     if basemap and basemap != "none":
         base_js = f'"{_CARTO_STYLE}"'
@@ -561,6 +655,7 @@ def audit_layers(
     *,
     max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
+    emphasis: str = "data",
 ) -> dict:
     """Dry pre-flight embed-size audit — no render, no displayHTML.
 
@@ -615,7 +710,7 @@ def audit_layers(
     for idx, layer in enumerate(lyrs):
         kind = getattr(layer, "kind", None)
         if kind == "pmtiles" and _pmtiles_is_url(layer):
-            entry = layer_to_sources_layers(layer, idx)
+            entry = layer_to_sources_layers(layer, idx, emphasis=emphasis)
             prepared.append(entry)
             continue
         if kind == "pmtiles":
@@ -628,14 +723,14 @@ def audit_layers(
                 prepared.append(None)
                 continue
         try:
-            entry = layer_to_sources_layers(layer, idx)
+            entry = layer_to_sources_layers(layer, idx, emphasis=emphasis)
             prepared.append(entry)
         except Exception:
             prepared.append(None)
 
     valid_prepared = [e for e in prepared if e is not None]
     if valid_prepared:
-        total_embed_bytes = len(build_html(valid_prepared).encode())
+        total_embed_bytes = len(build_html(valid_prepared, emphasis=emphasis).encode())
     else:
         # All layers were over-budget individually — estimate the RENDERED embed
         # size as the base64-inflated (~4/3x) sum of raw archive bytes, matching
@@ -660,6 +755,7 @@ def prepare_layers(
     max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
     fallback: bool = True,
+    emphasis: str = "data",
 ) -> dict:
     """Decide, per layer, whether the interactive map can be embedded or must fall back.
 
@@ -738,7 +834,7 @@ def prepare_layers(
         # Always interactive; skip budget accounting entirely.                #
         # ------------------------------------------------------------------ #
         if kind == "pmtiles" and _pmtiles_is_url(layer):
-            entry = layer_to_sources_layers(layer, idx)
+            entry = layer_to_sources_layers(layer, idx, emphasis=emphasis)
             prepared.append(entry)
             continue
 
@@ -776,7 +872,7 @@ def prepare_layers(
         # ------------------------------------------------------------------ #
         # Rung 2 (normal) -- prepare via layer_to_sources_layers.            #
         # ------------------------------------------------------------------ #
-        entry = layer_to_sources_layers(layer, idx)
+        entry = layer_to_sources_layers(layer, idx, emphasis=emphasis)
         prepared.append(entry)
 
     # ------------------------------------------------------------------ #
@@ -790,7 +886,7 @@ def prepare_layers(
         # Budget gate: measure actual assembled-HTML size.
         # (build_html is non-mutating -- safe to call for measurement.)
         valid_prepared = [e for e in prepared if e is not None]
-        html_bytes = len(build_html(valid_prepared).encode())
+        html_bytes = len(build_html(valid_prepared, emphasis=emphasis).encode())
         if html_bytes <= budget_bytes:
             if simplified_labels:
                 for lbl in simplified_labels:
@@ -935,31 +1031,42 @@ def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
 
     layers: list[dict] = []
     color = layer.color or "#3388ff"
-    opacity = layer.opacity if layer.opacity is not None else 0.5
+    # User-set opacity / width win over emphasis defaults; record the keys left at
+    # default in the _gbx_emphasis sidecar so build_html fills them per emphasis.
+    user_opacity = layer.opacity is not None
+    user_width = layer.width is not None
+    opacity = layer.opacity if user_opacity else 0.5
 
     # Polygons → fill + outline line.
     if geom_types & {"Polygon", "MultiPolygon"}:
         if getattr(layer, "fill", True):
+            fill_paint = {"fill-color": color, "fill-opacity": opacity}
+            fill_pending = []
+            if not user_opacity:
+                fill_pending.append("fill-opacity")
+            # The contrasting dark outline is purely emphasis-driven (no user
+            # kwarg controls it), so it is always emphasis-defaultable.
+            fill_pending.append("fill-outline-color")
             layers.append(
                 {
                     "id": f"{sid}-fill",
                     "type": "fill",
                     "source": sid,
-                    "paint": {
-                        "fill-color": color,
-                        "fill-opacity": opacity,
-                    },
+                    "paint": fill_paint,
+                    _GBX_EMPHASIS: fill_pending,
                 }
             )
+        line_paint = {
+            "line-color": layer.color or "#1f6fb5",
+            "line-width": layer.width or 1.0,
+        }
         layers.append(
             {
                 "id": f"{sid}-line",
                 "type": "line",
                 "source": sid,
-                "paint": {
-                    "line-color": layer.color or "#1f6fb5",
-                    "line-width": layer.width or 1.0,
-                },
+                "paint": line_paint,
+                _GBX_EMPHASIS: [] if user_width else ["line-width"],
             }
         )
     # Lines (no polygon — those already got an outline above).
@@ -973,6 +1080,7 @@ def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
                     "line-color": layer.color or "#1f6fb5",
                     "line-width": layer.width or 1.0,
                 },
+                _GBX_EMPHASIS: [] if user_width else ["line-width"],
             }
         )
     # Points.
@@ -1166,13 +1274,13 @@ def _raster(
             "coordinates": corners,
         }
     }
+    user_opacity = layer.opacity is not None
     lyr = {
         "id": f"{sid}-raster",
         "type": "raster",
         "source": sid,
-        "paint": {
-            "raster-opacity": layer.opacity if layer.opacity is not None else 1.0
-        },
+        "paint": {"raster-opacity": layer.opacity if user_opacity else 1.0},
+        _GBX_EMPHASIS: [] if user_opacity else ["raster-opacity"],
     }
     embed_bytes = len(png_b64.encode())
     return src, [lyr], embed_bytes
@@ -1279,16 +1387,14 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
     src[sid]["_gbx_pmtiles"] = info
 
     if is_raster:
+        user_opacity = layer.opacity is not None
         layers: list[dict] = [
             {
                 "id": f"{sid}-raster",
                 "type": "raster",
                 "source": sid,
-                "paint": {
-                    "raster-opacity": (
-                        layer.opacity if layer.opacity is not None else 1.0
-                    )
-                },
+                "paint": {"raster-opacity": layer.opacity if user_opacity else 1.0},
+                _GBX_EMPHASIS: [] if user_opacity else ["raster-opacity"],
             }
         ]
     else:
@@ -1298,6 +1404,9 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
         # (e.g. url-mode archives that cannot be pre-inspected).
         vector_names = info.get("vector_layer_names", [])
         source_layer = vector_names[0] if vector_names else "buildings"
+        user_opacity = layer.opacity is not None
+        fill_pending = [] if user_opacity else ["fill-opacity"]
+        fill_pending.append("fill-outline-color")
         layers = [
             {
                 "id": f"{sid}-fill",
@@ -1306,8 +1415,9 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
                 "source-layer": source_layer,
                 "paint": {
                     "fill-color": layer.color or "#c33",
-                    "fill-opacity": layer.opacity if layer.opacity is not None else 0.5,
+                    "fill-opacity": layer.opacity if user_opacity else 0.5,
                 },
+                _GBX_EMPHASIS: fill_pending,
             }
         ]
 
