@@ -55,9 +55,9 @@ def _json_for_script(obj) -> str:
 # ---------------------------------------------------------------------------
 
 _MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
-_MAPLIBRE_JS_SRI = "sha384-REPLACE_WITH_PINNED_HASH"  # pinned in Task 12
+_MAPLIBRE_JS_SRI = "sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj"
 _PMTILES_JS = "https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"
-_PMTILES_JS_SRI = "sha384-REPLACE_WITH_PINNED_HASH"  # pinned in Task 12
+_PMTILES_JS_SRI = "sha384-QfbOCebHNw8pQiPAOd2IFee2v2A5VYZxBk0+JGZ5H+3mfzVIp6zsQNkTsfGJot93"
 _CARTO_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 _DEFAULT_RASTER_MAX_PX = 1024
