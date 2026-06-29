@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Union
 
@@ -636,14 +637,15 @@ def simplify_tiles_from_archive(
             str(src),
         ]
 
-        if merged.get("budget_mb") and merged["budget_mb"] != 64:
+        if merged["budget_mb"] != 64:
             # budget_mb accepted in spec but tile-join has no equivalent flag;
-            # log so callers know it was ignored.
-            log.warning(
-                "simplify_tiles_from_archive: budget_mb=%s ignored — "
-                "tile-join does not support per-tile byte budgets. "
-                "Use simplify_tiles_from_source for budget-trimmed output.",
-                merged["budget_mb"],
+            # warn so callers know it was ignored.
+            warnings.warn(
+                f"simplify_tiles_from_archive: budget_mb={merged['budget_mb']} is ignored — "
+                "tile-join only trims by zoom, not byte budget. To enforce a byte budget, "
+                "re-tile from source with simplify_tiles_from_source.",
+                UserWarning,
+                stacklevel=2,
             )
 
         log.debug("tile-join argv: %s", argv)

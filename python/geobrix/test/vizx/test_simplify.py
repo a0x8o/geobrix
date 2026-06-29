@@ -1,4 +1,5 @@
 import shutil
+import warnings
 
 import pytest
 
@@ -124,9 +125,13 @@ def test_archive_downzoom_trims(tmp_path):
     src = tmp_path / "full.pmtiles"
     simplify_tiles_from_source(gdf, spec={"max_z": 8}, out_path=str(src))
     out = tmp_path / "ov.pmtiles"
-    simplify_tiles_from_archive(
-        str(src), spec={"max_z": 4, "budget_mb": 4}, out_path=str(out)
-    )
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        simplify_tiles_from_archive(
+            str(src), spec={"max_z": 4, "budget_mb": 4}, out_path=str(out)
+        )
+    # Assert that budget_mb warning was raised
+    assert any("budget_mb" in str(x.message) and issubclass(x.category, UserWarning) for x in w)
     assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
 
 
