@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, Callable, Optional
+import threading
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Optional, Tuple
 
 import traitlets
 
@@ -39,6 +42,166 @@ from databricks.labs.gbx.vizx._maplibre import (
     layer_to_sources_layers,
 )
 from databricks.labs.gbx.vizx._simplify import normalize_spec, simplify_tiles_from_source
+
+
+# ---------------------------------------------------------------------------
+# Tile cache
+# ---------------------------------------------------------------------------
+
+_TileKey = Tuple[int, int, int]  # (z, x, y)
+
+
+class _TileCache:
+    """Bounded LRU tile cache keyed by ``(z, x, y)``.
+
+    Eviction policy (priority order when full):
+    1. Never-viewed (speculatively prefetched) entries are evicted before viewed ones,
+       so eager prefetch cannot push out real user-visited tiles.
+    2. Within each class (viewed / unviewed), evict the least-recently used.
+
+    # TODO: distance-aware eviction (evict farthest from current viewport center) is
+    # a documented future refinement — see Task 13b plan notes.
+    """
+
+    def __init__(self, max_entries: int = 64) -> None:
+        self._max = max_entries
+        # Separate LRU-ordered dicts for each class.
+        # OrderedDict preserves insertion order; move_to_end keeps LRU at front.
+        self._viewed: OrderedDict[_TileKey, bytes] = OrderedDict()
+        self._prefetched: OrderedDict[_TileKey, bytes] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: _TileKey) -> Optional[bytes]:
+        """Return cached bytes for *key*, updating recency, or ``None`` on miss."""
+        with self._lock:
+            if key in self._viewed:
+                self._viewed.move_to_end(key)
+                return self._viewed[key]
+            if key in self._prefetched:
+                self._prefetched.move_to_end(key)
+                return self._prefetched[key]
+            return None
+
+    def put(self, key: _TileKey, value: bytes, *, viewed: bool) -> None:
+        """Store *value* under *key*.
+
+        ``viewed=True`` marks a tile that was actually served to the viewport;
+        ``viewed=False`` marks a speculatively prefetched tile.  If the entry
+        already exists in the other class, it is promoted/demoted accordingly.
+        """
+        with self._lock:
+            # Remove from whichever class currently holds this key (if any).
+            self._viewed.pop(key, None)
+            self._prefetched.pop(key, None)
+
+            target = self._viewed if viewed else self._prefetched
+            target[key] = value
+            target.move_to_end(key)
+
+            # Evict if over capacity: unviewed first, then viewed (LRU within each).
+            while len(self._viewed) + len(self._prefetched) > self._max:
+                if self._prefetched:
+                    # Evict LRU unviewed (first item = oldest).
+                    self._prefetched.popitem(last=False)
+                else:
+                    # All entries are viewed — evict LRU viewed.
+                    self._viewed.popitem(last=False)
+
+    def __contains__(self, key: _TileKey) -> bool:
+        with self._lock:
+            return key in self._viewed or key in self._prefetched
+
+
+# ---------------------------------------------------------------------------
+# Prefetch worker
+# ---------------------------------------------------------------------------
+
+
+class _PrefetchWorker:
+    """Background daemon worker that prefetches the 8-neighbor ring around
+    each served viewport tile.
+
+    Coalescing: each call to ``on_viewport_served`` increments a generation
+    counter.  The worker checks the generation before each tile fetch; if the
+    generation has advanced the viewport has moved and stale work is skipped.
+
+    Test-injectable: pass *tiler* (a ``(z, x, y) -> bytes`` callable) and
+    call ``flush()`` to synchronously wait for pending prefetch to finish.
+    Production callers pass *tiler* = None and supply a real tiler separately
+    via ``set_tiler``.
+    """
+
+    def __init__(
+        self,
+        cache: _TileCache,
+        tiler: Optional[Callable[[int, int, int], bytes]] = None,
+        *,
+        max_workers: int = 1,
+    ) -> None:
+        self._cache = cache
+        self._tiler = tiler
+        self._gen = 0
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="gbx-prefetch")
+        self._futures: list = []
+
+    def set_tiler(self, tiler: Callable[[int, int, int], bytes]) -> None:
+        self._tiler = tiler
+
+    def on_viewport_served(self, *, z: int, x: int, y: int) -> None:
+        """Called after a tile at ``(z, x, y)`` has been served to the viewport.
+
+        Schedules prefetch of the 8-neighbor ring in the background.
+        A new call supersedes any in-flight prefetch for a stale viewport.
+        """
+        with self._lock:
+            self._gen += 1
+            gen = self._gen
+
+        neighbors = [
+            (z, x + dx, y + dy)
+            for dx in (-1, 0, 1)
+            for dy in (-1, 0, 1)
+            if not (dx == 0 and dy == 0)
+        ]
+
+        future = self._executor.submit(self._prefetch_ring, neighbors, gen)
+        with self._lock:
+            self._futures.append(future)
+
+    def _prefetch_ring(self, neighbors: list, gen: int) -> None:
+        for key in neighbors:
+            with self._lock:
+                current_gen = self._gen
+            if current_gen != gen:
+                # Viewport has moved on — skip remaining stale work.
+                break
+            if key in self._cache:
+                continue
+            if self._tiler is not None:
+                try:
+                    data = self._tiler(*key)
+                    # Only write if generation is still current.
+                    with self._lock:
+                        still_current = self._gen == gen
+                    if still_current:
+                        self._cache.put(key, data, viewed=False)
+                except Exception:
+                    pass
+
+    def flush(self) -> None:
+        """Synchronously wait for all pending prefetch futures to complete."""
+        with self._lock:
+            futures = list(self._futures)
+            self._futures.clear()
+        for f in futures:
+            try:
+                f.result(timeout=30)
+            except Exception:
+                pass
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +443,7 @@ def _build_dynamic_widget(
     on_viewport: Optional[Callable],
     center: Optional[list],
     zoom: Optional[int],
+    prefetch: bool = True,
 ) -> anywidget.AnyWidget:
     """Internal factory — builds the AnyWidget subclass and wires the comm."""
     from databricks.labs.gbx.vizx._layers import as_layers
@@ -368,20 +532,63 @@ def _build_dynamic_widget(
 
     widget = _GbxDynamicWidget()
 
+    # --- Cache + prefetch setup ---
+    _cache = _TileCache()
+
+    # Prefetch always uses the default tiler (never the user's custom on_viewport),
+    # so custom callbacks are called only for real viewport requests.
+    _default_callback = _default_on_viewport(first_source, max_z, spec)
+
+    def _tiler_for_prefetch(z: int, x: int, y: int) -> bytes:
+        # Prefetch with a synthetic bbox; the default tiler ignores bbox currently.
+        return _default_callback([], float(z))
+
+    _prefetch_worker: Optional[_PrefetchWorker] = (
+        _PrefetchWorker(cache=_cache, tiler=_tiler_for_prefetch) if prefetch else None
+    )
+
     def _handle_msg(widget_instance, content, buffers=None):
         """Python-side handler for JS model.send({bbox, zoom}) messages."""
         if not isinstance(content, dict):
             return
         bbox = content.get("bbox")
-        zoom = content.get("zoom")
-        if bbox is None or zoom is None:
+        zoom_val = content.get("zoom")
+        if bbox is None or zoom_val is None:
             return
         # Seam gate: only act when zoom > max_z.
-        if _viewport_payload(bbox=bbox, zoom=zoom, max_z=_max_z_val) is None:
+        if _viewport_payload(bbox=bbox, zoom=zoom_val, max_z=_max_z_val) is None:
             return
-        result = _callback(bbox, zoom)
+
+        # Derive a tile key from (zoom, bbox-centre) for cache lookup.
+        # Use a simple integer zoom as the z coordinate.
+        z = int(zoom_val)
+        west, south, east, north = bbox
+        cx = (west + east) / 2
+        cy = (south + north) / 2
+        # Convert lon/lat to tile XY at zoom z.
+        import math
+        lat_rad = math.radians(max(-85.0511, min(85.0511, cy)))
+        n = 2 ** z
+        tx = int((cx + 180.0) / 360.0 * n)
+        ty = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
+        key = (z, tx, ty)
+
+        # Cache-first: serve from cache on hit, prepare + cache on miss.
+        cached = _cache.get(key)
+        if cached is not None:
+            result = cached
+            _cache.put(key, result, viewed=True)
+        else:
+            result = _callback(bbox, zoom_val)
+            if isinstance(result, (bytes, bytearray)):
+                _cache.put(key, bytes(result), viewed=True)
+
         if isinstance(result, (bytes, bytearray)):
             widget_instance.detail = base64.b64encode(bytes(result)).decode("ascii")
+
+        # Schedule prefetch of the neighbor ring in the background.
+        if _prefetch_worker is not None:
+            _prefetch_worker.on_viewport_served(z=z, x=tx, y=ty)
 
     widget.on_msg(_handle_msg)
     # Expose the handler under a test-accessible name for direct invocation in tests.
@@ -402,6 +609,7 @@ def plot_interactive_dynamic(
     on_viewport: Optional[Callable] = None,
     center: Optional[list] = None,
     zoom: Optional[int] = None,
+    prefetch: bool = True,
     **kw: Any,
 ) -> anywidget.AnyWidget:
     """Render an AnyWidget-based dynamic zoom cut-over map.
@@ -436,6 +644,11 @@ def plot_interactive_dynamic(
         center:               ``[lon, lat]`` map centre (default
                               ``[-122.43, 37.77]``).
         zoom:                 Initial zoom level (default ``11``).
+        prefetch:             Enable predictive tile prefetch (default ``True``).
+                              When ``True``, a background daemon thread prepares the
+                              8-neighbor ring around each served viewport tile into a
+                              bounded LRU cache so panning to an adjacent tile is
+                              served instantly.  Set to ``False`` to disable.
         **kw:                 Reserved for future keyword arguments (ignored).
 
     Returns:
@@ -449,4 +662,5 @@ def plot_interactive_dynamic(
         on_viewport=on_viewport,
         center=center,
         zoom=zoom,
+        prefetch=prefetch,
     )
