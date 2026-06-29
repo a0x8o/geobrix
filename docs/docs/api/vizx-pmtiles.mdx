@@ -10,11 +10,9 @@ import vizxViewers from '!!raw-loader!../../tests/python/api/vizx_viewers.py';
 
 [VizX Overview](./vizx) · [Multi-Layer Compositor](./vizx-layers) · [Vector](./vizx-vector) · [Raster](./vizx-raster)
 
-## PMTiles viewers
-
 These helpers render a `.pmtiles` archive or a Cloud-Optimized GeoTIFF in a notebook — driver-side, no tile server, no distributed op. See the [Helios notebooks](../notebooks/helios) for a worked end-to-end example: `plot_pmtiles` renders all three archives (vector MVT, raster XYZ, hillshade) and `plot_cog` visualizes a 3DEP terrain COG inline in a Databricks notebook.
 
-### `pmtiles_info`
+## `pmtiles_info`
 
 ```python
 from databricks.labs.gbx.pmtiles import pmtiles_info
@@ -42,7 +40,7 @@ Parse a `.pmtiles` archive header and count tiles. `path` is a filesystem path (
   functionName="pmtiles_info_example"
 />
 
-### `plot_pmtiles`
+## `plot_pmtiles`
 
 ```python
 plot_pmtiles(
@@ -89,7 +87,7 @@ plot_pmtiles("/Volumes/main/my_schema/my_vol/tiles.pmtiles")
 plot_pmtiles(archive_bytes, max_embed_mb=256)
 ```
 
-### `plot_cog`
+## `plot_cog`
 
 ```python
 plot_cog(
