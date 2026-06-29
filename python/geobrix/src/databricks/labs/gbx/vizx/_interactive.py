@@ -10,23 +10,54 @@ Requires the [vizx] extra.
 
 from __future__ import annotations
 
+try:
+    from IPython import get_ipython
+except Exception:  # noqa: BLE001 — IPython absent (plain Python)
+
+    def get_ipython():  # type: ignore[misc]
+        return None
+
 
 def _notebook_display_html():
     """Return Databricks' notebook ``displayHTML`` callable, or None.
 
-    ``displayHTML`` is injected by Databricks into the *notebook's* user
-    namespace, not into library module globals — so a bare ``displayHTML(...)``
-    from inside this module raises ``NameError``. Reach it via the IPython
-    user namespace instead. Returns None when unavailable (plain Python,
-    no IPython, etc.).
-    """
-    try:
-        from IPython import get_ipython
+    GeoBrix vizx targets Databricks notebooks only. ``displayHTML`` renders into
+    a sandboxed iframe and is NOT subject to the Jupyter/IPython cell-output
+    size cap — so large base64-embedded PMTiles maps must go through it, never
+    through ``IPython.display.HTML`` (which IS capped and silently drops the
+    map with "Output too large").
 
+    Databricks exposes ``displayHTML`` differently across runtimes:
+      1. Classic DBR notebook kernels inject it into the IPython *user
+         namespace* (``get_ipython().user_ns``).
+      2. Serverless / newer kernels expose it via ``dbruntime.display`` instead,
+         where it is NOT in ``user_ns`` — so the user-ns-only lookup returns
+         None and callers wrongly degrade to the capped ``IPython.display.HTML``
+         path. Resolve that case explicitly.
+
+    Returns None only when no Databricks display channel is reachable (plain
+    Python, no IPython, no dbruntime).
+    """
+    # 1. IPython user namespace (classic DBR notebooks).
+    try:
         ip = get_ipython()
-        return ip.user_ns.get("displayHTML") if ip is not None else None
-    except Exception:  # noqa: BLE001 — IPython absent or misbehaving
-        return None
+        if ip is not None:
+            dh = ip.user_ns.get("displayHTML")
+            if dh is not None:
+                return dh
+    except Exception:  # noqa: BLE001 — IPython misbehaving
+        pass
+
+    # 2. dbruntime.display (Serverless / newer DBR kernels).
+    try:
+        from dbruntime.display import displayHTML  # type: ignore[import-not-found]
+
+        if displayHTML is not None:
+            return displayHTML
+    except Exception:  # noqa: BLE001 — not on a Databricks runtime
+        pass
+
+    return None
 
 
 def _format_audit_line(audit: dict, max_embed_mb: float) -> str:
