@@ -65,6 +65,23 @@ def test_widget_esm_references_maplibre():
     assert "maplibre" in w._esm.lower() or "maplibregl" in w._esm.lower()
 
 
+def test_esm_is_synced_to_frontend():
+    """_esm must appear in get_state() — i.e. it actually reaches the JS frontend."""
+    gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
+    w = plot_interactive_dynamic([vector_layer(gdf)], simplify_tiles_spec={"max_z": 8})
+    state = w.get_state()
+    # _esm must be in the synced state dict (proves anywidget registered it sync=True).
+    assert "_esm" in state, "_esm is not in get_state() — widget will render blank in a notebook"
+    # Sanity-check: the ESM content is present (not an empty/null stub).
+    esm_val = state["_esm"]
+    if isinstance(esm_val, (list, tuple)):
+        # anywidget may wrap as (value, metadata) buffer tuple
+        esm_val = esm_val[0]
+    assert "moveend" in esm_val, "_esm in state but content is wrong"
+    # detail trait must also be synced.
+    assert "detail" in state, "detail trait is not in get_state()"
+
+
 def test_custom_on_viewport_called():
     """A user-supplied on_viewport callback replaces the default tiler."""
     gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
@@ -87,6 +104,9 @@ def test_custom_on_viewport_called():
     w._gbx_handle_msg({"bbox": [-122.5, 37.7, -122.4, 37.8], "zoom": 12})
     assert len(calls) == 1
     assert calls[0] == ([-122.5, 37.7, -122.4, 37.8], 12)
+    # Prove the Python data-flow: _handle_msg must have base64-encoded the result
+    # into the detail trait (which syncs to the JS frontend).
+    assert w.detail != "", "detail trait is empty after on_viewport returned bytes"
 
 
 def test_custom_on_viewport_below_seam_not_called():

@@ -97,6 +97,8 @@ def _default_on_viewport(
     """
 
     def _tile_viewport(bbox: list[float], zoom: float) -> bytes:
+        # bbox is currently unused: full-source re-tile at min_z=max_z+1 (no
+        # viewport clipping yet).  Kept in signature for future viewport-clipping.
         detail_min_z = max_z + 1
         detail_max_z = max(int(zoom), detail_min_z)
         viewport_spec = dict(spec)
@@ -357,11 +359,12 @@ def _build_dynamic_widget(
     _max_z_val = max_z
 
     class _GbxDynamicWidget(anywidget.AnyWidget):
-        _esm = traitlets.Unicode(_esm_val).tag(sync=False)
+        # Plain str — anywidget sees has_trait("_esm") == False and registers it
+        # as a sync=True trait automatically.  A traitlets.Unicode declaration
+        # here causes anywidget to skip that step → _esm never reaches the JS
+        # frontend and the widget renders blank.
+        _esm = _esm_val
         detail = traitlets.Unicode("").tag(sync=True)
-
-    # Override the _esm class attribute so AnyWidget picks it up.
-    _GbxDynamicWidget._esm = _esm_val  # type: ignore[attr-defined]
 
     widget = _GbxDynamicWidget()
 
