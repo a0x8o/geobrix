@@ -2562,10 +2562,11 @@ def rst_tilexyz(
         size:       Output tile side in pixels, in (0, 4096]. Default 256.
         resampling: GDAL warp resampling name (near, bilinear (default), cubic,
                     cubicspline, lanczos, average, mode, max, min, med, q1, q3).
-        rescale:    8-bit encoding contrast. "auto" (default) rescales non-8-bit
+        rescale:    8-bit encoding contrast: "auto" (default) rescales non-8-bit
                     rasters by whole-dataset per-band min/max and passes uint8
                     through unchanged; "none" keeps the raw full-dtype-range
-                    mapping; a (min, max) pair sets explicit bounds.
+                    mapping. (An explicit (min, max) pair is supported by the
+                    direct core/UDF API; see the Note below.)
 
     Note:
         The ``rescale`` Column wrapper supports the ``"auto"``/``"none"`` string
@@ -2577,10 +2578,19 @@ def rst_tilexyz(
         return a transparent RGBA PNG of ``size`` x ``size`` — NEVER null — so
         slippy-map servers always get a 200-status body.
     """
+    if isinstance(rescale, (tuple, list)):
+        raise ValueError(
+            "rst_tilexyz: an explicit (min, max) rescale tuple is not supported "
+            "through the Column API; pass rescale='auto' or 'none' (or a Column), "
+            "or use the core/UDF path for explicit bounds."
+        )
     fmt = f.lit(format) if isinstance(format, str) else _col(format)
     sz = f.lit(size) if isinstance(size, int) else _col(size)
     resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
-    rsc = f.lit(rescale) if isinstance(rescale, str) else _col(rescale)
+    if isinstance(rescale, str):
+        rsc = f.lit(rescale)
+    else:
+        rsc = _col(rescale)
     return _tilexyz_udf(_col(tile), _col(z), _col(x), _col(y), fmt, sz, resamp, rsc)
 
 
