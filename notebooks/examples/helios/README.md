@@ -2,10 +2,6 @@
 
 A four-notebook series that takes one San Francisco bounding box and turns it into self-contained [PMTiles](https://protomaps.com/docs/pmtiles) archives — one per data modality — then shards a layer into a multi-archive mosaic for web-scale delivery, using [GeoBrix](https://databrickslabs.github.io/geobrix/) on Databricks.
 
-![Interactive viewer preview](https://raw.githubusercontent.com/databrickslabs/geobrix/main/resources/images/diagrams/vizx/screenshots/vizx-interactive-hero.png)
-
-*A multi-layer interactive map (buildings + H3 grid) rendered by `plot_interactive` — self-contained MapLibre, no tile server.*
-
 The notebooks follow a solar site-selection narrative: identify candidate rooftops (vector, NB01), overlay an aerial basemap for visual validation (raster, NB02), and layer terrain-derived slope, aspect, and hillshade to score each candidate by sun exposure (elevation, NB03). A final notebook re-publishes the vector layer as a distributed, sharded PMTiles mosaic — many archives plus a catalog and manifest — for web-scale delivery (NB04). The single-archive outputs feed a single `plot_pmtiles` / `plot_cog` viewer at the end.
 
 > **Lightweight tier (Serverless) by default.** The series uses the lightweight tier — pure Python/PySpark bindings (`databricks.labs.gbx.pyrx`, `pyvx`) plus the `geobrix[light,stac,vizx,overture]` wheel installed by `config_nb` — so it runs on Serverless with no JAR. STAC discovery and download are handled by `StacClient` from `databricks.labs.gbx.stac` (see [STAC Client](https://databrickslabs.github.io/geobrix/docs/api/stac)); building footprints are fetched via `OvertureClient` from `databricks.labs.gbx.sample.overture`; visualization helpers come from `databricks.labs.gbx.vizx`. To run heavyweight instead, flip the commented *option-2* (`rasterx`) in `config_nb.ipynb` and attach the GeoBrix JAR + [GDAL init script](https://databrickslabs.github.io/geobrix/docs/installation) to a classic x86 cluster. See [Execution Tiers](https://databrickslabs.github.io/geobrix/docs/api/execution-tiers).

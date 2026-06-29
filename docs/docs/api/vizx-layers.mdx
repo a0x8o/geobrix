@@ -75,11 +75,6 @@ The static path renders every listed layer type except `pmtiles_layer` (which em
 
 ## Multi-layer interactive map
 
-<figure>
-  <img src="../../../resources/images/diagrams/vizx/screenshots/vizx-interactive-hero.png" alt="A multi-layer interactive map rendered by the VizX compositor — self-contained MapLibre, no tile server." style={{width: '100%'}} />
-  <figcaption>A multi-layer interactive map rendered by the VizX compositor — self-contained MapLibre, no tile server.</figcaption>
-</figure>
-
 `plot_interactive` converts each layer to MapLibre GL sources, assembles one self-contained HTML string, and either embeds it inline or streams it from a URL depending on the embed-size ladder above. Use `dry_run=True` to inspect the size audit without rendering.
 
 <CodeFromTest
