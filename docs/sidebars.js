@@ -90,7 +90,15 @@ const sidebars = {
         },
         { type: 'doc', id: 'api/vectorx-functions', label: 'VectorX' },
         { type: 'doc', id: 'api/gridx-functions', label: 'GridX' },
-        { type: 'doc', id: 'api/vizx', label: 'VizX' },
+        {
+          type: 'category',
+          label: 'VizX',
+          collapsed: false,
+          link: { type: 'doc', id: 'api/vizx' },
+          items: [
+            'api/vizx-layers',
+          ],
+        },
         { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
         { type: 'doc', id: 'api/stac', label: 'STAC' },
         {

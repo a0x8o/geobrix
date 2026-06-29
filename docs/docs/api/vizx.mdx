@@ -485,8 +485,23 @@ Requires the `[vizx]` extra plus `rasterio`. Integer rasters with values above 2
 
 When you need raster math that isn't in the `rst_*` surface, drop down to NumPy / rasterio per tile with the [pyrx escape hatches](./raster-functions#escape-hatches) (`tile_to_numpy`, `rst_apply`).
 
+## Multi-layer compositor
+
+To overlay **multiple layer types** (vector, raster, DGGS grid, and PMTiles) in a single map — and to understand the `>64 MB` embed-size ladder, the `audit_layers` proactive check, and the ephemeral-vs-durable `simplify_tiles` story — see the dedicated [Multi-Layer Compositor](./vizx-layers) page.
+
+```python
+from databricks.labs.gbx.vizx import plot_static, vector_layer, raster_layer
+
+# Raster DEM under a vector boundary — two layers, one axes, no basemap
+ax = plot_static([
+    raster_layer("/Volumes/main/geobrix_samples/geobrix-examples/nyc/dem.tif", label="dem"),
+    vector_layer(boundary_gdf, color="#3388ff", opacity=0.6, label="boundary"),
+], basemap=False)
+```
+
 ## Next steps
 
+- [Multi-Layer Compositor](./vizx-layers) — layer types, embed-size ladder, ephemeral/durable simplify, scale guidance
 - [RasterX Function Reference](./raster-functions)
 - [RasterX Readers](../readers/raster)
 - [STAC Client](./stac)
