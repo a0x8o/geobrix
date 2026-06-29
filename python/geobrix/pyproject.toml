@@ -142,7 +142,7 @@ vizx = [
     "mapclassify>=2.6,<3",
     "contextily>=1.5,<2",
     "anywidget>=0.9,<1",
-    "tippecanoe>=1.36",
+    "tippecanoe>=2.45,<3",
 ]
 
 [tool.coverage.run]

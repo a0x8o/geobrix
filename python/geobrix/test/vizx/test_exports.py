@@ -28,6 +28,12 @@ def test_sri_hashes_are_real():
     assert "REPLACE" not in m._MAPLIBRE_JS_SRI, (
         f"_MAPLIBRE_JS_SRI still contains placeholder: {m._MAPLIBRE_JS_SRI!r}"
     )
+    assert m._MAPLIBRE_CSS_SRI.startswith("sha384-"), (
+        f"_MAPLIBRE_CSS_SRI is not a real hash: {m._MAPLIBRE_CSS_SRI!r}"
+    )
+    assert "REPLACE" not in m._MAPLIBRE_CSS_SRI, (
+        f"_MAPLIBRE_CSS_SRI still contains placeholder: {m._MAPLIBRE_CSS_SRI!r}"
+    )
     assert m._PMTILES_JS_SRI.startswith("sha384-"), (
         f"_PMTILES_JS_SRI is not a real hash: {m._PMTILES_JS_SRI!r}"
     )
@@ -44,8 +50,10 @@ def test_build_html_contains_pinned_version_and_sri():
     assert "maplibre-gl@4.7.1" in html
     assert "pmtiles@3.2.0" in html
     assert "REPLACE" not in html
-    # integrity attributes are present (real SRI hashes)
+    # integrity attributes are present (real SRI hashes) for JS and CSS
     assert 'integrity="sha384-' in html
+    # CSS <link> tag has SRI integrity attribute
+    assert 'rel="stylesheet" integrity="sha384-' in html
 
 
 def test_layer_constructors_return_layer_objects():
