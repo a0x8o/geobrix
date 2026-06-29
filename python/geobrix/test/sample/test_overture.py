@@ -31,6 +31,7 @@ from databricks.labs.gbx.sample.overture import (  # noqa: E402
 def _fake_item_loader(href):
     """Offline item loader for tests: returns fake items keyed by href content."""
     if "sf-building" in href:
+
         class _A:
             href = "s3://overturemaps-us-west-2/release/buildings/building/sf.parquet"
 
@@ -40,6 +41,7 @@ def _fake_item_loader(href):
 
         return _Item()
     if "eu-place" in href:
+
         class _A:
             href = "s3://overturemaps-us-west-2/release/places/place/eu.parquet"
 
@@ -595,12 +597,16 @@ def test_download_via_cli_builds_meta(spark, tmp_path, monkeypatch):
     """_download_via_cli writes per-(theme,type) parquet and returns correct meta rows."""
     # Build a real parquet to serve as the CLI output.
     src = str(tmp_path / "cli_src.parquet")
-    spark.createDataFrame([Row(id=1), Row(id=2)]).coalesce(1).write.mode("overwrite").parquet(src)
+    spark.createDataFrame([Row(id=1), Row(id=2)]).coalesce(1).write.mode(
+        "overwrite"
+    ).parquet(src)
     part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
     src_file = os.path.join(src, part)
 
     # Monkeypatch CLI availability.
-    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(
+        ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps")
+    )
     monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
 
     # Monkeypatch subprocess.run to copy our test parquet to the -o path.
@@ -608,6 +614,7 @@ def test_download_via_cli_builds_meta(spark, tmp_path, monkeypatch):
         o_idx = cmd.index("-o")
         out_path = cmd[o_idx + 1]
         import shutil as _shutil
+
         _shutil.copyfile(src_file, out_path)
 
         class _Done:
@@ -661,6 +668,92 @@ def test_download_via_cli_builds_meta(spark, tmp_path, monkeypatch):
     assert row["href"] == ""
 
 
+def _fake_run_factory(outcomes, out_writer=None):
+    """Build a fake subprocess.run that yields the given (returncode, stderr)
+    outcomes in order. Optionally writes the -o output file on a 0-returncode call.
+    Records the flag (--stac / --no-stac) each call was made with.
+    """
+    calls = []
+
+    def _fake_run(cmd, **kwargs):
+        flag = (
+            "--stac"
+            if "--stac" in cmd
+            else ("--no-stac" if "--no-stac" in cmd else "?")
+        )
+        calls.append(flag)
+        rc, stderr = outcomes.pop(0)
+        if rc == 0 and out_writer is not None:
+            o_idx = cmd.index("-o")
+            out_writer(cmd[o_idx + 1])
+
+        class _R:
+            pass
+
+        r = _R()
+        r.returncode = rc
+        r.stdout = ""
+        r.stderr = stderr
+        return r
+
+    _fake_run.calls = calls
+    return _fake_run
+
+
+def test_run_overture_download_succeeds_first_stac_no_fallback(tmp_path, monkeypatch):
+    """First --stac attempt succeeds -> returns immediately, never tries --no-stac."""
+    out = str(tmp_path / "b.parquet")
+    fake = _fake_run_factory(
+        outcomes=[(0, "")],
+        out_writer=lambda p: open(p, "wb").write(b"x"),
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+    ov_mod._run_overture_download(
+        "/fake/overturemaps", bbox_str="0,0,1,1", type_="building", local_out=out
+    )
+    assert fake.calls == ["--stac"]  # no fallback needed
+    assert os.path.exists(out)
+
+
+def test_run_overture_download_retries_stac_then_falls_back_to_no_stac(
+    tmp_path, monkeypatch
+):
+    """--stac fails its retries, then --no-stac fallback succeeds (returns cleanly)."""
+    out = str(tmp_path / "b.parquet")
+    fake = _fake_run_factory(
+        outcomes=[
+            (1, "catalog timeout"),  # --stac retry 1
+            (1, "catalog timeout"),  # --stac retry 2 (retries=2 default)
+            (0, ""),  # --no-stac fallback succeeds
+        ],
+        out_writer=lambda p: open(p, "wb").write(b"x"),
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+    ov_mod._run_overture_download(
+        "/fake/overturemaps", bbox_str="0,0,1,1", type_="building", local_out=out
+    )
+    assert fake.calls == ["--stac", "--stac", "--no-stac"]
+    assert os.path.exists(out)
+
+
+def test_run_overture_download_raises_with_stderr_when_all_fail(tmp_path, monkeypatch):
+    """Every attempt fails -> RuntimeError that SURFACES the CLI stderr (not swallowed)."""
+    out = str(tmp_path / "b.parquet")
+    fake = _fake_run_factory(
+        outcomes=[
+            (1, "stac boom"),  # --stac retry 1
+            (1, "stac boom"),  # --stac retry 2
+            (1, "s3 access denied: the real cause"),  # --no-stac fallback
+        ],
+    )
+    monkeypatch.setattr(subprocess, "run", fake)
+    with pytest.raises(RuntimeError, match="s3 access denied: the real cause"):
+        ov_mod._run_overture_download(
+            "/fake/overturemaps", bbox_str="0,0,1,1", type_="building", local_out=out
+        )
+    assert fake.calls == ["--stac", "--stac", "--no-stac"]
+
+
 def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypatch):
     """_download_via_cli skips the subprocess when the target already exists and is valid.
 
@@ -673,7 +766,9 @@ def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypat
     part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
     src_file = os.path.join(src, part)
 
-    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(
+        ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps")
+    )
     monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
 
     call_count = {"n": 0}
@@ -683,6 +778,7 @@ def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypat
         o_idx = cmd.index("-o")
         out_path = cmd[o_idx + 1]
         import shutil as _shutil
+
         _shutil.copyfile(src_file, out_path)
 
         class _Done:
@@ -704,7 +800,15 @@ def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypat
         ]
     )
     assets = spark.createDataFrame(
-        [("buildings", "building", "", [-122.52, 37.70, -122.36, 37.83], "2026-06-17.0")],
+        [
+            (
+                "buildings",
+                "building",
+                "",
+                [-122.52, 37.70, -122.36, 37.83],
+                "2026-06-17.0",
+            )
+        ],
         schema,
     )
     client = OvertureClient(
@@ -717,15 +821,21 @@ def test_download_via_cli_idempotent_skips_when_valid(spark, tmp_path, monkeypat
 
     # First call — target absent; CLI must run.
     client._download_via_cli(assets, out_dir, bbox=bbox, validate=False)
-    assert call_count["n"] == 1, f"Expected 1 CLI call on first download, got {call_count['n']}"
+    assert (
+        call_count["n"] == 1
+    ), f"Expected 1 CLI call on first download, got {call_count['n']}"
 
     # Second call — target present + valid; CLI must NOT run.
     client._download_via_cli(assets, out_dir, bbox=bbox, validate=False)
-    assert call_count["n"] == 1, f"Expected still 1 CLI call after idempotent skip, got {call_count['n']}"
+    assert (
+        call_count["n"] == 1
+    ), f"Expected still 1 CLI call after idempotent skip, got {call_count['n']}"
 
     # Third call with force=True — must re-invoke the CLI even though target is valid.
     client._download_via_cli(assets, out_dir, bbox=bbox, validate=False, force=True)
-    assert call_count["n"] == 2, f"Expected 2 CLI calls after force=True, got {call_count['n']}"
+    assert (
+        call_count["n"] == 2
+    ), f"Expected 2 CLI calls after force=True, got {call_count['n']}"
 
 
 def test_download_via_cli_force_via_download_api(spark, tmp_path, monkeypatch):
@@ -735,7 +845,9 @@ def test_download_via_cli_force_via_download_api(spark, tmp_path, monkeypatch):
     part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
     src_file = os.path.join(src, part)
 
-    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(
+        ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps")
+    )
     monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
 
     call_count = {"n": 0}
@@ -745,6 +857,7 @@ def test_download_via_cli_force_via_download_api(spark, tmp_path, monkeypatch):
         o_idx = cmd.index("-o")
         out_path = cmd[o_idx + 1]
         import shutil as _shutil
+
         _shutil.copyfile(src_file, out_path)
 
         class _Done:
@@ -766,7 +879,15 @@ def test_download_via_cli_force_via_download_api(spark, tmp_path, monkeypatch):
         ]
     )
     assets = spark.createDataFrame(
-        [("buildings", "building", "", [-122.52, 37.70, -122.36, 37.83], "2026-06-17.0")],
+        [
+            (
+                "buildings",
+                "building",
+                "",
+                [-122.52, 37.70, -122.36, 37.83],
+                "2026-06-17.0",
+            )
+        ],
         schema,
     )
     client = OvertureClient(

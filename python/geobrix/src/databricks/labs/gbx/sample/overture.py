@@ -41,6 +41,52 @@ def _overturemaps_cli_available():
     """Return True if the official overturemaps CLI is runnable."""
     return _overturemaps_cli_path() is not None
 
+
+def _run_overture_download(cli, *, bbox_str, type_, local_out, retries=2):
+    """Run `overturemaps download` resiliently, returning on first success.
+
+    The ``--stac`` mode (the CLI default) makes an outbound HTTP call to the
+    Overture STAC catalog to limit which Parquet files are fetched. That hop can
+    fail transiently (catalog unreachable / timeout / TLS) and the CLI exits
+    non-zero. ``--no-stac`` skips the catalog and reads the S3 dataset directly —
+    it returns the SAME data (slightly faster, no catalog dependency).
+
+    Strategy: try ``--stac`` up to ``retries`` times, then fall back to
+    ``--no-stac`` once. Only if every attempt fails do we raise — with the last
+    command's STDERR included in the message (subprocess.run(check=True) otherwise
+    hides it inside CalledProcessError, leaving the failure undiagnosable).
+    """
+    base = [
+        str(cli),
+        "download",
+        f"--bbox={bbox_str}",
+        "-f",
+        "geoparquet",
+        "--type",
+        type_,
+        "-o",
+        local_out,
+    ]
+    # (flag, attempts): the STAC catalog path first (the optimization), then a
+    # single direct-S3 fallback that does not depend on the catalog being up.
+    attempts = [("--stac", max(1, retries)), ("--no-stac", 1)]
+    last = None
+    for flag, n in attempts:
+        cmd = [base[0], base[1], flag, *base[2:]]
+        for _ in range(n):
+            last = subprocess.run(cmd, capture_output=True, text=True)
+            if last.returncode == 0:
+                return
+    # All attempts (stac retries + no-stac fallback) failed — surface the cause.
+    stderr = (last.stderr or "").strip() if last is not None else ""
+    raise RuntimeError(
+        f"overturemaps download failed for type '{type_}' (bbox {bbox_str}) "
+        f"after --stac retries and a --no-stac fallback. "
+        f"Last exit code: {last.returncode if last else 'n/a'}. "
+        f"CLI stderr:\n{stderr or '(empty)'}"
+    )
+
+
 # Spark schema for discover() output — pinned; SP2/SP3 depend on it.
 _DISCOVER_COLS = ["theme", "type", "href", "asset_bbox", "release"]
 
@@ -282,7 +328,9 @@ class OvertureClient:
 
         return _meta_dataframe(spark, meta_rows, partitions)
 
-    def _download_via_cli(self, assets, out_dir, *, bbox, validate, force=False) -> "DataFrame":
+    def _download_via_cli(
+        self, assets, out_dir, *, bbox, validate, force=False
+    ) -> "DataFrame":
         """Download via the official overturemaps CLI (--stac bbox pushdown).
 
         Runs `overturemaps download --stac --bbox=W,S,E,N -f geoparquet --type <type>`
@@ -336,19 +384,8 @@ class OvertureClient:
             tmpdir = tempfile.mkdtemp(prefix="gbx_overture_cli_")
             try:
                 local_out = os.path.join(tmpdir, f"{type_}.parquet")
-                subprocess.run(
-                    [
-                        str(cli),
-                        "download",
-                        "--stac",
-                        f"--bbox={bbox_str}",
-                        "-f", "geoparquet",
-                        "--type", type_,
-                        "-o", local_out,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                _run_overture_download(
+                    cli, bbox_str=bbox_str, type_=type_, local_out=local_out
                 )
                 shutil.copyfile(local_out, target)
             finally:
