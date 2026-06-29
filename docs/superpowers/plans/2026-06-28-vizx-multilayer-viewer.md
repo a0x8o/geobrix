@@ -937,7 +937,10 @@ adjacent tiles before the user pans/zooms to them, served from cache for instant
 - Produces: a bounded driver-side **LRU tile cache** keyed by `(z, x, y)`; a `threading`-based prefetch worker that, after each viewport request, prepares the **ring of adjacent parent tiles** at the current zoom (and optionally `z+1`) into the cache; cache-hit serving so a pan to a prepared neighbor returns with no re-tile. The on-demand path checks the cache first (hit → instant), miss → prepare + return + trigger neighbor prefetch.
 
 **Constraints / guardrails:**
-- **Bounded cache** (LRU, a configurable max entry count / total bytes) — prefetched tiles must not grow driver memory unbounded; evict oldest.
+- **Bounded cache with an explicit evict policy** (configurable max entry count / total bytes) — prefetched tiles must not grow driver memory unbounded:
+  - *Baseline:* **LRU by last access** — a tile the user panned away from stops being accessed, ages to least-recently-used, and is evicted when new tiles need room (so "move away → removed" is automatic and memory is bounded).
+  - *Map-aware refinement (note, build after baseline):* when full, evict the tile **farthest from the current viewport center** rather than purely oldest, keeping the active neighborhood warm.
+  - *Prefetch guard:* a speculatively-prefetched tile that was **never viewed** must be evictable **before** a viewed tile (viewed > prefetched-unviewed), so eager prefetch can't push out real history.
 - Prefetch runs on a **background `threading` worker** (daemon), never blocking the comm callback; heavy tiling (tippecanoe subprocess) is fine off-thread on the Serverless driver.
 - **Coalesce / cancel**: a rapid sequence of viewport changes should not pile up stale prefetch work — cancel or skip prefetch for viewports the user has already left.
 - Start with **neighbor-ring** prefetch; pan-velocity direction prediction is a later refinement (note, don't build).
