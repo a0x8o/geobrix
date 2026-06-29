@@ -11,6 +11,11 @@ import VizXIcon from '../../../resources/images/brand/VizX.png';
 
 These are driver-side, single-node helpers for inspecting results in a notebook — not distributed operations. They collect to the driver, so the vector adapters guard the collect with `max_rows`.
 
+<figure>
+  <img src="../../../resources/images/diagrams/vizx/screenshots/vizx-interactive-hero.png" alt="A multi-layer interactive map (buildings + H3 grid) rendered by plot_interactive — self-contained MapLibre, no tile server." style={{width: '100%'}} />
+  <figcaption>A multi-layer interactive map (buildings + H3 grid) rendered by <code>plot_interactive</code> — self-contained MapLibre, no tile server.</figcaption>
+</figure>
+
 :::note Opt-in extra
 `gbx.vizx` requires `geobrix[vizx]`, which pulls in `matplotlib`, `geopandas`, `folium`, and `mapclassify`. The package itself imports only `matplotlib` (raster rendering) and `geopandas` (the GeoDataFrame adapters); `folium` + `mapclassify` are used by `plot_interactive` / `GeoDataFrame.explore()` for interactive maps.
 :::
