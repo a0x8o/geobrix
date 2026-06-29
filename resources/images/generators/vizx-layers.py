@@ -107,6 +107,8 @@ def render():
         ("Simplify",   "tippecanoe -> budget PMTiles",         ACCENT_ORANGE, TINT_ORANGE, "scale to budget"),
         ("Static",     "plot_static (matplotlib / PNG)",       C_MUTED,       "#F1F4F8",   "always works"),
     ]
+    # Fixed pill width: widest note is "indefinite size" (14 chars) → same width for ALL rungs
+    PILL_W = int(14 * 6.6) + 16  # 108px — same for every rung pill
     rung_ys = [LADDER_TOP + i * (RUNG_H + RUNG_GAP) for i in range(len(rungs_data))]
     rung_centers_y = [ry + RUNG_H // 2 for ry in rung_ys]
 
@@ -129,6 +131,21 @@ def render():
 
     # Rung 4 center → plot_static arrow y
     OUT_Y_STATIC = rung_centers_y[3] - OUT_H_STATIC // 2  # center box on arrow
+
+    # Bottom strip geometry (needed for canvas height computation)
+    STRIP_Y = LADDER_TOP + len(rungs_data) * (RUNG_H + RUNG_GAP) + 10
+    STRIP_H = 60
+    FOOTER_H = 30   # footer text height below strip
+
+    # -----------------------------------------------------------------------
+    # Compute tight canvas dimensions from actual content extents + uniform PAD
+    # -----------------------------------------------------------------------
+    _content_right  = OUT_X + OUT_W
+    _content_bottom = max(STRIP_Y + STRIP_H, OUT_Y_STATIC + OUT_H_STATIC) + FOOTER_H
+
+    # Tight canvas: content + same PAD on all four sides
+    CANVAS_W = _content_right + PAD
+    CANVAS_H = _content_bottom + PAD
 
     # -----------------------------------------------------------------------
     # Build SVG — single top-level <defs> with all clipPaths
@@ -245,12 +262,13 @@ def render():
         parts.append(text(LADDER_X + 50, ry + 26, label, size=12, weight=700,
                           fill=accent, anchor="start"))
         parts.append(text(LADDER_X + 50, ry + 44, desc, size=10, fill=C_MUTED, anchor="start"))
-        # Note pill
-        pw = int(len(note) * 6.6) + 16
-        parts.append(f'<rect x="{LADDER_X+LADDER_W-pw-8}" y="{ry+RUNG_H-22}" '
-                     f'rx="9" width="{pw}" height="18" fill="{accent}" fill-opacity="0.15" '
+        # Note pill — fixed width/height/corner-radius for all 4 rungs (pill consistency)
+        pill_x = LADDER_X + LADDER_W - PILL_W - 8
+        pill_y = ry + RUNG_H - 22
+        parts.append(f'<rect x="{pill_x}" y="{pill_y}" '
+                     f'rx="9" width="{PILL_W}" height="18" fill="{accent}" fill-opacity="0.15" '
                      f'stroke="{accent}" stroke-width="0.8"/>')
-        parts.append(text(LADDER_X + LADDER_W - pw // 2 - 8, ry + RUNG_H - 10,
+        parts.append(text(pill_x + PILL_W // 2, pill_y + 13,
                           note, size=9, fill=accent, family=SANS))
 
     # Vertical dashed "else" connectors between rungs
@@ -311,8 +329,6 @@ def render():
     # -----------------------------------------------------------------------
     # Bottom strip: audit_layers / dry_run proactive check
     # -----------------------------------------------------------------------
-    STRIP_Y = LADDER_TOP + len(rungs_data) * (RUNG_H + RUNG_GAP) + 10
-    STRIP_H = 60
     STRIP_W = LADDER_X + LADDER_W - LY_X
     parts.append(rect(LY_X, STRIP_Y, STRIP_W, STRIP_H, fill="#FFFFF0",
                       stroke="#C8B800", r=10, stroke_w=1))
@@ -323,9 +339,9 @@ def render():
                       size=11, fill="#7A6800", family=MONO, anchor="start"))
 
     # -----------------------------------------------------------------------
-    # Footer
+    # Footer — placed relative to content bottom with uniform bottom pad
     # -----------------------------------------------------------------------
-    FOOTER_Y = CANVAS_H - 30
+    FOOTER_Y = CANVAS_H - PAD // 2 - 4
     parts.append(text(CANVAS_W // 2, FOOTER_Y,
                       "databrickslabs/geobrix  .  gbx.vizx  .  MapLibre GL JS + pmtiles.js",
                       size=11, fill=C_MUTED3))

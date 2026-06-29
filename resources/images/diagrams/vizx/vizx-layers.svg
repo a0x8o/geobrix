@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 720" width="1480" height="720" style="font-family:Inter, -apple-system, system-ui, sans-serif;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1164 562" width="1164" height="562" style="font-family:Inter, -apple-system, system-ui, sans-serif;">
 <defs>
   <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
     <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#0F1B2A" flood-opacity="0.07"/>
@@ -13,9 +13,9 @@
   <clipPath id="stripe_clip_3"><rect x="32" y="336" rx="8" ry="8" width="220" height="64"/></clipPath>
   <clipPath id="comp_top_clip"><rect x="332" y="196" rx="14" ry="14" width="180" height="110"/></clipPath>
 </defs>
-<rect x="0" y="0" width="1480" height="720" fill="url(#bg)"/>
-<text x="740" y="46" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="26" font-weight="800" fill="#0F1B2A" text-anchor="middle">VizX Multi-Layer Compositor</text>
-<text x="740" y="72" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="14" font-weight="400" fill="#3F4D5E" text-anchor="middle">Layer types  -&gt;  unified renderer  -&gt;  embed-size ladder  -&gt;  output</text>
+<rect x="0" y="0" width="1164" height="562" fill="url(#bg)"/>
+<text x="582" y="46" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="26" font-weight="800" fill="#0F1B2A" text-anchor="middle">VizX Multi-Layer Compositor</text>
+<text x="582" y="72" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="14" font-weight="400" fill="#3F4D5E" text-anchor="middle">Layer types  -&gt;  unified renderer  -&gt;  embed-size ladder  -&gt;  output</text>
 <rect x="32" y="102" rx="8" ry="8" width="220" height="64" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1.5" filter="url(#sh)"/>
 <rect x="32" y="102" width="10" height="64" fill="#1F6FB5" clip-path="url(#stripe_clip_0)"/>
 <text x="147" y="124" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#1F6FB5" text-anchor="middle">vector_layer(data)</text>
@@ -45,29 +45,29 @@
 <text x="606" y="130" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">1</text>
 <text x="632" y="128" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1E8E3E" text-anchor="start">URL stream</text>
 <text x="632" y="146" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">FetchSource -- range-read (any size)</text>
-<rect x="739" y="150" rx="9" width="115" height="18" fill="#1E8E3E" fill-opacity="0.15" stroke="#1E8E3E" stroke-width="0.8"/>
-<text x="797" y="162" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1E8E3E" text-anchor="middle">indefinite size</text>
+<rect x="746" y="150" rx="9" width="108" height="18" fill="#1E8E3E" fill-opacity="0.15" stroke="#1E8E3E" stroke-width="0.8"/>
+<text x="800" y="163" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1E8E3E" text-anchor="middle">indefinite size</text>
 <rect x="582" y="184" rx="10" ry="10" width="280" height="70" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1"/>
 <rect x="592" y="194" rx="6" ry="6" width="28" height="28" fill="#1F6FB5"/>
 <text x="606" y="212" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">2</text>
 <text x="632" y="210" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1F6FB5" text-anchor="start">Embed</text>
 <text x="632" y="228" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">Embed inline (base64 FileSource)</text>
-<rect x="733" y="232" rx="9" width="121" height="18" fill="#1F6FB5" fill-opacity="0.15" stroke="#1F6FB5" stroke-width="0.8"/>
-<text x="794" y="244" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1F6FB5" text-anchor="middle">no server needed</text>
+<rect x="746" y="232" rx="9" width="108" height="18" fill="#1F6FB5" fill-opacity="0.15" stroke="#1F6FB5" stroke-width="0.8"/>
+<text x="800" y="245" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1F6FB5" text-anchor="middle">no server needed</text>
 <rect x="582" y="266" rx="10" ry="10" width="280" height="70" fill="#FCE9E2" stroke="#E04E2A" stroke-width="1"/>
 <rect x="592" y="276" rx="6" ry="6" width="28" height="28" fill="#E04E2A"/>
 <text x="606" y="294" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">3</text>
 <text x="632" y="292" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#E04E2A" text-anchor="start">Simplify</text>
 <text x="632" y="310" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">tippecanoe -&gt; budget PMTiles</text>
-<rect x="739" y="314" rx="9" width="115" height="18" fill="#E04E2A" fill-opacity="0.15" stroke="#E04E2A" stroke-width="0.8"/>
-<text x="797" y="326" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#E04E2A" text-anchor="middle">scale to budget</text>
+<rect x="746" y="314" rx="9" width="108" height="18" fill="#E04E2A" fill-opacity="0.15" stroke="#E04E2A" stroke-width="0.8"/>
+<text x="800" y="327" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#E04E2A" text-anchor="middle">scale to budget</text>
 <rect x="582" y="348" rx="10" ry="10" width="280" height="70" fill="#F1F4F8" stroke="#3F4D5E" stroke-width="1"/>
 <rect x="592" y="358" rx="6" ry="6" width="28" height="28" fill="#3F4D5E"/>
 <text x="606" y="376" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">4</text>
 <text x="632" y="374" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#3F4D5E" text-anchor="start">Static</text>
 <text x="632" y="392" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">plot_static (matplotlib / PNG)</text>
-<rect x="759" y="396" rx="9" width="95" height="18" fill="#3F4D5E" fill-opacity="0.15" stroke="#3F4D5E" stroke-width="0.8"/>
-<text x="807" y="408" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#3F4D5E" text-anchor="middle">always works</text>
+<rect x="746" y="396" rx="9" width="108" height="18" fill="#3F4D5E" fill-opacity="0.15" stroke="#3F4D5E" stroke-width="0.8"/>
+<text x="800" y="409" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#3F4D5E" text-anchor="middle">always works</text>
 <line x1="560" y1="172" x2="560" y2="184" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
 <text x="560" y="182" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">else</text>
 <line x1="560" y1="254" x2="560" y2="266" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
@@ -90,5 +90,5 @@
 <rect x="32" y="440" rx="10" ry="10" width="830" height="60" fill="#FFFFF0" stroke="#C8B800" stroke-width="1"/>
 <text x="52" y="462" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#7A6800" text-anchor="start">Proactive check -- run before rendering:</text>
 <text x="52" y="484" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="400" fill="#7A6800" text-anchor="start">audit_layers(layers)  or  plot_interactive(layers, dry_run=True)</text>
-<text x="740" y="690" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#7A8794" text-anchor="middle">databrickslabs/geobrix  .  gbx.vizx  .  MapLibre GL JS + pmtiles.js</text>
+<text x="582" y="542" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#7A8794" text-anchor="middle">databrickslabs/geobrix  .  gbx.vizx  .  MapLibre GL JS + pmtiles.js</text>
 </svg>
