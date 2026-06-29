@@ -552,7 +552,7 @@ def audit_layers(
         layers:              A list of :class:`~databricks.labs.gbx.vizx._layers.Layer`
                              or any input accepted by
                              :func:`~databricks.labs.gbx.vizx._layers.as_layers`.
-        max_embed_mb:        HTML size threshold in mebibytes (default ``64``).
+        max_embed_mb:        HTML size threshold in mebibytes (default ``DEFAULT_MAX_EMBED_MB`` = 8).
         simplify_tiles_spec: Optional spec dict; its presence drives
                              ``verdict="simplify"`` when the budget is exceeded.
 
@@ -643,7 +643,7 @@ def prepare_layers(
 
     Args:
         layers:               A list of :class:`~databricks.labs.gbx.vizx._layers.Layer`.
-        max_embed_mb:         HTML size threshold in mebibytes (default ``64``).
+        max_embed_mb:         HTML size threshold in mebibytes (default ``DEFAULT_MAX_EMBED_MB`` = 8).
         simplify_tiles_spec:  Optional spec dict passed to the Task-11 simplify
                               engine.  Currently wired only; passing a non-``None``
                               value invokes the stub and raises
@@ -769,22 +769,32 @@ def prepare_layers(
         if not oversize_labels:
             oversize_labels = [_layer_label(l, i) for i, l in enumerate(layers)]
 
-    if not fallback:
-        size_desc = (
-            f"{html_bytes / 1_048_576:.1f} MB"
-            if html_bytes is not None
-            else f">{max_embed_mb} MB (raw archive exceeds budget)"
+    # Unified over-budget measure: the actual assembled-HTML size when we built it,
+    # else the base64-inflated (~4/3x) RENDERED estimate of the pmtiles archives
+    # (the Serverless cell-output cap counts rendered bytes, not raw archive bytes).
+    # The SAME measure feeds the warning, the ValueError, and the audit below -- so
+    # the audit verdict can never disagree with the mode decision.
+    total_bytes = (
+        html_bytes
+        if html_bytes is not None
+        else int(
+            sum(
+                len(_pmtiles_raw_bytes(layer) or b"")
+                for layer in layers
+                if getattr(layer, "kind", None) == "pmtiles"
+            )
+            * _BASE64_INFLATION
         )
+    )
+    size_desc = f"{total_bytes / 1_048_576:.1f} MB" + (
+        "" if html_bytes is not None else " (rendered est.)"
+    )
+
+    if not fallback:
         raise ValueError(
             f"prepare_layers: assembled HTML exceeds budget ({size_desc} > "
             f"{max_embed_mb} MB). {remedy_msg}"
         )
-
-    size_desc = (
-        f"{html_bytes / 1_048_576:.1f} MB"
-        if html_bytes is not None
-        else f">{max_embed_mb} MB (raw archive size)"
-    )
     warn_text = (
         f"prepare_layers: embedded HTML ({size_desc}) exceeds "
         f"max_embed_mb={max_embed_mb}; falling back to static render. "
@@ -810,16 +820,8 @@ def prepare_layers(
         else:
             static_layers.append(layer)
 
-    # Build audit for the static-fallback path.
-    total_bytes = (
-        html_bytes
-        if html_bytes is not None
-        else sum(
-            len(_pmtiles_raw_bytes(layer) or b"")
-            for layer in layers
-            if getattr(layer, "kind", None) == "pmtiles"
-        )
-    )
+    # Build audit for the static-fallback path. total_bytes (computed above) is the
+    # SAME rendered measure as the mode decision, so the audit verdict matches mode.
     audit = _build_audit(
         layers, prepared, total_bytes, budget_bytes, simplify_tiles_spec
     )

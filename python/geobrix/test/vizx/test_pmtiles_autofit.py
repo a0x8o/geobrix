@@ -134,3 +134,36 @@ def test_autofit_rejects_bad_budget():
         autofit_archive(archive, max_embed_mb=0)
     with pytest.raises(ValueError):
         autofit_archive(archive, max_embed_mb=-1)
+
+
+def test_prepare_layers_static_audit_matches_mode_and_uses_rendered_size():
+    """Regression: when an over-budget pmtiles archive routes to the static
+    fallback, the audit must report the RENDERED (base64-inflated ~4/3x) size and
+    a 'static' verdict -- CONSISTENT with mode='static'.
+
+    Previously the static-path audit summed RAW archive bytes while the mode
+    decision used the inflated rendered size, so for a budget between the raw and
+    rendered sizes the audit said verdict='embed'/fits=True while mode='static'
+    (the audit line lied). Pick exactly such a budget to expose it.
+    """
+    import warnings
+
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _BASE64_INFLATION, prepare_layers
+
+    archive = _multi_zoom_archive(payload_size=8192)
+    raw_mb = len(archive) / 1_048_576
+    # raw < budget < raw*inflation -> raw "fits" but the rendered HTML does not.
+    budget_mb = raw_mb * 1.10
+    assert raw_mb < budget_mb < raw_mb * _BASE64_INFLATION
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = prepare_layers([pmtiles_layer(archive)], max_embed_mb=budget_mb)
+
+    a = res["audit"]
+    assert res["mode"] == "static"
+    assert a["verdict"] == "static", "verdict must agree with mode (was 'embed')"
+    assert a["fits"] is False
+    # The audit total is the RENDERED (inflated) measure, not the raw archive bytes.
+    assert a["total_embed_bytes"] == int(len(archive) * _BASE64_INFLATION)
