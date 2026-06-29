@@ -3,6 +3,7 @@ package com.databricks.labs.gbx.rasterx.expressions.web
 import com.databricks.labs.gbx.expressions.{ExpressionConfig, ExpressionConfigExpr, InvokedExpression, WithExpressionInfo}
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import com.databricks.labs.gbx.rasterx.operator.{GDALTranslate, GDALWarp}
+import com.databricks.labs.gbx.rasterx.operations.BandAccessors
 import com.databricks.labs.gbx.rasterx.tile.TileMath
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil, RasterSerializationUtil}
 import org.apache.spark.sql.catalyst.InternalRow
@@ -11,6 +12,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
 import org.gdal.gdal.{Dataset, gdal}
+import org.gdal.gdalconst.gdalconstConstants
 
 import java.util.Locale
 import scala.util.Try
@@ -29,7 +31,14 @@ import scala.util.Try
  *  null. Slippy-map tile servers expect a 200-status non-zero body even outside source
  *  coverage; returning null would surface as a 404 in the publishing pipeline.
  *
- *  Defaults: `format = "PNG"`, `size = 256`, `resampling = "bilinear"`.
+ *  Defaults: `format = "PNG"`, `size = 256`, `resampling = "bilinear"`, `rescale = "auto"`.
+ *
+ *  The `rescale` parameter controls 8-bit display contrast for PNG output:
+ *    - `"auto"` (default): uint8 source -> pass through unchanged; non-8-bit -> rescale
+ *      to Byte using whole-dataset per-band min/max (computed once per source, no seams).
+ *    - `"none"`: today's full-dtype-range mapping (raw crush behavior).
+ *    - `"min,max"` string (e.g. `"8000,12000"`): use exactly these bounds for all bands.
+ *  Note: `rescale` currently affects PNG output only; JPEG/WEBP rescale is a future follow-up.
  */
 case class RST_TileXYZ(
     tileExpr: Expression,
@@ -38,18 +47,19 @@ case class RST_TileXYZ(
     yExpr: Expression,
     formatExpr: Expression,
     sizeExpr: Expression,
-    resamplingExpr: Expression
+    resamplingExpr: Expression,
+    rescaleExpr: Expression
 ) extends InvokedExpression {
 
     private def rasterType = RST_ExpressionUtil.rasterType(tileExpr)
     override def children: Seq[Expression] =
-        Seq(tileExpr, zExpr, xExpr, yExpr, formatExpr, sizeExpr, resamplingExpr, ExpressionConfigExpr())
+        Seq(tileExpr, zExpr, xExpr, yExpr, formatExpr, sizeExpr, resamplingExpr, rescaleExpr, ExpressionConfigExpr())
     override def dataType: DataType = BinaryType
     override def nullable: Boolean = true
     override def prettyName: String = RST_TileXYZ.name
     override def replacement: Expression = rstInvoke(RST_TileXYZ, rasterType)
     override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4), nc(5), nc(6), nc(7))
 }
 
 /** Companion: SQL name, builder, and eval entry points for path/binary tile. */
@@ -67,26 +77,27 @@ object RST_TileXYZ extends WithExpressionInfo {
     // Spark sends Python ints as LongType - we accept both Int and Long overloads. Int
     // overloads are needed for SQL literal default args; Long overloads cover the
     // PySpark-from-notebook case (Wave 3 found this in Quadbin_PointAsCell).
-    def evalBinary(row: InternalRow, z: Int, x: Int, y: Int, format: UTF8String, size: Int, resampling: UTF8String, conf: UTF8String): Array[Byte] =
-        doInvoke(row, z, x, y, format, size, resampling, conf, BinaryType)
-    def evalBinary(row: InternalRow, z: Long, x: Long, y: Long, format: UTF8String, size: Long, resampling: UTF8String, conf: UTF8String): Array[Byte] =
-        doInvoke(row, z.toInt, x.toInt, y.toInt, format, size.toInt, resampling, conf, BinaryType)
-    def evalPath(row: InternalRow, z: Int, x: Int, y: Int, format: UTF8String, size: Int, resampling: UTF8String, conf: UTF8String): Array[Byte] =
-        doInvoke(row, z, x, y, format, size, resampling, conf, StringType)
-    def evalPath(row: InternalRow, z: Long, x: Long, y: Long, format: UTF8String, size: Long, resampling: UTF8String, conf: UTF8String): Array[Byte] =
-        doInvoke(row, z.toInt, x.toInt, y.toInt, format, size.toInt, resampling, conf, StringType)
+    def evalBinary(row: InternalRow, z: Int, x: Int, y: Int, format: UTF8String, size: Int, resampling: UTF8String, rescale: UTF8String, conf: UTF8String): Array[Byte] =
+        doInvoke(row, z, x, y, format, size, resampling, rescale, conf, BinaryType)
+    def evalBinary(row: InternalRow, z: Long, x: Long, y: Long, format: UTF8String, size: Long, resampling: UTF8String, rescale: UTF8String, conf: UTF8String): Array[Byte] =
+        doInvoke(row, z.toInt, x.toInt, y.toInt, format, size.toInt, resampling, rescale, conf, BinaryType)
+    def evalPath(row: InternalRow, z: Int, x: Int, y: Int, format: UTF8String, size: Int, resampling: UTF8String, rescale: UTF8String, conf: UTF8String): Array[Byte] =
+        doInvoke(row, z, x, y, format, size, resampling, rescale, conf, StringType)
+    def evalPath(row: InternalRow, z: Long, x: Long, y: Long, format: UTF8String, size: Long, resampling: UTF8String, rescale: UTF8String, conf: UTF8String): Array[Byte] =
+        doInvoke(row, z.toInt, x.toInt, y.toInt, format, size.toInt, resampling, rescale, conf, StringType)
 
     private def doInvoke(
         row: InternalRow,
         z: Int, x: Int, y: Int,
         format: UTF8String, size: Int, resampling: UTF8String,
-        conf: UTF8String, dt: DataType
+        rescale: UTF8String, conf: UTF8String, dt: DataType
     ): Array[Byte] = {
         val safe: () => Array[Byte] = () => {
             val exprConf = ExpressionConfig.fromB64(conf.toString)
             RST_ExpressionUtil.init(exprConf)
             val fmtStr = if (format == null) "PNG" else format.toString
             val resampleStr = if (resampling == null) "bilinear" else resampling.toString
+            val rescaleStr = if (rescale == null) "auto" else rescale.toString
             // scalastyle:off caselocale
             val fmt = fmtStr.toUpperCase
             val resampleLower = resampleStr.toLowerCase
@@ -96,7 +107,7 @@ object RST_TileXYZ extends WithExpressionInfo {
                 s"rst_tilexyz: unsupported resampling '$resampleStr'; allowed: ${AllowedResampling.toSeq.sorted.mkString(", ")}")
             require(size > 0 && size <= 4096, s"rst_tilexyz: size must be in (0, 4096]; got $size")
             val (_, ds, options) = RasterSerializationUtil.rowToTile(row, dt)
-            try execute(ds, options, z, x, y, fmt, size, resampleLower)
+            try execute(ds, options, z, x, y, fmt, size, resampleLower, rescaleStr)
             finally RasterDriver.releaseDataset(ds)
         }
         // safeEval wraps Throwables -> null; for BinaryType callers want bytes, never null.
@@ -105,14 +116,91 @@ object RST_TileXYZ extends WithExpressionInfo {
         result.getOrElse(transparentPng(size))
     }
 
-    /** Render the tile by warping `ds` to the (z,x,y) bbox + translating to bytes.
-     *  If the tile bbox does not overlap the source extent, return a transparent PNG.
+    /** Resolve the user `rescale` arg + open source `ds` into a pre-formatted GDAL
+     *  `-scale_<b> min max 0 255` string for the byte-output translate step, or `""` for
+     *  pass-through (uint8 `"auto"`, or `"none"`). Mirrors the light tier `_resolve_in_range`.
+     *
+     *  - `"none"`         -> `""` (today's full-dtype-range behavior).
+     *  - `"min,max"` pair -> that pair repeated for every band.
+     *  - `"auto"`:
+     *      * uint8 source  -> `""` (already display-ready; pass through unchanged).
+     *      * non-uint8     -> per-band whole-dataset (min,max) via BandAccessors.getMinMax
+     *        (ComputeRasterMinMax exact). A constant band (min==max) widened to (min, min+1).
+     *
+     *  NOTE: `ComputeRasterMinMax` does not honor NoData masks unless the band NoData flag is
+     *  set, whereas the light tier's `ds.statistics(approx=False)` honors the mask. On NoData
+     *  rasters, heavy's min/max may include masked pixel values and can diverge slightly from
+     *  light -- a known limitation. Fixtures for the parity gate are NoData-free.
+     *
+     *  Affects PNG output only; JPEG/WEBP rescale is a future follow-up.
      */
+    private[web] def resolveScale(ds: Dataset, rescale: String): String = {
+        val mode = if (rescale == null) "auto" else rescale.trim
+        // scalastyle:off caselocale
+        val modeLower = mode.toLowerCase
+        // scalastyle:on caselocale
+        val nbands = ds.GetRasterCount
+
+        // Use repeated -scale (one per band in order) rather than -scale_<n> form;
+        // both are equivalent per GDAL docs but the repeated form has wider Java binding support.
+        def fmtBands(pairs: Seq[(Double, Double)]): String =
+            pairs.map { case (lo, hi) => s"-scale $lo $hi 0 255" }.mkString(" ")
+
+        if (modeLower == "none") {
+            ""
+        } else if (modeLower == "auto") {
+            val firstDt = ds.GetRasterBand(1).GetRasterDataType
+            if (firstDt == gdalconstConstants.GDT_Byte) {
+                "" // uint8 pass-through
+            } else {
+                val pairs = (1 to nbands).map { b =>
+                    val (lo, hi) = BandAccessors.getMinMax(ds.GetRasterBand(b))
+                    if (!(lo < hi)) (lo, lo + 1.0) else (lo, hi)
+                }
+                fmtBands(pairs)
+            }
+        } else {
+            // explicit "min,max" pair (e.g. "8000,12000"), repeated per band.
+            val parts = mode.split(",").map(_.trim)
+            require(parts.length == 2, s"rst_tilexyz: rescale must be 'auto', 'none', or 'min,max'; got '$rescale'")
+            val lo = parts(0).toDouble
+            val hi = parts(1).toDouble
+            require(lo < hi, s"rst_tilexyz: rescale (min,max) must have min < max; got ($lo, $hi)")
+            fmtBands(Seq.fill(nbands)((lo, hi)))
+        }
+    }
+
+    /** Back-compat: callers that do not specify rescale get today's behavior ("none"). */
     def execute(
         ds: Dataset,
         options: Map[String, String],
         z: Int, x: Int, y: Int,
         format: String, size: Int, resampling: String
+    ): Array[Byte] = execute(ds, options, z, x, y, format, size, resampling, "none")
+
+    /** Render the tile by warping `ds` to the (z,x,y) bbox + translating to bytes.
+     *  If the tile bbox does not overlap the source extent, return a transparent PNG.
+     *  Stats are read from the original source `ds` (pre-warp) so all tiles share one
+     *  mapping -- no seams.
+     */
+    def execute(
+        ds: Dataset,
+        options: Map[String, String],
+        z: Int, x: Int, y: Int,
+        format: String, size: Int, resampling: String, rescale: String
+    ): Array[Byte] = {
+        val scaleFlags = resolveScale(ds, rescale)
+        executeWithScale(ds, options, z, x, y, format, size, resampling, scaleFlags)
+    }
+
+    /** Render with a PRE-RESOLVED scale string (RST_XYZPyramid resolves once and passes it
+     *  here for every tile so all tiles share one mapping -- no seams, stats read once).
+     */
+    private[web] def executeWithScale(
+        ds: Dataset,
+        options: Map[String, String],
+        z: Int, x: Int, y: Int,
+        format: String, size: Int, resampling: String, scaleFlags: String
     ): Array[Byte] = {
         val (xmin, ymin, xmax, ymax) = TileMath.tileBboxWebMerc(z, x, y)
         if (!datasetIntersectsWebMercBbox(ds, xmin, ymin, xmax, ymax)) {
@@ -136,11 +224,14 @@ object RST_TileXYZ extends WithExpressionInfo {
                 case other  => throw new IllegalArgumentException(s"rst_tilexyz: unknown format $other")
             }
             val translatePath = s"/vsimem/tilexyz_out_$uuid.$extension"
+            // Inject the pre-resolved per-band -scale (empty => no rescale; today's behavior).
+            val translateOpts = warpedOpts ++ Map("format" -> format, "extension" -> extension) ++
+                (if (scaleFlags.isEmpty) Map.empty[String, String] else Map("scale" -> scaleFlags))
             val (resDs, _) = GDALTranslate.executeTranslate(
               translatePath,
               warpedDs,
               command = "gdal_translate",
-              warpedOpts ++ Map("format" -> format, "extension" -> extension)
+              translateOpts
             )
             Try(resDs.FlushCache())
             Try(resDs.delete())
@@ -202,15 +293,16 @@ object RST_TileXYZ extends WithExpressionInfo {
 
     override def name: String = "gbx_rst_tilexyz"
 
-    /** Builder: 4 to 7 args (tile, z, x, y, [format, [size, [resampling]]]). */
+    /** Builder: 4 to 8 args (tile, z, x, y, [format, [size, [resampling, [rescale]]]]). */
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => {
         c.length match {
-            case 4 => RST_TileXYZ(c(0), c(1), c(2), c(3), Literal("PNG"), Literal(256), Literal("bilinear"))
-            case 5 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), Literal(256), Literal("bilinear"))
-            case 6 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), c(5), Literal("bilinear"))
-            case 7 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), c(5), c(6))
+            case 4 => RST_TileXYZ(c(0), c(1), c(2), c(3), Literal("PNG"), Literal(256), Literal("bilinear"), Literal("auto"))
+            case 5 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), Literal(256), Literal("bilinear"), Literal("auto"))
+            case 6 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), c(5), Literal("bilinear"), Literal("auto"))
+            case 7 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), c(5), c(6), Literal("auto"))
+            case 8 => RST_TileXYZ(c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7))
             case n => throw new IllegalArgumentException(
-                s"gbx_rst_tilexyz takes 4 to 7 arguments (tile, z, x, y, [format, [size, [resampling]]]); got $n"
+                s"gbx_rst_tilexyz takes 4 to 8 arguments (tile, z, x, y, [format, [size, [resampling, [rescale]]]]); got $n"
             )
         }
     }
