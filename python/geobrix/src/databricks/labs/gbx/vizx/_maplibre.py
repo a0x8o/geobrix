@@ -253,8 +253,9 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
     to produce a decoded representation, but rather than *rendering* it here we
     return a Layer that plot_static can accept.
 
-    For raster pmtiles: decode the lowest-zoom tile → raster_layer(bytes).
-    For vector pmtiles: decode MVT tiles → vector_layer(GeoDataFrame).
+    For raster pmtiles: mosaic the finest zoom that fits a tile budget →
+        raster_layer(ndarray) (finest level preserves source contrast/detail).
+    For vector pmtiles: decode the coarsest (min) zoom → vector_layer(GeoDataFrame).
 
     Raises ValueError when the archive contains no renderable tiles.
     """
@@ -281,21 +282,45 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
 
     info = pmtiles_info(raw)
     if _is_raster_type(info["tile_type"]):
-        # Build a coarse OVERVIEW image from the lowest (min) zoom: web-map tiles are
-        # images (PNG/JPEG/WEBP, possibly gzip-wrapped), NOT georeferenced rasters, so
-        # they can't go to plot_cog/rasterio. Mosaic all min-zoom tiles by their (x, y)
-        # grid position, then crop to the non-transparent data extent so a small AOI
-        # doesn't render as a speck in the corner of one coarse tile. plot_static imshows
-        # the resulting ndarray.
+        # Build an overview image from the FINEST zoom that fits a tile budget: web-map
+        # tiles are images (PNG/JPEG/WEBP, possibly gzip-wrapped), NOT georeferenced
+        # rasters, so they can't go to plot_cog/rasterio. Mosaic the chosen level's tiles
+        # by their (x, y) grid position, then crop to the non-transparent data extent so a
+        # small AOI doesn't render as a speck in the corner of one coarse tile. plot_static
+        # imshows the resulting ndarray.
+        #
+        # Why the finest (not coarsest) zoom: unlike vector tiles — where every level
+        # re-encodes the same features so the coarsest is sufficient — raster pyramid
+        # levels are independently resampled. The coarsest (min-zoom) overview averages
+        # many source pixels into few, which lowers contrast and lightens the image (the
+        # NB02 "washed-out" basemap). The finest level preserves the source imagery's
+        # contrast and detail. For a bounded AOI the finest level is only a handful of
+        # tiles; we cap the count and step down to a coarser level if it would be too
+        # large, so a wide-area archive still renders a sane overview.
         import io
 
         import numpy as np
         from PIL import Image
 
-        min_z = info.get("min_zoom")
+        # Tile counts per zoom; pick the highest zoom whose count is within budget.
+        _MAX_OVERVIEW_TILES = 256
+        per_zoom: dict = {}
+        for (z, x, y), _payload in all_tiles(MemorySource(raw)):
+            per_zoom.setdefault(z, 0)
+            per_zoom[z] += 1
+        if not per_zoom:
+            raise ValueError(
+                "prepare_layers static fallback: raster pmtiles archive has no tiles"
+            )
+        zooms_desc = sorted(per_zoom, reverse=True)
+        target_z = next(
+            (z for z in zooms_desc if per_zoom[z] <= _MAX_OVERVIEW_TILES),
+            zooms_desc[-1],  # all levels exceed budget -> coarsest is the smallest
+        )
+
         placed = []
         for (z, x, y), payload in all_tiles(MemorySource(raw)):
-            if min_z is not None and z != min_z:
+            if z != target_z:
                 continue
             img = Image.open(io.BytesIO(_maybe_gunzip(payload))).convert("RGBA")
             placed.append((x, y, np.asarray(img)))
