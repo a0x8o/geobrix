@@ -64,9 +64,45 @@ def test_expand_themes_unknown_raises():
         expand_themes(["weather"])
 
 
+def _sf_building_loader(href):
+    if "sf-building" in href:
+        class _A:
+            href = "s3://overturemaps-us-west-2/release/buildings/building/sf.parquet"
+
+        class _FakeItem:
+            bbox = [-122.52, 37.70, -122.36, 37.83]
+            assets = {"data": _A()}
+
+        return _FakeItem()
+    raise FileNotFoundError(href)
+
+
+def _eu_place_loader(href):
+    if "eu-place" in href:
+        class _A:
+            href = "s3://overturemaps-us-west-2/release/places/place/eu.parquet"
+
+        class _FakeItem:
+            bbox = [10.0, 50.0, 11.0, 51.0]
+            assets = {"data": _A()}
+
+        return _FakeItem()
+    raise FileNotFoundError(href)
+
+
+def _both_loader(href):
+    if "sf-building" in href:
+        return _sf_building_loader(href)
+    if "eu-place" in href:
+        return _eu_place_loader(href)
+    raise FileNotFoundError(href)
+
+
 def test_traverse_catalog_bbox_filters_disjoint():
     sf_bbox = (-122.45, 37.74, -122.40, 37.78)
-    rows = traverse_catalog(open_fake_overture, sf_bbox, [("buildings", "building")])
+    rows = traverse_catalog(
+        open_fake_overture, sf_bbox, [("buildings", "building")], _item_loader=_sf_building_loader
+    )
     assert len(rows) == 1
     r = rows[0]
     assert r["theme"] == "buildings"
@@ -78,18 +114,27 @@ def test_traverse_catalog_bbox_filters_disjoint():
 def test_traverse_catalog_skips_unrequested_pairs():
     # AOI covers the whole world, but we only ask for places -> the SF building drops out
     rows = traverse_catalog(
-        open_fake_overture, (-180, -90, 180, 90), [("places", "place")]
+        open_fake_overture, (-180, -90, 180, 90), [("places", "place")],
+        _item_loader=_eu_place_loader,
     )
     assert [r["type"] for r in rows] == ["place"]
 
 
+class _RelChild:
+    """Fake release child with latest=True."""
+
+    id = "2024-07-01"
+    extra_fields = {"latest": True}
+
+
 class _RelCatalog:
-    extra_fields = {"overture:releases": ["2024-01-01", "2024-07-01"]}
+    def get_children(self):
+        return [_RelChild()]
 
 
-class _NoRelCatalog:
-    extra_fields = {}
-    id = None
+class _EmptyCatalog:
+    def get_children(self):
+        return []
 
 
 def test_resolve_release_explicit_passthrough():
@@ -102,7 +147,7 @@ def test_resolve_release_latest():
 
 def test_resolve_release_missing_raises():
     with pytest.raises(ValueError):
-        resolve_release(lambda: _NoRelCatalog(), None)
+        resolve_release(lambda: _EmptyCatalog(), None)
 
 
 def test_cli_discover_absent_returns_none(monkeypatch):

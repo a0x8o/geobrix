@@ -122,6 +122,7 @@ databricks = [
 # pystac is the static-catalog reader; geopandas/pyarrow (in [light]) do parquet read.
 overture = [
     "pystac>=1.9,<2",
+    "overturemaps>=0.13",
 ]
 # STAC catalog client (lightweight): distributed search + resilient download + repair.
 # Optional extra so [light] users who don't need STAC don't pull pystac/planetary-computer.

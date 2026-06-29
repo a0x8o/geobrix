@@ -1,4 +1,6 @@
 import os
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -17,12 +19,36 @@ from pyspark.sql.types import (  # noqa: E402
     TimestampType,
 )
 
+import databricks.labs.gbx.sample.overture as ov_mod  # noqa: E402
 import databricks.labs.gbx.sample.overture as ov  # noqa: E402
 from databricks.labs.gbx.sample.overture import (  # noqa: E402
     _META_COLS,
     OvertureClient,
     _meta_dataframe,
 )
+
+
+def _fake_item_loader(href):
+    """Offline item loader for tests: returns fake items keyed by href content."""
+    if "sf-building" in href:
+        class _A:
+            href = "s3://overturemaps-us-west-2/release/buildings/building/sf.parquet"
+
+        class _Item:
+            bbox = [-122.52, 37.70, -122.36, 37.83]
+            assets = {"data": _A()}
+
+        return _Item()
+    if "eu-place" in href:
+        class _A:
+            href = "s3://overturemaps-us-west-2/release/places/place/eu.parquet"
+
+        class _Item:
+            bbox = [10.0, 50.0, 11.0, 51.0]
+            assets = {"data": _A()}
+
+        return _Item()
+    raise FileNotFoundError(href)
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +66,11 @@ def spark():
 
 
 def test_discover_columns_and_filter(spark):
-    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+    client = OvertureClient(
+        release="2024-07-01",
+        _catalog_opener=open_fake_overture,
+        _item_loader=_fake_item_loader,
+    )
     df = client.discover((-122.45, 37.74, -122.40, 37.78), themes=["buildings"])
     assert df.columns == ["theme", "type", "href", "asset_bbox", "release"]
     rows = df.collect()
@@ -51,7 +81,11 @@ def test_discover_columns_and_filter(spark):
 
 
 def test_discover_all_themes_when_none(spark):
-    client = OvertureClient(release="2024-07-01", _catalog_opener=open_fake_overture)
+    client = OvertureClient(
+        release="2024-07-01",
+        _catalog_opener=open_fake_overture,
+        _item_loader=_fake_item_loader,
+    )
     df = client.discover((-180, -90, 180, 90), themes=None)
     # fake catalog has a building + a place; both fall inside the world bbox
     assert {r["type"] for r in df.collect()} == {"building", "place"}
@@ -557,6 +591,76 @@ def test_read_from_table_name(spark, tmp_path):
         spark.sql(f"DROP TABLE IF EXISTS {table_name}")
 
 
+def test_download_via_cli_builds_meta(spark, tmp_path, monkeypatch):
+    """_download_via_cli writes per-(theme,type) parquet and returns correct meta rows."""
+    # Build a real parquet to serve as the CLI output.
+    src = str(tmp_path / "cli_src.parquet")
+    spark.createDataFrame([Row(id=1), Row(id=2)]).coalesce(1).write.mode("overwrite").parquet(src)
+    part = [f for f in os.listdir(src) if f.endswith(".parquet")][0]
+    src_file = os.path.join(src, part)
+
+    # Monkeypatch CLI availability.
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_path", lambda: Path("/fake/overturemaps"))
+    monkeypatch.setattr(ov_mod, "_overturemaps_cli_available", lambda: True)
+
+    # Monkeypatch subprocess.run to copy our test parquet to the -o path.
+    def fake_subprocess_run(cmd, **kwargs):
+        o_idx = cmd.index("-o")
+        out_path = cmd[o_idx + 1]
+        import shutil as _shutil
+        _shutil.copyfile(src_file, out_path)
+
+        class _Done:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Done()
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    schema = StructType(
+        [
+            StructField("theme", StringType()),
+            StructField("type", StringType()),
+            StructField("href", StringType()),
+            StructField("asset_bbox", ArrayType(DoubleType())),
+            StructField("release", StringType()),
+        ]
+    )
+    assets = spark.createDataFrame(
+        [
+            (
+                "buildings",
+                "building",
+                "",
+                [-122.52, 37.70, -122.36, 37.83],
+                "2026-06-17.0",
+            )
+        ],
+        schema,
+    )
+    client = OvertureClient(
+        release="2026-06-17.0",
+        _catalog_opener=open_fake_overture,
+        _item_loader=_fake_item_loader,
+    )
+    out_dir = str(tmp_path / "cli_out_dir")
+
+    meta = client._download_via_cli(
+        assets, out_dir, bbox=(-122.45, 37.74, -122.40, 37.78), validate=True
+    )
+    rows = meta.collect()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["theme"] == "buildings"
+    assert row["type"] == "building"
+    assert os.path.exists(row["source"])
+    assert row["out_file_sz"] > 0
+    assert row["is_out_file_valid"] is True
+    assert row["href"] == ""
+
+
 def test_download_overture_aoi_one_shot(spark, tmp_path, monkeypatch):
     # Force the convenience fn's default client to use the fake opener (offline).
     src = str(tmp_path / "aoi.parquet")
@@ -569,6 +673,7 @@ def test_download_overture_aoi_one_shot(spark, tmp_path, monkeypatch):
 
     def patched_init(self, *a, **k):
         k["_catalog_opener"] = open_fake_overture
+        k["_item_loader"] = _fake_item_loader
         orig_init(self, *a, **k)
 
     monkeypatch.setattr(ov.OvertureClient, "__init__", patched_init)

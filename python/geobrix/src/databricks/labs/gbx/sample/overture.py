@@ -13,12 +13,33 @@ object) and _get_fn (an HTTP fetcher passed to the fallback downloader).
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
 
 OVERTURE_CATALOG = "https://stac.overturemaps.org/catalog.json"
+
+
+def _overturemaps_cli_path():
+    """Return the Path to the overturemaps CLI if runnable, else None."""
+    bin_dir = Path(sys.executable).parent
+    exe = bin_dir / "overturemaps"
+    if exe.exists() and os.access(exe, os.X_OK):
+        return exe
+    found = shutil.which("overturemaps")
+    return Path(found) if found else None
+
+
+def _overturemaps_cli_available():
+    """Return True if the official overturemaps CLI is runnable."""
+    return _overturemaps_cli_path() is not None
 
 # Spark schema for discover() output — pinned; SP2/SP3 depend on it.
 _DISCOVER_COLS = ["theme", "type", "href", "asset_bbox", "release"]
@@ -148,11 +169,13 @@ class OvertureClient:
         release: Optional[str] = None,
         _catalog_opener=None,
         _get_fn=None,
+        _item_loader=None,
     ):
         self.catalog = catalog
         self.release = release
         self._catalog_opener = _catalog_opener
         self._get_fn = _get_fn
+        self._item_loader = _item_loader
 
     def _open_catalog(self):
         import pystac
@@ -258,6 +281,82 @@ class OvertureClient:
             )
 
         return _meta_dataframe(spark, meta_rows, partitions)
+
+    def _download_via_cli(self, assets, out_dir, *, bbox, validate) -> "DataFrame":
+        """Download via the official overturemaps CLI (--stac bbox pushdown).
+
+        Runs `overturemaps download --stac --bbox=W,S,E,N -f geoparquet --type <type>`
+        for each distinct (theme, type) pair. Sequential, driver-side. Requires bbox.
+        Volume-safe: assembles locally then shutil.copyfile to target.
+        Returns a metadata DataFrame matching _meta_dataframe schema.
+        """
+        from pyspark.sql import SparkSession
+
+        from databricks.labs.gbx.sample._overture_discover import (
+            normalize_bbox,
+            resolve_release,
+        )
+
+        spark = SparkSession.getActiveSession()
+        minx, miny, maxx, maxy = normalize_bbox(bbox)
+        bbox_str = f"{minx},{miny},{maxx},{maxy}"
+        cli = _overturemaps_cli_path()
+
+        pairs = assets.select("theme", "type").distinct().collect()
+        rel = resolve_release(self._opener(), self.release)
+
+        meta_rows = []
+        for row in pairs:
+            theme = row["theme"]
+            type_ = row["type"]
+            target_dir = os.path.join(out_dir, theme, type_)
+            os.makedirs(target_dir, exist_ok=True)
+            target = os.path.join(target_dir, f"{type_}.parquet")
+
+            tmpdir = tempfile.mkdtemp(prefix="gbx_overture_cli_")
+            try:
+                local_out = os.path.join(tmpdir, f"{type_}.parquet")
+                subprocess.run(
+                    [
+                        str(cli),
+                        "download",
+                        "--stac",
+                        f"--bbox={bbox_str}",
+                        "-f", "geoparquet",
+                        "--type", type_,
+                        "-o", local_out,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                shutil.copyfile(local_out, target)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+            sz = os.path.getsize(target) if os.path.exists(target) else None
+            valid = True
+            if validate:
+                try:
+                    spark.read.parquet(target).limit(1).count()
+                except Exception:  # noqa: BLE001
+                    valid = False
+
+            meta_rows.append(
+                {
+                    "theme": theme,
+                    "type": type_,
+                    "source": target,
+                    "out_file_sz": sz,
+                    "is_out_file_valid": valid,
+                    "asset_bbox": list(normalize_bbox(bbox)),
+                    "release": rel,
+                    "href": "",
+                }
+            )
+
+        n = max(1, len(meta_rows))
+        return _meta_dataframe(spark, meta_rows, partitions=n)
 
     def _download_fallback(
         self, assets_df, out_dir, *, validate, max_tries, partitions
@@ -438,6 +537,13 @@ class OvertureClient:
         assets = assets_df.select(*_DISCOVER_COLS)
         n = partitions if partitions is not None else max(1, assets.count())
 
+        # CLI fast-path: bbox present + overturemaps CLI available → server-side pushdown.
+        if bbox is not None and _overturemaps_cli_available():
+            meta = self._download_via_cli(assets, out_dir, bbox=bbox, validate=validate)
+            if table is not None:
+                meta = self._merge_metadata(meta, table)
+            return meta
+
         hrefs = [r["href"] for r in assets.select("href").distinct().collect()]
         is_cloud = bool(hrefs) and all(
             any(h.startswith(s) for s in self._CLOUD_SCHEMES)
@@ -564,7 +670,7 @@ class OvertureClient:
         if self._catalog_opener is None:
             rows = cli_discover(bbox, pairs, rel)
         if not rows:
-            rows = traverse_catalog(opener, bbox, pairs)
+            rows = traverse_catalog(opener, bbox, pairs, self._item_loader)
 
         for r in rows:
             r["release"] = rel

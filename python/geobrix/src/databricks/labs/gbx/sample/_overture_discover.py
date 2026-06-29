@@ -55,32 +55,68 @@ def expand_themes(themes: Optional[List[str]]) -> List[Tuple[str, str]]:
     return pairs
 
 
-def traverse_catalog(opener, bbox, theme_pairs):
-    """Walk a static STAC catalog and return one dict per intersecting GeoParquet asset.
+def traverse_catalog(opener, bbox, theme_pairs, _item_loader=None):
+    """Walk a nested static STAC catalog and return one dict per intersecting GeoParquet asset.
 
-    opener() returns a pystac.Catalog-shaped object. Items are filtered by AOI
-    bbox intersection and restricted to the requested (theme, type) pairs.
+    The real Overture catalog is nested: root → release child (extra_fields={"latest":True})
+    → theme Catalog → type Catalog → item links (rel="item"). Items are loaded via
+    _item_loader (default: pystac.Item.from_file) and filtered by AOI bbox intersection
+    and the requested (theme, type) pairs.
+
+    _item_loader is an injectable seam for offline tests (avoids network calls to pystac).
     """
+    import pystac as _pystac
+
+    if _item_loader is None:
+        _item_loader = _pystac.Item.from_file
+
     aoi = normalize_bbox(bbox)
     wanted = set(theme_pairs)
     rows = []
     catalog = opener()
-    for collection in catalog.get_children():
-        for item in collection.get_items():
-            props = item.properties or {}
-            pair = (props.get("theme"), props.get("type"))
-            if pair not in wanted:
+
+    # Navigate to the latest release child.
+    children = list(catalog.get_children())
+    release_cat = next(
+        (c for c in children if (getattr(c, "extra_fields", None) or {}).get("latest")),
+        children[0] if children else None,
+    )
+    if release_cat is None:
+        return rows
+
+    for (theme, type_) in wanted:
+        theme_cat = release_cat.get_child(theme)
+        if theme_cat is None:
+            continue
+        type_cat = theme_cat.get_child(type_)
+        if type_cat is None:
+            continue
+        for link in type_cat.links:
+            if link.rel != "item":
                 continue
-            item_bbox = list(item.bbox)
+            item_href = (
+                link.get_absolute_href()
+                if hasattr(link, "get_absolute_href")
+                else getattr(link, "href", None)
+            )
+            if not item_href:
+                continue
+            try:
+                item = _item_loader(item_href)
+            except Exception:  # noqa: BLE001
+                continue
+            if item.bbox is None:
+                continue
+            item_bbox = [float(v) for v in item.bbox]
             if not bbox_intersects(aoi, tuple(item_bbox)):
                 continue
             for asset in item.assets.values():
                 rows.append(
                     {
-                        "theme": pair[0],
-                        "type": pair[1],
+                        "theme": theme,
+                        "type": type_,
                         "href": asset.href,
-                        "asset_bbox": [float(v) for v in item_bbox],
+                        "asset_bbox": item_bbox,
                     }
                 )
     return rows
@@ -91,12 +127,15 @@ def resolve_release(opener, release: Optional[str] = None) -> str:
     if release is not None:
         return release
     catalog = opener()
-    releases = getattr(catalog, "extra_fields", {}).get("overture:releases")
-    if releases:
-        return sorted(releases)[-1]
-    cat_id = getattr(catalog, "id", None)
-    if cat_id:
-        return cat_id
+    children = list(catalog.get_children())
+    latest = next(
+        (c for c in children if (getattr(c, "extra_fields", None) or {}).get("latest")),
+        None,
+    )
+    if latest is None and children:
+        latest = children[0]
+    if latest is not None and getattr(latest, "id", None) is not None:
+        return latest.id
     raise ValueError(
         "could not resolve latest Overture release from the catalog; pass release=... explicitly"
     )
