@@ -110,17 +110,25 @@ def render():
     rung_ys = [LADDER_TOP + i * (RUNG_H + RUNG_GAP) for i in range(len(rungs_data))]
     rung_centers_y = [ry + RUNG_H // 2 for ry in rung_ys]
 
-    # Output geometry
-    OUT_X          = LADDER_X + LADDER_W + 70
-    OUT_W          = 200
-    OUT_Y_INTER    = LADDER_TOP
-    OUT_H_INTER    = 100
-    STATIC_GAP     = 24
-    OUT_Y_STATIC   = OUT_Y_INTER + OUT_H_INTER + STATIC_GAP
-    OUT_H_STATIC   = 80
-
     # Group box padding
     GRP_PAD = 8
+
+    # Output geometry — boxes centered on their incoming arrows.
+    # Arrow y values depend on the group/rung geometry computed above, so we
+    # derive OUT_Y_* here (after rung_ys / rung_centers_y are known).
+    OUT_X        = LADDER_X + LADDER_W + 70
+    OUT_W        = 200
+    OUT_H_INTER  = 100
+    OUT_H_STATIC = 80
+
+    # Rungs 1-3 group mid-y → plot_interactive arrow y
+    _inter_grp_top = rung_ys[0] - GRP_PAD
+    _inter_grp_bot = rung_ys[2] + RUNG_H + GRP_PAD
+    _inter_grp_mid = (_inter_grp_top + _inter_grp_bot) // 2
+    OUT_Y_INTER  = _inter_grp_mid - OUT_H_INTER // 2   # center box on arrow
+
+    # Rung 4 center → plot_static arrow y
+    OUT_Y_STATIC = rung_centers_y[3] - OUT_H_STATIC // 2  # center box on arrow
 
     # -----------------------------------------------------------------------
     # Build SVG — single top-level <defs> with all clipPaths
@@ -292,12 +300,8 @@ def render():
                  f'fill="none" stroke="{ACCENT_VIOLET}" stroke-width="1.2" '
                  f'stroke-dasharray="5,4"/>')
 
-    # Single arrow: rungs 1-3 group right edge → plot_interactive (mid-y of group)
+    # Single arrow: rungs 1-3 group right edge → plot_interactive (centered on group mid-y)
     inter_arrow_x = LADDER_X + LADDER_W + GRP_PAD + 2
-    inter_target_y = OUT_Y_INTER + OUT_H_INTER // 2
-    # Straight horizontal at group mid-y, then we rely on vertical alignment being close.
-    # Use a bent elbow: horizontal to OUT_X at inter_grp_mid level, but output may not
-    # align. Simplest readable: draw at rung_centers_y[1] (middle rung's center ~ group mid).
     parts.append(arrow_h(inter_arrow_x, inter_grp_mid, OUT_X, color=ACCENT_VIOLET))
 
     # Single arrow: rung 4 right edge → plot_static

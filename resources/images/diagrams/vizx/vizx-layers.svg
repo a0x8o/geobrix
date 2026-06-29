@@ -75,15 +75,15 @@
 <line x1="560" y1="336" x2="560" y2="348" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
 <text x="560" y="346" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">else</text>
 <line x1="518" y1="251" x2="573" y2="251" stroke="#0F1B2A" stroke-width="2" stroke-linecap="round"/><polygon points="582,251 573,247 573,255" fill="#0F1B2A"/>
-<rect x="932" y="102" rx="10" ry="10" width="200" height="100" fill="#EDE8F5" stroke="#6B4FA0" stroke-width="1"/>
-<text x="1032" y="128" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#6B4FA0" text-anchor="middle">plot_interactive</text>
-<text x="1032" y="148" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">MapLibre GL HTML</text>
-<text x="1032" y="164" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">self-contained, no server</text>
-<text x="1032" y="180" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">Serverless / classic DBR</text>
-<rect x="932" y="226" rx="10" ry="10" width="200" height="80" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1"/>
-<text x="1032" y="252" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#1F6FB5" text-anchor="middle">plot_static</text>
-<text x="1032" y="272" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">matplotlib Axes</text>
-<text x="1032" y="288" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">GitHub-renderable PNG</text>
+<rect x="932" y="169" rx="10" ry="10" width="200" height="100" fill="#EDE8F5" stroke="#6B4FA0" stroke-width="1"/>
+<text x="1032" y="195" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#6B4FA0" text-anchor="middle">plot_interactive</text>
+<text x="1032" y="215" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">MapLibre GL HTML</text>
+<text x="1032" y="231" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">self-contained, no server</text>
+<text x="1032" y="247" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">Serverless / classic DBR</text>
+<rect x="932" y="343" rx="10" ry="10" width="200" height="80" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1"/>
+<text x="1032" y="369" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#1F6FB5" text-anchor="middle">plot_static</text>
+<text x="1032" y="389" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">matplotlib Axes</text>
+<text x="1032" y="405" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">GitHub-renderable PNG</text>
 <rect x="574" y="94" rx="12" ry="12" width="296" height="250" fill="none" stroke="#6B4FA0" stroke-width="1.2" stroke-dasharray="5,4"/>
 <line x1="872" y1="219" x2="923" y2="219" stroke="#6B4FA0" stroke-width="2" stroke-linecap="round"/><polygon points="932,219 923,215 923,223" fill="#6B4FA0"/>
 <line x1="868" y1="383" x2="923" y2="383" stroke="#1F6FB5" stroke-width="2" stroke-linecap="round"/><polygon points="932,383 923,379 923,387" fill="#1F6FB5"/>
