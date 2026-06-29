@@ -7,7 +7,12 @@ from databricks.labs.gbx.vizx._simplify import normalize_spec
 
 def test_defaults_applied():
     s = normalize_spec(None)
-    assert s["budget_mb"] == 64 and s["min_z"] == 0 and s["max_z"] == 10 and s["effort"] == "fast"
+    assert (
+        s["budget_mb"] == 64
+        and s["min_z"] == 0
+        and s["max_z"] == 10
+        and s["effort"] == "fast"
+    )
 
 
 def test_override_and_validation():
@@ -18,7 +23,9 @@ def test_override_and_validation():
         normalize_spec({"effort": "turbo"})
 
 
-@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="tippecanoe not installed")
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
 def test_simplify_from_geojson_under_budget(tmp_path):
     import geopandas as gpd
     from shapely.geometry import Polygon
@@ -34,11 +41,15 @@ def test_simplify_from_geojson_under_budget(tmp_path):
         crs="EPSG:4326",
     )
     out = tmp_path / "o.pmtiles"
-    p = simplify_tiles_from_source(gdf, spec={"max_z": 6, "budget_mb": 8}, out_path=str(out))
+    p = simplify_tiles_from_source(
+        gdf, spec={"max_z": 6, "budget_mb": 8}, out_path=str(out)
+    )
     assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
 
 
-@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="tippecanoe not installed")
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
 def test_simplify_returns_bytes_without_out_path(tmp_path):
     """Without out_path, bytes are returned (not a file)."""
     import geopandas as gpd
@@ -55,7 +66,9 @@ def test_simplify_returns_bytes_without_out_path(tmp_path):
     assert isinstance(result, bytes) and result[:7] == b"PMTiles"
 
 
-@pytest.mark.skipif(shutil.which("tippecanoe") is None, reason="tippecanoe not installed")
+@pytest.mark.skipif(
+    shutil.which("tippecanoe") is None, reason="tippecanoe not installed"
+)
 def test_simplify_drop_densest_and_cluster(tmp_path):
     """spec options drop_densest + cluster_distance propagate without error."""
     import geopandas as gpd
@@ -93,6 +106,30 @@ def test_distributed_engine_raises():
         simplify_tiles_from_source(gdf, spec={"engine": "distributed"})
 
 
+@pytest.mark.skipif(shutil.which("tile-join") is None, reason="tile-join not installed")
+def test_archive_downzoom_trims(tmp_path):
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+
+    from databricks.labs.gbx.vizx._simplify import (
+        simplify_tiles_from_archive,
+        simplify_tiles_from_source,
+    )
+
+    gdf = gpd.GeoDataFrame(
+        {"v": [1]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+        crs="EPSG:4326",
+    )
+    src = tmp_path / "full.pmtiles"
+    simplify_tiles_from_source(gdf, spec={"max_z": 8}, out_path=str(src))
+    out = tmp_path / "ov.pmtiles"
+    simplify_tiles_from_archive(
+        str(src), spec={"max_z": 4, "budget_mb": 4}, out_path=str(out)
+    )
+    assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
+
+
 def test_simplify_raster_path(tmp_path):
     """Raster source (GeoTIFF path) → COG output exists and is a valid GeoTIFF."""
     import struct
@@ -122,7 +159,9 @@ def test_simplify_raster_path(tmp_path):
         dst.write(data)
 
     out_cog = tmp_path / "out.tif"
-    result = simplify_tiles_from_source(str(src_tif), spec={"raster_max_px": 32}, out_path=str(out_cog))
+    result = simplify_tiles_from_source(
+        str(src_tif), spec={"raster_max_px": 32}, out_path=str(out_cog)
+    )
     assert out_cog.exists() and out_cog.stat().st_size > 0
     # Verify it's a valid GeoTIFF (TIFF magic)
     magic = out_cog.read_bytes()[:4]

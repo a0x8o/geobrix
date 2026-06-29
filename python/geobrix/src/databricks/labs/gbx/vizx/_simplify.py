@@ -61,7 +61,9 @@ def normalize_spec(spec: dict | None) -> dict:
 
     # Validate
     if result["min_z"] > result["max_z"]:
-        raise ValueError(f"min_z ({result['min_z']}) must be <= max_z ({result['max_z']})")
+        raise ValueError(
+            f"min_z ({result['min_z']}) must be <= max_z ({result['max_z']})"
+        )
 
     if result["budget_mb"] <= 0:
         raise ValueError(f"budget_mb must be > 0, got {result['budget_mb']}")
@@ -135,6 +137,7 @@ def _is_raster_source(source) -> bool:
 #   1. Looking inside the PyPI package's BIN_DIR (most reliable).
 #   2. Falling back to PATH lookup (works on macOS brew install or system pkg).
 _TIPPECANOE_BIN: str | None = None  # cached after first resolution
+_TILEJOIN_BIN: str | None = None  # cached after first resolution
 
 
 def _resolve_tippecanoe_bin() -> str | None:
@@ -210,6 +213,99 @@ def _ensure_tippecanoe() -> str:
     return bin_path
 
 
+def _probe_tilejoin_bin(candidate: str) -> bool:
+    """Return True if candidate is a working (non-segfaulting) tile-join binary."""
+    if not Path(candidate).is_file() or not os.access(candidate, os.X_OK):
+        return False
+    # Read the first few bytes: Python scripts start with '#!' — skip those.
+    try:
+        with open(candidate, "rb") as f:
+            header = f.read(4)
+        if header[:2] == b"#!":
+            return False  # wrapper script, not the real binary
+    except Exception:
+        return False
+    # Run with no args: real binary exits 101 (usage).
+    # Segfault: subprocess reports returncode == -11 (signal 11) on Linux, or 139 on some shells.
+    try:
+        r = subprocess.run(
+            [candidate],
+            capture_output=True,
+            timeout=10,
+        )
+        # Negative returncode = killed by signal (e.g. SIGSEGV = -11).
+        # 139 = 128 + 11, the shell's representation of the same signal.
+        # Reject both; any other exit is considered "working" (101=usage, 0=ok).
+        return r.returncode >= 0 and r.returncode != 139
+    except Exception:
+        return False
+
+
+def _resolve_tilejoin_bin() -> str | None:
+    """Return the path to the real tile-join C binary, or None if unavailable.
+
+    Resolution order:
+    1. Same directory as the resolved tippecanoe binary.
+    2. PyPI-wheel BIN_DIR (probed safely — may segfault on emulated-x86 Docker).
+    3. PATH lookup (skipping Python wrapper scripts).
+    4. Scan common source-build directories (e.g. /tmp/tippecanoe) for cases
+       where make install overwrote the PATH slot with a Python wrapper.
+    """
+    global _TILEJOIN_BIN
+    if _TILEJOIN_BIN is not None:
+        return _TILEJOIN_BIN
+
+    # 1. Same directory as the resolved tippecanoe binary.
+    tc_bin = _resolve_tippecanoe_bin()
+    if tc_bin is not None:
+        sibling = str(Path(tc_bin).parent / "tile-join")
+        if _probe_tilejoin_bin(sibling):
+            _TILEJOIN_BIN = sibling
+            return _TILEJOIN_BIN
+
+    # 2. PyPI-wheel BIN_DIR.
+    try:
+        import tippecanoe as _tc_pkg
+
+        candidate = str(Path(_tc_pkg.BIN_DIR) / "tile-join")
+        if _probe_tilejoin_bin(candidate):
+            _TILEJOIN_BIN = candidate
+            return _TILEJOIN_BIN
+    except ImportError:
+        pass
+
+    # 3. PATH lookup (skip Python wrapper scripts).
+    path_bin = shutil.which("tile-join")
+    if path_bin and _probe_tilejoin_bin(path_bin):
+        _TILEJOIN_BIN = path_bin
+        return _TILEJOIN_BIN
+
+    # 4. Common source-build directories: handles the case where `make install`
+    #    copied tippecanoe to PREFIX/bin but the tile-join slot at that path was
+    #    pre-empted by a PyPI wrapper (leaving the ELF only in the build dir).
+    _SOURCEBUILD_DIRS = ["/tmp/tippecanoe", "/tmp/tippecanoe-src", "/opt/tippecanoe"]
+    for build_dir in _SOURCEBUILD_DIRS:
+        candidate = str(Path(build_dir) / "tile-join")
+        if _probe_tilejoin_bin(candidate):
+            _TILEJOIN_BIN = candidate
+            return _TILEJOIN_BIN
+
+    return None
+
+
+def _ensure_tilejoin() -> str:
+    """Return the real tile-join binary path; raise ImportError if not available."""
+    bin_path = _resolve_tilejoin_bin()
+    if bin_path is None:
+        raise ImportError(
+            "tile-join binary not found or not executable. "
+            "Install it via: pip install geobrix[vizx]  "
+            "(which pulls in the tippecanoe manylinux wheel containing tile-join), or "
+            "brew install tippecanoe (macOS), or build tippecanoe from source."
+        )
+    return bin_path
+
+
 def _gdf_to_geojson(gdf, tmp_dir: str) -> str:
     """Write geopandas GeoDataFrame to a temp GeoJSON file; return its path."""
     path = str(Path(tmp_dir) / "input.geojson")
@@ -229,7 +325,9 @@ def _vector_path_to_geojson(source_path, tmp_dir: str) -> str:
     return _gdf_to_geojson(gdf, tmp_dir)
 
 
-def _build_tippecanoe_argv(bin_path: str, in_geojson: str, out_pmtiles: str, spec: dict) -> list:
+def _build_tippecanoe_argv(
+    bin_path: str, in_geojson: str, out_pmtiles: str, spec: dict
+) -> list:
     """Build the tippecanoe command-line from a normalized spec dict."""
     argv = [
         bin_path,
@@ -465,7 +563,11 @@ def simplify_tiles_from_source(
         )
 
     # Route by source type
-    if _is_geodataframe(source) or _is_spark_dataframe(source) or _is_vector_path(source):
+    if (
+        _is_geodataframe(source)
+        or _is_spark_dataframe(source)
+        or _is_vector_path(source)
+    ):
         return _simplify_vector(source, merged, out_path)
     elif _is_raster_source(source):
         return _simplify_raster(source, merged, out_path)
@@ -474,3 +576,91 @@ def simplify_tiles_from_source(
             f"Cannot determine source type for {type(source).__name__!r}. "
             "Pass a GeoDataFrame, Spark DataFrame, vector path, raster path, or numpy array."
         )
+
+
+def simplify_tiles_from_archive(
+    pmtiles_path: str,
+    *,
+    spec: dict | None = None,
+    out_path: str | None = None,
+) -> Union[bytes, str]:
+    """Down-zoom and budget-trim an existing PMTiles archive via tile-join.
+
+    Unlike :func:`simplify_tiles_from_source`, this does not re-tile from
+    source data — it recombines tiles already in an existing ``.pmtiles``
+    archive, dropping tiles above ``max_z`` and optionally filtering by zoom
+    range.  This is substantially faster than re-tiling from scratch and is
+    the preferred path when a full-detail archive already exists.
+
+    Note on budget trimming: ``tile-join`` does not expose a per-tile byte
+    budget flag (``--maximum-tile-bytes`` is a tippecanoe-only option). The
+    ``budget_mb`` field in *spec* is accepted and recorded in the merged spec
+    for forward-compatibility, but has no effect on the ``tile-join``
+    invocation.  If per-tile budget trimming is required, run
+    :func:`simplify_tiles_from_source` instead.
+
+    Args:
+        pmtiles_path: Path to the source ``.pmtiles`` archive.
+        spec: Optional dict of simplify options (see :func:`normalize_spec`).
+            Relevant keys for this function: ``max_z``, ``min_z``.
+        out_path: If given, the output is written to this path and the path
+            string is returned. If None, the raw bytes are returned.
+
+    Returns:
+        bytes: the down-zoomed PMTiles archive, when out_path is None.
+        str:   out_path, when out_path was specified.
+
+    Raises:
+        ImportError: if the tile-join binary is missing or not executable.
+        RuntimeError: if tile-join exits with a non-zero return code.
+        FileNotFoundError: if ``pmtiles_path`` does not exist.
+    """
+    merged = normalize_spec(spec)
+
+    src = Path(pmtiles_path)
+    if not src.exists():
+        raise FileNotFoundError(f"PMTiles archive not found: {pmtiles_path}")
+
+    bin_path = _ensure_tilejoin()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_pmtiles = str(Path(tmp_dir) / "out.pmtiles")
+
+        argv = [
+            bin_path,
+            f"--maximum-zoom={merged['max_z']}",
+            f"--minimum-zoom={merged['min_z']}",
+            "--force",
+            "-o",
+            out_pmtiles,
+            str(src),
+        ]
+
+        if merged.get("budget_mb") and merged["budget_mb"] != 64:
+            # budget_mb accepted in spec but tile-join has no equivalent flag;
+            # log so callers know it was ignored.
+            log.warning(
+                "simplify_tiles_from_archive: budget_mb=%s ignored — "
+                "tile-join does not support per-tile byte budgets. "
+                "Use simplify_tiles_from_source for budget-trimmed output.",
+                merged["budget_mb"],
+            )
+
+        log.debug("tile-join argv: %s", argv)
+        result = subprocess.run(argv, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"tile-join failed (exit {result.returncode}):\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+        log.debug("tile-join stdout: %s", result.stdout)
+
+        if out_path is not None:
+            shutil.copy2(out_pmtiles, out_path)
+            log.info("engine=tile-join → %s", out_path)
+            return out_path
+        else:
+            data = Path(out_pmtiles).read_bytes()
+            log.info("engine=tile-join → %d bytes in memory", len(data))
+            return data
