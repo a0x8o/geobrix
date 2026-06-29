@@ -140,22 +140,36 @@ def _resolve_in_range(ds, rescale):
     return out
 
 
-def render_tile(ds, z, x, y, fmt="PNG", size=256, resampling="bilinear") -> bytes:
+def render_tile(
+    ds, z, x, y, fmt="PNG", size=256, resampling="bilinear",
+    rescale="auto", in_range=None,
+) -> bytes:
     """Render a single web-mercator (z, x, y) tile from open dataset ``ds``.
 
-    Validates inputs (raises ValueError on bad format/size/resampling). Out-of-
-    extent / empty tiles, or any hard render failure, return a transparent PNG
-    of ``size`` x ``size`` (mirrors heavyweight: PNG regardless of ``fmt``).
+    Validates inputs (raises ValueError on bad format/size/resampling/rescale).
+    Out-of-extent / empty tiles, or any hard render failure, return a transparent
+    PNG of ``size`` x ``size`` (mirrors heavyweight: PNG regardless of ``fmt``).
+
+    ``rescale`` controls 8-bit encoding contrast (see _resolve_in_range): "auto"
+    (default) rescales non-8-bit rasters by whole-dataset min/max and passes uint8
+    through unchanged; "none" keeps the raw full-dtype-range mapping; a (min, max)
+    pair sets explicit bounds. ``in_range`` (internal) lets the pyramid path pass a
+    precomputed per-band range so stats are read once, not per tile; when given it
+    overrides ``rescale``.
     """
     from rio_tiler.errors import TileOutsideBounds  # lazy: see module-top note
     from rio_tiler.io import Reader
 
     fmt_u, s, resamp_name = _validate(fmt, size, resampling)
+    if in_range is None:
+        in_range = _resolve_in_range(ds, rescale)  # may raise ValueError on bad rescale
     try:
         with Reader(None, dataset=ds) as cog:
             img = cog.tile(
                 int(x), int(y), int(z), tilesize=s, resampling_method=resamp_name
             )
+            if in_range is not None:
+                img = img.post_process(in_range=in_range)
             out = img.render(img_format=fmt_u)
         if not out:
             return transparent_png(s)

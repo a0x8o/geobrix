@@ -313,3 +313,67 @@ def test_pyramid_guard_tile_count_before_rendering():
     finally:
         ds.close()
         mf.close()
+
+
+# --- render_tile rescale / in_range ------------------------------------------
+
+def _decode_png_rgb(png_bytes):
+    import io
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    a = np.asarray(img)
+    # data pixels = alpha > 0
+    mask = a[..., 3] > 0
+    rgb = a[..., :3][mask]
+    return rgb  # (N, 3) uint8 of covered pixels
+
+
+def _center_tile_zxy(ds):
+    # Pick the z=8 tile that covers the geographic centre of the fixture extent
+    # (lon~10-12, lat~48-50).  Using the midpoint avoids edge tiles that only
+    # clip a corner of the raster and therefore contain a narrow value range.
+    import morecantile
+    tms = morecantile.tms.get("WebMercatorQuad")
+    west, south, east, north = xyz._wgs84_bounds(ds)
+    mid_lon = (west + east) / 2
+    mid_lat = (south + north) / 2
+    t = tms.tile(mid_lon, mid_lat, 8)
+    return t.z, t.x, t.y
+
+
+def test_render_tile_auto_uint16_spans_full_range():
+    mf, ds = _open(_make_uint16_narrow(lo=8000, hi=12000))
+    try:
+        z, x, y = _center_tile_zxy(ds)
+        png = xyz.render_tile(ds, z, x, y, rescale="auto")
+        rgb = _decode_png_rgb(png)
+        assert rgb.size > 0
+        # Auto rescale maps [8000,12000] -> ~full 8-bit; expect a wide spread,
+        # NOT crushed into the ~[31,46] full-dtype-range band.
+        assert int(rgb.max()) - int(rgb.min()) > 100
+    finally:
+        ds.close(); mf.close()
+
+
+def test_render_tile_none_uint16_stays_crushed():
+    mf, ds = _open(_make_uint16_narrow(lo=8000, hi=12000))
+    try:
+        z, x, y = _center_tile_zxy(ds)
+        png = xyz.render_tile(ds, z, x, y, rescale="none")
+        rgb = _decode_png_rgb(png)
+        assert rgb.size > 0
+        # Full-dtype-range: 8000..12000 / 65535 * 255 -> ~[31, 46]; crushed.
+        assert int(rgb.max()) < 80
+    finally:
+        ds.close(); mf.close()
+
+
+def test_render_tile_uint8_auto_matches_none():
+    mf, ds = _open(_make_rgb())
+    try:
+        z, x, y = _center_tile_zxy(ds)
+        auto = xyz.render_tile(ds, z, x, y, rescale="auto")
+        none = xyz.render_tile(ds, z, x, y, rescale="none")
+        assert auto == none  # uint8 pass-through: byte-identical
+    finally:
+        ds.close(); mf.close()
