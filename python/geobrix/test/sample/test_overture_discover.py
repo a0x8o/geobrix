@@ -65,6 +65,7 @@ def test_expand_themes_unknown_raises():
 
 def _sf_building_loader(href):
     if "sf-building" in href:
+
         class _A:
             href = "s3://overturemaps-us-west-2/release/buildings/building/sf.parquet"
 
@@ -78,6 +79,7 @@ def _sf_building_loader(href):
 
 def _eu_place_loader(href):
     if "eu-place" in href:
+
         class _A:
             href = "s3://overturemaps-us-west-2/release/places/place/eu.parquet"
 
@@ -100,7 +102,10 @@ def _both_loader(href):
 def test_traverse_catalog_bbox_filters_disjoint():
     sf_bbox = (-122.45, 37.74, -122.40, 37.78)
     rows = traverse_catalog(
-        open_fake_overture, sf_bbox, [("buildings", "building")], _item_loader=_sf_building_loader
+        open_fake_overture,
+        sf_bbox,
+        [("buildings", "building")],
+        _item_loader=_sf_building_loader,
     )
     assert len(rows) == 1
     r = rows[0]
@@ -113,7 +118,9 @@ def test_traverse_catalog_bbox_filters_disjoint():
 def test_traverse_catalog_skips_unrequested_pairs():
     # AOI covers the whole world, but we only ask for places -> the SF building drops out
     rows = traverse_catalog(
-        open_fake_overture, (-180, -90, 180, 90), [("places", "place")],
+        open_fake_overture,
+        (-180, -90, 180, 90),
+        [("places", "place")],
         _item_loader=_eu_place_loader,
     )
     assert [r["type"] for r in rows] == ["place"]

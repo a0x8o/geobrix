@@ -42,7 +42,7 @@ def test_simplify_from_geojson_under_budget(tmp_path):
         crs="EPSG:4326",
     )
     out = tmp_path / "o.pmtiles"
-    p = simplify_tiles_from_source(
+    simplify_tiles_from_source(
         gdf, spec={"max_z": 6, "budget_mb": 8}, out_path=str(out)
     )
     assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
@@ -139,7 +139,8 @@ def test_archive_downzoom_trims(tmp_path):
     assert out.exists() and out.read_bytes()[:7] == b"PMTiles"
     # No budget_mb warning expected for a small archive that fits within budget
     budget_warns = [
-        x for x in w
+        x
+        for x in w
         if "budget_mb" in str(x.message) and issubclass(x.category, UserWarning)
     ]
     assert len(budget_warns) == 0, (
@@ -154,17 +155,17 @@ def test_archive_downzoom_trims(tmp_path):
 )
 def test_archive_budget_escalation_retiles_from_source(tmp_path):
     """An archive whose tiles exceed budget_mb → escalated to source re-tile; warning fires and result respects budget."""
-    import geopandas as gpd
+    import gzip as _gzip
     from pathlib import Path
+
+    import geopandas as gpd
+    from pmtiles.reader import MemorySource, all_tiles
     from shapely.geometry import box
 
     from databricks.labs.gbx.vizx._simplify import (
         simplify_tiles_from_archive,
         simplify_tiles_from_source,
     )
-    from pmtiles.reader import MemorySource, all_tiles
-
-    import gzip as _gzip
 
     # Build a dense source archive at z=8 (many features → tiles will be large)
     gdf = gpd.GeoDataFrame(
@@ -173,7 +174,9 @@ def test_archive_budget_escalation_retiles_from_source(tmp_path):
         crs="EPSG:4326",
     )
     src = tmp_path / "dense.pmtiles"
-    simplify_tiles_from_source(gdf, spec={"max_z": 8, "budget_mb": 64}, out_path=str(src))
+    simplify_tiles_from_source(
+        gdf, spec={"max_z": 8, "budget_mb": 64}, out_path=str(src)
+    )
 
     # Use a tiny budget (0.001 MB = ~1 KB) that forces escalation.
     # Note: tippecanoe's `--maximum-tile-bytes` is best-effort and may not achieve
@@ -242,14 +245,14 @@ def test_bbox_clip_produces_distinct_archives(tmp_path):
         geometry=[
             Point(-10, 0),  # west cluster
             Point(-9, 0),
-            Point(10, 0),   # east cluster
+            Point(10, 0),  # east cluster
             Point(11, 0),
         ],
         crs="EPSG:4326",
     )
 
-    west_bbox = (-15.0, -5.0, -5.0, 5.0)   # covers only the west cluster
-    east_bbox = (5.0, -5.0, 15.0, 5.0)     # covers only the east cluster
+    west_bbox = (-15.0, -5.0, -5.0, 5.0)  # covers only the west cluster
+    east_bbox = (5.0, -5.0, 15.0, 5.0)  # covers only the east cluster
 
     west_bytes = simplify_tiles_from_source(gdf, spec={"max_z": 4}, bbox=west_bbox)
     east_bytes = simplify_tiles_from_source(gdf, spec={"max_z": 4}, bbox=east_bbox)
@@ -258,15 +261,13 @@ def test_bbox_clip_produces_distinct_archives(tmp_path):
     assert isinstance(west_bytes, bytes) and west_bytes[:7] == b"PMTiles"
     assert isinstance(east_bytes, bytes) and east_bytes[:7] == b"PMTiles"
     # The two archives must differ (different spatial content).
-    assert west_bytes != east_bytes, (
-        "bbox clip had no effect — west and east archives are identical"
-    )
+    assert (
+        west_bytes != east_bytes
+    ), "bbox clip had no effect — west and east archives are identical"
 
 
 def test_simplify_raster_path(tmp_path):
     """Raster source (GeoTIFF path) → COG output exists and is a valid GeoTIFF."""
-    import struct
-
     import numpy as np
 
     from databricks.labs.gbx.vizx._simplify import simplify_tiles_from_source
@@ -292,7 +293,7 @@ def test_simplify_raster_path(tmp_path):
         dst.write(data)
 
     out_cog = tmp_path / "out.tif"
-    result = simplify_tiles_from_source(
+    simplify_tiles_from_source(
         str(src_tif), spec={"raster_max_px": 32}, out_path=str(out_cog)
     )
     assert out_cog.exists() and out_cog.stat().st_size > 0

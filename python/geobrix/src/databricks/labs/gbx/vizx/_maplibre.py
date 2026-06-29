@@ -25,7 +25,10 @@ import base64
 import io
 import json
 import warnings as _warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from databricks.labs.gbx.vizx._layers import Layer
 
 # ---------------------------------------------------------------------------
 # security helper
@@ -55,11 +58,17 @@ def _json_for_script(obj) -> str:
 # ---------------------------------------------------------------------------
 
 _MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"
-_MAPLIBRE_JS_SRI = "sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj"
+_MAPLIBRE_JS_SRI = (
+    "sha384-SYKAG6cglRMN0RVvhNeBY0r3FYKNOJtznwA0v7B5Vp9tr31xAHsZC0DqkQ/pZDmj"
+)
 _MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
-_MAPLIBRE_CSS_SRI = "sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V"
+_MAPLIBRE_CSS_SRI = (
+    "sha384-MinO0mNliZ3vwppuPOUnGa+iq619pfMhLVUXfC4LHwSCvF9H+6P/KO4Q7qBOYV5V"
+)
 _PMTILES_JS = "https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"
-_PMTILES_JS_SRI = "sha384-QfbOCebHNw8pQiPAOd2IFee2v2A5VYZxBk0+JGZ5H+3mfzVIp6zsQNkTsfGJot93"
+_PMTILES_JS_SRI = (
+    "sha384-QfbOCebHNw8pQiPAOd2IFee2v2A5VYZxBk0+JGZ5H+3mfzVIp6zsQNkTsfGJot93"
+)
 _CARTO_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
 
 _DEFAULT_RASTER_MAX_PX = 1024
@@ -432,7 +441,9 @@ def _max_tile_bytes(raw: bytes) -> int | None:
         return None
 
 
-def _build_audit(layers, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec) -> dict:
+def _build_audit(
+    layers, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec
+) -> dict:
     """Build the audit dict from layers + their prepared (sources, layers, embed_bytes) entries."""
     audit_layers_list = []
     for idx, layer in enumerate(layers):
@@ -452,8 +463,12 @@ def _build_audit(layers, prepared, total_embed_bytes, max_embed_bytes, simplify_
     else:
         # "url" — at least one pmtiles layer exists AND every pmtiles layer is
         # url-mode (no archive needs embedding; non-pmtiles layers are irrelevant).
-        pmtiles_layers = [l for l in layers if getattr(l, "kind", None) == "pmtiles"]
-        all_url = bool(pmtiles_layers) and all(_pmtiles_is_url(l) for l in pmtiles_layers)
+        pmtiles_layers = [
+            lyr for lyr in layers if getattr(lyr, "kind", None) == "pmtiles"
+        ]
+        all_url = bool(pmtiles_layers) and all(
+            _pmtiles_is_url(lyr) for lyr in pmtiles_layers
+        )
         if all_url:
             verdict = "url"
         elif simplify_tiles_spec or any(
@@ -558,7 +573,9 @@ def audit_layers(
             if getattr(layer, "kind", None) == "pmtiles"
         )
 
-    return _build_audit(lyrs, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec)
+    return _build_audit(
+        lyrs, prepared, total_embed_bytes, max_embed_bytes, simplify_tiles_spec
+    )
 
 
 def prepare_layers(
@@ -691,7 +708,9 @@ def prepare_layers(
                     msg = f"simplified {lbl}"
                     warn_msgs.append(msg)
                     _warnings.warn(msg, stacklevel=2)
-            audit = _build_audit(layers, prepared, html_bytes, budget_bytes, simplify_tiles_spec)
+            audit = _build_audit(
+                layers, prepared, html_bytes, budget_bytes, simplify_tiles_spec
+            )
             return {
                 "mode": "interactive",
                 "prepared": valid_prepared,
@@ -749,13 +768,24 @@ def prepare_layers(
             static_layers.append(layer)
 
     # Build audit for the static-fallback path.
-    total_bytes = html_bytes if html_bytes is not None else sum(
-        len(_pmtiles_raw_bytes(layer) or b"")
-        for layer in layers
-        if getattr(layer, "kind", None) == "pmtiles"
+    total_bytes = (
+        html_bytes
+        if html_bytes is not None
+        else sum(
+            len(_pmtiles_raw_bytes(layer) or b"")
+            for layer in layers
+            if getattr(layer, "kind", None) == "pmtiles"
+        )
     )
-    audit = _build_audit(layers, prepared, total_bytes, budget_bytes, simplify_tiles_spec)
-    return {"mode": "static", "prepared": static_layers, "warnings": warn_msgs, "audit": audit}
+    audit = _build_audit(
+        layers, prepared, total_bytes, budget_bytes, simplify_tiles_spec
+    )
+    return {
+        "mode": "static",
+        "prepared": static_layers,
+        "warnings": warn_msgs,
+        "audit": audit,
+    }
 
 
 def _pmtiles_register_js(sid: str, info: dict) -> str:
@@ -1021,8 +1051,6 @@ def _data_to_png_b64(data, height: int, width: int) -> str:
 
 def _ndarray_to_png_b64(arr) -> str:
     """Render a bare ndarray (2-D or 3-D CxHxW) to a base64 PNG string."""
-    import numpy as np
-
     if arr.ndim == 2:
         h, w = arr.shape
     elif arr.ndim == 3:

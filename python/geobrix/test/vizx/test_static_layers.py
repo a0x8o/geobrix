@@ -1,14 +1,16 @@
 """Task 3: plot_static multi-layer compositor tests."""
+
 import matplotlib
 
 matplotlib.use("Agg")
 
-import geopandas as gpd  # noqa: E402
 import warnings  # noqa: E402
+
+import geopandas as gpd  # noqa: E402
 import pytest  # noqa: E402
 from shapely.geometry import Point, Polygon  # noqa: E402
 
-from databricks.labs.gbx.vizx._layers import vector_layer, pmtiles_layer  # noqa: E402
+from databricks.labs.gbx.vizx._layers import pmtiles_layer, vector_layer  # noqa: E402
 from databricks.labs.gbx.vizx._static_map import plot_static  # noqa: E402
 
 

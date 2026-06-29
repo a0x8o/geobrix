@@ -134,7 +134,10 @@ def test_plot_pmtiles_size_guard_uses_static_fallback(monkeypatch):
         # tiny max_embed_mb forces static path
         p.plot_pmtiles(archive, max_embed_mb=1e-9)
     # A prepare_layers warning must have been issued.
-    assert any("fallback" in str(w.message).lower() or "exceed" in str(w.message).lower() for w in ws)
+    assert any(
+        "fallback" in str(w.message).lower() or "exceed" in str(w.message).lower()
+        for w in ws
+    )
     # plot_static was called.
     assert called.get("static") is True
 
@@ -165,7 +168,10 @@ def test_plot_pmtiles_size_guard_uses_vector_static_fallback(monkeypatch):
         warnings.simplefilter("always")
         p.plot_pmtiles(archive, max_embed_mb=1e-9)
     # A fallback warning must have been issued by prepare_layers.
-    assert any("fallback" in str(w.message).lower() or "exceed" in str(w.message).lower() for w in ws)
+    assert any(
+        "fallback" in str(w.message).lower() or "exceed" in str(w.message).lower()
+        for w in ws
+    )
 
 
 def test_plot_pmtiles_oversized_without_fallback_raises():
@@ -246,8 +252,6 @@ def test_public_exports():
 
 def test_maybe_gunzip_idempotent_on_raw():
     """_maybe_gunzip is a no-op when the payload is already raw (not gzip)."""
-    import gzip
-
     from databricks.labs.gbx.vizx import _pmtiles as p
 
     raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -385,9 +389,9 @@ def test_plot_pmtiles_static_vector_min_zoom_only(monkeypatch):
         p_mod.plot_pmtiles(archive, max_embed_mb=0)
 
     assert decoded_zooms, "spy never called — _decode_mvt_to_geoms not reached"
-    assert all(z == z_min for z in decoded_zooms), (
-        f"Expected only z={z_min}, got zoom levels {set(decoded_zooms)}"
-    )
+    assert all(
+        z == z_min for z in decoded_zooms
+    ), f"Expected only z={z_min}, got zoom levels {set(decoded_zooms)}"
 
 
 def _solid_png(size, value):
@@ -417,9 +421,7 @@ def test_plot_pmtiles_static_raster_uses_finest_zoom(monkeypatch):
     # must come from z=2 (finest), so the decoded array's max channel ~= 210.
     coarse = _solid_png(64, 40)
     fine = _solid_png(64, 210)
-    archive = _build_archive(
-        [(0, 0, 0, coarse), (2, 1, 1, fine)], TileType.PNG
-    )
+    archive = _build_archive([(0, 0, 0, coarse), (2, 1, 1, fine)], TileType.PNG)
 
     layer = pmtiles_layer(archive)
     decoded = mlib._decode_pmtiles_for_static(layer)

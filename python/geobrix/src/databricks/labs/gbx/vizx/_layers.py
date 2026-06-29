@@ -1,4 +1,5 @@
 """Layer model for the unified VizX viewers (vector / raster / grid / pmtiles)."""
+
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -29,20 +30,60 @@ class Layer:
             raise ValueError(f"Layer.kind must be one of {_VALID}, got {self.kind!r}")
 
 
-def vector_layer(data, *, geom_col=None, column=None, cmap="viridis", fill=True,
-                 color=None, width=None, opacity=0.8, simplify=None, label=None):
-    return Layer("vector", data, geom_col=geom_col, column=column, cmap=cmap, fill=fill,
-                 color=color, width=width, opacity=opacity, simplify=simplify, label=label)
+def vector_layer(
+    data,
+    *,
+    geom_col=None,
+    column=None,
+    cmap="viridis",
+    fill=True,
+    color=None,
+    width=None,
+    opacity=0.8,
+    simplify=None,
+    label=None,
+):
+    return Layer(
+        "vector",
+        data,
+        geom_col=geom_col,
+        column=column,
+        cmap=cmap,
+        fill=fill,
+        color=color,
+        width=width,
+        opacity=opacity,
+        simplify=simplify,
+        label=label,
+    )
 
 
 def raster_layer(data, *, band=None, cmap="viridis", opacity=1.0, label=None):
     return Layer("raster", data, band=band, cmap=cmap, opacity=opacity, label=label)
 
 
-def grid_layer(data, *, grid_system, cellid_col=None, column=None, cmap="viridis",
-               opacity=0.7, grid_conf=None, label=None):
-    return Layer("grid", data, grid_system=grid_system, cellid_col=cellid_col, column=column,
-                 cmap=cmap, opacity=opacity, grid_conf=grid_conf, label=label)
+def grid_layer(
+    data,
+    *,
+    grid_system,
+    cellid_col=None,
+    column=None,
+    cmap="viridis",
+    opacity=0.7,
+    grid_conf=None,
+    label=None,
+):
+    return Layer(
+        "grid",
+        data,
+        grid_system=grid_system,
+        cellid_col=cellid_col,
+        column=column,
+        cmap=cmap,
+        opacity=opacity,
+        grid_conf=grid_conf,
+        label=label,
+    )
 
 
 def pmtiles_layer(data, *, style=None, simplify=None, label=None):
@@ -63,7 +104,11 @@ def as_layers(obj) -> list:
         raise ValueError("as_layers: no layers provided")
     if isinstance(obj, Layer):
         return [obj]
-    if isinstance(obj, (list, tuple)) and obj and all(isinstance(x, Layer) for x in obj):
+    if (
+        isinstance(obj, (list, tuple))
+        and obj
+        and all(isinstance(x, Layer) for x in obj)
+    ):
         return list(obj)
     if _looks_pmtiles(obj):
         return [pmtiles_layer(obj)]
@@ -72,6 +117,7 @@ def as_layers(obj) -> list:
         return [raster_layer(obj)]
     try:
         import numpy as np
+
         if isinstance(obj, np.ndarray):
             return [raster_layer(obj)]
     except ImportError:

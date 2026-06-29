@@ -20,7 +20,9 @@ def _strip_scheme(path: str) -> str:
     return path
 
 
-def _render_cog(data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_source, ax=None):
+def _render_cog(
+    data, transform, *, crs, fig_w, fig_h, title, basemap, basemap_source, ax=None
+):
     """Render a decimated COG array (bands, h, w) over a contextily basemap.
 
     When *ax* is provided the caller owns the figure; this function draws onto

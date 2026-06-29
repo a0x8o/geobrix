@@ -51,7 +51,6 @@ def test_warnings_are_list():
 )
 def test_simplify_spec_produces_interactive():
     """An oversize vector layer + simplify_tiles_spec → mode='interactive' with 'simplified' warning."""
-    import shutil as _shutil
     import warnings as _warnings
 
     import geopandas as gpd
@@ -160,10 +159,10 @@ def test_audit_max_tile_bytes_for_archive():
     assert len(result["layers"]) == 1
     entry = result["layers"][0]
     assert entry["kind"] == "pmtiles"
-    assert entry["max_tile_bytes"] is not None, (
-        "_max_tile_bytes returned None — it is not reading real tile data from the archive"
-    )
+    assert (
+        entry["max_tile_bytes"] is not None
+    ), "_max_tile_bytes returned None — it is not reading real tile data from the archive"
     assert isinstance(entry["max_tile_bytes"], int)
-    assert entry["max_tile_bytes"] > 0, (
-        f"max_tile_bytes should be positive, got {entry['max_tile_bytes']}"
-    )
+    assert (
+        entry["max_tile_bytes"] > 0
+    ), f"max_tile_bytes should be positive, got {entry['max_tile_bytes']}"

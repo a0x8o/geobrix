@@ -22,24 +22,24 @@ def test_sri_hashes_are_real():
     """SRI hash constants are real sha384 values — no placeholder remains."""
     from databricks.labs.gbx.vizx import _maplibre as m
 
-    assert m._MAPLIBRE_JS_SRI.startswith("sha384-"), (
-        f"_MAPLIBRE_JS_SRI is not a real hash: {m._MAPLIBRE_JS_SRI!r}"
-    )
-    assert "REPLACE" not in m._MAPLIBRE_JS_SRI, (
-        f"_MAPLIBRE_JS_SRI still contains placeholder: {m._MAPLIBRE_JS_SRI!r}"
-    )
-    assert m._MAPLIBRE_CSS_SRI.startswith("sha384-"), (
-        f"_MAPLIBRE_CSS_SRI is not a real hash: {m._MAPLIBRE_CSS_SRI!r}"
-    )
-    assert "REPLACE" not in m._MAPLIBRE_CSS_SRI, (
-        f"_MAPLIBRE_CSS_SRI still contains placeholder: {m._MAPLIBRE_CSS_SRI!r}"
-    )
-    assert m._PMTILES_JS_SRI.startswith("sha384-"), (
-        f"_PMTILES_JS_SRI is not a real hash: {m._PMTILES_JS_SRI!r}"
-    )
-    assert "REPLACE" not in m._PMTILES_JS_SRI, (
-        f"_PMTILES_JS_SRI still contains placeholder: {m._PMTILES_JS_SRI!r}"
-    )
+    assert m._MAPLIBRE_JS_SRI.startswith(
+        "sha384-"
+    ), f"_MAPLIBRE_JS_SRI is not a real hash: {m._MAPLIBRE_JS_SRI!r}"
+    assert (
+        "REPLACE" not in m._MAPLIBRE_JS_SRI
+    ), f"_MAPLIBRE_JS_SRI still contains placeholder: {m._MAPLIBRE_JS_SRI!r}"
+    assert m._MAPLIBRE_CSS_SRI.startswith(
+        "sha384-"
+    ), f"_MAPLIBRE_CSS_SRI is not a real hash: {m._MAPLIBRE_CSS_SRI!r}"
+    assert (
+        "REPLACE" not in m._MAPLIBRE_CSS_SRI
+    ), f"_MAPLIBRE_CSS_SRI still contains placeholder: {m._MAPLIBRE_CSS_SRI!r}"
+    assert m._PMTILES_JS_SRI.startswith(
+        "sha384-"
+    ), f"_PMTILES_JS_SRI is not a real hash: {m._PMTILES_JS_SRI!r}"
+    assert (
+        "REPLACE" not in m._PMTILES_JS_SRI
+    ), f"_PMTILES_JS_SRI still contains placeholder: {m._PMTILES_JS_SRI!r}"
 
 
 def test_build_html_contains_pinned_version_and_sri():
@@ -72,9 +72,9 @@ def test_plot_interactive_dynamic_exported():
     The lazy import requires anywidget + traitlets (the [vizx] extra); if they are
     absent the __all__ membership is still asserted and the callable check is skipped.
     """
-    assert "plot_interactive_dynamic" in vizx.__all__, (
-        "plot_interactive_dynamic missing from __all__"
-    )
+    assert (
+        "plot_interactive_dynamic" in vizx.__all__
+    ), "plot_interactive_dynamic missing from __all__"
     try:
         fn = vizx.plot_interactive_dynamic
         assert callable(fn), "plot_interactive_dynamic is not callable"
@@ -97,15 +97,15 @@ def test_build_pmtiles_html_is_gone():
     """_build_pmtiles_html and duplicate CDN constants were removed from _pmtiles."""
     import databricks.labs.gbx.vizx._pmtiles as p
 
-    assert not hasattr(p, "_build_pmtiles_html"), (
-        "_build_pmtiles_html was not removed from _pmtiles.py"
-    )
-    assert not hasattr(p, "_MAPLIBRE_JS"), (
-        "duplicate _MAPLIBRE_JS constant was not removed from _pmtiles.py"
-    )
-    assert not hasattr(p, "_PMTILES_JS"), (
-        "duplicate _PMTILES_JS constant was not removed from _pmtiles.py"
-    )
-    assert not hasattr(p, "_MAPLIBRE_CSS"), (
-        "duplicate _MAPLIBRE_CSS constant was not removed from _pmtiles.py"
-    )
+    assert not hasattr(
+        p, "_build_pmtiles_html"
+    ), "_build_pmtiles_html was not removed from _pmtiles.py"
+    assert not hasattr(
+        p, "_MAPLIBRE_JS"
+    ), "duplicate _MAPLIBRE_JS constant was not removed from _pmtiles.py"
+    assert not hasattr(
+        p, "_PMTILES_JS"
+    ), "duplicate _PMTILES_JS constant was not removed from _pmtiles.py"
+    assert not hasattr(
+        p, "_MAPLIBRE_CSS"
+    ), "duplicate _MAPLIBRE_CSS constant was not removed from _pmtiles.py"

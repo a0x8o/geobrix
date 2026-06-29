@@ -114,8 +114,7 @@ def test_register_enables_xyzpyramid_minimal_args_sql(spark):
     prx.register(spark)
     _rgb_tile_view(spark)
     n_minimal = spark.sql(
-        "SELECT count(*) AS n FROM t, "
-        "LATERAL gbx_rst_xyzpyramid(tile, 1, 2) p"
+        "SELECT count(*) AS n FROM t, " "LATERAL gbx_rst_xyzpyramid(tile, 1, 2) p"
     ).first()["n"]
     assert n_minimal > 0
     # Same tile-count as the explicit-format call — defaults match.

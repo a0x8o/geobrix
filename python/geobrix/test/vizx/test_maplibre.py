@@ -11,9 +11,12 @@ from shapely.geometry import LineString, Point, Polygon
 
 matplotlib.use("Agg")
 
-from databricks.labs.gbx.vizx._layers import pmtiles_layer, raster_layer, vector_layer
-from databricks.labs.gbx.vizx._maplibre import layer_to_sources_layers
-
+from databricks.labs.gbx.vizx._layers import (  # noqa: E402
+    pmtiles_layer,
+    raster_layer,
+    vector_layer,
+)
+from databricks.labs.gbx.vizx._maplibre import layer_to_sources_layers  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -94,23 +97,27 @@ def _build_pmtiles_archive(tile_type_str="mvt", layer_name="buildings"):
 def test_vector_layer_becomes_geojson_source_and_fill_layer():
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
-        geometry=[Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])],
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])
+        ],
         crs="EPSG:4326",
     )
     sources, layers, embed = layer_to_sources_layers(vector_layer(gdf, column="v"), 0)
     assert "gbx0" in sources and sources["gbx0"]["type"] == "geojson"
-    assert any(l["type"] in ("fill", "line", "circle") for l in layers)
+    assert any(layer["type"] in ("fill", "line", "circle") for layer in layers)
     assert embed > 0
 
 
 def test_vector_layer_polygon_gets_fill_and_line_layers():
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
-        geometry=[Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])],
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])
+        ],
         crs="EPSG:4326",
     )
     sources, layers, embed = layer_to_sources_layers(vector_layer(gdf), 1)
-    types = {l["type"] for l in layers}
+    types = {layer["type"] for layer in layers}
     assert "fill" in types
     assert "line" in types
     # no circle for polygon-only gdf
@@ -126,7 +133,7 @@ def test_vector_layer_point_gets_circle_layer():
         crs="EPSG:4326",
     )
     sources, layers, embed = layer_to_sources_layers(vector_layer(gdf), 2)
-    types = {l["type"] for l in layers}
+    types = {layer["type"] for layer in layers}
     assert "circle" in types
     assert embed > 0
 
@@ -138,7 +145,7 @@ def test_vector_layer_line_gets_line_layer():
         crs="EPSG:4326",
     )
     sources, layers, embed = layer_to_sources_layers(vector_layer(gdf), 3)
-    types = {l["type"] for l in layers}
+    types = {layer["type"] for layer in layers}
     assert "line" in types
     assert "fill" not in types
     assert embed > 0
@@ -148,7 +155,9 @@ def test_vector_layer_source_data_is_valid_geojson():
     """The 'data' key in the source must be a GeoJSON FeatureCollection dict."""
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
-        geometry=[Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])],
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])
+        ],
         crs="EPSG:4326",
     )
     sources, _, _ = layer_to_sources_layers(vector_layer(gdf), 0)
@@ -180,14 +189,16 @@ def test_vector_layer_idx_keys_source_and_layers():
     """idx drives the source key and layer ids."""
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
-        geometry=[Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])],
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])
+        ],
         crs="EPSG:4326",
     )
     sources, layers, _ = layer_to_sources_layers(vector_layer(gdf), 7)
     assert "gbx7" in sources
-    for l in layers:
-        assert l["source"] == "gbx7"
-        assert l["id"].startswith("gbx7-")
+    for layer in layers:
+        assert layer["source"] == "gbx7"
+        assert layer["id"].startswith("gbx7-")
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +361,8 @@ def test_pmtiles_layer_idx_drives_key():
     sources, layers, _ = layer_to_sources_layers(pmtiles_layer(url), 5)
     assert "gbx5" in sources
     assert sources["gbx5"]["url"] == "pmtiles://gbx5"
-    for l in layers:
-        assert l["source"] == "gbx5"
+    for layer in layers:
+        assert layer["source"] == "gbx5"
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +390,7 @@ def test_pmtiles_vector_source_layer_from_metadata():
     the MapLibre fill layer carries source-layer='roads'."""
     archive = _build_pmtiles_archive("mvt", layer_name="roads")
     sources, layers, _ = layer_to_sources_layers(pmtiles_layer(archive), 0)
-    fill_layers = [l for l in layers if l.get("type") == "fill"]
+    fill_layers = [layer for layer in layers if layer.get("type") == "fill"]
     assert fill_layers, "expected at least one fill layer for a vector PMTiles"
     assert fill_layers[0]["source-layer"] == "roads", (
         f"source-layer should be 'roads' (from archive metadata), "
@@ -409,12 +420,10 @@ def test_extract_vector_layer_names_unit():
 
 def test_build_html_is_self_contained_and_sri_pinned():
     """The brief's required smoke test: vector layer → build_html → assertions."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import vector_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
-    gdf = gpd.GeoDataFrame(
-        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
     prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
     html = build_html(prepared)
     assert "maplibregl.Map" in html
@@ -426,8 +435,8 @@ def test_build_html_is_self_contained_and_sri_pinned():
 
 def test_build_html_pmtiles_embed_mode_no_sidecar():
     """build_html reads the _gbx_pmtiles sidecar without mutating it, emits FileSource JS."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
     archive = _build_pmtiles_archive("mvt")
     prepared = [layer_to_sources_layers(pmtiles_layer(archive), 0)]
@@ -442,8 +451,8 @@ def test_build_html_pmtiles_embed_mode_no_sidecar():
 
 def test_build_html_pmtiles_url_mode():
     """build_html url-mode emits new pmtiles.PMTiles(<url>) and no sidecar."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
     url = "https://example.com/tiles.pmtiles"
     prepared = [layer_to_sources_layers(pmtiles_layer(url), 0)]
@@ -455,12 +464,10 @@ def test_build_html_pmtiles_url_mode():
 
 def test_build_html_basemap_none():
     """basemap='none' renders an empty style literal, not a CARTO URL."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import vector_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
-    gdf = gpd.GeoDataFrame(
-        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
     prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
     html = build_html(prepared, basemap="none")
     assert "carto" not in html.lower()
@@ -469,12 +476,10 @@ def test_build_html_basemap_none():
 
 def test_build_html_custom_center_and_zoom():
     """center and zoom are written into the Map constructor."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import vector_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
-    gdf = gpd.GeoDataFrame(
-        {"v": [1]}, geometry=[Point(0.0, 51.5)], crs="EPSG:4326"
-    )
+    gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(0.0, 51.5)], crs="EPSG:4326")
     prepared = [layer_to_sources_layers(vector_layer(gdf), 0)]
     html = build_html(prepared, center=[0.0, 51.5], zoom=8)
     assert "[0.0, 51.5]" in html
@@ -483,15 +488,11 @@ def test_build_html_custom_center_and_zoom():
 
 def test_build_html_multi_layer():
     """N prepared tuples → N source ids present in the HTML."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import vector_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
-    gdf0 = gpd.GeoDataFrame(
-        {"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326"
-    )
-    gdf1 = gpd.GeoDataFrame(
-        {"v": [2]}, geometry=[Point(-122.5, 37.8)], crs="EPSG:4326"
-    )
+    gdf0 = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
+    gdf1 = gpd.GeoDataFrame({"v": [2]}, geometry=[Point(-122.5, 37.8)], crs="EPSG:4326")
     prepared = [
         layer_to_sources_layers(vector_layer(gdf0), 0),
         layer_to_sources_layers(vector_layer(gdf1), 1),
@@ -508,8 +509,8 @@ def test_build_html_multi_layer():
 
 def test_build_html_escapes_script_breakout():
     """Crafted feature-attribute values must not break out of the <script> block."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import vector_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
     gdf = gpd.GeoDataFrame(
         {"name": ["PWNED</script><img src=x onerror=alert(1)>"]},
@@ -527,8 +528,8 @@ def test_build_html_escapes_script_breakout():
 
 def test_build_html_does_not_mutate_prepared():
     """build_html must not mutate the caller's prepared list; calling it twice is idempotent."""
-    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
     archive = _build_pmtiles_archive("mvt")
     prepared = [layer_to_sources_layers(pmtiles_layer(archive), 0)]
@@ -540,9 +541,9 @@ def test_build_html_does_not_mutate_prepared():
     h1 = build_html(prepared)
 
     # Sidecar must NOT have been popped — caller's dict is unchanged.
-    assert "_gbx_pmtiles" in prepared[0][0][sid], (
-        "build_html mutated prepared: _gbx_pmtiles was popped from the caller's source dict"
-    )
+    assert (
+        "_gbx_pmtiles" in prepared[0][0][sid]
+    ), "build_html mutated prepared: _gbx_pmtiles was popped from the caller's source dict"
 
     h2 = build_html(prepared)
 

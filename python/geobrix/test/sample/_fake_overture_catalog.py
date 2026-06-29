@@ -51,20 +51,27 @@ class FakeOvertureCatalog:
     """Two themes: SF buildings (intersects SF) + EU places (disjoint from SF)."""
 
     def get_children(self):
-        building_type_cat = _TypeCatalog([
-            _Link("fake://sf-building-item.json"),
-        ])
+        building_type_cat = _TypeCatalog(
+            [
+                _Link("fake://sf-building-item.json"),
+            ]
+        )
         buildings_theme_cat = _ThemeCatalog({"building": building_type_cat})
 
-        place_type_cat = _TypeCatalog([
-            _Link("fake://eu-place-item.json"),
-        ])
+        place_type_cat = _TypeCatalog(
+            [
+                _Link("fake://eu-place-item.json"),
+            ]
+        )
         places_theme_cat = _ThemeCatalog({"place": place_type_cat})
 
-        release = _ReleaseCatalog("2026-06-17.0", {
-            "buildings": buildings_theme_cat,
-            "places": places_theme_cat,
-        })
+        release = _ReleaseCatalog(
+            "2026-06-17.0",
+            {
+                "buildings": buildings_theme_cat,
+                "places": places_theme_cat,
+            },
+        )
         return [release]
 
 

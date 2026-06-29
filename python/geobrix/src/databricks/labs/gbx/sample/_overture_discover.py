@@ -82,7 +82,7 @@ def traverse_catalog(opener, bbox, theme_pairs, _item_loader=None):
     if release_cat is None:
         return rows
 
-    for (theme, type_) in wanted:
+    for theme, type_ in wanted:
         theme_cat = release_cat.get_child(theme)
         if theme_cat is None:
             continue
@@ -137,5 +137,3 @@ def resolve_release(opener, release: Optional[str] = None) -> str:
     raise ValueError(
         "could not resolve latest Overture release from the catalog; pass release=... explicitly"
     )
-
-

@@ -26,9 +26,8 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional, Tuple
 
-import traitlets
-
 import anywidget
+import traitlets
 
 from databricks.labs.gbx.vizx._maplibre import (
     _CARTO_STYLE,
@@ -41,8 +40,10 @@ from databricks.labs.gbx.vizx._maplibre import (
     _json_for_script,
     layer_to_sources_layers,
 )
-from databricks.labs.gbx.vizx._simplify import normalize_spec, simplify_tiles_from_source
-
+from databricks.labs.gbx.vizx._simplify import (
+    normalize_spec,
+    simplify_tiles_from_source,
+)
 
 # ---------------------------------------------------------------------------
 # Tile cache
@@ -162,7 +163,9 @@ class _PrefetchWorker:
         self._tiler = tiler
         self._gen = 0
         self._lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="gbx-prefetch")
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="gbx-prefetch"
+        )
         self._futures: list = []
 
     def set_tiler(self, tiler: Callable[[int, int, int], bytes]) -> None:
@@ -468,7 +471,7 @@ def _tile_bbox(z: int, x: int, y: int) -> tuple:
     """
     import math
 
-    n = 2 ** z
+    n = 2**z
     min_lon = x / n * 360.0 - 180.0
     max_lon = (x + 1) / n * 360.0 - 180.0
 
@@ -521,6 +524,7 @@ def _build_dynamic_widget(
         if kind in ("vector", "grid"):
             if first_source is None:
                 from databricks.labs.gbx.vizx._maplibre import _gdf_for
+
                 first_source = _gdf_for(layer).to_crs(4326)
             overview_bytes = simplify_tiles_from_source(
                 first_source if first_source is not None else layer.data,
@@ -619,10 +623,15 @@ def _build_dynamic_widget(
         cy = (south + north) / 2
         # Convert lon/lat to tile XY at zoom z.
         import math
+
         lat_rad = math.radians(max(-85.0511, min(85.0511, cy)))
-        n = 2 ** z
+        n = 2**z
         tx = int((cx + 180.0) / 360.0 * n)
-        ty = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
+        ty = int(
+            (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi)
+            / 2.0
+            * n
+        )
         key = (z, tx, ty)
 
         # Cache-first: serve from cache on hit, prepare + cache on miss.

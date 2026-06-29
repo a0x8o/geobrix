@@ -5,21 +5,22 @@ Browser comm round-trip is proven by Spike B (model.send -> on_msg -> trait ->
 change handler); that path is not unit-testable headlessly.
 """
 
-import pytest
 import threading
+
+import pytest
 
 anywidget = pytest.importorskip("anywidget")
 
-from databricks.labs.gbx.vizx._dynamic import (
+import geopandas as gpd  # noqa: E402
+from shapely.geometry import Point  # noqa: E402
+
+from databricks.labs.gbx.vizx._dynamic import (  # noqa: E402
+    _PrefetchWorker,
+    _TileCache,
     _viewport_payload,
     plot_interactive_dynamic,
-    _TileCache,
-    _PrefetchWorker,
 )
-from databricks.labs.gbx.vizx._layers import vector_layer
-import geopandas as gpd
-from shapely.geometry import Point
-
+from databricks.labs.gbx.vizx._layers import vector_layer  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Task 13b: _TileCache + prefetch worker tests
@@ -157,7 +158,6 @@ def test_prefetch_coalesces_stale():
         ]
         # Not all stale neighbors were cached (coalescing dropped at least some).
         cached_stale = [k for k in stale_only_neighbors if cache.get(k) is not None]
-        all_stale = len(stale_only_neighbors)
         assert len(cached_stale) == 0, (
             f"Stale-generation ring DID populate the cache — generation token not working. "
             f"Stale entries found: {cached_stale}"
@@ -174,15 +174,25 @@ def test_builds_widget_with_overview_and_esm():
 
 
 def test_viewport_payload_only_fires_above_seam():
-    assert _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=12, max_z=10) is not None
-    assert _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=9, max_z=10) is None
+    assert (
+        _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=12, max_z=10)
+        is not None
+    )
+    assert (
+        _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=9, max_z=10) is None
+    )
 
 
 def test_viewport_payload_at_seam_boundary():
     # zoom == max_z is NOT above the seam — must return None.
-    assert _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=10, max_z=10) is None
+    assert (
+        _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=10, max_z=10) is None
+    )
     # zoom == max_z + 1 is above the seam — must return a payload.
-    assert _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=11, max_z=10) is not None
+    assert (
+        _viewport_payload(bbox=[-122.5, 37.7, -122.4, 37.8], zoom=11, max_z=10)
+        is not None
+    )
 
 
 def test_viewport_payload_structure():
@@ -222,7 +232,9 @@ def test_esm_is_synced_to_frontend():
     w = plot_interactive_dynamic([vector_layer(gdf)], simplify_tiles_spec={"max_z": 8})
     state = w.get_state()
     # _esm must be in the synced state dict (proves anywidget registered it sync=True).
-    assert "_esm" in state, "_esm is not in get_state() — widget will render blank in a notebook"
+    assert (
+        "_esm" in state
+    ), "_esm is not in get_state() — widget will render blank in a notebook"
     # Sanity-check: the ESM content is present (not an empty/null stub).
     esm_val = state["_esm"]
     if isinstance(esm_val, (list, tuple)):
@@ -280,8 +292,6 @@ def test_custom_on_viewport_below_seam_not_called():
 
 def test_handle_msg_cache_hit_skips_callback():
     """On a _handle_msg cache hit, the user callback is NOT invoked."""
-    import math
-
     gdf = gpd.GeoDataFrame({"v": [1]}, geometry=[Point(-122.4, 37.7)], crs="EPSG:4326")
     callback_calls = []
 
@@ -295,19 +305,8 @@ def test_handle_msg_cache_hit_skips_callback():
         on_viewport=counting_callback,
     )
 
-    # Compute which tile key _handle_msg will derive for zoom=12, bbox centred at (-122.45, 37.75).
     zoom = 12
     bbox = [-122.5, 37.7, -122.4, 37.8]
-    west, south, east, north = bbox
-    cx = (west + east) / 2  # -122.45
-    cy = (south + north) / 2  # 37.75
-    z = int(zoom)
-    lat_rad = math.radians(max(-85.0511, min(85.0511, cy)))
-    n = 2 ** z
-    tx = int((cx + 180.0) / 360.0 * n)
-    ty = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
-    key = (z, tx, ty)
-
     # Pre-seed the cache (accessed via the widget's internal cache through the worker).
     # We can't access _cache directly, so we drive a first msg to populate it.
     w._gbx_handle_msg({"bbox": bbox, "zoom": zoom})
@@ -326,6 +325,7 @@ def test_handle_msg_cache_hit_skips_callback():
 def test_tile_bbox_z0_whole_world():
     """At z=0, tile (0,0,0) must cover the whole Web Mercator world."""
     from databricks.labs.gbx.vizx._dynamic import _tile_bbox
+
     min_lon, min_lat, max_lon, max_lat = _tile_bbox(0, 0, 0)
     assert abs(min_lon - (-180.0)) < 1e-9
     assert abs(max_lon - 180.0) < 1e-9
@@ -337,6 +337,7 @@ def test_tile_bbox_z0_whole_world():
 def test_tile_bbox_neighbors_have_distinct_bboxes():
     """Neighboring tiles must produce non-overlapping, distinct bounding boxes."""
     from databricks.labs.gbx.vizx._dynamic import _tile_bbox
+
     bb_center = _tile_bbox(10, 512, 512)
     bb_right = _tile_bbox(10, 513, 512)
     bb_below = _tile_bbox(10, 512, 513)
@@ -362,9 +363,9 @@ def test_tiler_for_prefetch_uses_distinct_bboxes():
     ]
     bboxes = [_tile_bbox(*n) for n in neighbors]
     # All 8 bboxes must be distinct.
-    assert len(set(bboxes)) == 8, (
-        f"Expected 8 distinct bboxes for 8 neighbors, got {len(set(bboxes))}: {bboxes}"
-    )
+    assert (
+        len(set(bboxes)) == 8
+    ), f"Expected 8 distinct bboxes for 8 neighbors, got {len(set(bboxes))}: {bboxes}"
 
 
 def test_put_if_absent_does_not_demote_viewed():

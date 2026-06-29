@@ -361,7 +361,9 @@ def _run_tippecanoe(argv: list) -> None:
     log.debug("tippecanoe stdout: %s", result.stdout)
 
 
-def _simplify_vector(source, spec: dict, out_path: str | None, bbox: tuple | None = None) -> Union[bytes, str]:
+def _simplify_vector(
+    source, spec: dict, out_path: str | None, bbox: tuple | None = None
+) -> Union[bytes, str]:
     """Vector branch: GeoDataFrame / path / Spark DF → PMTiles bytes or path."""
     bin_path = _ensure_tippecanoe()
 
@@ -375,6 +377,7 @@ def _simplify_vector(source, spec: dict, out_path: str | None, bbox: tuple | Non
             gdf = source
         elif _is_vector_path(source):
             import geopandas as gpd
+
             gdf = gpd.read_file(str(source))
         else:
             raise TypeError(
@@ -385,6 +388,7 @@ def _simplify_vector(source, spec: dict, out_path: str | None, bbox: tuple | Non
         # Apply bbox clip if requested.
         if bbox is not None:
             import shapely.geometry
+
             clip_box = shapely.geometry.box(*bbox)
             gdf = gdf[gdf.intersects(clip_box)]
 
@@ -593,7 +597,7 @@ def simplify_tiles_from_source(
         )
 
 
-def simplify_tiles_from_archive(
+def simplify_tiles_from_archive(  # noqa: C901
     pmtiles_path: str,
     *,
     spec: dict | None = None,
@@ -755,7 +759,9 @@ def simplify_tiles_from_archive(
                     result_bytes = simplify_tiles_from_source(gdf, spec=merged)
                     if out_path is not None:
                         Path(out_path).write_bytes(result_bytes)
-                        log.info("engine=tile-join+tippecanoe (escalated) → %s", out_path)
+                        log.info(
+                            "engine=tile-join+tippecanoe (escalated) → %s", out_path
+                        )
                         return out_path
                     else:
                         log.info(

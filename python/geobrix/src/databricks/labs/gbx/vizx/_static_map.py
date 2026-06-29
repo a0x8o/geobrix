@@ -192,8 +192,9 @@ def _resolve_gdf(
     return gpd.GeoDataFrame(pdf, geometry=geoms, crs=(srid or 4326))
 
 
-def _draw_one_layer(lyr, ax, *, max_rows=10_000, sample_seed=None, srid=None,
-                    legend=True):
+def _draw_one_layer(
+    lyr, ax, *, max_rows=10_000, sample_seed=None, srid=None, legend=True
+):
     """Draw a single Layer onto an existing matplotlib Axes (already in EPSG:3857).
 
     Dispatches by lyr.kind:
@@ -327,8 +328,14 @@ def plot_static(
         if created:
             _, ax = plt.subplots(1, figsize=(fig_w, fig_h))
         for lyr in lyrs:
-            _draw_one_layer(lyr, ax, max_rows=max_rows, sample_seed=sample_seed,
-                            srid=srid, legend=legend)
+            _draw_one_layer(
+                lyr,
+                ax,
+                max_rows=max_rows,
+                sample_seed=sample_seed,
+                srid=srid,
+                legend=legend,
+            )
         if basemap:
             try:
                 import contextily as cx

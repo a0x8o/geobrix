@@ -14,7 +14,6 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-import pytest  # noqa: E402
 
 
 def _write_single_band_tif(tmp_path, size=16, crs="EPSG:3857"):
@@ -67,20 +66,20 @@ def test_cog_raster_above_basemap_single_band(tmp_path, monkeypatch):
 
     # (a) basemap spy was called with zorder=1
     assert basemap_calls, "cx.add_basemap was never called"
-    assert basemap_calls[0].get("zorder") == 1, (
-        f"Expected basemap zorder=1, got {basemap_calls[0].get('zorder')!r}"
-    )
+    assert (
+        basemap_calls[0].get("zorder") == 1
+    ), f"Expected basemap zorder=1, got {basemap_calls[0].get('zorder')!r}"
 
     # (b) at least one AxesImage (the COG) has zorder strictly above basemap zorder
     images = ax.get_images()
     assert images, "No AxesImage found on axes — COG was not drawn"
     raster_zorders = [img.get_zorder() for img in images]
     basemap_zorder = basemap_calls[0].get("zorder")
-    assert all(z > basemap_zorder for z in raster_zorders), (
-        f"COG raster zorder(s) {raster_zorders} must all be > basemap zorder {basemap_zorder}"
-    )
-    assert all(z == 2 for z in raster_zorders), (
-        f"Expected COG raster zorder=2, got {raster_zorders}"
-    )
+    assert all(
+        z > basemap_zorder for z in raster_zorders
+    ), f"COG raster zorder(s) {raster_zorders} must all be > basemap zorder {basemap_zorder}"
+    assert all(
+        z == 2 for z in raster_zorders
+    ), f"Expected COG raster zorder=2, got {raster_zorders}"
 
     plt.close("all")

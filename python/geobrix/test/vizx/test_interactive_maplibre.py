@@ -3,7 +3,6 @@
 import builtins
 
 import geopandas as gpd
-import pytest
 from shapely.geometry import Point
 
 from databricks.labs.gbx.vizx._interactive import plot_interactive
@@ -43,8 +42,12 @@ def test_no_folium_import_in_vizx():
 
     for m in pkgutil.iter_modules(v.__path__):
         src = importlib.import_module(f"databricks.labs.gbx.vizx.{m.name}")
-        assert "folium" not in (getattr(src, "__file__", "") or "")  # sanity; real check below
+        assert "folium" not in (
+            getattr(src, "__file__", "") or ""
+        )  # sanity; real check below
     # grep-style: no module imports folium
     root = os.path.dirname(v.__file__)
-    out = subprocess.run(["grep", "-rl", "import folium", root], capture_output=True, text=True)
+    out = subprocess.run(
+        ["grep", "-rl", "import folium", root], capture_output=True, text=True
+    )
     assert out.stdout.strip() == "", f"folium still imported in: {out.stdout}"
