@@ -64,8 +64,13 @@ def _make_uint16_narrow(width=64, height=64, epsg=4326, lo=8000, hi=12000):
     """Single-band uint16 raster with values spread across [lo, hi] (narrow band)."""
     transform = from_origin(10.0, 50.0, 0.03125, 0.03125)
     profile = dict(
-        driver="GTiff", width=width, height=height, count=1, dtype="uint16",
-        crs=f"EPSG:{epsg}", transform=transform,
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=1,
+        dtype="uint16",
+        crs=f"EPSG:{epsg}",
+        transform=transform,
     )
     ramp = np.linspace(lo, hi, width * height).astype("uint16").reshape(height, width)
     with MemoryFile() as mf:
@@ -97,7 +102,8 @@ def test_resolve_in_range_uint8_passthrough_is_none():
     try:
         assert xyz._resolve_in_range(ds, "auto") is None
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_resolve_in_range_none_is_none():
@@ -105,7 +111,8 @@ def test_resolve_in_range_none_is_none():
     try:
         assert xyz._resolve_in_range(ds, "none") is None
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_resolve_in_range_auto_uint16_uses_data_minmax():
@@ -118,7 +125,8 @@ def test_resolve_in_range_auto_uint16_uses_data_minmax():
         assert 7900 <= lo <= 8100
         assert 11900 <= hi <= 12100
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_resolve_in_range_explicit_pair_repeats_per_band():
@@ -127,7 +135,8 @@ def test_resolve_in_range_explicit_pair_repeats_per_band():
         rng = xyz._resolve_in_range(ds, (10, 200))
         assert rng == [(10.0, 200.0), (10.0, 200.0), (10.0, 200.0)]
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 # --- render_tile: in-extent -------------------------------------------------
@@ -317,9 +326,12 @@ def test_pyramid_guard_tile_count_before_rendering():
 
 # --- render_tile rescale / in_range ------------------------------------------
 
+
 def _decode_png_rgb(png_bytes):
     import io
+
     from PIL import Image
+
     img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
     a = np.asarray(img)
     # data pixels = alpha > 0
@@ -333,6 +345,7 @@ def _center_tile_zxy(ds):
     # (lon~10-12, lat~48-50).  Using the midpoint avoids edge tiles that only
     # clip a corner of the raster and therefore contain a narrow value range.
     import morecantile
+
     tms = morecantile.tms.get("WebMercatorQuad")
     west, south, east, north = xyz._wgs84_bounds(ds)
     mid_lon = (west + east) / 2
@@ -352,7 +365,8 @@ def test_render_tile_auto_uint16_spans_full_range():
         # NOT crushed into the ~[31,46] full-dtype-range band.
         assert int(rgb.max()) - int(rgb.min()) > 100
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_render_tile_none_uint16_stays_crushed():
@@ -365,7 +379,8 @@ def test_render_tile_none_uint16_stays_crushed():
         # Full-dtype-range: 8000..12000 / 65535 * 255 -> ~[31, 46]; crushed.
         assert int(rgb.max()) < 80
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_render_tile_uint8_auto_matches_none():
@@ -376,7 +391,8 @@ def test_render_tile_uint8_auto_matches_none():
         none = xyz.render_tile(ds, z, x, y, rescale="none")
         assert auto == none  # uint8 pass-through: byte-identical
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_pyramid_shares_one_mapping_no_per_tile_stats(monkeypatch):
@@ -399,12 +415,15 @@ def test_pyramid_shares_one_mapping_no_per_tile_stats(monkeypatch):
         nonempty = [t for t in tiles if t["bytes"]]
         assert nonempty
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_tilexyz_udf_accepts_rescale_and_recovers_contrast():
     import io
+
     from PIL import Image
+
     from databricks.labs.gbx.pyrx import functions as fns
 
     raster = _make_uint16_narrow(lo=8000, hi=12000)
@@ -412,7 +431,8 @@ def test_tilexyz_udf_accepts_rescale_and_recovers_contrast():
     try:
         z, x, y = _center_tile_zxy(ds)
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
     tile = {"raster": raster}
     auto = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear", "auto")
@@ -423,18 +443,20 @@ def test_tilexyz_udf_accepts_rescale_and_recovers_contrast():
         rgb = a[..., :3][a[..., 3] > 0]
         return 0 if rgb.size == 0 else int(rgb.max()) - int(rgb.min())
 
-    assert _spread(auto) > 100   # contrast recovered
-    assert _spread(none) < 80    # today's crushed behavior preserved
+    assert _spread(auto) > 100  # contrast recovered
+    assert _spread(none) < 80  # today's crushed behavior preserved
 
 
 def test_tilexyz_udf_rescale_defaults_to_auto():
     from databricks.labs.gbx.pyrx import functions as fns
+
     raster = _make_uint16_narrow(lo=8000, hi=12000)
     mf, ds = _open(raster)
     try:
         z, x, y = _center_tile_zxy(ds)
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
     tile = {"raster": raster}
     # rescale omitted -> defaults to auto (contrast recovered)
     default = fns._tilexyz_udf.func(tile, z, x, y, "PNG", 256, "bilinear")

@@ -2519,7 +2519,9 @@ class _RstXyzPyramidUDTF:
     tile-count guards fire up front before any tile is rendered or yielded.
     """
 
-    def eval(self, tile, min_z, max_z, format=None, size=None, resampling=None, rescale=None):
+    def eval(
+        self, tile, min_z, max_z, format=None, size=None, resampling=None, rescale=None
+    ):
         # Defaults make format/size/resampling/rescale optional in the SQL UDTF call
         # (gbx_rst_xyzpyramid(tile, min_z, max_z)). None maps to PNG/256/bilinear/auto.
         if tile is None or tile["raster"] is None:

@@ -141,8 +141,15 @@ def _resolve_in_range(ds, rescale):
 
 
 def render_tile(
-    ds, z, x, y, fmt="PNG", size=256, resampling="bilinear",
-    rescale="auto", in_range=None,
+    ds,
+    z,
+    x,
+    y,
+    fmt="PNG",
+    size=256,
+    resampling="bilinear",
+    rescale="auto",
+    in_range=None,
 ) -> bytes:
     """Render a single web-mercator (z, x, y) tile from open dataset ``ds``.
 
@@ -239,9 +246,7 @@ def iter_pyramid(
 
     for z in range(lo, hi + 1):
         for t in _TMS.tiles(west, south, east, north, [z]):
-            b = render_tile(
-                ds, t.z, t.x, t.y, fmt, size, resampling, in_range=in_range
-            )
+            b = render_tile(ds, t.z, t.x, t.y, fmt, size, resampling, in_range=in_range)
             yield (t.z, t.x, t.y, b)
 
 
@@ -255,9 +260,7 @@ def pyramid(
     """
     return [
         {"z": z, "x": x, "y": y, "bytes": b}
-        for z, x, y, b in iter_pyramid(
-            ds, min_z, max_z, fmt, size, resampling, rescale
-        )
+        for z, x, y, b in iter_pyramid(ds, min_z, max_z, fmt, size, resampling, rescale)
     ]
 
 
