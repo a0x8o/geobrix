@@ -85,6 +85,7 @@ def spark():
         .getOrCreate()
     )
     yield session
+    session.stop()
 
 
 def test_client_download_threads_bbox(spark, tmp_path):
