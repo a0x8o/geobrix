@@ -254,6 +254,37 @@ def layer_to_sources_layers(
 # ---------------------------------------------------------------------------
 
 
+def _auto_view_from_pmtiles(pm_pairs):
+    """Derive ``(center, zoom)`` from the first EMBEDDED pmtiles archive's header.
+
+    ``center`` is ``[lon, lat]`` from the archive's header center; ``zoom`` is the
+    default city zoom (11) CLAMPED into ``[min_zoom, max_zoom]`` so the opening view
+    actually has tiles (a z12-16 archive must open at >= 12). Returns ``(None, None)``
+    when no embedded archive is inspectable (e.g. url-only), so the caller keeps its
+    default. Header parse failures are swallowed (best-effort).
+    """
+    from databricks.labs.gbx.pmtiles import pmtiles_info
+
+    for _sid, info in pm_pairs:
+        raw = info.get("bytes")
+        if not raw:
+            continue  # url mode (no local bytes to inspect)
+        try:
+            hdr = pmtiles_info(raw)
+        except Exception:  # noqa: BLE001 — best-effort; fall back to caller default
+            continue
+        c = hdr.get("center")
+        center = [c[0], c[1]] if c and len(c) >= 2 else None
+        mn, mx = hdr.get("min_zoom"), hdr.get("max_zoom")
+        zoom = None
+        if mn is not None:
+            lo = int(mn)
+            hi = int(mx) if mx is not None else lo
+            zoom = min(max(lo, 11), hi)
+        return center, zoom
+    return None, None
+
+
 def build_html(
     prepared,
     *,
@@ -322,8 +353,24 @@ def build_html(
     overlay_json = _json_for_script({"sources": sources, "layers": layers})
     pm_js = "".join(_pmtiles_register_js(sid, info) for sid, info in pm_pairs)
 
-    center_js = _json_for_script(center if center is not None else [-122.43, 37.77])
-    zoom_js = zoom if zoom is not None else 11
+    # Open ON the data: derive center/zoom from the first embedded pmtiles archive's
+    # header when the caller didn't pass them. The old hardcoded SF/zoom-11 opened
+    # BLANK for any archive whose min_zoom > 11 (e.g. a z12-16 raster) -- MapLibre does
+    # not under-zoom -- and could sit over the wrong place if the archive isn't centered
+    # on SF. Fall back to the SF default only when no embedded archive is inspectable.
+    auto_center, auto_zoom = (None, None)
+    if center is None or zoom is None:
+        auto_center, auto_zoom = _auto_view_from_pmtiles(pm_pairs)
+    eff_center = (
+        center
+        if center is not None
+        else (auto_center if auto_center is not None else [-122.43, 37.77])
+    )
+    eff_zoom = (
+        zoom if zoom is not None else (auto_zoom if auto_zoom is not None else 11)
+    )
+    center_js = _json_for_script(eff_center)
+    zoom_js = eff_zoom
 
     return f"""\
 <div id="gbx-map" style="height:480px"></div>

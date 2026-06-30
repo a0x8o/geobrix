@@ -435,6 +435,34 @@ def test_plot_pmtiles_static_raster_no_rasterioioerror(monkeypatch):
         plt.close("all")
 
 
+def test_build_html_opens_on_archive_center_and_min_zoom():
+    """build_html opens ON the embedded archive: center from its header, zoom clamped
+    into [min_zoom, max_zoom]. A z12-16 archive must open at >= 12 (MapLibre doesn't
+    under-zoom -> the old hardcoded SF/zoom-11 rendered blank), centered on the archive,
+    not the hardcoded SF default."""
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
+
+    # MVT tiles at z12 + z13 -> min_zoom 12; _build_archive centers at -122.44/37.76.
+    archive = _build_archive(
+        [(12, 0, 0, _real_mvt_tile(12, 0, 0)), (13, 0, 0, _real_mvt_tile(13, 0, 0))],
+        TileType.MVT,
+    )
+    html = build_html([layer_to_sources_layers(pmtiles_layer(archive), 0)])
+    assert "zoom: 12" in html, "must open at >= the archive min_zoom (12), not 11"
+    assert "-122.44" in html, "must center on the archive header, not the SF default"
+
+
+def test_build_html_falls_back_to_sf_default_without_archive():
+    """With no embedded pmtiles (e.g. a vector GeoJSON layer only), build_html keeps the
+    SF default view rather than crashing on the auto-view path."""
+    from databricks.labs.gbx.vizx._maplibre import build_html
+
+    html = build_html([])  # no layers, no pmtiles
+    assert "zoom: 11" in html
+    assert "-122.43" in html
+
+
 def _mvt_tile_n(z, x, y, n):
     """MVT tile with ``n`` distinct polygon features (tile-local pixel space)."""
     import mapbox_vector_tile as mvt
