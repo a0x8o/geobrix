@@ -1490,6 +1490,31 @@ def _is_raster_tile_type(tile_type: str) -> bool:
     return tile_type.lower() in ("png", "jpeg", "webp", "avif")
 
 
+def _raster_tile_px(info: dict) -> int:
+    """Pixel side of the archive's raster tiles, for the MapLibre raster ``tileSize``.
+
+    Reads the first tile's PNG IHDR width (raster tiles are stored uncompressed PNG).
+    Defaults to 256 -- the gbx_rst_xyzpyramid default and the web-tile standard -- when
+    the bytes aren't available (url mode) or the header can't be parsed. A correct
+    tileSize is what places the raster at the right scale/position on the map.
+    """
+    raw = info.get("bytes")
+    if not raw:
+        return 256
+    try:
+        import struct
+
+        from pmtiles.reader import MemorySource, all_tiles
+
+        for _key, payload in all_tiles(MemorySource(raw)):
+            if payload[:8] == b"\x89PNG\r\n\x1a\n" and len(payload) >= 24:
+                return int(struct.unpack(">I", payload[16:20])[0])
+            break  # only the first tile; non-PNG -> fall back to the default
+    except Exception:  # noqa: BLE001 — best-effort; default to 256
+        pass
+    return 256
+
+
 def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
     sid = f"gbx{idx}"
     info = _resolve_pmtiles_bytes_or_url(layer)
@@ -1508,6 +1533,11 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
             "url": f"pmtiles://{pm_key}",
         }
     }
+    if is_raster:
+        # MapLibre's raster source defaults to tileSize 512, but gbx_rst_xyzpyramid emits
+        # 256px tiles -- a 256 tile rendered as 512 lands at 2x scale and the wrong place.
+        # Pin the actual tile pixel size so the raster registers correctly on the map.
+        src[sid]["tileSize"] = _raster_tile_px(info)
     # Sidecar consumed (and popped) by the Task-5 HTML builder.
     src[sid]["_gbx_pmtiles"] = info
 

@@ -435,6 +435,27 @@ def test_plot_pmtiles_static_raster_no_rasterioioerror(monkeypatch):
         plt.close("all")
 
 
+def test_raster_pmtiles_source_sets_tilesize_from_tile():
+    """A raster pmtiles source must declare tileSize = the actual tile pixel size, not
+    rely on MapLibre's 512 default. gbx_rst_xyzpyramid emits 256px tiles; a 256 tile
+    rendered as 512 lands at 2x scale and the wrong position. A vector source has no
+    tileSize."""
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import layer_to_sources_layers
+
+    # _real_png_tile() is an 8x8 PNG -> tileSize must be detected as 8 (not 512).
+    raster = _build_archive([(0, 0, 0, _real_png_tile())], TileType.PNG)
+    rsrc = layer_to_sources_layers(pmtiles_layer(raster), 0)[0]["gbx0"]
+    assert rsrc["type"] == "raster"
+    assert rsrc["tileSize"] == 8, "raster tileSize must come from the tile, not 512"
+
+    # Vector source must not carry tileSize.
+    vec = _build_archive([(0, 0, 0, _real_mvt_tile(0, 0, 0))], TileType.MVT)
+    vsrc = layer_to_sources_layers(pmtiles_layer(vec), 0)[0]["gbx0"]
+    assert vsrc["type"] == "vector"
+    assert "tileSize" not in vsrc
+
+
 def test_build_html_opens_on_archive_center_and_min_zoom():
     """build_html opens ON the embedded archive: center from its header, zoom clamped
     into [min_zoom, max_zoom]. A z12-16 archive must open at >= 12 (MapLibre doesn't
