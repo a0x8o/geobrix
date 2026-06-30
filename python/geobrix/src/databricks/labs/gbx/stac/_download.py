@@ -61,6 +61,31 @@ def _sanitize_filename(filename: str) -> str:
     return os.path.basename(os.path.normpath(filename))
 
 
+def windowed_download(href: str, outpath: str, bbox, bbox_crs=None) -> str:
+    """Open href (rasterio /vsicurl for https; any path locally), window to bbox, and
+    write a windowed GeoTIFF. The window is clipped to the dataset, so the output is
+    correctly georeferenced. Raises ValueError if the bbox does not overlap the asset."""
+    import rasterio
+
+    from databricks.labs.gbx.ds._window import window_for_bbox
+
+    with rasterio.open(href) as src:
+        win = window_for_bbox(src, bbox, bbox_crs)
+        if win is None:
+            raise ValueError(f"bbox {bbox} does not overlap the asset {href!r}")
+        data = src.read(window=win)
+        profile = src.profile.copy()
+        profile.update(
+            driver="GTiff",
+            width=int(win.width),
+            height=int(win.height),
+            transform=src.window_transform(win),
+        )
+        with rasterio.open(outpath, "w", **profile) as dst:
+            dst.write(data)
+    return outpath
+
+
 def fetch_validate_publish(
     href_fn: Callable[[], str],
     out_dir: str,
@@ -69,10 +94,18 @@ def fetch_validate_publish(
     max_tries: int = 5,
     sleep: Callable = time.sleep,
     validate: bool = True,
+    bbox=None,
+    bbox_crs=None,
 ) -> Optional[str]:
     """Download -> optionally read-validate -> publish to out_dir, with retries.
 
     href_fn() is called each attempt so the href is (re-)signed (signed URLs expire).
+
+    bbox=(minx, miny, maxx, maxy): when provided, use a windowed read via rasterio
+        (/vsicurl range-reads for https; any local path) clipped to the AOI.
+        A successful windowed write replaces the validate step. bbox_crs declares the
+        bbox CRS (None = same as dataset CRS). Raises inside the retry loop if the
+        bbox does not overlap the asset (all attempts fail -> returns None).
 
     validate=True (default):
         Publish only if rasterio can open and decode a window of the file.
@@ -107,6 +140,12 @@ def fetch_validate_publish(
         tmpd = tempfile.mkdtemp(prefix="gbx_stac_dl_")
         try:
             local = os.path.join(tmpd, safe_filename)
+            if bbox is not None:
+                # Windowed read decodes-on-read; a successful write IS the validation,
+                # so publish directly (skip the separate read_validate window-decode).
+                windowed_download(href_fn(), local, bbox, bbox_crs)
+                shutil.copyfile(local, outpath)
+                return outpath
             download_href(href_fn(), local, get=get)
             if validate:
                 if read_validate(local):

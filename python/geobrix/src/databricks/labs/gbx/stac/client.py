@@ -14,7 +14,7 @@ AS DOUBLE) < 20``).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Sequence
 
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame
@@ -215,6 +215,8 @@ class StacClient:
         validate: bool = True,
         max_tries: int = 5,
         partitions: Optional[int] = None,
+        bbox: Optional[Sequence[float]] = None,
+        bbox_crs: Optional[str] = None,
         _get_fn=None,
     ) -> "DataFrame":
         """Download STAC assets to out_dir.
@@ -226,6 +228,10 @@ class StacClient:
 
         Already-valid files (idempotency): if the target path exists and passes the
         validity check, the asset is skipped (no re-download).
+
+        bbox=(minx, miny, maxx, maxy) windows each asset to the AOI on read (source
+            CRS by default; bbox_crs declares the bbox CRS). Uses rasterio range reads
+            (/vsicurl for https) so only the required pixel window is transferred.
 
         Returns a DataFrame with columns: item_id, asset_name, out_file_path,
         out_file_sz, is_out_file_valid, last_update.
@@ -254,6 +260,8 @@ class StacClient:
         sign = self.sign
         _validate = validate
         _injected_get = _get_fn  # None in production; injectable for tests
+        _bbox = tuple(bbox) if bbox is not None else None
+        _bbox_crs = bbox_crs
 
         @F.udf(StringType())
         def _fetch(item_id, asset_name, href):
@@ -277,6 +285,8 @@ class StacClient:
                 filename,
                 max_tries=max_tries,
                 validate=_validate,
+                bbox=_bbox,
+                bbox_crs=_bbox_crs,
                 **kwargs,
             )
 
