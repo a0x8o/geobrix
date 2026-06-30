@@ -435,17 +435,32 @@ def test_plot_pmtiles_static_raster_no_rasterioioerror(monkeypatch):
         plt.close("all")
 
 
-def test_plot_pmtiles_static_vector_min_zoom_only(monkeypatch):
-    """plot_pmtiles static path decodes only the min-zoom tiles for vector archives.
+def _mvt_tile_n(z, x, y, n):
+    """MVT tile with ``n`` distinct polygon features (tile-local pixel space)."""
+    import mapbox_vector_tile as mvt
+    from shapely.geometry import box
 
-    Multi-zoom vector archives encode the same features at every zoom level;
-    decoding all zooms yields ~N_levels x features. The live _decode_pmtiles_for_static
-    (in _maplibre.py) filters to min_zoom before calling _decode_mvt_to_geoms.
+    feats = [
+        {
+            "geometry": box(50 * i, 50 * i, 50 * i + 40, 50 * i + 40),
+            "properties": {"v": i},
+        }
+        for i in range(n)
+    ]
+    return mvt.encode(
+        {"name": "demo", "features": feats},
+        default_options={"extents": 4096, "y_coord_down": True},
+    )
+
+
+def test_plot_pmtiles_static_vector_uses_one_populated_zoom(monkeypatch):
+    """plot_pmtiles static path decodes a SINGLE zoom for vector archives -- never sums
+    across levels (a normal pyramid repeats features at every zoom, so summing would
+    render ~N_levels x the geometries). It uses the COARSEST sufficiently-populated zoom;
+    for a normal pyramid the min zoom is already populated, so only min_zoom is decoded.
 
     _maplibre._decode_pmtiles_for_static uses a local `from _pmtiles import
-    _decode_mvt_to_geoms` inside the function body, so it re-imports from the
-    _pmtiles module at call time. Patching _pmtiles._decode_mvt_to_geoms is
-    sufficient to intercept the call.
+    _decode_mvt_to_geoms`, so patching _pmtiles._decode_mvt_to_geoms intercepts it.
     """
     import warnings
 
@@ -454,8 +469,10 @@ def test_plot_pmtiles_static_vector_min_zoom_only(monkeypatch):
 
     z_min, x_min, y_min = 3, 4, 4
     z_fine, x_fine, y_fine = 5, 16, 16
-    blob_min = _real_mvt_tile(z_min, x_min, y_min)
-    blob_fine = _real_mvt_tile(z_fine, x_fine, y_fine)
+    # Normal-pyramid shape: the min zoom is fully populated (>= the static threshold),
+    # so the decoder stops there and never touches the finer zoom.
+    blob_min = _mvt_tile_n(z_min, x_min, y_min, 60)
+    blob_fine = _mvt_tile_n(z_fine, x_fine, y_fine, 60)
     archive = _build_archive(
         [(z_min, x_min, y_min, blob_min), (z_fine, x_fine, y_fine, blob_fine)],
         TileType.MVT,

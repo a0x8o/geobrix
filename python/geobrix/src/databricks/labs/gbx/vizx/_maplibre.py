@@ -517,20 +517,40 @@ def _decode_pmtiles_for_static(layer) -> "Layer":
             canvas = canvas[r[0] : r[1] + 1, c[0] : c[1] + 1]
         return raster_layer(canvas, opacity=layer.opacity)
     else:
-        # Vector (MVT): decode ONLY the coarsest (min) zoom — higher zooms re-encode the
-        # same features, so decoding every level renders ~N_levels x the geometries (a
-        # 171k-feature z12-z16 archive took minutes). The static path is a driver-side
-        # overview; the lowest zoom is sufficient.
+        # Vector (MVT): decode the COARSEST zoom that actually has features. A normal
+        # pyramid (e.g. gbx_st_asmvt_pyramid) carries every feature at every zoom, so the
+        # min zoom suffices and decoding just one level avoids re-rendering N_levels x the
+        # geometries (a 171k-feature z12-z16 archive took minutes). But a tippecanoe
+        # drop_densest OVERVIEW drops most/all features at the lowest zooms, so the min
+        # zoom can decode to nothing -> scan UPWARD and stop at the first non-empty zoom
+        # (still cheap: coarse zooms have few tiles, and we stop as soon as features appear).
+        from collections import defaultdict
+
         import geopandas as gpd
 
-        min_z = info.get("min_zoom")
-        geoms, rows = [], []
+        tiles_by_z: dict = defaultdict(list)
         for (z, x, y), payload in all_tiles(MemorySource(raw)):
-            if min_z is not None and z != min_z:
-                continue
-            for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
-                geoms.append(geom)
-                rows.append(props)
+            tiles_by_z[z].append((x, y, payload))
+
+        # A drop_densest overview drops most features at low zooms, so the min zoom can
+        # be empty or near-empty. Scan zooms ascending and use the COARSEST one that is
+        # populated enough to read as an overview (>= _STATIC_MIN_FEATURES); fall back to
+        # the richest zoom seen if none clears the bar. One zoom only -- a normal pyramid
+        # repeats features at every level, so we must never sum across zooms (that would
+        # render N_levels x the geometries). A raw min_zoom=12 archive hits its first
+        # (coarsest) zoom already populated, so this keeps the prior fast path for it.
+        _STATIC_MIN_FEATURES = 50
+        geoms, rows = [], []
+        for z in sorted(tiles_by_z):
+            zg, zr = [], []
+            for x, y, payload in tiles_by_z[z]:
+                for geom, props in _decode_mvt_to_geoms(payload, z, x, y):
+                    zg.append(geom)
+                    zr.append(props)
+            if len(zg) > len(geoms):  # track the richest zoom seen
+                geoms, rows = zg, zr
+            if len(zg) >= _STATIC_MIN_FEATURES:
+                break  # coarsest sufficiently-populated zoom -> stop (don't decode finer)
         if not geoms:
             raise ValueError(
                 "prepare_layers static fallback: vector pmtiles archive decoded to no geometries"

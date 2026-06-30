@@ -251,6 +251,32 @@ def test_autofit_preserves_gzip_tile_compression():
     assert first[:2] == b"\x1f\x8b"
 
 
+def test_decode_for_static_scans_past_empty_low_zoom():
+    """Regression: a tippecanoe drop_densest overview can have NO features at its min
+    zoom (z0). The static fallback decoder must scan UP to the first zoom that has
+    features, not decode only min_zoom -- which raised 'no geometries' -> plot_static([])
+    -> 'no layers provided' (the static View step blew up). Here z0 is an empty MVT and
+    z1 has a polygon; the decoder must return that polygon, not raise."""
+    import mapbox_vector_tile as mvt
+    from shapely.geometry import Polygon
+
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _decode_pmtiles_for_static
+
+    poly = Polygon([(1000, 1000), (2000, 1000), (2000, 2000), (1000, 2000)])
+    real = mvt.encode(
+        [{"name": "buildings", "features": [{"geometry": poly, "properties": {}}]}]
+    )
+    empty = mvt.encode([{"name": "buildings", "features": []}])
+    archive = _build_archive(
+        [(0, 0, 0, empty), (1, 0, 0, real)], tile_type=TileType.MVT
+    )
+
+    out = _decode_pmtiles_for_static(pmtiles_layer(archive))
+    assert out.kind == "vector"
+    assert len(out.data) >= 1, "must decode the z1 polygon after skipping the empty z0"
+
+
 def test_plot_pmtiles_defaults_to_downzoom():
     """plot_pmtiles auto-fits by default: interactive_fit defaults to 'downzoom' so an
     over-budget archive is reduced to fit instead of silently falling to static."""
