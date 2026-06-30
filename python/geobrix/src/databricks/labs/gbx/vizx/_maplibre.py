@@ -987,10 +987,14 @@ def _pmtiles_register_js(sid: str, info: dict) -> str:
     # Embed mode: base64 → Uint8Array → File → FileSource.
     # The base64 string is already ASCII-safe; json.dumps is sufficient here.
     b64 = base64.b64encode(info["bytes"]).decode("ascii")
+    # The File name IS the protocol key (FileSource.getKey() returns it) and MUST match
+    # the source URL "pmtiles://<sid>" (see _pmtiles). Name it `sid`, NOT "{sid}.pmtiles"
+    # -- the old ".pmtiles" suffix made the key "gbx0.pmtiles" while the source looked up
+    # "gbx0", so MapLibre never found the archive and the map rendered blank.
     return (
         f"  const _b{sid} = Uint8Array.from(atob({json.dumps(b64)}), c => c.charCodeAt(0));\n"
         f"  proto.add(new pmtiles.PMTiles(new pmtiles.FileSource("
-        f"new File([_b{sid}.buffer], '{sid}.pmtiles'))));\n"
+        f"new File([_b{sid}.buffer], '{sid}'))));\n"
     )
 
 
@@ -1377,10 +1381,16 @@ def _pmtiles(layer, idx: int) -> tuple[dict, list[dict], int]:
     tile_type = info.get("tile_type", "unknown")
     is_raster = _is_raster_tile_type(tile_type)
 
+    # pmtiles.js resolves a source by the key in its "pmtiles://<key>" URL, which MUST
+    # equal the registered archive's key: for an embedded FileSource that key is the
+    # File name (we register it as `sid`), and for url mode it is the remote URL string
+    # (PMTiles(url) keys by the URL). A mismatch means MapLibre can't find the archive
+    # -> no tiles load -> a silently blank map. So the source URL key is mode-dependent.
+    pm_key = info["url"] if info["mode"] == "url" else sid
     src: dict[str, Any] = {
         sid: {
             "type": "raster" if is_raster else "vector",
-            "url": f"pmtiles://{sid}",
+            "url": f"pmtiles://{pm_key}",
         }
     }
     # Sidecar consumed (and popped) by the Task-5 HTML builder.

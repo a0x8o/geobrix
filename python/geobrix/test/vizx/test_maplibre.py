@@ -304,7 +304,9 @@ def test_pmtiles_layer_url_mode():
     layer = pmtiles_layer(url)
     sources, layers, embed = layer_to_sources_layers(layer, 0)
     src = sources["gbx0"]
-    assert src["url"] == "pmtiles://gbx0"
+    # URL mode: the source key must be the remote URL (pmtiles.js keys PMTiles(url) by
+    # the URL), not the source id, or MapLibre can't resolve the archive.
+    assert src["url"] == f"pmtiles://{url}"
     assert "_gbx_pmtiles" in src
     info = src["_gbx_pmtiles"]
     assert info["mode"] == "url"
@@ -360,9 +362,29 @@ def test_pmtiles_layer_idx_drives_key():
     url = "https://example.com/tiles.pmtiles"
     sources, layers, _ = layer_to_sources_layers(pmtiles_layer(url), 5)
     assert "gbx5" in sources
-    assert sources["gbx5"]["url"] == "pmtiles://gbx5"
+    # URL mode: pmtiles.js keys the registered PMTiles by the REMOTE URL, so the
+    # source's "pmtiles://<key>" must use that URL (not the source id) or MapLibre
+    # can't resolve the archive.
+    assert sources["gbx5"]["url"] == f"pmtiles://{url}"
     for layer in layers:
         assert layer["source"] == "gbx5"
+
+
+def test_embed_filesource_name_matches_source_url_key():
+    """Regression: an embedded archive's FileSource File name is its protocol key, and
+    MUST equal the "pmtiles://<key>" in its source URL. The old code named the File
+    "gbx0.pmtiles" while the source looked up "gbx0" -> MapLibre never found the archive
+    -> every embedded pmtiles map rendered blank (basemap only / white)."""
+    from databricks.labs.gbx.vizx._maplibre import build_html
+
+    archive = _build_pmtiles_archive("mvt")
+    entry = layer_to_sources_layers(pmtiles_layer(archive), 0)
+    sources = entry[0]
+    key = sources["gbx0"]["url"].split("pmtiles://", 1)[1]
+    assert key == "gbx0"
+    html = build_html([entry])
+    assert f"new File([_bgbx0.buffer], '{key}')" in html
+    assert "'gbx0.pmtiles'" not in html, "stale File name must be gone"
 
 
 # ---------------------------------------------------------------------------
