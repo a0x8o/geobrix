@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, Iterator, List, Sequence, Tuple
 
 from pyspark.sql.datasource import DataSourceReader, InputPartition
 
 from databricks.labs.gbx.ds import _listing, _xyz_mosaic
+
+_LOG = logging.getLogger(__name__)
 
 
 class _TilesPartition(InputPartition):
@@ -61,6 +64,14 @@ class PMtilesRasterReader(DataSourceReader):
                     (p, transform_bounds(ds.crs, "EPSG:4326", *ds.bounds))
                 )
         tiles = _xyz_mosaic.enumerate_tiles(bbox, self.min_z, self.max_z)
+        if not tiles:
+            _LOG.warning(
+                "pmtiles_gbx raster reader: AOI/bbox intersects zero tiles for zoom %s..%s under %s"
+                " — emitting empty result",
+                self.min_z,
+                self.max_z,
+                self.path,
+            )
         # sort by (z, x, y) for spatial contiguity within each zoom
         tiles.sort()
         parts: List[InputPartition] = []
@@ -119,6 +130,7 @@ class PMtilesArchiveReader(DataSourceReader):
         self.path = options.get("path")
         if not self.path:
             raise ValueError("pmtiles_gbx archive reader requires a 'path' (.pmtiles file).")
+        self.path = _listing.to_local_path(self.path)
         self.tiles_per_partition = int(options.get("tilesPerPartition", "2048"))
 
     def _entries(self) -> List[Tuple[int, int, int]]:

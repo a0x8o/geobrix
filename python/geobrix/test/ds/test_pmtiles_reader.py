@@ -13,6 +13,7 @@ from PIL import Image
 from rasterio.transform import from_bounds
 
 from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
+from databricks.labs.gbx.ds._pmtiles_read import PMtilesRasterReader
 
 
 def _write_cog(path, w, s, e, n, px=256, val=200):
@@ -128,3 +129,32 @@ def test_archive_reader_roundtrip(spark, tmp_path):
     got = {(r["z"], r["x"], r["y"]): bytes(r["bytes"]) for r in back}
     # both the (z,x,y) set AND the tile bytes must round-trip identically
     assert got == {(14, 2615 + i, 6330): _png_bytes(i) for i in range(3)}
+
+
+def test_raster_reader_rejects_bad_pixel_selection(tmp_path):
+    with pytest.raises(ValueError):
+        PMtilesRasterReader({"path": str(tmp_path), "pixelSelection": "max"})
+
+
+def test_reader_rejects_unknown_source(spark, tmp_path):
+    spark.dataSource.register(PMTilesGbxDataSource)
+    with pytest.raises(Exception):
+        spark.read.format("pmtiles_gbx").option("source", "bogus").option(
+            "path", str(tmp_path)
+        ).load().collect()
+
+
+def test_raster_reader_bbox_outside_sources_is_empty(spark, tmp_path):
+    _write_cog(str(tmp_path / "a.tif"), -122.50, 37.74, -122.45, 37.79, val=120)
+    spark.dataSource.register(PMTilesGbxDataSource)
+    df = (
+        spark.read.format("pmtiles_gbx")
+        .option("source", "raster")
+        .option("path", str(tmp_path))
+        .option("bbox", "10,50,10.1,50.1")
+        .option("minZoom", "15")
+        .option("maxZoom", "15")
+        .load()
+    )
+    assert df.collect() == []
+    assert [f.name for f in df.schema.fields] == ["z", "x", "y", "bytes"]
