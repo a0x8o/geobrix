@@ -277,6 +277,7 @@ class StacClient:
         ]
         if not rows:
             from pyspark.sql.types import (
+                BooleanType,
                 LongType,
                 StringType,
                 StructField,
@@ -288,10 +289,9 @@ class StacClient:
                 [
                     StructField("item_id", StringType()),
                     StructField("asset_name", StringType()),
-                    StructField("href", StringType()),
                     StructField("out_file_path", StringType()),
                     StructField("out_file_sz", LongType()),
-                    StructField("is_out_file_valid", StringType()),
+                    StructField("is_out_file_valid", BooleanType()),
                     StructField("last_update", TimestampType()),
                 ]
             )

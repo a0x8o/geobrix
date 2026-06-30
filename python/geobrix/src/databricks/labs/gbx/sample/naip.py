@@ -202,8 +202,9 @@ class NaipDownloader:
         client = self._get_stac_client()
 
         # -- search -------------------------------------------------------
-        aoi_df = self._aoi_dataframe(bbox, spark)
         from pyspark.sql.types import IntegerType
+
+        aoi_df = self._aoi_dataframe(bbox, spark)
 
         raw = client.search(
             aoi_df,
@@ -226,27 +227,26 @@ class NaipDownloader:
             # Collect the max year from the driver (modest list of items).
             max_year_row = img.agg(F.max("_year").alias("max_year")).first()
             if max_year_row is None or max_year_row["max_year"] is None:
-                # Return empty result matching StacClient.download schema.
-                return img.select(
-                    "item_id",
-                    "asset_name",
-                    "href",
-                ).limit(0).withColumn("out_file_path", F.lit(None).cast("string")).withColumn(
-                    "out_file_sz", F.lit(None).cast("long")
-                ).withColumn(
-                    "is_out_file_valid", F.lit(None).cast("boolean")
-                ).withColumn(
-                    "last_update", F.current_timestamp()
-                )
-            selected_year = max_year_row["max_year"]
+                selected_year = None
+            else:
+                selected_year = max_year_row["max_year"]
         else:
             selected_year = int(year)
 
-        vintage = img.filter(F.col("_year") == selected_year).select(
-            "item_id", "asset_name", "href"
-        )
+        if selected_year is not None:
+            vintage = img.filter(F.col("_year") == selected_year).select(
+                "item_id", "asset_name", "href"
+            )
+        else:
+            # No items found — pass the empty selection to client.download so it
+            # returns the correct schema (same field names + types as the non-empty
+            # path).  StacClient.download handles empty input by returning an
+            # empty DataFrame with the canonical schema (no href, BooleanType
+            # is_out_file_valid).
+            vintage = img.select("item_id", "asset_name", "href").limit(0)
 
         # -- download via StacClient -------------------------------------
+        # partitions controls the spark.range fan-out inside StacClient.download.
         return client.download(
             vintage,
             out_dir,

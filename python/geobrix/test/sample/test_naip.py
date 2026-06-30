@@ -495,6 +495,58 @@ def test_download_falls_back_to_date_when_no_naip_year(spark, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# DL6 — empty vintage returns correct schema (no href, BooleanType is_out_file_valid)
+# ---------------------------------------------------------------------------
+
+
+def test_download_empty_vintage_returns_correct_schema(spark, tmp_path):
+    """DL6: when no items are found the result schema matches a non-empty download.
+
+    Verifies the I1 fix: the empty-path no longer hand-builds a frame with
+    ``href`` and wrong types — it flows through ``StacClient.download`` which
+    returns the canonical schema.
+    """
+    # Empty search result — no items match.
+    empty_search_df = _make_search_df(spark, [])
+    mock = _MockStacClient(empty_search_df)
+
+    nd = NaipDownloader(_stac_client=mock)
+    result = nd.download(
+        (-122.52, 37.70, -122.36, 37.83),
+        str(tmp_path / "out"),
+        year="latest",
+        spark=spark,
+    )
+
+    # Must have 0 rows.
+    assert result.count() == 0, "Expected empty DataFrame for empty vintage"
+
+    # Schema must match the non-empty download schema: canonical field names + types.
+    schema_map = {f.name: f.dataType for f in result.schema}
+    required = {
+        "item_id", "asset_name", "out_file_path", "out_file_sz",
+        "is_out_file_valid", "last_update",
+    }
+    missing = required - set(schema_map)
+    assert not missing, f"Empty-vintage result missing columns: {missing}"
+
+    # href must NOT appear in the output (it is an input-only column).
+    assert "href" not in schema_map, (
+        "Empty-vintage result incorrectly includes 'href' column"
+    )
+
+    # is_out_file_valid must be BooleanType (not StringType or NullType).
+    assert isinstance(schema_map["is_out_file_valid"], BooleanType), (
+        f"is_out_file_valid should be BooleanType, got {schema_map['is_out_file_valid']}"
+    )
+
+    # out_file_sz must be LongType.
+    assert isinstance(schema_map["out_file_sz"], LongType), (
+        f"out_file_sz should be LongType, got {schema_map['out_file_sz']}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # E1 — export check
 # ---------------------------------------------------------------------------
 
