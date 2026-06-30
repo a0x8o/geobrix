@@ -112,3 +112,34 @@ class PMtilesRasterReader(DataSourceReader):
                     yield (z, x, y, png)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+class PMtilesArchiveReader(DataSourceReader):
+    def __init__(self, options: Dict[str, str]):
+        self.path = options.get("path")
+        if not self.path:
+            raise ValueError("pmtiles_gbx archive reader requires a 'path' (.pmtiles file).")
+        self.tiles_per_partition = int(options.get("tilesPerPartition", "2048"))
+
+    def _entries(self) -> List[Tuple[int, int, int]]:
+        from pmtiles.reader import MemorySource, all_tiles
+
+        with open(self.path, "rb") as fh:
+            raw = fh.read()
+        return [(z, x, y) for (z, x, y), _ in all_tiles(MemorySource(raw))]
+
+    def partitions(self) -> Sequence[InputPartition]:
+        entries = self._entries()
+        return [_TilesPartition(list(c), [self.path]) for c in _chunk(entries, self.tiles_per_partition)]
+
+    def read(self, partition: "_TilesPartition") -> Iterator[Tuple]:
+        from pmtiles.reader import MemorySource, Reader
+
+        # FUSE-safe: read archive bytes sequentially, then serve tiles in memory
+        with open(partition.sources[0], "rb") as fh:
+            raw = fh.read()
+        reader = Reader(MemorySource(raw))
+        for z, x, y in partition.tiles:
+            data = reader.get(z, x, y)
+            if data is not None:
+                yield (z, x, y, bytes(data))

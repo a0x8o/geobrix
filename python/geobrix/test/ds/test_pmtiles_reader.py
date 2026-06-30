@@ -93,3 +93,38 @@ def test_raster_reader_bbox_defaults_to_source_union(spark, tmp_path):
         .load()
     )  # no bbox
     assert len(df.collect()) > 0
+
+
+def _png_bytes(i):
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    a = np.full((256, 256, 3), 40 + i * 20, dtype="uint8")
+    buf = io.BytesIO()
+    Image.fromarray(a).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_archive_reader_roundtrip(spark, tmp_path):
+    from pyspark.sql import Row
+
+    spark.dataSource.register(PMTilesGbxDataSource)
+    # build a small archive via the writer
+    tiles = [Row(z=14, x=2615 + i, y=6330, bytes=_png_bytes(i)) for i in range(3)]
+    out = str(tmp_path / "rt.pmtiles")
+    spark.createDataFrame(tiles).write.format("pmtiles_gbx").option(
+        "shardZoom", "0"
+    ).mode("overwrite").save(out)
+    # read it back
+    back = (
+        spark.read.format("pmtiles_gbx")
+        .option("source", "archive")
+        .option("path", out)
+        .load()
+        .collect()
+    )
+    got = {(r["z"], r["x"], r["y"]): bytes(r["bytes"]) for r in back}
+    # both the (z,x,y) set AND the tile bytes must round-trip identically
+    assert got == {(14, 2615 + i, 6330): _png_bytes(i) for i in range(3)}
