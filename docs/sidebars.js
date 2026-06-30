@@ -41,6 +41,8 @@ const sidebars = {
         'sample-data/vector-data',
         'sample-data/raster-data',
         'sample-data/additional',
+        'sample-data/overture-downloader',
+        'sample-data/naip-downloader',
       ],
     },
     {

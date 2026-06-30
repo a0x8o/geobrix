@@ -1,0 +1,182 @@
+---
+sidebar_position: 6
+title: NAIP Aerial Imagery Downloader
+---
+
+## NAIP Aerial Imagery Downloader
+
+`NaipDownloader` fetches **NAIP (National Agriculture Imagery Program)** aerial photography for any US bounding-box AOI via the [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/) STAC API and stages the GeoTIFFs into a Unity Catalog Volume.
+
+NAIP provides 1-metre-resolution, four-band (RGB + NIR) aerial imagery covering the continental United States. Vintages are available from approximately 2010 onward, with new acquisitions every 2–3 years per state.
+
+:::note Prerequisites
+- GeoBrix installed (wheel includes `databricks.labs.gbx.sample`)
+- Unity Catalog Volume already exists at `/Volumes/{catalog}/{schema}/{volume}/...`
+- `pystac-client` and `planetary-computer` packages installed: `%pip install pystac-client planetary-computer`
+- NAIP coverage is continental US only
+:::
+
+---
+
+## How It Works
+
+`NaipDownloader` follows the same **discover → download → read** pattern as `OvertureClient`:
+
+1. **`discover(bbox, year=None)`** — driver-side STAC search against Planetary Computer. Returns a DataFrame of NAIP items intersecting the AOI: `item_id`, `year`, `item_bbox`, `href`. Each row is one quad tile. Use `year` to pre-filter by vintage, or leave it `None` to see all available years.
+
+2. **`download(bbox, out_dir, year="latest", ...)`** — selects a vintage from the search results, then fans out the per-quad downloads as parallel Spark tasks via `StacClient.download()`. Downloads are windowed and decimated to the AOI bounding box so only the relevant pixels of each quad are stored. Returns a metadata DataFrame: `item_id`, `asset_name`, `out_file_path`, `out_file_sz`, `is_out_file_valid`, `last_update`.
+
+3. **`read(out_dir)`** — loads the staged GeoTIFFs from `out_dir` into a Spark tile DataFrame using the `raster_gbx` data source (the light-tier pyrx raster reader). Returns a DataFrame with a `tile` struct column ready for GeoBrix RasterX functions.
+
+---
+
+## API Reference
+
+### `NaipDownloader`
+
+```python
+from databricks.labs.gbx.sample.naip import NaipDownloader
+
+downloader = NaipDownloader()
+# Defaults: Planetary Computer catalog, planetary_computer signing, naip collection
+```
+
+#### `discover(bbox, year=None, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bbox` | `(minx, miny, maxx, maxy)` | AOI in EPSG:4326 (WGS84 longitude/latitude) |
+| `year` | `int \| None` | Keep only items from this year. `None` returns all available years. |
+| `spark` | `SparkSession \| None` | Active SparkSession. Defaults to `SparkSession.getActiveSession()`. |
+
+Returns a DataFrame with columns: `item_id` (str), `year` (int), `item_bbox` (array\<double\>), `href` (str).
+
+#### `download(bbox, out_dir, year="latest", bbox_crs="EPSG:4326", max_mpp=2.4, partitions=None, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bbox` | `(minx, miny, maxx, maxy)` | AOI in EPSG:4326 |
+| `out_dir` | `str` | Output directory — a UC Volume path (e.g. `/Volumes/...`) or local path |
+| `year` | `int \| "latest"` | `"latest"` (default) picks the most recent NAIP vintage in the search results. An integer selects that exact year. |
+| `bbox_crs` | `str` | CRS of the `bbox` parameter (default `"EPSG:4326"`). |
+| `max_mpp` | `float` | Maximum pixel size in source-CRS units passed to the tile reader. Default `2.4` m keeps full 1-m native resolution with a safety margin for decimated reads. |
+| `partitions` | `int \| None` | Target partition count for the `spark.range` fan-out. `None` → one task per quad tile. |
+| `spark` | `SparkSession \| None` | Active SparkSession. |
+
+Returns a metadata DataFrame with columns: `item_id`, `asset_name`, `out_file_path`, `out_file_sz`, `is_out_file_valid`, `last_update`.
+
+#### `read(out_dir, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `out_dir` | `str` | Root directory written by `download()` |
+| `spark` | `SparkSession \| None` | Active SparkSession. |
+
+Returns a Spark DataFrame with a `tile` struct column. Each row is one tile chunk from the downloaded GeoTIFFs, partitioned by source path — ready for GeoBrix RasterX operations.
+
+---
+
+### `download_naip_aoi` (convenience function)
+
+Combines discover + download in a single call:
+
+```python
+from databricks.labs.gbx.sample.naip import download_naip_aoi
+
+download_naip_aoi(
+    spark,
+    bbox,
+    out_dir,
+    year="latest",    # int or "latest"
+    max_mpp=2.4,
+    # **kw forwarded to NaipDownloader.download() — e.g. partitions=, bbox_crs=
+)
+```
+
+---
+
+## Copy-Paste Example
+
+The example below downloads the latest NAIP imagery for a San Francisco AOI into a UC Volume, then reads the tiles into a Spark DataFrame for analysis.
+
+```python
+# Install dependencies if not already present
+# %pip install pystac-client planetary-computer
+
+from databricks.labs.gbx.sample.naip import NaipDownloader
+
+# San Francisco downtown AOI (lon/lat, EPSG:4326)
+SF_BBOX = (-122.4194, 37.7749, -122.3894, 37.8049)
+
+VOLUME = "/Volumes/main/default/geobrix_samples/naip"
+
+downloader = NaipDownloader()
+
+# Step 1 — discover: see what vintages are available for this AOI
+items = downloader.discover(SF_BBOX)
+items.groupBy("year").count().orderBy("year").show()
+# +----+-----+
+# |year|count|
+# +----+-----+
+# |2020|   4 |
+# |2022|   4 |
+# +----+-----+
+
+# Step 2 — download: fetch the latest vintage (or pin a year with year=2020)
+meta = downloader.download(SF_BBOX, VOLUME, year="latest")
+meta.select("item_id", "out_file_path", "out_file_sz", "is_out_file_valid").show(truncate=False)
+
+# Step 3 — read: load tiles into Spark for GeoBrix RasterX operations
+tiles = downloader.read(VOLUME)
+tiles.printSchema()
+# root
+#  |-- tile: struct (nullable = true)
+#  |    |-- index: long (nullable = true)
+#  |    |-- source: string (nullable = true)
+#  |    |-- content: binary (nullable = true)
+#  |    |-- ...
+
+tiles.count()  # total tile chunks across all downloaded quads
+```
+
+### One-shot convenience
+
+```python
+from databricks.labs.gbx.sample.naip import download_naip_aoi
+
+meta = download_naip_aoi(
+    spark,
+    bbox=SF_BBOX,
+    out_dir=VOLUME,
+    year="latest",
+)
+meta.show()
+```
+
+### Use the tiles with RasterX
+
+Once loaded, the `tile` DataFrame works directly with GeoBrix RasterX functions:
+
+```python
+from databricks.labs.gbx.rasterx import functions as rst
+
+tiles.select(
+    rst.rst_width("tile").alias("width"),
+    rst.rst_height("tile").alias("height"),
+    rst.rst_crs("tile").alias("crs"),
+).show(5)
+```
+
+:::tip Vintage selection
+`year="latest"` picks the single most recent NAIP acquisition year in the STAC results. To compare vintages or inspect what years are available, call `discover()` first and inspect the `year` column before downloading.
+:::
+
+:::info NAIP coverage
+NAIP covers only the **continental United States**. For imagery outside the US, see [More Sentinel-2 Imagery via STAC](./additional#more-sentinel-2-imagery-via-stac) on the Additional page.
+:::
+
+---
+
+## Notebook Reference
+
+`NaipDownloader` is used in the [Helios NB-02 notebook](../notebooks/helios) to stage NAIP aerial imagery for San Francisco as the raster layer in a multi-scale tiling and visualization workflow.
