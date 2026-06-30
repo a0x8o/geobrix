@@ -16,14 +16,16 @@ from pmtiles.writer import Writer
 from databricks.labs.gbx.vizx._pmtiles_autofit import autofit_archive
 
 
-def _build_archive(tiles, tile_type=TileType.MVT, *, name="demo"):
+def _build_archive(
+    tiles, tile_type=TileType.MVT, *, name="demo", tile_compression=Compression.NONE
+):
     """Build a PMTiles archive from (z, x, y, payload) tuples."""
     buf = io.BytesIO()
     w = Writer(buf)
     zs = [z for z, _, _, _ in tiles]
     header = {
         "tile_type": tile_type,
-        "tile_compression": Compression.NONE,
+        "tile_compression": tile_compression,
         "internal_compression": Compression.GZIP,
         "min_zoom": min(zs),
         "max_zoom": max(zs),
@@ -210,6 +212,43 @@ def test_simplify_layer_url_archive_returned_unchanged():
     layer = pmtiles_layer("https://example.com/tiles.pmtiles", label="remote")
     out = _simplify_layer(layer, {"max_z": 1}, max_embed_mb=1.0)
     assert out is layer, "URL-mode archive must be returned unchanged"
+
+
+def test_autofit_preserves_gzip_tile_compression():
+    """Regression: tiles are copied through verbatim, so a GZIP source archive must stay
+    labeled GZIP in the reduced header. Mislabeling gzipped tiles as NONE makes pmtiles.js
+    skip the gunzip and hand gzipped bytes to the MVT decoder -> zero features render (a
+    silently blank interactive map). tippecanoe and gbx_pmtiles_agg both gzip their tiles.
+    """
+    import gzip
+    import os
+
+    from pmtiles.reader import MemorySource, Reader, all_tiles
+    from pmtiles.tile import Compression
+
+    # GZIP archive: gzip each payload AND declare tile_compression=GZIP.
+    tiles = []
+    for z in range(3):
+        n = 2**z
+        for x in range(n):
+            for y in range(n):
+                tiles.append((z, x, y, gzip.compress(os.urandom(4096))))
+    archive = _build_archive(tiles, tile_compression=Compression.GZIP)
+    assert (
+        Reader(MemorySource(archive)).header()["tile_compression"] == Compression.GZIP
+    )
+
+    target_mb = (len(archive) * 0.5) / 1_048_576
+    reduced, report = autofit_archive(archive, max_embed_mb=target_mb)
+    assert report["dropped_zooms"], "test needs a real downzoom to exercise the rebuild"
+
+    hdr = Reader(MemorySource(reduced)).header()
+    assert (
+        hdr["tile_compression"] == Compression.GZIP
+    ), "reduced header must keep the source GZIP label (tiles are copied gzipped)"
+    # The kept payloads are still gzip-magic -> consistent with the GZIP header.
+    first = next(p for _, p in all_tiles(MemorySource(reduced)))
+    assert first[:2] == b"\x1f\x8b"
 
 
 def test_plot_pmtiles_defaults_to_downzoom():

@@ -36,7 +36,7 @@ def _rebuild_with_max_zoom(raw: bytes, keep_max_z: int) -> bytes:
     Preserves tile type and tile content; the header bounds/zoom range are
     recomputed from the kept tiles via the shared header builder.
     """
-    from pmtiles.reader import MemorySource, all_tiles
+    from pmtiles.reader import MemorySource, Reader, all_tiles
     from pmtiles.tile import Compression, zxy_to_tileid
     from pmtiles.writer import Writer
 
@@ -46,6 +46,14 @@ def _rebuild_with_max_zoom(raw: bytes, keep_max_z: int) -> bytes:
 
     info = pmtiles_info(raw)
     metadata = info.get("metadata") or {}
+    # The tile payloads are copied through verbatim, so the rebuilt header MUST
+    # declare the SOURCE's tile_compression -- not a hardcoded NONE. tippecanoe (and
+    # gbx_pmtiles_agg) gzip their MVT tiles; mislabeling them NONE makes pmtiles.js
+    # skip the gunzip and feed gzipped bytes to the MVT decoder -> zero features
+    # render (a silently blank map).
+    src_compression = (
+        Reader(MemorySource(raw)).header().get("tile_compression", Compression.NONE)
+    )
 
     kept = []  # (z, x, y, payload)
     first_payload = None
@@ -63,7 +71,7 @@ def _rebuild_with_max_zoom(raw: bytes, keep_max_z: int) -> bytes:
 
     tile_type = sniff_tile_type(first_payload)
     coords = [(z, x, y) for (z, x, y, _) in kept]
-    hdr = build_header_info(coords, SlippyGrid(), tile_type, Compression.NONE, metadata)
+    hdr = build_header_info(coords, SlippyGrid(), tile_type, src_compression, metadata)
 
     import io
 
