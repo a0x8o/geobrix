@@ -1,11 +1,16 @@
 """StacClient — catalog-agnostic, Serverless-safe STAC search/download/repair.
 
-Parallelism is via DataFrame.repartition(N, col) — hash by a column, since a
-number-only repartition(N) is AQE-coalesced toward 1 partition on Serverless (NOT
-spark.conf, which is a no-op there). No caching or persistence calls — Serverless-safe.
-Asset download is
-resilient (read-validated + retried). The catalog opener is injectable
-(_catalog_opener) for unit tests.
+Download parallelism is via ``spark.range(N, numPartitions=N)`` — a Range SCAN,
+which is NOT subject to AQE coalescePartitions (unlike a shuffle Exchange produced
+by repartition(N, col)).  The target list is driver-collected (fine for dozens of
+assets) and captured in the UDF closure — the Serverless-safe alternative to
+broadcast (which requires sparkContext, forbidden on Serverless).
+
+Search parallelism is via ``df.repartition(partitions, col)`` — hash by the AOI
+geometry column so ~one search task per AOI.
+
+No caching, persistence, sparkContext, _jvm, or .rdd calls — Serverless-safe.
+The catalog opener is injectable (_catalog_opener) for unit tests.
 
 Note on item_properties: values are stringified into a MapType(String, String).
 Downstream numeric filters must cast (e.g. ``CAST(item_properties['eo:cloud_cover']
@@ -263,7 +268,36 @@ class StacClient:
                 "DataFrame (or use build_band_table(force_rebuild=True))."
             )
         targets = df.select("item_id", "asset_name", "href").distinct()
-        n = partitions if partitions is not None else max(1, targets.count())
+
+        # Driver-collect the (modest) target list.  This is the Serverless-safe
+        # alternative to sparkContext.broadcast — which is forbidden on Serverless.
+        # For dozens-of-assets scale the collect is negligible.
+        rows = [
+            (r["item_id"], r["asset_name"], r["href"]) for r in targets.collect()
+        ]
+        if not rows:
+            from pyspark.sql.types import (
+                LongType,
+                StringType,
+                StructField,
+                StructType,
+                TimestampType,
+            )
+
+            empty_schema = StructType(
+                [
+                    StructField("item_id", StringType()),
+                    StructField("asset_name", StringType()),
+                    StructField("href", StringType()),
+                    StructField("out_file_path", StringType()),
+                    StructField("out_file_sz", LongType()),
+                    StructField("is_out_file_valid", StringType()),
+                    StructField("last_update", TimestampType()),
+                ]
+            )
+            return df.sparkSession.createDataFrame([], empty_schema)
+
+        n = partitions if partitions is not None else len(rows)
         sign = self.sign
         _validate = validate
         _injected_get = _get_fn  # None in production; injectable for tests
@@ -271,11 +305,24 @@ class StacClient:
         _bbox_crs = bbox_crs
         _max_mpp = max_mpp  # picklable scalar; captured per closure for the UDF
 
-        @F.udf(StringType())
-        def _fetch(item_id, asset_name, href):
+        from pyspark.sql.types import StringType, StructField, StructType
+
+        _result_schema = StructType(
+            [
+                StructField("item_id", StringType()),
+                StructField("asset_name", StringType()),
+                StructField("out_file_path", StringType()),
+            ]
+        )
+
+        @F.udf(_result_schema)
+        def _fetch_by_index(idx):
+            """Look up target by range index and download.  Closure captures `rows` +
+            all download params — the Serverless-safe substitute for broadcast."""
             from databricks.labs.gbx.stac._download import fetch_validate_publish
             from databricks.labs.gbx.stac._sign import resolve_signer
 
+            item_id, asset_name, href = rows[idx]
             signer = resolve_signer(sign)
 
             def href_fn():
@@ -287,7 +334,7 @@ class StacClient:
 
             filename = name.format(asset_name=asset_name, item_id=item_id)
             kwargs = {} if _injected_get is None else {"get": _injected_get}
-            return fetch_validate_publish(
+            out_path = fetch_validate_publish(
                 href_fn,
                 out_dir,
                 filename,
@@ -298,6 +345,7 @@ class StacClient:
                 max_mpp=_max_mpp,
                 **kwargs,
             )
+            return (item_id, asset_name, out_path)
 
         @F.udf("long")
         def _size(path):
@@ -305,13 +353,18 @@ class StacClient:
 
             return os.path.getsize(path) if path and os.path.exists(path) else None
 
+        spark = df.sparkSession
+        # spark.range produces a Range SCAN — NOT a shuffle Exchange — so AQE
+        # coalescePartitions cannot collapse it back to 1 partition.  This guarantees
+        # N concurrent download tasks on Serverless regardless of AQE settings.
         return (
-            # Hash-by-column repartition (NOT number-only): on Serverless a round-robin
-            # repartition(N) is AQE-coalesced back toward 1 partition (serial download).
-            # (item_id, asset_name) is unique per target, so hashing by it spreads
-            # downloads evenly across n.
-            targets.repartition(n, F.col("item_id"), F.col("asset_name"))
-            .withColumn("out_file_path", _fetch("item_id", "asset_name", "href"))
+            spark.range(0, len(rows), 1, numPartitions=n)
+            .withColumn("_r", _fetch_by_index(F.col("id")))
+            .select(
+                F.col("_r.item_id").alias("item_id"),
+                F.col("_r.asset_name").alias("asset_name"),
+                F.col("_r.out_file_path").alias("out_file_path"),
+            )
             .withColumn("out_file_sz", _size("out_file_path"))
             .withColumn("is_out_file_valid", F.col("out_file_path").isNotNull())
             .withColumn("last_update", F.current_timestamp())
