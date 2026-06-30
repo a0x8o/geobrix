@@ -9,7 +9,7 @@ from rasterio.transform import from_bounds
 from PIL import Image
 
 from databricks.labs.gbx.ds._xyz_mosaic import (
-    enumerate_tiles, source_bounds_union, render_tile,
+    enumerate_tiles, source_bounds_union, render_tile, to_render_rgb,
 )
 
 
@@ -84,3 +84,54 @@ def test_render_tile_none_when_no_source_covers():
         assert render_tile(far.z, far.x, far.y, [only_p]) is None
     finally:
         os.unlink(only_p)
+
+
+def _rgba_tmp(w, s, e, n, px=512, rgb=200, alpha=0):
+    """A 4-band RGBA EPSG:4326 raster (NAIP-like) with a constant RGB and alpha band."""
+    from rasterio.enums import ColorInterp
+
+    data = np.full((4, px, px), rgb, dtype="uint8")
+    data[3] = alpha
+    fd, p = tempfile.mkstemp(suffix=".tif")
+    os.close(fd)
+    with rasterio.open(
+        p, "w", driver="GTiff", width=px, height=px, count=4, dtype="uint8",
+        crs="EPSG:4326", transform=from_bounds(w, s, e, n, px, px),
+    ) as ds:
+        ds.write(data)
+        ds.colorinterp = [
+            ColorInterp.red, ColorInterp.green, ColorInterp.blue, ColorInterp.alpha,
+        ]
+    return p
+
+
+def test_to_render_rgb_strips_alpha_so_tile_is_opaque():
+    # NAIP-style 4-band RGBA whose alpha reads 0 (the staged-quad pathology): rendering
+    # it directly masks the valid RGB to transparent; to_render_rgb -> RGB fixes it.
+    rgba = _rgba_tmp(-122.50, 37.74, -122.40, 37.80, rgb=200, alpha=0)
+    try:
+        import morecantile
+        tms = morecantile.tms.get("WebMercatorQuad")
+        t = next(iter(tms.tiles(-122.47, 37.76, -122.46, 37.77, [15])))  # interior tile
+
+        direct = render_tile(t.z, t.x, t.y, [rgba])
+        assert direct is not None
+        a0 = np.asarray(Image.open(io.BytesIO(direct)).convert("RGBA"))
+        assert float(np.mean(a0[:, :, 3] == 255)) < 0.01  # alpha=0 masks it (the bug)
+
+        rgb_path = to_render_rgb(rgba)
+        assert rgb_path != rgba  # a new RGB sibling was written
+        fixed = render_tile(t.z, t.x, t.y, [rgb_path])
+        a1 = np.asarray(Image.open(io.BytesIO(fixed)).convert("RGBA"))
+        assert float(np.mean(a1[:, :, 3] == 255)) > 0.99  # fully opaque after strip
+    finally:
+        os.unlink(rgba)
+
+
+def test_to_render_rgb_passthrough_for_three_band():
+    # A 3-band RGB raster has no alpha to strip -> returned unchanged.
+    rgb = _tmp(_cog_bytes(-122.50, 37.74, -122.45, 37.79))
+    try:
+        assert to_render_rgb(rgb) == rgb
+    finally:
+        os.unlink(rgb)

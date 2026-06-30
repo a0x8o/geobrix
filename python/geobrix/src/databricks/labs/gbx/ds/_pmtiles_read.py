@@ -114,7 +114,10 @@ class PMtilesRasterReader(DataSourceReader):
                 lp = os.path.join(tmpdir, f"src_{i}.tif")
                 with open(p, "rb") as src_fh, open(lp, "wb") as dst_fh:
                     shutil.copyfileobj(src_fh, dst_fh)  # sequential, FUSE-safe
-                local_paths.append(lp)
+                # RGBA imagery (e.g. NAIP) -> render from RGB so the tile mask comes from
+                # the footprint, not an alpha band that reads ~0 post-decimation (which
+                # would mask the valid imagery to transparent). Strip on the LOCAL copy.
+                local_paths.append(_xyz_mosaic.to_render_rgb(lp))
             for z, x, y in partition.tiles:
                 png = _xyz_mosaic.render_tile(
                     z, x, y, local_paths, tile_format=self.tile_format

@@ -69,3 +69,34 @@ def render_tile(z, x, y, paths: Sequence[str], tile_format: str = "PNG") -> Opti
     except EmptyMosaicError:
         return None
     return bytes(img.render(img_format=tile_format))
+
+
+def to_render_rgb(path: str) -> str:
+    """Return a render-ready RGB raster path: strip a masking alpha band, else passthrough.
+
+    NAIP "image" assets are 4-band RGBA. After a windowed/decimated download the alpha
+    band can read ~0 even though the RGB is fully valid; rio-tiler then treats that alpha
+    as the tile mask and renders the imagery TRANSPARENT (the "only-NE / blank basemap"
+    bug). For an imagery pyramid we want the tile mask to come from the read FOOTPRINT,
+    not a per-pixel alpha — so when the source is RGBA we write a sibling 3-band RGB
+    GeoTIFF (dropping the alpha) and return its path. Non-alpha sources (1/3-band, or a
+    4th band that isn't tagged alpha) are returned unchanged.
+
+    Operates on a LOCAL path (rasterio does random-access reads) — callers must stage
+    Volume bytes to local disk SEQUENTIALLY first (FUSE-safe), then call this.
+    """
+    import rasterio
+    from rasterio.enums import ColorInterp
+
+    with rasterio.open(path) as src:
+        if src.count < 4 or ColorInterp.alpha not in src.colorinterp:
+            return path
+        profile = src.profile.copy()
+        profile.update(count=3)
+        profile.pop("nodata", None)
+        data = src.read([1, 2, 3])
+    out = path + ".rgb.tif"
+    with rasterio.open(out, "w", **profile) as dst:
+        dst.write(data)
+        dst.colorinterp = [ColorInterp.red, ColorInterp.green, ColorInterp.blue]
+    return out
