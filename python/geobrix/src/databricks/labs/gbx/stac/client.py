@@ -217,6 +217,7 @@ class StacClient:
         partitions: Optional[int] = None,
         bbox: Optional[Sequence[float]] = None,
         bbox_crs: Optional[str] = None,
+        max_mpp: Optional[float] = None,
         _get_fn=None,
     ) -> "DataFrame":
         """Download STAC assets to out_dir.
@@ -232,6 +233,12 @@ class StacClient:
         bbox=(minx, miny, maxx, maxy) windows each asset to the AOI on read (source
             CRS by default; bbox_crs declares the bbox CRS). Uses rasterio range reads
             (/vsicurl for https) so only the required pixel window is transferred.
+
+        max_mpp: maximum pixel size in source-CRS units (metres for UTM sources such as
+            NAIP; degrees for EPSG:4326). When set and coarser than the native pixel
+            size, each windowed read is DECIMATED so the output pixel size is
+            approximately max_mpp. Bounds UDF memory on Serverless (1 GB/UDF cap)
+            for high-resolution sources. Requires bbox. Ignored when bbox is None.
 
         Returns a DataFrame with columns: item_id, asset_name, out_file_path,
         out_file_sz, is_out_file_valid, last_update.
@@ -262,6 +269,7 @@ class StacClient:
         _injected_get = _get_fn  # None in production; injectable for tests
         _bbox = tuple(bbox) if bbox is not None else None
         _bbox_crs = bbox_crs
+        _max_mpp = max_mpp  # picklable scalar; captured per closure for the UDF
 
         @F.udf(StringType())
         def _fetch(item_id, asset_name, href):
@@ -287,6 +295,7 @@ class StacClient:
                 validate=_validate,
                 bbox=_bbox,
                 bbox_crs=_bbox_crs,
+                max_mpp=_max_mpp,
                 **kwargs,
             )
 
