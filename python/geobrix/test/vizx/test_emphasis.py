@@ -39,7 +39,8 @@ def spark():
 # ---------------------------------------------------------------------------
 
 
-def test_emphasis_default_is_data_on_all_entrypoints():
+def test_emphasis_default_is_blend_on_all_entrypoints():
+    # Default is "blend" (the soft composite the user prefers); "data" is opt-in.
     from databricks.labs.gbx.vizx import (
         plot_cog,
         plot_interactive,
@@ -58,8 +59,8 @@ def test_emphasis_default_is_data_on_all_entrypoints():
         sig = inspect.signature(fn)
         assert "emphasis" in sig.parameters, f"{fn.__name__} missing emphasis"
         assert (
-            sig.parameters["emphasis"].default == "data"
-        ), f"{fn.__name__} emphasis default != 'data'"
+            sig.parameters["emphasis"].default == "blend"
+        ), f"{fn.__name__} emphasis default != 'blend'"
 
 
 def test_debug_mode_added_to_static_entrypoints():

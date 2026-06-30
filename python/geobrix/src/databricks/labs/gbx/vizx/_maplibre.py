@@ -77,8 +77,8 @@ DEFAULT_DEBUG_MODE: int = 1
 # emphasis styling defaults (interactive / MapLibre tier)
 # ---------------------------------------------------------------------------
 #
-# ``emphasis="data"`` (default) makes a newly-added data layer visually pop
-# against the full-strength basemap; ``emphasis="blend"`` reproduces the prior
+# ``emphasis="data"`` makes a newly-added data layer visually pop
+# against the full-strength basemap; ``emphasis="blend"`` (default) reproduces the prior
 # soft composite exactly. These are DEFAULTS only -- an explicit user style kwarg
 # (color/opacity/width on the Layer) always wins, so the per-layer builders mark
 # which emphasis-controlled paint keys they left at default and ``build_html``
@@ -217,7 +217,7 @@ def layer_to_sources_layers(
     idx: int,
     *,
     raster_max_px: int = _DEFAULT_RASTER_MAX_PX,
-    emphasis: str = "data",
+    emphasis: str = "blend",
 ) -> tuple[dict, list[dict], int]:
     """Convert *layer* to MapLibre GL ``(sources, layers, embed_bytes)``.
 
@@ -226,8 +226,8 @@ def layer_to_sources_layers(
         idx:          Integer index; drives the source key ``f"gbx{idx}"`` and
                       layer ids ``f"gbx{idx}-{type}"``.
         raster_max_px: Maximum pixel size (longest edge) for decimated raster PNG.
-        emphasis:     ``"data"`` (default) makes the data layer pop against the
-                      basemap; ``"blend"`` reproduces the prior soft composite.
+        emphasis:     ``"data"`` makes the data layer pop against the
+                      basemap; ``"blend"`` (default) reproduces the prior soft composite.
                       Each built layer records which emphasis-controlled paint
                       keys the user did NOT set via a ``_gbx_emphasis`` sidecar;
                       :func:`build_html` fills those per its own ``emphasis``.
@@ -260,7 +260,7 @@ def build_html(
     basemap: str = "carto-positron",
     center=None,
     zoom=None,
-    emphasis: str = "data",
+    emphasis: str = "blend",
 ) -> str:
     """Assemble N per-layer adapter outputs into one self-contained HTML viewer.
 
@@ -273,8 +273,8 @@ def build_html(
                   the base layer.  Pass ``"none"`` to render a blank dark canvas.
         center:   ``[lon, lat]`` map centre (default San Francisco ``[-122.43, 37.77]``).
         zoom:     Initial zoom level (default ``11``).
-        emphasis: ``"data"`` (default) fills the emphasis-controlled paint keys so
-                  data layers pop against the basemap; ``"blend"`` reproduces the
+        emphasis: ``"data"`` fills the emphasis-controlled paint keys so
+                  data layers pop against the basemap; ``"blend"`` (default) reproduces the
                   prior soft composite. Per-layer ``_gbx_emphasis`` sidecars name
                   the keys the user left at default — only those are filled, so
                   explicit user style kwargs always win.
@@ -675,7 +675,7 @@ def audit_layers(
     *,
     max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
-    emphasis: str = "data",
+    emphasis: str = "blend",
 ) -> dict:
     """Dry pre-flight embed-size audit — no render, no displayHTML.
 
@@ -775,7 +775,7 @@ def prepare_layers(
     max_embed_mb: float = DEFAULT_MAX_EMBED_MB,
     simplify_tiles_spec=None,
     fallback: bool = True,
-    emphasis: str = "data",
+    emphasis: str = "blend",
 ) -> dict:
     """Decide, per layer, whether the interactive map can be embedded or must fall back.
 

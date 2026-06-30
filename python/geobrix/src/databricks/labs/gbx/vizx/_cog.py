@@ -24,8 +24,8 @@ def _strip_scheme(path: str) -> str:
 # emphasis styling defaults (static raster / COG tier)
 # ---------------------------------------------------------------------------
 #
-# ``emphasis="data"`` (default) renders the raster at full strength with a vivid
-# colormap; ``emphasis="blend"`` keeps the prior softer render. The basemap stays
+# ``emphasis="data"`` renders the raster at full strength with a vivid
+# colormap; ``emphasis="blend"`` (default) keeps the prior softer render. The basemap stays
 # full-strength in both modes -- we emphasize the DATA, not the basemap.
 _COG_EMPHASIS = {
     "data": {"cmap": "viridis", "alpha": 1.0},
@@ -50,14 +50,14 @@ def _render_cog(
     basemap,
     basemap_source,
     ax=None,
-    emphasis="data",
+    emphasis="blend",
 ):
     """Render a decimated COG array (bands, h, w) over a contextily basemap.
 
     When *ax* is provided the caller owns the figure; this function draws onto
     it and returns it without calling ``plt.show``.  When *ax* is ``None`` a
-    new figure is created (original behaviour). ``emphasis="data"`` (default)
-    renders the raster vivid at full opacity; ``"blend"`` keeps the prior softer
+    new figure is created (original behaviour). ``emphasis="data"`` renders the
+    raster vivid at full opacity; ``"blend"`` (default) keeps the prior softer
     render. The basemap is full-strength in both modes.
     """
     import matplotlib.pyplot as plt
@@ -117,7 +117,7 @@ def plot_cog(
     basemap_source=None,
     title=None,
     ax=None,
-    emphasis="data",
+    emphasis="blend",
     debug_mode=1,
     **kw,
 ):
@@ -126,7 +126,7 @@ def plot_cog(
     Reads ``path`` decimated so the longest edge is <= ``max_pixels`` (uses the
     COG's overviews when present). ``band`` (1-based) selects a single band;
     otherwise all bands render (1 -> viridis, 3+ -> RGB). Volume/DBFS scheme
-    prefixes are stripped. ``emphasis="data"`` (default) renders the raster vivid
+    prefixes are stripped. ``emphasis="data"`` renders the raster vivid
     at full opacity so it pops against the full-strength basemap; ``"blend"``
     keeps the prior softer render. ``debug_mode`` (``0`` silent, ``1`` default,
     ``2`` diagnostics) mirrors the other entrypoints. Requires the [vizx] extra

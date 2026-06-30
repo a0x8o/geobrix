@@ -13,8 +13,8 @@ import numpy as np
 # emphasis styling defaults (raster tier)
 # ---------------------------------------------------------------------------
 #
-# ``emphasis="data"`` (default) renders the raster vivid at full strength;
-# ``emphasis="blend"`` keeps the prior softer render. plot_raster has no basemap
+# ``emphasis="data"`` renders the raster vivid at full strength;
+# ``emphasis="blend"`` (default) keeps the prior softer render. plot_raster has no basemap
 # (bytes are not always georeferenced), so emphasis here tunes the data render
 # itself: a vivid colormap at full alpha vs a softer alpha.
 _RASTER_EMPHASIS = {
@@ -138,7 +138,7 @@ def _render(
     scale,
     composite="auto",
     nodata=None,
-    emphasis="data",
+    emphasis="blend",
 ):
     """Stretch when needed, then plot via rasterio.plot.show (Agg-safe).
 
@@ -217,15 +217,15 @@ def plot_raster(
     fig_h=10,
     max_pixels=2000,
     composite="auto",
-    emphasis="data",
+    emphasis="blend",
     debug_mode=1,
 ):
     """Render a raster from in-memory bytes (e.g. a tile's `raster` field).
 
     Auto-decimates above max_pixels; integer rasters whose values exceed 255
     (typical EO UInt16) get a per-band 2-98% percentile stretch. Single-band ->
-    viridis; multi-band -> RGB. ``emphasis="data"`` (default) renders the raster
-    vivid at full opacity; ``"blend"`` keeps the prior softer render.
+    viridis; multi-band -> RGB. ``emphasis="data"`` renders the raster
+    vivid at full opacity; ``"blend"`` (default) keeps the prior softer render.
     ``debug_mode`` (``0`` silent, ``1`` default, ``2`` diagnostics) mirrors the
     other entrypoints. Requires the [vizx] extra.
 

@@ -116,7 +116,7 @@ def plot_interactive(
     zoom=None,
     dry_run: bool = False,
     debug_mode: int = 1,
-    emphasis: str = "data",
+    emphasis: str = "blend",
 ) -> "str | None | dict":
     """Render one or more layers as an interactive MapLibre GL map.
 
@@ -149,10 +149,10 @@ def plot_interactive(
                               (default) concise notes (audit verdict, cap-raise),
                               ``2`` adds diagnostics (per-layer sizes, display
                               channel, budget math, chosen emphasis values).
-        emphasis:             ``"data"`` (default) styles the data layer to pop
+        emphasis:             ``"data"`` styles the data layer to pop
                               against the full-strength basemap (firmer fill,
                               contrasting dark outline, bumped line width, full
-                              raster opacity); ``"blend"`` reproduces the prior
+                              raster opacity); ``"blend"`` (default) reproduces the prior
                               soft composite. Explicit per-layer style kwargs
                               (``color``/``opacity``/``width``) always override.
 

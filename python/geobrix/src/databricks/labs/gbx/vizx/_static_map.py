@@ -18,8 +18,8 @@ _UNSET = object()
 # emphasis styling defaults (static / matplotlib tier)
 # ---------------------------------------------------------------------------
 #
-# ``emphasis="data"`` (default) makes a newly-added data layer pop against the
-# full-strength basemap; ``emphasis="blend"`` reproduces the prior soft render.
+# ``emphasis="data"`` makes a newly-added data layer pop against the
+# full-strength basemap; ``emphasis="blend"`` (default) reproduces the prior soft render.
 # These set DEFAULTS only -- an explicit user kwarg (alpha/edgecolor/markersize/
 # linewidth) always wins.
 _STATIC_EMPHASIS = {
@@ -245,7 +245,7 @@ def _draw_one_layer(
     sample_seed=None,
     srid=None,
     legend=True,
-    emphasis="data",
+    emphasis="blend",
 ):
     """Draw a single Layer onto an existing matplotlib Axes (already in EPSG:3857).
 
@@ -254,7 +254,7 @@ def _draw_one_layer(
     - 'raster': delegate to plot_cog (Task 2) with basemap=False.
 
     ``emphasis`` sets the per-layer styling defaults: ``"data"`` pops the layer
-    (dark outline, firmer alpha, full raster strength); ``"blend"`` keeps the
+    (dark outline, firmer alpha, full raster strength); ``"blend"`` (default) keeps the
     prior soft render. Explicit per-layer style attributes (opacity/color/width)
     always win.
     """
@@ -371,7 +371,7 @@ def plot_static(
     fig_w=10,
     fig_h=10,
     ax=None,
-    emphasis="data",
+    emphasis="blend",
     debug_mode=1,
 ):
     """Render geometries / DGGS cells over a basemap as a static figure.
@@ -404,7 +404,7 @@ def plot_static(
     outlines only (no face) -- e.g. a canvas/footprint boundary over a filled
     choropleth; combine with ``edgecolor`` to colour the outline.
 
-    ``emphasis`` controls the default styling: ``"data"`` (default) makes the
+    ``emphasis`` controls the default styling: ``"data"`` makes the
     layer pop against the full-strength basemap (a dark outline ~#222222,
     ``linewidth`` ~0.6, ``alpha`` ~0.85, bumped point markers); ``"blend"``
     reproduces the prior soft render (``edgecolor="face"``, ``alpha`` 0.8, no bold
