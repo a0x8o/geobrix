@@ -251,6 +251,30 @@ def test_autofit_preserves_gzip_tile_compression():
     assert first[:2] == b"\x1f\x8b"
 
 
+def test_prepare_layers_downzooms_each_pmtiles_layer_to_fit():
+    """A multi-layer overlay of embedded pmtiles must embed interactively: each archive
+    is down-zoomed to its share of the budget (budget / n_pmtiles). Without this, the
+    full pair busts the budget and falls back to static (the NB-02 overlay symptom)."""
+    import warnings
+
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import prepare_layers
+
+    a1 = _multi_zoom_archive(payload_size=8192)
+    a2 = _multi_zoom_archive(payload_size=8192)
+    # Budget ~ ONE archive's rendered size: the full PAIR (~2x) busts it, but each
+    # down-zoomed to budget/2 fits, so the overlay should stay interactive.
+    budget_mb = len(a1) * (4.0 / 3.0) / 1_048_576
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = prepare_layers(
+            [pmtiles_layer(a1), pmtiles_layer(a2)], max_embed_mb=budget_mb
+        )
+    assert res["mode"] == "interactive", "overlay must embed after per-layer downzoom"
+    assert len(res["prepared"]) == 2
+
+
 def test_decode_for_static_scans_past_empty_low_zoom():
     """Regression: a tippecanoe drop_densest overview can have NO features at its min
     zoom (z0). The static fallback decoder must scan UP to the first zoom that has

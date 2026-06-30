@@ -816,6 +816,29 @@ def audit_layers(
     )
 
 
+def _autofit_pmtiles_layer(layer, per_pmtiles_mb: float):
+    """Down-zoom an embedded pmtiles layer to fit ``per_pmtiles_mb`` (its budget share).
+
+    Returns ``(layer, reduced)``. A no-op returning ``(layer, False)`` when the archive
+    already fits its share, isn't an embeddable local archive, or autofit fails (the
+    caller then lets the over-budget gate decide). On a real reduction returns a fresh
+    ``pmtiles_layer`` wrapping the down-zoomed bytes and ``True``.
+    """
+    raw = _pmtiles_raw_bytes(layer)
+    if raw is None or len(raw) * _BASE64_INFLATION <= per_pmtiles_mb * 1_048_576:
+        return layer, False
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer as _pml
+    from databricks.labs.gbx.vizx._pmtiles_autofit import autofit_archive
+
+    try:
+        reduced, report = autofit_archive(raw, max_embed_mb=per_pmtiles_mb)
+    except Exception:  # noqa: BLE001 — fall through to the over-budget gate
+        return layer, False
+    if not report["dropped_zooms"]:
+        return layer, False
+    return _pml(reduced, label=getattr(layer, "label", None)), True
+
+
 def prepare_layers(
     layers,
     *,
@@ -893,6 +916,19 @@ def prepare_layers(
     # Labels of layers that were simplified (for interactive-mode warning).
     simplified_labels: list[str] = []
 
+    # Auto-fit: when a MULTI-layer overlay has >=2 embedded pmtiles layers (e.g. a NAIP
+    # raster basemap + buildings), split the budget across them and down-zoom each to its
+    # share below so the overlay embeds instead of busting the cell cap (autofit is a
+    # no-op when an archive already fits). URL-mode pmtiles stream for free and are
+    # excluded. A SINGLE archive is left alone here -- plot_pmtiles already governs its
+    # reduction via interactive_fit (so interactive_fit=None still means "do not reduce").
+    _n_embed_pm = sum(
+        1
+        for _l in layers
+        if getattr(_l, "kind", None) == "pmtiles" and not _pmtiles_is_url(_l)
+    )
+    per_pmtiles_mb = (max_embed_mb / _n_embed_pm) if _n_embed_pm >= 2 else 0
+
     for idx, layer in enumerate(layers):
         kind = getattr(layer, "kind", None)
 
@@ -917,6 +953,18 @@ def prepare_layers(
         if spec is not None and not (kind == "pmtiles" and _pmtiles_is_url(layer)):
             layer = _simplify_layer(layer, spec, max_embed_mb)
             simplified_labels.append(_layer_label(layer, idx))
+
+        # ------------------------------------------------------------------ #
+        # Rung 2.5 -- auto-fit: down-zoom an embedded pmtiles archive to its  #
+        # share of the budget so a multi-layer overlay embeds (the same       #
+        # binary-free downzoom plot_pmtiles does for a single archive). No-op  #
+        # when the archive already fits its share; failures fall through to    #
+        # the over-budget gate below.                                          #
+        # ------------------------------------------------------------------ #
+        if kind == "pmtiles" and per_pmtiles_mb > 0:
+            layer, _reduced = _autofit_pmtiles_layer(layer, per_pmtiles_mb)
+            if _reduced:
+                simplified_labels.append(_layer_label(layer, idx))
 
         # ------------------------------------------------------------------ #
         # Rung 2 (pre-check) -- for embedded pmtiles, guard against archives  #
