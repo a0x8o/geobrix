@@ -315,6 +315,15 @@ def build_html(
         and base64-embedded PMTiles archives (or URL-referenced ones).
     """
     _validate_emphasis(emphasis)
+    # Per-map id: namespaces the container div, the embedded-archive protocol keys, and
+    # an IIFE scope so MULTIPLE vizx maps in one document (e.g. §7 then §8) don't collide
+    # -- without it the second map's top-level `const proto` re-declares the first's
+    # ("Identifier 'proto' has already been declared"), both target #gbx-map, and the
+    # shared pmtiles registry keys (gbx0) clash.
+    import uuid
+
+    uid = uuid.uuid4().hex[:10]
+
     sources: dict = {}
     layers: list = []
     pm_pairs: list[tuple[str, dict]] = []
@@ -325,9 +334,15 @@ def build_html(
                 # Read sidecar WITHOUT mutating the caller's dict — Task 6 calls
                 # build_html twice (size-check then real build) and must find the
                 # sidecar intact on the second call.
-                pm_pairs.append((sid, sdef["_gbx_pmtiles"]))
+                info_sc = sdef["_gbx_pmtiles"]
+                pm_pairs.append((sid, info_sc))
                 # Build a clean copy for the overlay (MapLibre rejects unknown keys).
                 clean = {k: v for k, v in sdef.items() if k != "_gbx_pmtiles"}
+                # Embedded archives register under a per-map key (uid_sid) on a shared
+                # protocol, so point this source's URL at that key. URL mode keeps the
+                # remote URL as its key (already unique).
+                if info_sc.get("mode") == "embed":
+                    clean["url"] = f"pmtiles://{uid}_{sid}"
                 sources[sid] = clean
             else:
                 sources[sid] = sdef
@@ -351,7 +366,7 @@ def build_html(
         base_js = "{version:8,sources:{},layers:[]}"
 
     overlay_json = _json_for_script({"sources": sources, "layers": layers})
-    pm_js = "".join(_pmtiles_register_js(sid, info) for sid, info in pm_pairs)
+    pm_js = "".join(_pmtiles_register_js(sid, info, uid) for sid, info in pm_pairs)
 
     # Open ON the data: derive center/zoom from the first embedded pmtiles archive's
     # header when the caller didn't pass them. The old hardcoded SF/zoom-11 opened
@@ -372,17 +387,27 @@ def build_html(
     center_js = _json_for_script(eff_center)
     zoom_js = eff_zoom
 
+    container = f"gbx-map-{uid}"
     return f"""\
-<div id="gbx-map" style="height:480px"></div>
+<div id="{container}" style="height:480px"></div>
 <link href="{_MAPLIBRE_CSS}" rel="stylesheet" integrity="{_MAPLIBRE_CSS_SRI}" crossorigin="anonymous"/>
 <script src="{_MAPLIBRE_JS}" integrity="{_MAPLIBRE_JS_SRI}" crossorigin="anonymous"></script>
 <script src="{_PMTILES_JS}" integrity="{_PMTILES_JS_SRI}" crossorigin="anonymous"></script>
 <script>
-  const proto = new pmtiles.Protocol();
-  maplibregl.addProtocol('pmtiles', proto.tile.bind(proto));
+(function() {{
+  // ONE shared pmtiles protocol per document, registered once: multiple vizx maps in
+  // the same document add their archives (under per-map keys) to the same registry, so
+  // the global 'pmtiles' protocol resolves every map's tiles. Everything else lives in
+  // this IIFE so each map's locals (map, overlay, _b*) never collide across maps.
+  const proto = window.__gbxPmtilesProto
+    || (window.__gbxPmtilesProto = new pmtiles.Protocol());
+  if (!window.__gbxPmtilesRegistered) {{
+    maplibregl.addProtocol('pmtiles', proto.tile.bind(proto));
+    window.__gbxPmtilesRegistered = true;
+  }}
   {pm_js}
   const map = new maplibregl.Map({{
-    container: 'gbx-map',
+    container: '{container}',
     style: {base_js},
     center: {center_js},
     zoom: {zoom_js}
@@ -396,6 +421,7 @@ def build_html(
       map.addLayer(ly);
     }}
   }});
+}})();
 </script>"""
 
 
@@ -1090,26 +1116,26 @@ def prepare_layers(
     }
 
 
-def _pmtiles_register_js(sid: str, info: dict) -> str:
+def _pmtiles_register_js(sid: str, info: dict, uid: str) -> str:
     """Return the JS snippet that registers one PMTiles source with the protocol.
 
-    For ``"url"`` mode the archive is fetched on demand from the remote URL.
-    For ``"embed"`` mode the bytes are base64-encoded into a JS ``Uint8Array``
-    wrapped in a ``File`` → ``pmtiles.FileSource``.
+    For ``"url"`` mode the archive is fetched on demand from the remote URL (keyed by
+    that URL). For ``"embed"`` mode the bytes are base64-encoded into a JS ``Uint8Array``
+    wrapped in a ``File`` → ``pmtiles.FileSource`` keyed by ``uid_sid`` (per-map unique).
     """
     if info["mode"] == "url":
         return f"  proto.add(new pmtiles.PMTiles({_json_for_script(info['url'])}));\n"
     # Embed mode: base64 → Uint8Array → File → FileSource.
-    # The base64 string is already ASCII-safe; json.dumps is sufficient here.
-    b64 = base64.b64encode(info["bytes"]).decode("ascii")
     # The File name IS the protocol key (FileSource.getKey() returns it) and MUST match
-    # the source URL "pmtiles://<sid>" (see _pmtiles). Name it `sid`, NOT "{sid}.pmtiles"
-    # -- the old ".pmtiles" suffix made the key "gbx0.pmtiles" while the source looked up
-    # "gbx0", so MapLibre never found the archive and the map rendered blank.
+    # the source URL "pmtiles://<uid>_<sid>" (see build_html). The per-map `uid` prefix
+    # keeps keys unique when several maps add archives to the one shared protocol; the
+    # name must NOT carry a ".pmtiles" suffix (that mismatched the URL -> blank map).
+    key = f"{uid}_{sid}"
+    b64 = base64.b64encode(info["bytes"]).decode("ascii")
     return (
         f"  const _b{sid} = Uint8Array.from(atob({json.dumps(b64)}), c => c.charCodeAt(0));\n"
         f"  proto.add(new pmtiles.PMTiles(new pmtiles.FileSource("
-        f"new File([_b{sid}.buffer], '{sid}'))));\n"
+        f"new File([_b{sid}.buffer], '{key}'))));\n"
     )
 
 

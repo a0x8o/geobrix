@@ -375,14 +375,19 @@ def test_embed_filesource_name_matches_source_url_key():
     MUST equal the "pmtiles://<key>" in its source URL. The old code named the File
     "gbx0.pmtiles" while the source looked up "gbx0" -> MapLibre never found the archive
     -> every embedded pmtiles map rendered blank (basemap only / white)."""
+    import re
+
     from databricks.labs.gbx.vizx._maplibre import build_html
 
     archive = _build_pmtiles_archive("mvt")
     entry = layer_to_sources_layers(pmtiles_layer(archive), 0)
-    sources = entry[0]
-    key = sources["gbx0"]["url"].split("pmtiles://", 1)[1]
-    assert key == "gbx0"
     html = build_html([entry])
+    # build_html namespaces the embed key per map (uid_sid); the registered File name
+    # MUST equal the source URL's "pmtiles://<key>" so the protocol resolves it.
+    m = re.search(r'"url":\s*"pmtiles://([^"]+)"', html)
+    assert m, "no pmtiles source URL in html"
+    key = m.group(1)
+    assert key.endswith("_gbx0"), f"embed key should be <uid>_gbx0, got {key!r}"
     assert f"new File([_bgbx0.buffer], '{key}')" in html
     assert "'gbx0.pmtiles'" not in html, "stale File name must be gone"
 
@@ -569,7 +574,10 @@ def test_build_html_does_not_mutate_prepared():
 
     h2 = build_html(prepared)
 
-    # Both calls must produce identical output (idempotent).
-    assert h1 == h2, "build_html is not idempotent: second call produced different HTML"
+    # build_html assigns a fresh per-map uid each call (so multiple maps in one document
+    # don't collide), so the two outputs differ only by that fixed-length uid -- NOT
+    # byte-identical, but the SAME length, which is what prepare_layers' size measurement
+    # relies on.
+    assert len(h1) == len(h2), "build_html output length must be stable for measurement"
     # PMTiles registration must be present in the output.
     assert "pmtiles.FileSource" in h2
