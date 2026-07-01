@@ -397,20 +397,34 @@ def build_html(
             _auto_view_from_pmtiles(pm_pairs)
         )
 
+    # View is applied AFTER the container is measured (see _gbxApplyView in the template),
+    # NOT via MapLibre's constructor `bounds`/canvas — inside a notebook iframe the map is
+    # constructed before layout, so the container is 0-sized at construction. A
+    # constructor `bounds` fit then computes against 0 and silently falls back to minZoom
+    # (a globe when min zoom is low), and the initial canvas is 0x0 so no tiles load
+    # (a blank map). `init_view_js` is only a sane first paint; `load_view_js` is the real
+    # framing, deferred until the container has real dimensions.
     if center is None and zoom is None and auto_bounds is not None:
         w, s, e, n = auto_bounds
         # minZoom floor keeps fitBounds from underzooming into blank tiles; maxZoom cap
         # keeps a tiny AOI from opening over-zoomed past the archive's detail.
         min_z = auto_min_zoom if auto_min_zoom is not None else 0
         max_z = auto_max_zoom if auto_max_zoom is not None else 22
-        view_js = (
-            f"bounds: [[{w}, {s}], [{e}, {n}]], minZoom: {min_z}, "
-            f"fitBoundsOptions: {{ padding: 24, maxZoom: {max_z}, animate: false }}"
+        init_center = auto_center if auto_center is not None else [(w + e) / 2, (s + n) / 2]
+        init_view_js = (
+            f"center: {_json_for_script(init_center)}, zoom: {min_z}, minZoom: {min_z}"
+        )
+        load_view_js = (
+            f"map.fitBounds([[{w}, {s}], [{e}, {n}]], "
+            f"{{ padding: 24, maxZoom: {max_z}, animate: false }});"
         )
     else:
         eff_center = center if center is not None else [-122.43, 37.77]
         eff_zoom = zoom if zoom is not None else 11
-        view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}"
+        init_view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}"
+        load_view_js = (
+            f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
+        )
 
     container = f"gbx-map-{uid}"
     legend_html = _legend_html(legends)
@@ -438,9 +452,24 @@ def build_html(
   const map = new maplibregl.Map({{
     container: '{container}',
     style: {base_js},
-    {view_js}
+    {init_view_js}
   }});
   const overlay = {overlay_json};
+  // Frame + size the canvas only once the container has REAL dimensions. In a notebook
+  // iframe the map is built before layout (container 0-sized), so we defer resize()+
+  // framing until the container is measured — via map load AND a ResizeObserver, since
+  // Databricks often sizes the output iframe after the map is constructed.
+  let _gbxFramed = false;
+  const _gbxApplyView = () => {{
+    const c = map.getContainer();
+    if (_gbxFramed || !c || c.clientWidth === 0 || c.clientHeight === 0) {{
+      map.resize();
+      return;
+    }}
+    _gbxFramed = true;
+    map.resize();
+    {load_view_js}
+  }};
   map.on('load', () => {{
     for (const [sid, sdef] of Object.entries(overlay.sources)) {{
       map.addSource(sid, sdef);
@@ -448,7 +477,11 @@ def build_html(
     for (const ly of overlay.layers) {{
       map.addLayer(ly);
     }}
+    _gbxApplyView();
   }});
+  if (typeof ResizeObserver !== 'undefined') {{
+    new ResizeObserver(_gbxApplyView).observe(map.getContainer());
+  }}
 }})();
 </script>"""
 
