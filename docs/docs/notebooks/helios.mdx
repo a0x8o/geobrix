@@ -47,9 +47,9 @@ The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` re
 
 ### 03 — Analytical Core (COG + STAC)
 
-![Notebook 03 — 3DEP/SRTM DEM → COGs + STAC Delta → slope/aspect/hillshade → PMTiles → solar score per H3 cell](../../../resources/images/diagrams/helios/helios-03.png)
+![Notebook 03 — 3DEP DEM → COGs + STAC Delta → slope/aspect/hillshade → PMTiles → solar score per H3 cell](../../../resources/images/diagrams/helios/helios-03.png)
 
-- **COG conversion + STAC Delta catalog** — `gbx_rst_cog_convert` converts raw 3DEP DEMs to Cloud-Optimized GeoTIFFs in a distributed pass; the resulting COG paths are written to a managed STAC Delta table for incremental updates and downstream notebook access.
+- **`DemDownloader` → COG + STAC Delta catalog** — the `gbx.sample` `DemDownloader` stages a 3DEP DEM (windowed to the AOI), then `gbx_rst_cog_convert` converts it to a Cloud-Optimized GeoTIFF in a distributed pass; the resulting COG paths are written to a managed STAC Delta table for incremental updates and downstream notebook access.
 - **Terrain analytics at scale** — `gbx_rst_slope`, `gbx_rst_aspect`, and `gbx_rst_hillshade` derive terrain layers in parallel across all DEM tiles; `gbx_rst_xyzpyramid` + `gbx_pmtiles_agg` package the hillshade into `sf_hillshade.pmtiles`. With `INTERACTIVE_PLOTS = True`, `plot_interactive` layers the hillshade and the NB01 building footprints as PMTiles and the H3 `solar_score` as a grid layer — all in one MapLibre map.
 - **Databricks-native solar scoring** — `gbx_rst_h3_rastertogridavg` bins slope and aspect rasters into H3 cells; the resulting per-cell values are joined and scored with native Databricks SQL expressions to produce a `solar_score` column; `h3_centeraswkb` reconstructs geometry for map rendering — all without leaving the warehouse.
 
@@ -57,7 +57,7 @@ The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` re
 
 ![Notebook 04 — MVT pyramid → shard by parent tile → per-shard PMTiles archives → mosaic catalog + manifest](../../../resources/images/diagrams/helios/helios-04.png)
 
-- **Spatial sharding into parallel work units** — each pyramid tile is assigned to a coarse parent tile (z11) via `shiftright(x, z-11)`, then `groupBy(shard).agg(gbx_pmtiles_agg(...))` fans archive packing out across the cluster — one `.pmtiles` per shard instead of one monolithic file. The SF AOI splits into four shards.
+- **Spatial sharding into parallel work units** — each pyramid tile is assigned to a coarse parent tile (z11) via `shiftright(x, z-11)`, then `groupBy(shard).agg(gbx_pmtiles_agg(...))` fans archive packing out across the cluster — one `.pmtiles` per shard instead of one monolithic file. The SF AOI spans four z11 parent tiles, but only the three containing buildings produce an archive (the SW tile is open water) — shards form only where there is data.
 - **Shard catalog + mosaic manifest** — a `sf_building_shards` Delta table maps each shard key to its archive path and bounds (`pmtiles_info`), and a `mosaic.json` manifest lets a client discover and assemble the shards with no tile server.
 - **Web-scale delivery pattern** — buffering the source query while keeping output tiles non-overlapping across shards keeps boundaries clean and avoids double-rendering; the mosaic pattern scales a single AOI into the per-file size range that object stores and CDNs serve efficiently.
 
@@ -67,10 +67,10 @@ The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` re
 
 | File | Purpose |
 |---|---|
-| `config_nb.ipynb` | Shared setup (`%run ./config_nb` from every main notebook). Installs the `geobrix[light,stac,vizx,overture]` wheel (2-step: `--no-deps` first, then with extras), selects the tier (option-1 `pyrx`/`pyvx` default / option-2 heavyweight), registers functions and light readers/writers, imports visualization helpers (`plot_pmtiles`, `plot_cog`, `pmtiles_info`), sets `catalog_name` / `schema_name`, creates the `/Volumes/<cat>/<schema>/data/sf` ETL tree, instantiates `OvertureClient` and `StacClient`, and exposes `FORCE_REBUILD` and `INTERACTIVE_PLOTS` toggles. |
+| `config_nb.ipynb` | Shared setup (`%run ./config_nb` from every main notebook). Installs the `geobrix[light,stac,vizx,overture]` wheel (2-step: `--no-deps` first, then with extras), selects the tier (option-1 `pyrx`/`pyvx` default / option-2 heavyweight), registers functions and light readers/writers, imports visualization helpers (`plot_pmtiles`, `plot_cog`, `pmtiles_info`), sets `catalog_name` / `schema_name`, creates the `/Volumes/<cat>/<schema>/data/helios` ETL tree, instantiates `OvertureClient`, and exposes `FORCE_REBUILD` and `INTERACTIVE_PLOTS` toggles. |
 | `01. Vector Engine (MVT).ipynb` | Loads SF building footprints via `OvertureClient`, computes roof area and H3 roof density with Databricks built-in ST/H3 functions, encodes MVT tiles with `gbx_st_asmvt` + `gbx_st_asmvt_pyramid`, and packages the result into `sf_buildings.pmtiles` with `gbx_pmtiles_agg`. |
-| `02. Visual Basemap (XYZ).ipynb` | Downloads NAIP aerial imagery for the SF AOI, reprojects to Web Mercator with `gbx_rst_to_webmercator`, generates an XYZ tile pyramid with `gbx_rst_xyzpyramid`, and writes `sf_naip.pmtiles` with `gbx_pmtiles_agg`. |
-| `03. Analytical Core (COG + STAC).ipynb` | Downloads 3DEP (or SRTM) DEMs, converts them to COGs with `gbx_rst_cog_convert`, builds a STAC Delta catalog, derives slope/aspect/hillshade, packages `sf_hillshade.pmtiles`, and computes a per-H3-cell `solar_score` with `gbx_rst_h3_rastertogridavg` + native Databricks SQL. |
+| `02. Visual Basemap (XYZ).ipynb` | Downloads NAIP aerial imagery for the SF AOI via `NaipDownloader`, reprojects to Web Mercator with `gbx_rst_to_webmercator`, generates an XYZ tile pyramid with `gbx_rst_xyzpyramid`, and writes `sf_naip.pmtiles` with `gbx_pmtiles_agg`. |
+| `03. Analytical Core (COG + STAC).ipynb` | Downloads a 3DEP DEM via `DemDownloader`, converts it to a COG with `gbx_rst_cog_convert`, builds a STAC Delta catalog, derives slope/aspect/hillshade, packages `sf_hillshade.pmtiles`, and computes a per-H3-cell `solar_score` with `gbx_rst_h3_rastertogridavg` + native Databricks SQL. |
 | `04. Distributed Sharding & Mosaic.ipynb` | Re-publishes the SF buildings vector layer as a **multi-archive** PMTiles mosaic: assigns each pyramid tile to a coarse parent shard (z11), packs one `.pmtiles` per shard with `groupBy(shard).agg(gbx_pmtiles_agg)`, and writes a `sf_building_shards` Delta catalog + `mosaic.json` manifest (bounds via `pmtiles_info`) for client-side mosaic assembly. |
 
 ---
@@ -80,14 +80,14 @@ The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` re
 - **Databricks Runtime 17.3 LTS / 18 LTS, or Serverless** (Scala 2.13 / Spark 4 / Python 3.12). The lightweight default runs on Serverless (set Environment to version 5+); the heavyweight option requires a classic x86 cluster.
 - **GeoBrix 0.4.0.** `config_nb.ipynb` `%pip`-installs `geobrix[light,stac,vizx,overture]` from a staged Volume wheel using the 2-step pattern (force-reinstall `--no-deps` first, then with the extras). For the heavyweight option, flip *option-2* in `config_nb.ipynb` and attach the GeoBrix JAR + GDAL init script to the cluster.
 - **Unity Catalog.** Edit `config_nb.ipynb` to set `catalog_name` and `schema_name`. A Volume named `data` must already exist under `<catalog>/<schema>` — the notebooks create sub-directories inside it but will not create the Volume itself.
-- **Network access.** NB01 reads Overture Maps via `OvertureClient`; NB02 fetches NAIP from AWS Open Data; NB03 fetches 3DEP from Planetary Computer (SRTM offline fallback available in NB03). Classic cluster outbound internet is sufficient; Serverless has it by default.
+- **Network access.** NB01 reads Overture Maps via `OvertureClient`; NB02 fetches NAIP via `NaipDownloader` and NB03 fetches 3DEP via `DemDownloader`, both from Planetary Computer STAC (online-only — no offline fallback). Classic cluster outbound internet is sufficient; Serverless has it by default.
 
 ---
 
 ## Run order
 
 1. Open `config_nb.ipynb`, set `catalog_name` / `schema_name`, and verify the Volume exists.
-2. Run notebooks in numeric order: **01 → 02 → 03 → 04**. Each notebook starts with `%run ./config_nb` so the shared state is re-established every time. NB04 reuses the building footprints from NB01, so run NB01 first (NB04 also stands alone via its offline fallback).
+2. Run notebooks in numeric order: **01 → 02 → 03 → 04**. Each notebook starts with `%run ./config_nb` so the shared state is re-established every time. NB04 reuses the building footprints from NB01, so run NB01 first (if `overture_buildings_meta` is absent, NB04 re-fetches them from Overture).
 
 Each notebook is safe to re-run — outputs are written with skip-guards so already-built files are not re-downloaded or re-tiled. Set `FORCE_REBUILD = True` in a cell right after `%run ./config_nb` to force a full rebuild of that notebook's outputs.
 
@@ -96,7 +96,7 @@ Each notebook is safe to re-run — outputs are written with skip-guards so alre
 ## Data flow
 
 ```text
-San Francisco AOI (one bbox, reused across all three notebooks)
+San Francisco AOI (one bbox, reused across the series)
         │
   ┌─────┴───────────────┬─────────────────────────────┐
   ▼                     ▼                             ▼
@@ -122,7 +122,7 @@ sf_buildings.pmtiles   sf_naip.pmtiles              sf_hillshade.pmtiles
 - **GeoBrix VectorX** (`pyvx` / SQL): [`gbx_st_asmvt`, `gbx_st_asmvt_pyramid`](../api/vectorx-functions#vector-tile-output) — distributed MVT tile generation and pyramid fan-out.
 - **GeoBrix RasterX** (`pyrx` / SQL): [`gbx_rst_to_webmercator`](../api/raster-functions#rst_to_webmercator), [`gbx_rst_xyzpyramid`](../api/raster-functions#rst_xyzpyramid), [`gbx_rst_cog_convert`](../api/raster-functions#rst_cog_convert), [`gbx_rst_slope`, `gbx_rst_aspect`, `gbx_rst_hillshade`](../api/raster-functions#terrain), [`gbx_rst_h3_rastertogridavg`](../api/h3-raster-tessellation#relationship-to-rst_h3_rastertogrid).
 - **GeoBrix PMTiles** (`pyrx` / `pyvx` / SQL): [`gbx_pmtiles_agg`](../api/pmtiles-functions#pmtiles_agg) — aggregate tile bytes into a single archive, or grouped as `groupBy(shard).agg(gbx_pmtiles_agg)` for a sharded multi-archive mosaic (NB04); [`pmtiles_info`](../api/vizx-pmtiles#pmtiles_info) — per-archive bounds for the shard catalog; [PMTiles Writer](../writers/pmtiles) (`.write.format("pmtiles_gbx")`) — for larger pyramids.
-- **GeoBrix STAC + Overture** (`stac` / `overture` extras): `OvertureClient.discover` / `download` / `read` (building footprints); [`StacClient`](../api/stac) (search, download, repair — NAIP and 3DEP COGs).
+- **GeoBrix sample downloaders** (`stac` / `overture` extras): `OvertureClient.discover` / `download` / `read` (building footprints, NB01); [`NaipDownloader`](../sample-data/naip-downloader) (NAIP, NB02) and [`DemDownloader`](../sample-data/dem-downloader) (3DEP, NB03), both wrapping [`StacClient`](../api/stac) (distributed STAC search / download / repair).
 - **GeoBrix VizX**: [`plot_pmtiles`, `plot_cog`, `pmtiles_info`](../api/vizx-pmtiles) — inline PMTiles / COG rendering without a tile server.
 - **Databricks built-in ST / H3** (on-ramp to native): `st_area`, `st_centroid` (roof metrics, NB01); `h3_longlatash3` (roof density, NB01); `h3_centeraswkb` (H3 solar-score geometry, NB03).
 
@@ -133,6 +133,6 @@ sf_buildings.pmtiles   sf_naip.pmtiles              sf_hillshade.pmtiles
 - **PMTiles is driver-side only.** `gbx_pmtiles_agg` produces the archive via a distributed reduce but the final file lands on the driver Volume path — it cannot be read back via `spark.read`. Use `pmtiles_info` / `plot_pmtiles` for inspection.
 - **`plot_pmtiles` base64 size guard.** The inline embed is bounded by the notebook cell-output cap (~10 MB default, 20 MB max), and `displayHTML` inflates the payload ~2–3× — so an archive over **~4–5 MB** falls back to a static thumbnail. Scope the AOI/zoom range, use `interactive_fit="downzoom"`, or stream from an `https://` URL if the archive exceeds the ceiling.
 - **Overture cloud-path vs. HTTP-href.** `OvertureClient` first tries a direct cloud-storage path; if that is not reachable from the cluster network it falls back to an HTTP href. Classic clusters with S3 VPC endpoints reach the cloud path; Serverless always reaches the HTTP href.
-- **NAIP and 3DEP network reachability.** Both sources require outbound internet access. On restricted networks, the SRTM offline fallback in NB03 covers the terrain layer; NAIP has no offline fallback and NB02 will skip if the endpoint is unreachable.
+- **NAIP and 3DEP network reachability.** Both sources require outbound internet access via Planetary Computer and have no offline fallback — NB02 (`NaipDownloader`) and NB03 (`DemDownloader`) skip or error if the endpoint is unreachable.
 - **Repartition by column on Serverless.** A number-only `repartition(N)` is AQE-coalesced on Serverless. Always repartition by a data column (e.g., `repartition(N, "tile_x")`) before distributed UDF calls.
 - **Wheel install is a 2-step pattern.** `config_nb` installs the wheel with `--no-deps` first (to force fresh bytes), then reinstalls with `geobrix[light,stac,vizx,overture]` (to pull extras). A bare single-step `--no-deps` install drops the extras and causes `ModuleNotFoundError` at import.
