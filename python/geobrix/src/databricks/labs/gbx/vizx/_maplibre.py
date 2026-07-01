@@ -255,13 +255,18 @@ def layer_to_sources_layers(
 
 
 def _auto_view_from_pmtiles(pm_pairs):
-    """Derive ``(center, zoom)`` from the first EMBEDDED pmtiles archive's header.
+    """Derive an opening view from the first EMBEDDED pmtiles archive's header.
 
-    ``center`` is ``[lon, lat]`` from the archive's header center; ``zoom`` is the
-    default city zoom (11) CLAMPED into ``[min_zoom, max_zoom]`` so the opening view
-    actually has tiles (a z12-16 archive must open at >= 12). Returns ``(None, None)``
-    when no embedded archive is inspectable (e.g. url-only), so the caller keeps its
-    default. Header parse failures are swallowed (best-effort).
+    Returns ``(bounds, min_zoom, max_zoom, center)`` where ``bounds`` is
+    ``[w, s, e, n]`` (for MapLibre ``fitBounds`` — frames the whole data extent
+    rather than guessing a fixed zoom). ``min_zoom``/``max_zoom`` are the archive's
+    zoom range: the opening view MUST stay within it — MapLibre does not render a
+    raster/vector source below its min zoom (opening wider than the archive's coarsest
+    level shows a blank map), so ``fitBounds`` is clamped to ``[min_zoom, max_zoom]``.
+    ``center`` is the header centre, kept as a fallback when bounds are absent.
+
+    Returns ``(None, None, None, None)`` when no embedded archive is inspectable
+    (e.g. url-only) so the caller keeps its default. Parse failures are swallowed.
     """
     from databricks.labs.gbx.pmtiles import pmtiles_info
 
@@ -273,16 +278,19 @@ def _auto_view_from_pmtiles(pm_pairs):
             hdr = pmtiles_info(raw)
         except Exception:  # noqa: BLE001 — best-effort; fall back to caller default
             continue
+        b = hdr.get("bounds")
+        bounds = (
+            [float(b[0]), float(b[1]), float(b[2]), float(b[3])]
+            if b and len(b) >= 4
+            else None
+        )
         c = hdr.get("center")
         center = [c[0], c[1]] if c and len(c) >= 2 else None
         mn, mx = hdr.get("min_zoom"), hdr.get("max_zoom")
-        zoom = None
-        if mn is not None:
-            lo = int(mn)
-            hi = int(mx) if mx is not None else lo
-            zoom = min(max(lo, 11), hi)
-        return center, zoom
-    return None, None
+        min_zoom = int(mn) if mn is not None else None
+        max_zoom = int(mx) if mx is not None else min_zoom
+        return bounds, min_zoom, max_zoom, center
+    return None, None, None, None
 
 
 def build_html(
@@ -368,28 +376,36 @@ def build_html(
     overlay_json = _json_for_script({"sources": sources, "layers": layers})
     pm_js = "".join(_pmtiles_register_js(sid, info, uid) for sid, info in pm_pairs)
 
-    # Open ON the data: derive center/zoom from the first embedded pmtiles archive's
-    # header when the caller didn't pass them. The old hardcoded SF/zoom-11 opened
-    # BLANK for any archive whose min_zoom > 11 (e.g. a z12-16 raster) -- MapLibre does
-    # not under-zoom -- and could sit over the wrong place if the archive isn't centered
-    # on SF. Fall back to the SF default only when no embedded archive is inspectable.
-    auto_center, auto_zoom = (None, None)
-    if center is None or zoom is None:
-        auto_center, auto_zoom = _auto_view_from_pmtiles(pm_pairs)
-    eff_center = (
-        center
-        if center is not None
-        else (auto_center if auto_center is not None else [-122.43, 37.77])
-    )
-    eff_zoom = (
-        zoom if zoom is not None else (auto_zoom if auto_zoom is not None else 11)
-    )
-    center_js = _json_for_script(eff_center)
-    zoom_js = eff_zoom
+    # Open ON the data. When the caller passes neither center nor zoom, FIT the first
+    # embedded archive's bounds (frames the whole extent) instead of guessing a fixed
+    # zoom -- clamped to [min_zoom, max_zoom] because MapLibre does not render a source
+    # below its min zoom (opening wider than the coarsest level = a blank map). An
+    # explicit center/zoom from the caller wins; the SF default is the last resort when
+    # no embedded archive is inspectable (e.g. url-only).
+    auto_bounds = auto_min_zoom = auto_max_zoom = auto_center = None
+    if center is None and zoom is None:
+        auto_bounds, auto_min_zoom, auto_max_zoom, auto_center = (
+            _auto_view_from_pmtiles(pm_pairs)
+        )
+
+    if center is None and zoom is None and auto_bounds is not None:
+        w, s, e, n = auto_bounds
+        # minZoom floor keeps fitBounds from underzooming into blank tiles; maxZoom cap
+        # keeps a tiny AOI from opening over-zoomed past the archive's detail.
+        min_z = auto_min_zoom if auto_min_zoom is not None else 0
+        max_z = auto_max_zoom if auto_max_zoom is not None else 22
+        view_js = (
+            f"bounds: [[{w}, {s}], [{e}, {n}]], minZoom: {min_z}, "
+            f"fitBoundsOptions: {{ padding: 24, maxZoom: {max_z}, animate: false }}"
+        )
+    else:
+        eff_center = center if center is not None else [-122.43, 37.77]
+        eff_zoom = zoom if zoom is not None else 11
+        view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}"
 
     container = f"gbx-map-{uid}"
     return f"""\
-<div id="{container}" style="height:480px"></div>
+<div id="{container}" style="height:720px"></div>
 <link href="{_MAPLIBRE_CSS}" rel="stylesheet" integrity="{_MAPLIBRE_CSS_SRI}" crossorigin="anonymous"/>
 <script src="{_MAPLIBRE_JS}" integrity="{_MAPLIBRE_JS_SRI}" crossorigin="anonymous"></script>
 <script src="{_PMTILES_JS}" integrity="{_PMTILES_JS_SRI}" crossorigin="anonymous"></script>
@@ -409,8 +425,7 @@ def build_html(
   const map = new maplibregl.Map({{
     container: '{container}',
     style: {base_js},
-    center: {center_js},
-    zoom: {zoom_js}
+    {view_js}
   }});
   const overlay = {overlay_json};
   map.on('load', () => {{

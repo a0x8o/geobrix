@@ -456,22 +456,23 @@ def test_raster_pmtiles_source_sets_tilesize_from_tile():
     assert "tileSize" not in vsrc
 
 
-def test_build_html_opens_on_archive_center_and_min_zoom():
-    """build_html opens ON the embedded archive: center from its header, zoom clamped
-    into [min_zoom, max_zoom]. A z12-16 archive must open at >= 12 (MapLibre doesn't
-    under-zoom -> the old hardcoded SF/zoom-11 rendered blank), centered on the archive,
-    not the hardcoded SF default."""
+def test_build_html_frames_archive_bounds_clamped_to_min_zoom():
+    """build_html opens by FITTING the embedded archive's bounds (frames the whole
+    extent), clamped to the archive zoom range so it never underzooms into blank tiles:
+    a z12-16 archive floors at minZoom 12 (MapLibre doesn't render below a source's min
+    zoom). Uses fitBounds over the archive bounds, not a hardcoded fixed zoom/center."""
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
     from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
-    # MVT tiles at z12 + z13 -> min_zoom 12; _build_archive centers at -122.44/37.76.
+    # MVT tiles at z12 + z13 -> min_zoom 12; _build_archive bounds = SF AOI.
     archive = _build_archive(
         [(12, 0, 0, _real_mvt_tile(12, 0, 0)), (13, 0, 0, _real_mvt_tile(13, 0, 0))],
         TileType.MVT,
     )
     html = build_html([layer_to_sources_layers(pmtiles_layer(archive), 0)])
-    assert "zoom: 12" in html, "must open at >= the archive min_zoom (12), not 11"
-    assert "-122.44" in html, "must center on the archive header, not the SF default"
+    assert "bounds:" in html and "fitBoundsOptions" in html, "must frame via fitBounds"
+    assert "minZoom: 12" in html, "must floor at the archive min_zoom (12) -> non-blank"
+    assert "-122.52" in html and "37.83" in html, "must frame the archive bounds"
 
 
 def test_build_html_falls_back_to_sf_default_without_archive():
