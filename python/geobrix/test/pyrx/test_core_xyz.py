@@ -153,6 +153,38 @@ def test_render_tile_in_extent_png():
     assert len(out) > 0
 
 
+def _make_gray(width=64, height=64, epsg=4326, ulx=10.0, uly=50.0, res=0.03125):
+    """A small single-band (grayscale — e.g. hillshade/DEM relief) GTiff over Europe."""
+    transform = from_origin(ulx, uly, res, res)
+    profile = dict(
+        driver="GTiff", width=width, height=height, count=1, dtype="uint8",
+        crs=f"EPSG:{epsg}", transform=transform,
+    )
+    data = (np.arange(width * height) % 256).astype("uint8").reshape(height, width)
+    with MemoryFile() as mf:
+        with mf.open(**profile) as ds:
+            ds.write(data, 1)
+        return mf.read()
+
+
+def test_render_tile_single_band_is_rgb_not_grayscale():
+    """A 1-band raster (hillshade/DEM) must render as RGB(A), not grayscale+alpha (LA):
+    MapLibre's raster layer can't paint an LA PNG (the tile shows blank)."""
+    import io as _io
+
+    from PIL import Image
+
+    mf, ds = _open(_make_gray())
+    try:
+        out = xyz.render_tile(ds, 5, 16, 10, "PNG", 256, "bilinear")
+    finally:
+        ds.close()
+        mf.close()
+    arr = _decode(out)
+    assert arr.shape[0] in (3, 4), f"expected RGB(A), got {arr.shape[0]} band(s)"
+    assert Image.open(_io.BytesIO(out)).mode in ("RGB", "RGBA")
+
+
 def test_render_tile_jpeg_webp():
     raster = _make_rgb()
     mf, ds = _open(raster)

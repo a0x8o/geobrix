@@ -177,6 +177,22 @@ def render_tile(
             )
             if in_range is not None:
                 img = img.post_process(in_range=in_range)
+            # A single-band raster (e.g. hillshade / DEM relief) renders as a
+            # grayscale+alpha ("LA") PNG, which MapLibre's raster layer cannot paint
+            # (the tile shows as blank). Replicate the lone band to R=G=B so the tile is
+            # RGB(A) — the mask becomes the alpha — a neutral grayscale relief that web
+            # tile renderers display. Multi-band (RGB/RGBA, e.g. NAIP) is untouched.
+            if img.array.shape[0] == 1:
+                import numpy as np
+                from rio_tiler.models import ImageData
+
+                a = img.array
+                img = ImageData(
+                    np.ma.MaskedArray(
+                        np.repeat(a.data, 3, axis=0),
+                        mask=np.repeat(np.ma.getmaskarray(a), 3, axis=0),
+                    )
+                )
             out = img.render(img_format=fmt_u)
         if not out:
             return transparent_png(s)
