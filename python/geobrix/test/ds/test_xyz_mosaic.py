@@ -1,23 +1,34 @@
 import io
 import os
 import tempfile
+
 import numpy as np
 import pytest
 import rasterio
+from PIL import Image
 from rasterio.io import MemoryFile
 from rasterio.transform import from_bounds
-from PIL import Image
 
 from databricks.labs.gbx.ds._xyz_mosaic import (
-    enumerate_tiles, source_bounds_union, render_tile, to_render_rgb,
+    enumerate_tiles,
+    render_tile,
+    source_bounds_union,
+    to_render_rgb,
 )
 
 
 def _cog_bytes(w, s, e, n, px=128, val=200):
     """A uint8 RGB EPSG:4326 raster filling [w,s,e,n] with a constant value."""
     data = np.full((3, px, px), val, dtype="uint8")
-    profile = dict(driver="GTiff", width=px, height=px, count=3, dtype="uint8",
-                   crs="EPSG:4326", transform=from_bounds(w, s, e, n, px, px))
+    profile = dict(
+        driver="GTiff",
+        width=px,
+        height=px,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_bounds(w, s, e, n, px, px),
+    )
     with MemoryFile() as mf:
         with mf.open(**profile) as ds:
             ds.write(data)
@@ -58,6 +69,7 @@ def test_render_tile_composites_all_covering_sources():
     right_p = _tmp(_cog_bytes(-122.45, 37.74, -122.40, 37.79, val=220))
     try:
         import morecantile
+
         tms = morecantile.tms.get("WebMercatorQuad")
         # a high zoom tile straddling the seam lon=-122.45, lat~37.766
         # Use a tight bbox centred on the seam so the first returned tile crosses it.
@@ -65,7 +77,7 @@ def test_render_tile_composites_all_covering_sources():
         png = render_tile(t.z, t.x, t.y, [left_p, right_p])
         assert png is not None
         arr = np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
-        assert float(np.mean(arr[:, :, 3] == 255)) > 0.99   # fully covered, no seam gap
+        assert float(np.mean(arr[:, :, 3] == 255)) > 0.99  # fully covered, no seam gap
         # both source values appear (left ~120, right ~220) -> composited from both
         lo = float(np.mean((arr[:, :, 0] > 90) & (arr[:, :, 0] < 150)))
         hi = float(np.mean(arr[:, :, 0] > 190))
@@ -79,6 +91,7 @@ def test_render_tile_none_when_no_source_covers():
     only_p = _tmp(_cog_bytes(-122.50, 37.74, -122.45, 37.79))
     try:
         import morecantile
+
         tms = morecantile.tms.get("WebMercatorQuad")
         far = next(iter(tms.tiles(10.0, 50.0, 10.1, 50.1, [16])))  # far away
         assert render_tile(far.z, far.x, far.y, [only_p]) is None
@@ -95,12 +108,22 @@ def _rgba_tmp(w, s, e, n, px=512, rgb=200, alpha=0):
     fd, p = tempfile.mkstemp(suffix=".tif")
     os.close(fd)
     with rasterio.open(
-        p, "w", driver="GTiff", width=px, height=px, count=4, dtype="uint8",
-        crs="EPSG:4326", transform=from_bounds(w, s, e, n, px, px),
+        p,
+        "w",
+        driver="GTiff",
+        width=px,
+        height=px,
+        count=4,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_bounds(w, s, e, n, px, px),
     ) as ds:
         ds.write(data)
         ds.colorinterp = [
-            ColorInterp.red, ColorInterp.green, ColorInterp.blue, ColorInterp.alpha,
+            ColorInterp.red,
+            ColorInterp.green,
+            ColorInterp.blue,
+            ColorInterp.alpha,
         ]
     return p
 
@@ -111,6 +134,7 @@ def test_to_render_rgb_strips_alpha_so_tile_is_opaque():
     rgba = _rgba_tmp(-122.50, 37.74, -122.40, 37.80, rgb=200, alpha=0)
     try:
         import morecantile
+
         tms = morecantile.tms.get("WebMercatorQuad")
         t = next(iter(tms.tiles(-122.47, 37.76, -122.46, 37.77, [15])))  # interior tile
 

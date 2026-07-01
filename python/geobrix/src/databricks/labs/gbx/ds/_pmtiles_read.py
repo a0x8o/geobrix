@@ -27,7 +27,9 @@ class PMtilesRasterReader(DataSourceReader):
     def __init__(self, options: Dict[str, str]):
         self.path = options.get("path")
         if not self.path:
-            raise ValueError("pmtiles_gbx raster reader requires a 'path' (dir of COGs).")
+            raise ValueError(
+                "pmtiles_gbx raster reader requires a 'path' (dir of COGs)."
+            )
         self.filter_regex = options.get("filterRegex", r".*\.tif$")
         self.min_z = int(options.get("minZoom", "0"))
         self.max_z = int(options.get("maxZoom", "0"))
@@ -39,9 +41,7 @@ class PMtilesRasterReader(DataSourceReader):
                 f"pmtiles_gbx v1 supports pixelSelection='first' only; got {ps!r}"
             )
         bbox_opt = options.get("bbox")
-        self.bbox = (
-            tuple(float(v) for v in bbox_opt.split(",")) if bbox_opt else None
-        )
+        self.bbox = tuple(float(v) for v in bbox_opt.split(",")) if bbox_opt else None
         if self.bbox is not None and len(self.bbox) != 4:
             raise ValueError("pmtiles_gbx bbox must be 'minx,miny,maxx,maxy'")
 
@@ -52,9 +52,7 @@ class PMtilesRasterReader(DataSourceReader):
 
         sources = _listing.list_files(self.path, self.filter_regex)
         if not sources:
-            raise ValueError(
-                f"pmtiles_gbx raster reader: no rasters under {self.path}"
-            )
+            raise ValueError(f"pmtiles_gbx raster reader: no rasters under {self.path}")
         bbox = self.bbox or _xyz_mosaic.source_bounds_union(sources)
         # per-source WGS84 bounds, to attach only intersecting sources to each chunk
         src_bounds = []
@@ -78,9 +76,7 @@ class PMtilesRasterReader(DataSourceReader):
         tms = _xyz_mosaic._tms()
         for chunk in _chunk(tiles, self.tiles_per_partition):
             # combined WGS84 bbox of the chunk's tiles
-            cb = [
-                tms.bounds(morecantile.Tile(x, y, z)) for z, x, y in chunk
-            ]
+            cb = [tms.bounds(morecantile.Tile(x, y, z)) for z, x, y in chunk]
             cw = min(b.left for b in cb)
             cs = min(b.bottom for b in cb)
             ce = max(b.right for b in cb)
@@ -132,7 +128,9 @@ class PMtilesArchiveReader(DataSourceReader):
     def __init__(self, options: Dict[str, str]):
         self.path = options.get("path")
         if not self.path:
-            raise ValueError("pmtiles_gbx archive reader requires a 'path' (.pmtiles file).")
+            raise ValueError(
+                "pmtiles_gbx archive reader requires a 'path' (.pmtiles file)."
+            )
         self.path = _listing.to_local_path(self.path)
         self.tiles_per_partition = int(options.get("tilesPerPartition", "2048"))
 
@@ -145,7 +143,10 @@ class PMtilesArchiveReader(DataSourceReader):
 
     def partitions(self) -> Sequence[InputPartition]:
         entries = self._entries()
-        return [_TilesPartition(list(c), [self.path]) for c in _chunk(entries, self.tiles_per_partition)]
+        return [
+            _TilesPartition(list(c), [self.path])
+            for c in _chunk(entries, self.tiles_per_partition)
+        ]
 
     def read(self, partition: "_TilesPartition") -> Iterator[Tuple]:
         from pmtiles.reader import MemorySource, Reader

@@ -249,7 +249,6 @@ class StacClient:
         out_file_sz, is_out_file_valid, last_update.
         """
         from pyspark.sql import functions as F
-        from pyspark.sql.types import StringType
 
         if asset_names:
             df = df.filter(F.col("asset_name").isin(list(asset_names)))
@@ -272,9 +271,7 @@ class StacClient:
         # Driver-collect the (modest) target list.  This is the Serverless-safe
         # alternative to sparkContext.broadcast — which is forbidden on Serverless.
         # For dozens-of-assets scale the collect is negligible.
-        rows = [
-            (r["item_id"], r["asset_name"], r["href"]) for r in targets.collect()
-        ]
+        rows = [(r["item_id"], r["asset_name"], r["href"]) for r in targets.collect()]
         if not rows:
             from pyspark.sql.types import (
                 BooleanType,

@@ -268,7 +268,10 @@ def _fit_zoom_for_bounds(w, s, e, n, viewport_px=760):
 
     def _merc_y_frac(lat):
         lat = max(min(float(lat), 85.05112878), -85.05112878)
-        return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) / (2 * math.pi) + 0.5
+        return (
+            math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) / (2 * math.pi)
+            + 0.5
+        )
 
     x_frac = abs(float(e) - float(w)) / 360.0
     y_frac = abs(_merc_y_frac(n) - _merc_y_frac(s))
@@ -379,7 +382,8 @@ def build_html(
                 pm_pairs.append((sid, info_sc))
                 # Build a clean copy for the overlay (MapLibre rejects unknown keys).
                 clean = {
-                    k: v for k, v in sdef.items()
+                    k: v
+                    for k, v in sdef.items()
                     if k not in ("_gbx_pmtiles", "_gbx_legend")
                 }
                 # Embedded archives register under a per-map key (uid_sid) on a shared
@@ -437,21 +441,17 @@ def build_html(
         # keeps a tiny AOI from opening over-zoomed past the archive's detail.
         min_z = auto_min_zoom if auto_min_zoom is not None else 0
         max_z = auto_max_zoom if auto_max_zoom is not None else 22
-        eff_center = auto_center if auto_center is not None else [(w + e) / 2, (s + n) / 2]
+        eff_center = (
+            auto_center if auto_center is not None else [(w + e) / 2, (s + n) / 2]
+        )
         eff_zoom = max(min_z, min(max_z, _fit_zoom_for_bounds(w, s, e, n)))
-        init_view_js = (
-            f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}, minZoom: {min_z}"
-        )
-        load_view_js = (
-            f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
-        )
+        init_view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}, minZoom: {min_z}"
+        load_view_js = f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
     else:
         eff_center = center if center is not None else [-122.43, 37.77]
         eff_zoom = zoom if zoom is not None else 11
         init_view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}"
-        load_view_js = (
-            f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
-        )
+        load_view_js = f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
 
     container = f"gbx-map-{uid}"
     legend_html = _legend_html(legends)

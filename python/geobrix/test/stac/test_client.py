@@ -477,9 +477,7 @@ def test_download_range_scan_fanout(spark, tmp_path):
     out_dir = tmp_path / "volume"
 
     # Build a 4-row DataFrame with local-file hrefs (no network, no signing needed).
-    rows = [
-        (f"item{i}", f"band{i}", src_paths[i]) for i in range(4)
-    ]
+    rows = [(f"item{i}", f"band{i}", src_paths[i]) for i in range(4)]
     search_df = spark.createDataFrame(rows, ["item_id", "asset_name", "href"])
 
     client = StacClient.__new__(StacClient)
@@ -498,26 +496,26 @@ def test_download_range_scan_fanout(spark, tmp_path):
     )
 
     # (a) 4 partitions from the range scan
-    assert result.rdd.getNumPartitions() == 4, (
-        f"Expected 4 partitions (range-scan fan-out); got {result.rdd.getNumPartitions()}"
-    )
+    assert (
+        result.rdd.getNumPartitions() == 4
+    ), f"Expected 4 partitions (range-scan fan-out); got {result.rdd.getNumPartitions()}"
 
     # (b) all 4 rows have a valid output path
     collected = result.collect()
     assert len(collected) == 4, f"Expected 4 result rows; got {len(collected)}"
     for row in collected:
-        assert row["out_file_path"] is not None, (
-            f"out_file_path is None for {row['item_id']}/{row['asset_name']}"
-        )
-        assert row["is_out_file_valid"] is True, (
-            f"is_out_file_valid is False for {row['item_id']}/{row['asset_name']}"
-        )
+        assert (
+            row["out_file_path"] is not None
+        ), f"out_file_path is None for {row['item_id']}/{row['asset_name']}"
+        assert (
+            row["is_out_file_valid"] is True
+        ), f"is_out_file_valid is False for {row['item_id']}/{row['asset_name']}"
 
     # (c) physical plan contains 'Range' (confirms range-scan approach, not shuffle)
     plan_str = result._jdf.queryExecution().executedPlan().toString()
-    assert "Range" in plan_str, (
-        f"Expected 'Range' in physical plan (range-scan fan-out); plan: {plan_str[:500]}"
-    )
+    assert (
+        "Range" in plan_str
+    ), f"Expected 'Range' in physical plan (range-scan fan-out); plan: {plan_str[:500]}"
 
 
 # ---------------------------------------------------------------------------

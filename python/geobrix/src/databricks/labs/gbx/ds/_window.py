@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from rasterio.windows import Window, from_bounds as _from_bounds
+from rasterio.windows import Window
+from rasterio.windows import from_bounds as _from_bounds
 
 
 def window_for_bbox(

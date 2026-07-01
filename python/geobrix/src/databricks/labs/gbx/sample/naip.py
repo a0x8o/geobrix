@@ -325,4 +325,6 @@ def download_naip_aoi(
         out_file_sz, is_out_file_valid, last_update.
     """
     downloader = NaipDownloader()
-    return downloader.download(bbox, out_dir, year=year, max_mpp=max_mpp, spark=spark, **kw)
+    return downloader.download(
+        bbox, out_dir, year=year, max_mpp=max_mpp, spark=spark, **kw
+    )

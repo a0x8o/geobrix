@@ -25,11 +25,20 @@ pyspark = pytest.importorskip("pyspark")
 from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
 from pyspark.sql.types import (  # noqa: E402
-    ArrayType, BooleanType, DoubleType, LongType, MapType, StringType,
-    StructField, StructType,
+    ArrayType,
+    BooleanType,
+    DoubleType,
+    LongType,
+    MapType,
+    StringType,
+    StructField,
+    StructType,
 )
 
-from databricks.labs.gbx.sample.dem import DemDownloader, _bbox_to_geojson_polygon  # noqa: E402
+from databricks.labs.gbx.sample.dem import (  # noqa: E402
+    DemDownloader,
+    _bbox_to_geojson_polygon,
+)
 
 
 @pytest.fixture(scope="module")
@@ -46,25 +55,42 @@ def spark():
 
 # Two gsd tiers (10 m + 30 m), two AOI items each; asset "data" + a non-data asset.
 _FAKE_ITEMS = [
-    {"id": "dep_10_a", "bbox": [-122.45, 37.74, -122.40, 37.78],
-     "properties": {"datetime": "2021-01-01T00:00:00Z", "gsd": "10"},
-     "assets": {"data": {"href": "file:///fake/dep_10_a.tif"},
-                "rendered_preview": {"href": "file:///fake/prev_a.png"}}},
-    {"id": "dep_10_b", "bbox": [-122.50, 37.70, -122.42, 37.76],
-     "properties": {"datetime": "2021-01-01T00:00:00Z", "gsd": "10"},
-     "assets": {"data": {"href": "file:///fake/dep_10_b.tif"}}},
-    {"id": "dep_30_a", "bbox": [-122.45, 37.74, -122.40, 37.78],
-     "properties": {"datetime": "2019-01-01T00:00:00Z", "gsd": "30"},
-     "assets": {"data": {"href": "file:///fake/dep_30_a.tif"}}},
-    {"id": "dep_30_b", "bbox": [-122.50, 37.70, -122.42, 37.76],
-     "properties": {"datetime": "2019-01-01T00:00:00Z", "gsd": "30"},
-     "assets": {"data": {"href": "file:///fake/dep_30_b.tif"}}},
+    {
+        "id": "dep_10_a",
+        "bbox": [-122.45, 37.74, -122.40, 37.78],
+        "properties": {"datetime": "2021-01-01T00:00:00Z", "gsd": "10"},
+        "assets": {
+            "data": {"href": "file:///fake/dep_10_a.tif"},
+            "rendered_preview": {"href": "file:///fake/prev_a.png"},
+        },
+    },
+    {
+        "id": "dep_10_b",
+        "bbox": [-122.50, 37.70, -122.42, 37.76],
+        "properties": {"datetime": "2021-01-01T00:00:00Z", "gsd": "10"},
+        "assets": {"data": {"href": "file:///fake/dep_10_b.tif"}},
+    },
+    {
+        "id": "dep_30_a",
+        "bbox": [-122.45, 37.74, -122.40, 37.78],
+        "properties": {"datetime": "2019-01-01T00:00:00Z", "gsd": "30"},
+        "assets": {"data": {"href": "file:///fake/dep_30_a.tif"}},
+    },
+    {
+        "id": "dep_30_b",
+        "bbox": [-122.50, 37.70, -122.42, 37.76],
+        "properties": {"datetime": "2019-01-01T00:00:00Z", "gsd": "30"},
+        "assets": {"data": {"href": "file:///fake/dep_30_b.tif"}},
+    },
 ]
 
 _FAKE_ITEMS_NO_GSD = [
-    {"id": "dep_nogsd", "bbox": [-122.45, 37.74, -122.40, 37.78],
-     "properties": {"datetime": "2020-01-01T00:00:00Z"},
-     "assets": {"data": {"href": "file:///fake/dep_nogsd.tif"}}},
+    {
+        "id": "dep_nogsd",
+        "bbox": [-122.45, 37.74, -122.40, 37.78],
+        "properties": {"datetime": "2020-01-01T00:00:00Z"},
+        "assets": {"data": {"href": "file:///fake/dep_nogsd.tif"}},
+    },
 ]
 
 
@@ -82,21 +108,31 @@ class _MockStacClient:
     def download(self, df, out_dir, **kwargs):
         rows = df.select("item_id", "asset_name", "href").collect()
         self.download_calls.append(
-            {"item_ids": sorted(r["item_id"] for r in rows), "out_dir": out_dir, **kwargs}
+            {
+                "item_ids": sorted(r["item_id"] for r in rows),
+                "out_dir": out_dir,
+                **kwargs,
+            }
         )
         spark = SparkSession.getActiveSession()
-        schema = StructType([
-            StructField("item_id", StringType()),
-            StructField("asset_name", StringType()),
-            StructField("out_file_path", StringType()),
-            StructField("out_file_sz", LongType()),
-            StructField("is_out_file_valid", BooleanType()),
-        ])
+        schema = StructType(
+            [
+                StructField("item_id", StringType()),
+                StructField("asset_name", StringType()),
+                StructField("out_file_path", StringType()),
+                StructField("out_file_sz", LongType()),
+                StructField("is_out_file_valid", BooleanType()),
+            ]
+        )
         if self._download_df is not None:
             return self._download_df
-        _rows = [(iid, "data", f"/fake/out/{iid}.tif", 1000, True)
-                 for iid in self.download_calls[-1]["item_ids"]]
-        return spark.createDataFrame(_rows, schema).withColumn("last_update", F.current_timestamp())
+        _rows = [
+            (iid, "data", f"/fake/out/{iid}.tif", 1000, True)
+            for iid in self.download_calls[-1]["item_ids"]
+        ]
+        return spark.createDataFrame(_rows, schema).withColumn(
+            "last_update", F.current_timestamp()
+        )
 
 
 def _make_search_df(spark, items):
@@ -107,27 +143,33 @@ def _make_search_df(spark, items):
         date = d["properties"].get("datetime", "")[:10]
         for asset_name, asset in d["assets"].items():
             rows.append((d["id"], date, bbox, props, asset_name, asset["href"]))
-    schema = StructType([
-        StructField("item_id", StringType()),
-        StructField("date", StringType()),
-        StructField("item_bbox", ArrayType(DoubleType())),
-        StructField("item_properties", MapType(StringType(), StringType())),
-        StructField("asset_name", StringType()),
-        StructField("href", StringType()),
-    ])
+    schema = StructType(
+        [
+            StructField("item_id", StringType()),
+            StructField("date", StringType()),
+            StructField("item_bbox", ArrayType(DoubleType())),
+            StructField("item_properties", MapType(StringType(), StringType())),
+            StructField("asset_name", StringType()),
+            StructField("href", StringType()),
+        ]
+    )
     return spark.createDataFrame(rows if rows else [], schema)
 
 
 def _make_download_df(spark, item_ids):
     rows = [(iid, "data", f"/fake/out/{iid}.tif", 12345, True) for iid in item_ids]
-    schema = StructType([
-        StructField("item_id", StringType()),
-        StructField("asset_name", StringType()),
-        StructField("out_file_path", StringType()),
-        StructField("out_file_sz", LongType()),
-        StructField("is_out_file_valid", BooleanType()),
-    ])
-    return spark.createDataFrame(rows, schema).withColumn("last_update", F.current_timestamp())
+    schema = StructType(
+        [
+            StructField("item_id", StringType()),
+            StructField("asset_name", StringType()),
+            StructField("out_file_path", StringType()),
+            StructField("out_file_sz", LongType()),
+            StructField("is_out_file_valid", BooleanType()),
+        ]
+    )
+    return spark.createDataFrame(rows, schema).withColumn(
+        "last_update", F.current_timestamp()
+    )
 
 
 # --- D1 ---
@@ -137,7 +179,12 @@ def test_discover_returns_expected_columns_and_rows(spark):
     df = dd.discover((-122.52, 37.70, -122.36, 37.83), spark=spark)
     assert set(df.columns) == {"item_id", "gsd", "item_bbox", "href"}, df.columns
     rows = df.collect()
-    assert {r["item_id"] for r in rows} == {"dep_10_a", "dep_10_b", "dep_30_a", "dep_30_b"}
+    assert {r["item_id"] for r in rows} == {
+        "dep_10_a",
+        "dep_10_b",
+        "dep_30_a",
+        "dep_30_b",
+    }
     # only "data" asset hrefs (rendered_preview filtered out)
     assert all("prev" not in r["href"] for r in rows)
 
@@ -146,7 +193,9 @@ def test_discover_returns_expected_columns_and_rows(spark):
 def test_discover_resolution_filter(spark):
     mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS))
     dd = DemDownloader(_stac_client=mock)
-    rows = dd.discover((-122.52, 37.70, -122.36, 37.83), resolution=10, spark=spark).collect()
+    rows = dd.discover(
+        (-122.52, 37.70, -122.36, 37.83), resolution=10, spark=spark
+    ).collect()
     assert len(rows) == 2 and all(r["gsd"] == 10 for r in rows)
     assert {r["item_id"] for r in rows} == {"dep_10_a", "dep_10_b"}
 
@@ -155,39 +204,65 @@ def test_discover_resolution_filter(spark):
 def test_discover_deduplicates_items(spark):
     mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS + _FAKE_ITEMS))
     dd = DemDownloader(_stac_client=mock)
-    ids = [r["item_id"] for r in dd.discover((-122.52, 37.70, -122.36, 37.83), spark=spark).collect()]
+    ids = [
+        r["item_id"]
+        for r in dd.discover((-122.52, 37.70, -122.36, 37.83), spark=spark).collect()
+    ]
     assert len(ids) == len(set(ids)), ids
 
 
 # --- DL1: finest picks the minimum gsd (10 m) ---
 def test_download_picks_finest_gsd(spark, tmp_path):
-    mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS),
-                           _make_download_df(spark, ["dep_10_a", "dep_10_b"]))
+    mock = _MockStacClient(
+        _make_search_df(spark, _FAKE_ITEMS),
+        _make_download_df(spark, ["dep_10_a", "dep_10_b"]),
+    )
     dd = DemDownloader(_stac_client=mock)
-    result = dd.download((-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"),
-                         resolution="finest", spark=spark)
+    result = dd.download(
+        (-122.52, 37.70, -122.36, 37.83),
+        str(tmp_path / "o"),
+        resolution="finest",
+        spark=spark,
+    )
     assert len(mock.download_calls) == 1
     assert set(mock.download_calls[0]["item_ids"]) == {"dep_10_a", "dep_10_b"}
-    assert {"item_id", "asset_name", "out_file_path", "last_update"} <= {f.name for f in result.schema}
+    assert {"item_id", "asset_name", "out_file_path", "last_update"} <= {
+        f.name for f in result.schema
+    }
 
 
 # --- DL2: resolution=int selects that gsd ---
 def test_download_resolution_int_selects_tier(spark, tmp_path):
-    mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS),
-                           _make_download_df(spark, ["dep_30_a", "dep_30_b"]))
+    mock = _MockStacClient(
+        _make_search_df(spark, _FAKE_ITEMS),
+        _make_download_df(spark, ["dep_30_a", "dep_30_b"]),
+    )
     dd = DemDownloader(_stac_client=mock)
-    dd.download((-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"), resolution=30, spark=spark)
+    dd.download(
+        (-122.52, 37.70, -122.36, 37.83),
+        str(tmp_path / "o"),
+        resolution=30,
+        spark=spark,
+    )
     assert set(mock.download_calls[0]["item_ids"]) == {"dep_30_a", "dep_30_b"}
 
 
 # --- DL3: kwargs forwarded ---
 def test_download_passes_kwargs(spark, tmp_path):
-    mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS),
-                           _make_download_df(spark, ["dep_10_a"]))
+    mock = _MockStacClient(
+        _make_search_df(spark, _FAKE_ITEMS), _make_download_df(spark, ["dep_10_a"])
+    )
     bbox = (-122.52, 37.70, -122.36, 37.83)
     dd = DemDownloader(_stac_client=mock)
-    dd.download(bbox, str(tmp_path / "o"), resolution="finest",
-                bbox_crs="EPSG:4326", max_mpp=5.0, partitions=8, spark=spark)
+    dd.download(
+        bbox,
+        str(tmp_path / "o"),
+        resolution="finest",
+        bbox_crs="EPSG:4326",
+        max_mpp=5.0,
+        partitions=8,
+        spark=spark,
+    )
     call = mock.download_calls[0]
     assert call["bbox"] == list(bbox)
     assert call["bbox_crs"] == "EPSG:4326"
@@ -197,11 +272,21 @@ def test_download_passes_kwargs(spark, tmp_path):
 
 # --- DL4: result carries StacClient.download schema ---
 def test_download_returns_stac_schema(spark, tmp_path):
-    mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS),
-                           _make_download_df(spark, ["dep_10_a"]))
+    mock = _MockStacClient(
+        _make_search_df(spark, _FAKE_ITEMS), _make_download_df(spark, ["dep_10_a"])
+    )
     dd = DemDownloader(_stac_client=mock)
-    result = dd.download((-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"), spark=spark)
-    required = {"item_id", "asset_name", "out_file_path", "out_file_sz", "is_out_file_valid", "last_update"}
+    result = dd.download(
+        (-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"), spark=spark
+    )
+    required = {
+        "item_id",
+        "asset_name",
+        "out_file_path",
+        "out_file_sz",
+        "is_out_file_valid",
+        "last_update",
+    }
     assert required <= {f.name for f in result.schema}
 
 
@@ -209,10 +294,19 @@ def test_download_returns_stac_schema(spark, tmp_path):
 def test_download_empty_returns_canonical_schema(spark, tmp_path):
     mock = _MockStacClient(_make_search_df(spark, []))
     dd = DemDownloader(_stac_client=mock)
-    result = dd.download((-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"), spark=spark)
+    result = dd.download(
+        (-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"), spark=spark
+    )
     assert result.count() == 0
     schema_map = {f.name: f.dataType for f in result.schema}
-    assert {"item_id", "asset_name", "out_file_path", "out_file_sz", "is_out_file_valid", "last_update"} <= set(schema_map)
+    assert {
+        "item_id",
+        "asset_name",
+        "out_file_path",
+        "out_file_sz",
+        "is_out_file_valid",
+        "last_update",
+    } <= set(schema_map)
     assert "href" not in schema_map
     assert isinstance(schema_map["is_out_file_valid"], BooleanType)
     assert isinstance(schema_map["out_file_sz"], LongType)
@@ -220,11 +314,17 @@ def test_download_empty_returns_canonical_schema(spark, tmp_path):
 
 # --- DL6: finest with no gsd property keeps all items (graceful) ---
 def test_download_finest_no_gsd_keeps_all(spark, tmp_path):
-    mock = _MockStacClient(_make_search_df(spark, _FAKE_ITEMS_NO_GSD),
-                           _make_download_df(spark, ["dep_nogsd"]))
+    mock = _MockStacClient(
+        _make_search_df(spark, _FAKE_ITEMS_NO_GSD),
+        _make_download_df(spark, ["dep_nogsd"]),
+    )
     dd = DemDownloader(_stac_client=mock)
-    dd.download((-122.52, 37.70, -122.36, 37.83), str(tmp_path / "o"),
-                resolution="finest", spark=spark)
+    dd.download(
+        (-122.52, 37.70, -122.36, 37.83),
+        str(tmp_path / "o"),
+        resolution="finest",
+        spark=spark,
+    )
     assert mock.download_calls[0]["item_ids"] == ["dep_nogsd"]
 
 
@@ -232,12 +332,14 @@ def test_download_finest_no_gsd_keeps_all(spark, tmp_path):
 def test_export_dem_downloader_from_sample_init():
     from databricks.labs.gbx.sample import DemDownloader as DD
     from databricks.labs.gbx.sample import download_dem_aoi as dda
+
     assert DD is DemDownloader
     assert callable(dda)
 
 
 def test_bbox_to_geojson_polygon_shape():
     import json
+
     d = json.loads(_bbox_to_geojson_polygon((-1.0, 2.0, 3.0, 4.0)))
     assert d["type"] == "Polygon"
     ring = d["coordinates"][0]

@@ -12,8 +12,8 @@ import rasterio
 from PIL import Image
 from rasterio.transform import from_bounds
 
-from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 from databricks.labs.gbx.ds._pmtiles_read import PMtilesRasterReader
+from databricks.labs.gbx.ds.pmtiles import PMTilesGbxDataSource
 
 
 def _write_cog(path, w, s, e, n, px=256, val=200):

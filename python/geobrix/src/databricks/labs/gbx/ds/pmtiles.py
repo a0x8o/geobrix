@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional
 
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
-from pyspark.sql.datasource import DataSource, DataSourceReader, DataSourceWriter, WriterCommitMessage
+from pyspark.sql.datasource import (
+    DataSource,
+    DataSourceReader,
+    DataSourceWriter,
+    WriterCommitMessage,
+)
 from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
 from databricks.labs.gbx.ds import _scratch

@@ -82,8 +82,10 @@ def _rebuild_with_max_zoom(raw: bytes, keep_max_z: int) -> bytes:
     src_bounds = info.get("bounds")
     if src_bounds and len(src_bounds) >= 4:
         hdr.bbox = (
-            float(src_bounds[0]), float(src_bounds[1]),
-            float(src_bounds[2]), float(src_bounds[3]),
+            float(src_bounds[0]),
+            float(src_bounds[1]),
+            float(src_bounds[2]),
+            float(src_bounds[3]),
         )
 
     import io

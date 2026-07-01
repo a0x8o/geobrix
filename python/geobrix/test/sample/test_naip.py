@@ -22,8 +22,6 @@ Test coverage:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 pyspark = pytest.importorskip("pyspark")
@@ -34,17 +32,17 @@ from pyspark.sql.types import (  # noqa: E402
     ArrayType,
     BooleanType,
     DoubleType,
-    IntegerType,
     LongType,
     MapType,
     StringType,
     StructField,
     StructType,
-    TimestampType,
 )
 
-from databricks.labs.gbx.sample.naip import NaipDownloader, _bbox_to_geojson_polygon  # noqa: E402
-
+from databricks.labs.gbx.sample.naip import (  # noqa: E402
+    NaipDownloader,
+    _bbox_to_geojson_polygon,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -219,18 +217,31 @@ class _MockStacClient:
         # Return a minimal valid DataFrame when no download_df was given.
         from pyspark.sql import SparkSession
         from pyspark.sql import functions as F
-        from pyspark.sql.types import BooleanType, LongType, StringType, StructField, StructType
+        from pyspark.sql.types import (
+            BooleanType,
+            LongType,
+            StringType,
+            StructField,
+            StructType,
+        )
+
         spark = SparkSession.getActiveSession()
-        schema = StructType([
-            StructField("item_id", StringType()),
-            StructField("asset_name", StringType()),
-            StructField("out_file_path", StringType()),
-            StructField("out_file_sz", LongType()),
-            StructField("is_out_file_valid", BooleanType()),
-        ])
-        _rows = [(iid, "image", f"/fake/out/{iid}.tif", 1000, True)
-                 for iid in self.download_calls[-1]["item_ids"]]
-        return spark.createDataFrame(_rows, schema).withColumn("last_update", F.current_timestamp())
+        schema = StructType(
+            [
+                StructField("item_id", StringType()),
+                StructField("asset_name", StringType()),
+                StructField("out_file_path", StringType()),
+                StructField("out_file_sz", LongType()),
+                StructField("is_out_file_valid", BooleanType()),
+            ]
+        )
+        _rows = [
+            (iid, "image", f"/fake/out/{iid}.tif", 1000, True)
+            for iid in self.download_calls[-1]["item_ids"]
+        ]
+        return spark.createDataFrame(_rows, schema).withColumn(
+            "last_update", F.current_timestamp()
+        )
 
 
 def _make_search_df(spark, items):
@@ -299,15 +310,20 @@ def test_discover_returns_expected_columns_and_rows(spark):
     nd = NaipDownloader(_stac_client=mock)
     df = nd.discover((-122.52, 37.70, -122.36, 37.83), spark=spark)
 
-    assert set(df.columns) == {"item_id", "year", "item_bbox", "href"}, (
-        f"Unexpected columns: {df.columns}"
-    )
+    assert set(df.columns) == {
+        "item_id",
+        "year",
+        "item_bbox",
+        "href",
+    }, f"Unexpected columns: {df.columns}"
     rows = df.collect()
     ids = {r["item_id"] for r in rows}
     assert ids == {"naip_2020_a", "naip_2020_b", "naip_2022_a", "naip_2022_b"}
     # Only image asset hrefs should appear (thumbnail filtered out).
     hrefs = {r["href"] for r in rows}
-    assert all("thumb" not in h for h in hrefs), f"Thumbnail leaked into discover: {hrefs}"
+    assert all(
+        "thumb" not in h for h in hrefs
+    ), f"Thumbnail leaked into discover: {hrefs}"
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +397,10 @@ def test_download_picks_latest_vintage(spark, tmp_path):
     assert len(mock.download_calls) == 1, "Expected exactly one download() call"
     call = mock.download_calls[0]
     # Only the 2022 items should have been passed to download.
-    assert set(call["item_ids"]) == {"naip_2022_a", "naip_2022_b"}, (
-        f"Latest-vintage selection passed wrong items: {call['item_ids']}"
-    )
+    assert set(call["item_ids"]) == {
+        "naip_2022_a",
+        "naip_2022_b",
+    }, f"Latest-vintage selection passed wrong items: {call['item_ids']}"
     # Result schema contains expected columns.
     col_names = {f.name for f in result.schema}
     assert {"item_id", "asset_name", "out_file_path", "last_update"} <= col_names
@@ -409,9 +426,10 @@ def test_download_year_int_selects_vintage(spark, tmp_path):
     )
 
     call = mock.download_calls[0]
-    assert set(call["item_ids"]) == {"naip_2020_a", "naip_2020_b"}, (
-        f"year=2020 selection wrong: {call['item_ids']}"
-    )
+    assert set(call["item_ids"]) == {
+        "naip_2020_a",
+        "naip_2020_b",
+    }, f"year=2020 selection wrong: {call['item_ids']}"
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +481,14 @@ def test_download_returns_stac_download_schema(spark, tmp_path):
     )
 
     col_names = {f.name for f in result.schema}
-    required = {"item_id", "asset_name", "out_file_path", "out_file_sz", "is_out_file_valid", "last_update"}
+    required = {
+        "item_id",
+        "asset_name",
+        "out_file_path",
+        "out_file_sz",
+        "is_out_file_valid",
+        "last_update",
+    }
     missing = required - col_names
     assert not missing, f"download() result missing columns: {missing}"
 
@@ -489,9 +514,9 @@ def test_download_falls_back_to_date_when_no_naip_year(spark, tmp_path):
 
     call = mock.download_calls[0]
     # Latest year from dates is 2021 (dates: "2019-07-15", "2021-08-01").
-    assert call["item_ids"] == ["naip_noyear_2021"], (
-        f"date-fallback latest selection wrong: {call['item_ids']}"
-    )
+    assert call["item_ids"] == [
+        "naip_noyear_2021"
+    ], f"date-fallback latest selection wrong: {call['item_ids']}"
 
 
 # ---------------------------------------------------------------------------
@@ -524,26 +549,30 @@ def test_download_empty_vintage_returns_correct_schema(spark, tmp_path):
     # Schema must match the non-empty download schema: canonical field names + types.
     schema_map = {f.name: f.dataType for f in result.schema}
     required = {
-        "item_id", "asset_name", "out_file_path", "out_file_sz",
-        "is_out_file_valid", "last_update",
+        "item_id",
+        "asset_name",
+        "out_file_path",
+        "out_file_sz",
+        "is_out_file_valid",
+        "last_update",
     }
     missing = required - set(schema_map)
     assert not missing, f"Empty-vintage result missing columns: {missing}"
 
     # href must NOT appear in the output (it is an input-only column).
-    assert "href" not in schema_map, (
-        "Empty-vintage result incorrectly includes 'href' column"
-    )
+    assert (
+        "href" not in schema_map
+    ), "Empty-vintage result incorrectly includes 'href' column"
 
     # is_out_file_valid must be BooleanType (not StringType or NullType).
-    assert isinstance(schema_map["is_out_file_valid"], BooleanType), (
-        f"is_out_file_valid should be BooleanType, got {schema_map['is_out_file_valid']}"
-    )
+    assert isinstance(
+        schema_map["is_out_file_valid"], BooleanType
+    ), f"is_out_file_valid should be BooleanType, got {schema_map['is_out_file_valid']}"
 
     # out_file_sz must be LongType.
-    assert isinstance(schema_map["out_file_sz"], LongType), (
-        f"out_file_sz should be LongType, got {schema_map['out_file_sz']}"
-    )
+    assert isinstance(
+        schema_map["out_file_sz"], LongType
+    ), f"out_file_sz should be LongType, got {schema_map['out_file_sz']}"
 
 
 # ---------------------------------------------------------------------------

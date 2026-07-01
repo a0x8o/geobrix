@@ -48,7 +48,9 @@ def source_bounds_union(paths: Sequence[str]) -> BBox:
     return (ws, ss, es, ns)
 
 
-def render_tile(z, x, y, paths: Sequence[str], tile_format: str = "PNG") -> Optional[bytes]:
+def render_tile(
+    z, x, y, paths: Sequence[str], tile_format: str = "PNG"
+) -> Optional[bytes]:
     """Composite the source rasters at `paths` for tile (z,x,y); PNG bytes or None.
 
     Opens each source fresh per call via rio-tiler Reader so that concurrent

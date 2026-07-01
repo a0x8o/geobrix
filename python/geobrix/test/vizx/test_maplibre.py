@@ -121,8 +121,12 @@ def test_vector_grid_fill_is_data_driven_by_column_cmap():
         vector_layer(gdf, column="solar", cmap="RdYlGn"), 0
     )
     fill = next(ly for ly in layers if ly["type"] == "fill")
-    assert fill["paint"]["fill-color"] == ["get", "_gbx_color"], fill["paint"]["fill-color"]
-    colors = [f["properties"]["_gbx_color"] for f in sources["gbx0"]["data"]["features"]]
+    assert fill["paint"]["fill-color"] == ["get", "_gbx_color"], fill["paint"][
+        "fill-color"
+    ]
+    colors = [
+        f["properties"]["_gbx_color"] for f in sources["gbx0"]["data"]["features"]
+    ]
     assert len(set(colors)) == 3, f"expected 3 distinct ramp colors, got {colors}"
 
 
@@ -147,7 +151,9 @@ def test_cmap_hex_colors_ramp_and_degenerate():
     from databricks.labs.gbx.vizx._maplibre import _cmap_hex_colors
 
     ramp = _cmap_hex_colors([0.0, 0.5, 1.0], "viridis")
-    assert len(ramp) == 3 and len(set(ramp)) == 3 and all(c.startswith("#") for c in ramp)
+    assert (
+        len(ramp) == 3 and len(set(ramp)) == 3 and all(c.startswith("#") for c in ramp)
+    )
     same = _cmap_hex_colors([5, 5, 5], "viridis")  # single value -> mid-ramp, all equal
     assert len(set(same)) == 1
     grey = _cmap_hex_colors([None, float("nan")], "viridis")  # non-finite -> grey
@@ -174,9 +180,9 @@ def test_cmap_hex_colors_quantile_spreads_skewed_distribution():
     # spread); quantile spreads it pale->dark across the ramp (large luminance spread).
     lo_lin = [_lum(c) for c in lin[:7]]
     lo_qnt = [_lum(c) for c in qnt[:7]]
-    assert (max(lo_qnt) - min(lo_qnt)) > (max(lo_lin) - min(lo_lin)), (
-        "quantile must spread the dense low range across the ramp"
-    )
+    assert (max(lo_qnt) - min(lo_qnt)) > (
+        max(lo_lin) - min(lo_lin)
+    ), "quantile must spread the dense low range across the ramp"
 
 
 def test_legend_for_quantile_adds_median_tick():
@@ -186,7 +192,9 @@ def test_legend_for_quantile_adds_median_tick():
 
     lg = _legend_for([1, 1, 2, 2, 3, 4, 5, 100], "YlOrRd", "roofs", "quantile")
     assert lg["vmin"] == 1 and lg["vmax"] == 100 and "mid" in lg
-    assert "mid" not in _legend_for([1, 1, 2, 2, 3, 4, 5, 100], "YlOrRd", "roofs", "linear")
+    assert "mid" not in _legend_for(
+        [1, 1, 2, 2, 3, 4, 5, 100], "YlOrRd", "roofs", "linear"
+    )
 
 
 def test_build_html_renders_cmap_legend_for_data_driven_layer():
@@ -199,7 +207,9 @@ def test_build_html_renders_cmap_legend_for_data_driven_layer():
     from databricks.labs.gbx.vizx._maplibre import build_html
 
     gdf = gpd.GeoDataFrame({"solar": [0.1, 0.5, 0.9]}, geometry=polys, crs="EPSG:4326")
-    prepared = [layer_to_sources_layers(vector_layer(gdf, column="solar", cmap="RdYlGn"), 0)]
+    prepared = [
+        layer_to_sources_layers(vector_layer(gdf, column="solar", cmap="RdYlGn"), 0)
+    ]
     html = build_html(prepared)
     assert "linear-gradient(to right" in html, "no cmap legend gradient in the HTML"
     assert "solar" in html  # legend label defaults to the column name

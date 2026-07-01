@@ -98,7 +98,9 @@ def grid_layer(
     )
 
 
-def pmtiles_layer(data, *, style=None, simplify=None, label=None, opacity=None, color=None):
+def pmtiles_layer(
+    data, *, style=None, simplify=None, label=None, opacity=None, color=None
+):
     """A PMTiles layer (raster or vector, auto-detected from the archive tile type).
 
     ``opacity`` sets raster-opacity (raster tiles) or fill-opacity (vector tiles);
@@ -107,8 +109,13 @@ def pmtiles_layer(data, *, style=None, simplify=None, label=None, opacity=None, 
     ``opacity`` to make a PMTiles layer a muted underlay/context in a multi-layer overlay.
     """
     return Layer(
-        "pmtiles", data, style=style, simplify=simplify, label=label,
-        opacity=opacity, color=color,
+        "pmtiles",
+        data,
+        style=style,
+        simplify=simplify,
+        label=label,
+        opacity=opacity,
+        color=color,
     )
 
 

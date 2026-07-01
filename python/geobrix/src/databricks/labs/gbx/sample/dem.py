@@ -35,7 +35,11 @@ def _bbox_to_geojson_polygon(bbox: Sequence[float]) -> str:
 
     minx, miny, maxx, maxy = bbox
     coords = [
-        [minx, miny], [maxx, miny], [maxx, maxy], [minx, maxy], [minx, miny],
+        [minx, miny],
+        [maxx, miny],
+        [maxx, maxy],
+        [minx, maxy],
+        [minx, miny],
     ]
     return json.dumps({"type": "Polygon", "coordinates": [coords]})
 
@@ -81,9 +85,7 @@ class DemDownloader:
         from pyspark.sql import SparkSession
 
         spark = spark or SparkSession.getActiveSession()
-        return spark.createDataFrame(
-            [(_bbox_to_geojson_polygon(bbox),)], ["geojson"]
-        )
+        return spark.createDataFrame([(_bbox_to_geojson_polygon(bbox),)], ["geojson"])
 
     def _gsd_col(self):
         """Column expr: item_properties['gsd'] as an int (nullable)."""
@@ -109,8 +111,10 @@ class DemDownloader:
         aoi_df = self._aoi_dataframe(bbox, spark)
 
         raw = client.search(
-            aoi_df, geojson_col="geojson",
-            collections=[self.collection], datetime=_DEM_DATETIME,
+            aoi_df,
+            geojson_col="geojson",
+            collections=[self.collection],
+            datetime=_DEM_DATETIME,
         )
         img = raw.filter(F.col("asset_name") == self.asset)
         out = (
@@ -148,8 +152,10 @@ class DemDownloader:
         aoi_df = self._aoi_dataframe(bbox, spark)
 
         raw = client.search(
-            aoi_df, geojson_col="geojson",
-            collections=[self.collection], datetime=_DEM_DATETIME,
+            aoi_df,
+            geojson_col="geojson",
+            collections=[self.collection],
+            datetime=_DEM_DATETIME,
         )
         img = raw.filter(F.col("asset_name") == self.asset).withColumn(
             "_gsd", self._gsd_col()
@@ -162,14 +168,20 @@ class DemDownloader:
             # covers two cases that both correctly fall through to `img`: NO gsd property
             # on the source (keep the whole matching set), or an EMPTY search (img is
             # already empty, so client.download returns the canonical empty schema).
-            vintage = img.filter(F.col("_gsd") == selected) if selected is not None else img
+            vintage = (
+                img.filter(F.col("_gsd") == selected) if selected is not None else img
+            )
         else:
             vintage = img.filter(F.col("_gsd") == int(resolution))
 
         vintage = vintage.select("item_id", "asset_name", "href")
         return client.download(
-            vintage, out_dir,
-            bbox=list(bbox), bbox_crs=bbox_crs, max_mpp=max_mpp, partitions=partitions,
+            vintage,
+            out_dir,
+            bbox=list(bbox),
+            bbox_crs=bbox_crs,
+            max_mpp=max_mpp,
+            partitions=partitions,
         )
 
     def read(self, out_dir: str, spark=None) -> "DataFrame":

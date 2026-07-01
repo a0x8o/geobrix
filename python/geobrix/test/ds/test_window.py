@@ -1,4 +1,5 @@
 """Tests for the window_for_bbox clip-safe AOI windowing primitive."""
+
 import numpy as np
 import rasterio
 from rasterio.io import MemoryFile
@@ -42,12 +43,15 @@ def _open(width=4, height=3, epsg=4326):
 def test_fully_inside_window_matches_bbox():
     mf, ds = _open()
     try:
-        win = window_for_bbox(ds, (10.5, 49.0, 11.5, 50.0))  # inside x[10,12], y[48.5,50]
+        win = window_for_bbox(
+            ds, (10.5, 49.0, 11.5, 50.0)
+        )  # inside x[10,12], y[48.5,50]
         assert win is not None
         b = rasterio.windows.bounds(win, ds.transform)  # (left, bottom, right, top)
         assert b == (10.5, 49.0, 11.5, 50.0)
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_north_overhang_is_clipped_not_shifted():
@@ -61,7 +65,8 @@ def test_north_overhang_is_clipped_not_shifted():
         assert top == 50.0, f"top should clip to dataset top 50.0, got {top}"
         assert win.row_off == 0
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_no_overlap_returns_none():
@@ -69,7 +74,8 @@ def test_no_overlap_returns_none():
     try:
         assert window_for_bbox(ds, (20.0, 20.0, 21.0, 21.0)) is None
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()
 
 
 def test_bbox_crs_is_reprojected():
@@ -77,15 +83,26 @@ def test_bbox_crs_is_reprojected():
     # transformed to 3857 before windowing (proves bbox_crs is applied).
     w, s, e, n = transform_bounds("EPSG:4326", "EPSG:3857", -122.5, 37.7, -122.4, 37.8)
     from rasterio.transform import from_bounds as _affine_from_bounds
-    profile = dict(driver="GTiff", width=100, height=100, count=1, dtype="uint8",
-                   crs="EPSG:3857", transform=_affine_from_bounds(w, s, e, n, 100, 100))
+
+    profile = dict(
+        driver="GTiff",
+        width=100,
+        height=100,
+        count=1,
+        dtype="uint8",
+        crs="EPSG:3857",
+        transform=_affine_from_bounds(w, s, e, n, 100, 100),
+    )
     with MemoryFile() as src_mf:
         with src_mf.open(**profile) as out:
             out.write(np.zeros((1, 100, 100), dtype="uint8"))
         data = src_mf.read()
-    mf = MemoryFile(data); ds = mf.open()
+    mf = MemoryFile(data)
+    ds = mf.open()
     try:
-        win = window_for_bbox(ds, (-122.47, 37.72, -122.43, 37.78), bbox_crs="EPSG:4326")
+        win = window_for_bbox(
+            ds, (-122.47, 37.72, -122.43, 37.78), bbox_crs="EPSG:4326"
+        )
         assert win is not None
         b = rasterio.windows.bounds(win, ds.transform)  # in source CRS (3857)
         exp = transform_bounds("EPSG:4326", "EPSG:3857", -122.47, 37.72, -122.43, 37.78)
@@ -93,4 +110,5 @@ def test_bbox_crs_is_reprojected():
         px = abs(ds.transform.a)
         assert all(abs(a - c) <= px for a, c in zip(b, exp))
     finally:
-        ds.close(); mf.close()
+        ds.close()
+        mf.close()

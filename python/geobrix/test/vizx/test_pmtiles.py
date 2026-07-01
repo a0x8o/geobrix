@@ -53,7 +53,8 @@ def test_is_raster_type():
 
 def test_pmtiles_layer_opacity_and_color_reach_paint():
     """pmtiles_layer(opacity=, color=) sets raster-opacity (raster) / fill paint (vector),
-    so a hillshade underlay can be dimmed and buildings styled in a multi-layer overlay."""
+    so a hillshade underlay can be dimmed and buildings styled in a multi-layer overlay.
+    """
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
     from databricks.labs.gbx.vizx._maplibre import _pmtiles
 
@@ -496,11 +497,13 @@ def test_build_html_frames_archive_bounds_clamped_to_min_zoom():
     assert "map.jumpTo(" in html, "must open via an explicit center+zoom"
     assert "map.fitBounds(" not in html, "must NOT use container-measured fitBounds"
     # View + canvas sizing are (re)applied once the container has real dimensions.
-    assert "ResizeObserver" in html and "map.resize()" in html, (
-        "must resize + apply the view once the container has real dimensions"
-    )
+    assert (
+        "ResizeObserver" in html and "map.resize()" in html
+    ), "must resize + apply the view once the container has real dimensions"
     assert "minZoom: 12" in html, "must floor at the archive min_zoom (12) -> non-blank"
-    assert "-122" in html and "37." in html, "must open centered on the archive (SF) extent"
+    assert (
+        "-122" in html and "37." in html
+    ), "must open centered on the archive (SF) extent"
 
 
 def test_build_html_falls_back_to_sf_default_without_archive():
