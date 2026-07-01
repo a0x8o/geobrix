@@ -16,6 +16,7 @@ class Layer:
     grid_system: Optional[str] = None
     grid_conf: Optional[dict] = None
     cmap: str = "viridis"
+    scale: str = "linear"
     opacity: Optional[float] = None
     color: Optional[str] = None
     width: Optional[float] = None
@@ -36,6 +37,7 @@ def vector_layer(
     geom_col=None,
     column=None,
     cmap="viridis",
+    scale="linear",
     fill=True,
     color=None,
     width=None,
@@ -49,6 +51,7 @@ def vector_layer(
         geom_col=geom_col,
         column=column,
         cmap=cmap,
+        scale=scale,
         fill=fill,
         color=color,
         width=width,
@@ -69,10 +72,18 @@ def grid_layer(
     cellid_col=None,
     column=None,
     cmap="viridis",
+    scale="linear",
     opacity=0.7,
     grid_conf=None,
     label=None,
 ):
+    """A grid (H3 / BNG / quadbin) layer, colored per cell by ``column`` through ``cmap``.
+
+    ``scale`` controls the value→color mapping: ``"linear"`` (default) spreads color
+    evenly across min..max; ``"quantile"`` spreads by percentile rank, so a skewed
+    distribution (e.g. most cells holding a small count with a long tail) stays visually
+    distinguishable instead of collapsing into one end of the colormap.
+    """
     return Layer(
         "grid",
         data,
@@ -80,6 +91,7 @@ def grid_layer(
         cellid_col=cellid_col,
         column=column,
         cmap=cmap,
+        scale=scale,
         opacity=opacity,
         grid_conf=grid_conf,
         label=label,

@@ -154,6 +154,41 @@ def test_cmap_hex_colors_ramp_and_degenerate():
     assert grey == ["#cccccc", "#cccccc"]
 
 
+def test_cmap_hex_colors_quantile_spreads_skewed_distribution():
+    """quantile scale maps by percentile rank, so a skewed distribution (a dense low
+    range + a long tail) spreads across the full ramp instead of collapsing into one end
+    the way linear does -- the fix for an indistinguishable low range (e.g. roof counts
+    where most H3 cells hold a small count but a few hold many)."""
+    from databricks.labs.gbx.vizx._maplibre import _cmap_hex_colors
+
+    vals = [1, 1, 2, 2, 3, 4, 5, 100]  # dense 1..5, long tail to 100
+    lin = _cmap_hex_colors(vals, "YlOrRd", "linear")
+    qnt = _cmap_hex_colors(vals, "YlOrRd", "quantile")
+
+    def _lum(h):
+        h = h.lstrip("#")
+        r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    # Under linear the dense low range crushes into the pale ramp start (tiny luminance
+    # spread); quantile spreads it pale->dark across the ramp (large luminance spread).
+    lo_lin = [_lum(c) for c in lin[:7]]
+    lo_qnt = [_lum(c) for c in qnt[:7]]
+    assert (max(lo_qnt) - min(lo_qnt)) > (max(lo_lin) - min(lo_lin)), (
+        "quantile must spread the dense low range across the ramp"
+    )
+
+
+def test_legend_for_quantile_adds_median_tick():
+    """quantile legend carries a median (bar-midpoint) tick so labels stay honest about
+    the non-linear ramp; linear has only vmin/vmax."""
+    from databricks.labs.gbx.vizx._maplibre import _legend_for
+
+    lg = _legend_for([1, 1, 2, 2, 3, 4, 5, 100], "YlOrRd", "roofs", "quantile")
+    assert lg["vmin"] == 1 and lg["vmax"] == 100 and "mid" in lg
+    assert "mid" not in _legend_for([1, 1, 2, 2, 3, 4, 5, 100], "YlOrRd", "roofs", "linear")
+
+
 def test_build_html_renders_cmap_legend_for_data_driven_layer():
     """A column+cmap layer adds a colormap legend (gradient bar + value range) to the
     HTML, and the _gbx_legend sidecar is stripped from the serialized sources."""

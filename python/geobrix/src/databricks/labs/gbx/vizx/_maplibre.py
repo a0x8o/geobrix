@@ -1226,14 +1226,19 @@ def _gdf_for(layer) -> Any:
     return _vector.as_gdf(data, wkt_col=wkt_col)
 
 
-def _cmap_hex_colors(values, cmap_name):
+def _cmap_hex_colors(values, cmap_name, scale="linear"):
     """Map numeric ``values`` through a matplotlib colormap to hex color strings.
 
-    Finite values are normalized to [0, 1] across their min..max (a single distinct
-    value -> mid-ramp); non-finite/None -> neutral grey. MapLibre has no server-side
-    colormap, so the interactive vector/grid renderer precomputes a per-feature color;
-    this is what makes a grid heatmap (e.g. an H3 solar-score layer) render a real ramp
-    instead of one flat fill.
+    ``scale`` controls the value -> ramp-position mapping:
+      * ``"linear"`` (default) -- position = (x - min) / (max - min).
+      * ``"quantile"`` -- position = the value's percentile rank, so a skewed
+        distribution (e.g. most H3 cells holding 1..25 of a 1..128 roof-count range)
+        spreads across the full ramp instead of collapsing into one end of the colormap.
+
+    Finite values map to a color; non-finite/None -> neutral grey. A single distinct
+    finite value -> mid-ramp. MapLibre has no server-side colormap, so the interactive
+    vector/grid renderer precomputes a per-feature color; this is what makes a grid
+    heatmap render a real ramp instead of one flat fill.
     """
     import math
 
@@ -1252,19 +1257,37 @@ def _cmap_hex_colors(values, cmap_name):
         return ["#cccccc"] * len(nums)
     lo, hi = min(finite), max(finite)
     span = hi - lo
-    return [
-        "#cccccc"
-        if not math.isfinite(x)
-        else mcolors.to_hex(cmap(0.5 if span == 0 else (x - lo) / span))
-        for x in nums
-    ]
+
+    if span == 0:
+        positions = [None if not math.isfinite(x) else 0.5 for x in nums]
+    elif scale == "quantile":
+        import numpy as np
+
+        srt = np.sort(np.asarray(finite, dtype=float))
+        n = len(srt)
+        positions = []
+        for x in nums:
+            if not math.isfinite(x):
+                positions.append(None)
+                continue
+            lo_i = int(np.searchsorted(srt, x, side="left"))
+            hi_i = int(np.searchsorted(srt, x, side="right"))
+            positions.append(min(max(((lo_i + hi_i) / 2.0) / n, 0.0), 1.0))
+    else:  # linear
+        positions = [None if not math.isfinite(x) else (x - lo) / span for x in nums]
+
+    return ["#cccccc" if p is None else mcolors.to_hex(cmap(p)) for p in positions]
 
 
-def _legend_for(values, cmap_name, label):
-    """Legend descriptor for a data-driven layer: ``{label, vmin, vmax, stops}`` or None.
+def _legend_for(values, cmap_name, label, scale="linear"):
+    """Legend descriptor for a data-driven layer: ``{label, vmin, vmax, stops[, mid]}``
+    or None.
 
     ``stops`` are 9 hex colors sampled evenly along the colormap for the CSS gradient
-    bar; ``vmin``/``vmax`` are the finite value range. None when no finite values.
+    bar; ``vmin``/``vmax`` are the finite value range. For ``scale="quantile"`` the ramp
+    position is percentile rank, so the bar midpoint is the median — ``mid`` carries it
+    for a center tick, keeping the labels honest about the non-linear mapping. None when
+    no finite values.
     """
     import math
 
@@ -1283,7 +1306,12 @@ def _legend_for(values, cmap_name, label):
         return None
     cmap = matplotlib.colormaps[cmap_name]
     stops = [mcolors.to_hex(cmap(i / 8.0)) for i in range(9)]
-    return {"label": str(label), "vmin": min(nums), "vmax": max(nums), "stops": stops}
+    lg = {"label": str(label), "vmin": min(nums), "vmax": max(nums), "stops": stops}
+    if scale == "quantile" and len(nums) > 2:
+        import numpy as np
+
+        lg["mid"] = float(np.median(np.asarray(nums, dtype=float)))
+    return lg
 
 
 def _legend_html(legends):
@@ -1303,7 +1331,9 @@ def _legend_html(legends):
             f'background:linear-gradient(to right,{grad})"></div>'
             '<div style="display:flex;justify-content:space-between;'
             'font:10px sans-serif;color:#555">'
-            f'<span>{lg["vmin"]:.3g}</span><span>{lg["vmax"]:.3g}</span></div>'
+            f'<span>{lg["vmin"]:.3g}</span>'
+            + (f'<span>{lg["mid"]:.3g}</span>' if lg.get("mid") is not None else "")
+            + f'<span>{lg["vmax"]:.3g}</span></div>'
             "</div>"
         )
     return (
@@ -1326,9 +1356,10 @@ def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
     if layer.color is None and layer.column is not None and layer.column in gdf.columns:
         gdf = gdf.copy()
         _vals = gdf[layer.column].tolist()
-        gdf["_gbx_color"] = _cmap_hex_colors(_vals, layer.cmap)
+        _scale = getattr(layer, "scale", "linear")
+        gdf["_gbx_color"] = _cmap_hex_colors(_vals, layer.cmap, _scale)
         fill_color_expr = ["get", "_gbx_color"]
-        legend = _legend_for(_vals, layer.cmap, layer.label or layer.column)
+        legend = _legend_for(_vals, layer.cmap, layer.label or layer.column, _scale)
 
     gj = json.loads(gdf.to_json())
 
