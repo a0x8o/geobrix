@@ -254,6 +254,33 @@ def layer_to_sources_layers(
 # ---------------------------------------------------------------------------
 
 
+def _fit_zoom_for_bounds(w, s, e, n, viewport_px=760):
+    """Web-mercator zoom that frames the bounds ``[w, s, e, n]`` (lon/lat degrees) in a
+    ~``viewport_px`` square, computed WITHOUT the map container.
+
+    build_html opens the auto-view via an explicit center+zoom rather than MapLibre's
+    container-measured fitBounds (unreliable in a notebook iframe — see build_html). This
+    derives that opening zoom from the data extent alone: fit the more constraining of the
+    lon/lat spans into the viewport with a small padding margin. Degenerate extent -> a
+    sensible mid zoom.
+    """
+    import math
+
+    def _merc_y_frac(lat):
+        lat = max(min(float(lat), 85.05112878), -85.05112878)
+        return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) / (2 * math.pi) + 0.5
+
+    x_frac = abs(float(e) - float(w)) / 360.0
+    y_frac = abs(_merc_y_frac(n) - _merc_y_frac(s))
+    frac = max(x_frac, y_frac)
+    if frac <= 0:
+        return 11.0
+    # World at zoom z is 256*2^z px wide; fit `frac` of the world into viewport_px with a
+    # 0.9 padding margin so the extent doesn't touch the edges.
+    z = math.log2(viewport_px * 0.9 / (256.0 * frac))
+    return max(0.0, min(22.0, z))
+
+
 def _auto_view_from_pmtiles(pm_pairs):
     """Derive an opening view from the first EMBEDDED pmtiles archive's header.
 
@@ -397,26 +424,26 @@ def build_html(
             _auto_view_from_pmtiles(pm_pairs)
         )
 
-    # View is applied AFTER the container is measured (see _gbxApplyView in the template),
-    # NOT via MapLibre's constructor `bounds`/canvas — inside a notebook iframe the map is
-    # constructed before layout, so the container is 0-sized at construction. A
-    # constructor `bounds` fit then computes against 0 and silently falls back to minZoom
-    # (a globe when min zoom is low), and the initial canvas is 0x0 so no tiles load
-    # (a blank map). `init_view_js` is only a sane first paint; `load_view_js` is the real
-    # framing, deferred until the container has real dimensions.
+    # Both view modes open via an EXPLICIT center+zoom (constructor + a jumpTo once the
+    # container is measured). We deliberately do NOT use MapLibre's constructor `bounds`
+    # or fitBounds: both measure the container, which inside a notebook iframe is 0-sized
+    # at construction and unreliable even on load — a container-measured fit then collapses
+    # to minZoom (a globe when min zoom is low) or leaves the map blank. An explicit zoom
+    # (auto-derived from the archive extent, container-INDEPENDENTLY, for the auto-view
+    # path) opens framed regardless of when the container is measured.
     if center is None and zoom is None and auto_bounds is not None:
         w, s, e, n = auto_bounds
-        # minZoom floor keeps fitBounds from underzooming into blank tiles; maxZoom cap
+        # minZoom floor keeps a wide drag from underzooming into blank tiles; maxZoom cap
         # keeps a tiny AOI from opening over-zoomed past the archive's detail.
         min_z = auto_min_zoom if auto_min_zoom is not None else 0
         max_z = auto_max_zoom if auto_max_zoom is not None else 22
-        init_center = auto_center if auto_center is not None else [(w + e) / 2, (s + n) / 2]
+        eff_center = auto_center if auto_center is not None else [(w + e) / 2, (s + n) / 2]
+        eff_zoom = max(min_z, min(max_z, _fit_zoom_for_bounds(w, s, e, n)))
         init_view_js = (
-            f"center: {_json_for_script(init_center)}, zoom: {min_z}, minZoom: {min_z}"
+            f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}, minZoom: {min_z}"
         )
         load_view_js = (
-            f"map.fitBounds([[{w}, {s}], [{e}, {n}]], "
-            f"{{ padding: 24, maxZoom: {max_z}, animate: false }});"
+            f"map.jumpTo({{ center: {_json_for_script(eff_center)}, zoom: {eff_zoom} }});"
         )
     else:
         eff_center = center if center is not None else [-122.43, 37.77]

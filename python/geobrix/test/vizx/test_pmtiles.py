@@ -477,12 +477,13 @@ def test_raster_pmtiles_source_sets_tilesize_from_tile():
 
 
 def test_build_html_frames_archive_bounds_clamped_to_min_zoom():
-    """build_html opens by FITTING the embedded archive's bounds (frames the whole
-    extent), clamped to the archive zoom range so it never underzooms into blank tiles:
-    a z12-16 archive floors at minZoom 12 (MapLibre doesn't render below a source's min
-    zoom). The fit is applied via map.fitBounds AFTER the container is measured (deferred
-    off construction + a ResizeObserver), because a notebook-iframe container is 0-sized
-    at construction and MapLibre's constructor `bounds` fit would collapse to a globe."""
+    """build_html opens the auto-view on the embedded archive's extent via an EXPLICIT
+    center+zoom (constructor + a jumpTo once the container is measured), clamped so it
+    never underzooms below the archive min zoom (a z12-16 archive floors at minZoom 12 --
+    MapLibre doesn't render below a source's min zoom). It must NOT use the container-
+    measured fitBounds: a notebook-iframe container is 0-sized at construction and
+    unreliable even on load, so a measured fit would collapse to a globe or a blank map.
+    An explicit zoom, derived from the extent container-independently, opens framed."""
     from databricks.labs.gbx.vizx._layers import pmtiles_layer
     from databricks.labs.gbx.vizx._maplibre import build_html, layer_to_sources_layers
 
@@ -492,13 +493,14 @@ def test_build_html_frames_archive_bounds_clamped_to_min_zoom():
         TileType.MVT,
     )
     html = build_html([layer_to_sources_layers(pmtiles_layer(archive), 0)])
-    assert "map.fitBounds(" in html, "must frame via fitBounds"
-    # Framing is deferred to a measured container, not the (0-sized) construction canvas.
+    assert "map.jumpTo(" in html, "must open via an explicit center+zoom"
+    assert "map.fitBounds(" not in html, "must NOT use container-measured fitBounds"
+    # View + canvas sizing are (re)applied once the container has real dimensions.
     assert "ResizeObserver" in html and "map.resize()" in html, (
-        "must defer resize + fit until the container has real dimensions"
+        "must resize + apply the view once the container has real dimensions"
     )
     assert "minZoom: 12" in html, "must floor at the archive min_zoom (12) -> non-blank"
-    assert "-122.52" in html and "37.83" in html, "must frame the archive bounds"
+    assert "-122" in html and "37." in html, "must open centered on the archive (SF) extent"
 
 
 def test_build_html_falls_back_to_sf_default_without_archive():
