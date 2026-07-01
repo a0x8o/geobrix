@@ -51,6 +51,26 @@ def test_is_raster_type():
     assert p._is_raster_type("unknown") is False
 
 
+def test_pmtiles_layer_opacity_and_color_reach_paint():
+    """pmtiles_layer(opacity=, color=) sets raster-opacity (raster) / fill paint (vector),
+    so a hillshade underlay can be dimmed and buildings styled in a multi-layer overlay."""
+    from databricks.labs.gbx.vizx._layers import pmtiles_layer
+    from databricks.labs.gbx.vizx._maplibre import _pmtiles
+
+    raster = _build_archive([(0, 0, 0, _PNG)], TileType.PNG)
+    _, rlayers, _ = _pmtiles(pmtiles_layer(raster, opacity=0.55), 0)
+    assert rlayers[0]["type"] == "raster"
+    assert rlayers[0]["paint"]["raster-opacity"] == 0.55
+    # opacity set -> emphasis must not override it (no raster-opacity in the pending list)
+    assert "raster-opacity" not in rlayers[0].get("_gbx_emphasis", [])
+
+    vec = _build_archive([(0, 0, 0, _real_mvt_tile(0, 0, 0))], TileType.MVT)
+    _, vlayers, _ = _pmtiles(pmtiles_layer(vec, opacity=0.25, color="#3a3a3a"), 1)
+    assert vlayers[0]["type"] == "fill"
+    assert vlayers[0]["paint"]["fill-opacity"] == 0.25
+    assert vlayers[0]["paint"]["fill-color"] == "#3a3a3a"
+
+
 def test_archive_bytes_passthrough_and_path(tmp_path):
     from databricks.labs.gbx.vizx import _pmtiles as p
 
