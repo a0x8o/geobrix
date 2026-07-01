@@ -336,8 +336,14 @@ def build_html(
     layers: list = []
     pm_pairs: list[tuple[str, dict]] = []
 
+    legends: list[dict] = []
     for s, ls, *_rest in prepared:
         for sid, sdef in s.items():
+            # Collect a data-driven colormap legend (vector/grid), then strip the sidecar
+            # from every source copy below — MapLibre rejects unknown source keys.
+            leg = sdef.get("_gbx_legend")
+            if leg:
+                legends.append(leg)
             if "_gbx_pmtiles" in sdef:
                 # Read sidecar WITHOUT mutating the caller's dict — Task 6 calls
                 # build_html twice (size-check then real build) and must find the
@@ -345,7 +351,10 @@ def build_html(
                 info_sc = sdef["_gbx_pmtiles"]
                 pm_pairs.append((sid, info_sc))
                 # Build a clean copy for the overlay (MapLibre rejects unknown keys).
-                clean = {k: v for k, v in sdef.items() if k != "_gbx_pmtiles"}
+                clean = {
+                    k: v for k, v in sdef.items()
+                    if k not in ("_gbx_pmtiles", "_gbx_legend")
+                }
                 # Embedded archives register under a per-map key (uid_sid) on a shared
                 # protocol, so point this source's URL at that key. URL mode keeps the
                 # remote URL as its key (already unique).
@@ -353,7 +362,7 @@ def build_html(
                     clean["url"] = f"pmtiles://{uid}_{sid}"
                 sources[sid] = clean
             else:
-                sources[sid] = sdef
+                sources[sid] = {k: v for k, v in sdef.items() if k != "_gbx_legend"}
         # Apply emphasis to each layer's emphasis-controlled paint keys, then strip
         # the _gbx_emphasis sidecar (MapLibre rejects unknown layer keys). Copy so
         # the caller's prepared dicts stay intact across repeated build_html calls
@@ -404,8 +413,12 @@ def build_html(
         view_js = f"center: {_json_for_script(eff_center)}, zoom: {eff_zoom}"
 
     container = f"gbx-map-{uid}"
+    legend_html = _legend_html(legends)
     return f"""\
+<div style="position:relative">
 <div id="{container}" style="height:720px"></div>
+{legend_html}
+</div>
 <link href="{_MAPLIBRE_CSS}" rel="stylesheet" integrity="{_MAPLIBRE_CSS_SRI}" crossorigin="anonymous"/>
 <script src="{_MAPLIBRE_JS}" integrity="{_MAPLIBRE_JS_SRI}" crossorigin="anonymous"></script>
 <script src="{_PMTILES_JS}" integrity="{_PMTILES_JS_SRI}" crossorigin="anonymous"></script>
@@ -1174,12 +1187,115 @@ def _gdf_for(layer) -> Any:
     return _vector.as_gdf(data, wkt_col=wkt_col)
 
 
+def _cmap_hex_colors(values, cmap_name):
+    """Map numeric ``values`` through a matplotlib colormap to hex color strings.
+
+    Finite values are normalized to [0, 1] across their min..max (a single distinct
+    value -> mid-ramp); non-finite/None -> neutral grey. MapLibre has no server-side
+    colormap, so the interactive vector/grid renderer precomputes a per-feature color;
+    this is what makes a grid heatmap (e.g. an H3 solar-score layer) render a real ramp
+    instead of one flat fill.
+    """
+    import math
+
+    import matplotlib
+    import matplotlib.colors as mcolors
+
+    cmap = matplotlib.colormaps[cmap_name]
+    nums = []
+    for v in values:
+        try:
+            nums.append(float(v))
+        except (TypeError, ValueError):
+            nums.append(math.nan)
+    finite = [x for x in nums if math.isfinite(x)]
+    if not finite:
+        return ["#cccccc"] * len(nums)
+    lo, hi = min(finite), max(finite)
+    span = hi - lo
+    return [
+        "#cccccc"
+        if not math.isfinite(x)
+        else mcolors.to_hex(cmap(0.5 if span == 0 else (x - lo) / span))
+        for x in nums
+    ]
+
+
+def _legend_for(values, cmap_name, label):
+    """Legend descriptor for a data-driven layer: ``{label, vmin, vmax, stops}`` or None.
+
+    ``stops`` are 9 hex colors sampled evenly along the colormap for the CSS gradient
+    bar; ``vmin``/``vmax`` are the finite value range. None when no finite values.
+    """
+    import math
+
+    import matplotlib
+    import matplotlib.colors as mcolors
+
+    nums = []
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f):
+            nums.append(f)
+    if not nums:
+        return None
+    cmap = matplotlib.colormaps[cmap_name]
+    stops = [mcolors.to_hex(cmap(i / 8.0)) for i in range(9)]
+    return {"label": str(label), "vmin": min(nums), "vmax": max(nums), "stops": stops}
+
+
+def _legend_html(legends):
+    """An absolute-positioned colormap legend overlay for data-driven layers (or "")."""
+    if not legends:
+        return ""
+    import html as _html
+
+    entries = []
+    for lg in legends:
+        grad = ", ".join(lg["stops"])
+        entries.append(
+            '<div style="margin:3px 0 5px">'
+            '<div style="font:600 11px sans-serif;color:#222;margin-bottom:2px">'
+            f'{_html.escape(lg["label"])}</div>'
+            '<div style="width:130px;height:10px;border:1px solid #aaa;'
+            f'background:linear-gradient(to right,{grad})"></div>'
+            '<div style="display:flex;justify-content:space-between;'
+            'font:10px sans-serif;color:#555">'
+            f'<span>{lg["vmin"]:.3g}</span><span>{lg["vmax"]:.3g}</span></div>'
+            "</div>"
+        )
+    return (
+        '<div style="position:absolute;bottom:14px;right:14px;z-index:2;'
+        "background:rgba(255,255,255,0.92);padding:8px 10px;border-radius:6px;"
+        'box-shadow:0 1px 4px rgba(0,0,0,0.3)">' + "".join(entries) + "</div>"
+    )
+
+
 def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
     sid = f"gbx{idx}"
     gdf = _gdf_for(layer).to_crs(4326)
+
+    # Data-driven fill: map layer.column through layer.cmap to a per-feature hex color
+    # (MapLibre has no server-side colormap, so precompute per feature). An explicit
+    # scalar layer.color overrides; no column -> flat default. This is what makes a grid
+    # heatmap (e.g. an H3 solar-score layer) render a real ramp, not one flat color.
+    fill_color_expr = None
+    legend = None
+    if layer.color is None and layer.column is not None and layer.column in gdf.columns:
+        gdf = gdf.copy()
+        _vals = gdf[layer.column].tolist()
+        gdf["_gbx_color"] = _cmap_hex_colors(_vals, layer.cmap)
+        fill_color_expr = ["get", "_gbx_color"]
+        legend = _legend_for(_vals, layer.cmap, layer.label or layer.column)
+
     gj = json.loads(gdf.to_json())
 
     src = {sid: {"type": "geojson", "data": gj}}
+    if legend:
+        src[sid]["_gbx_legend"] = legend
 
     # Collect all geometry types present in this feature collection.
     geom_types: set[str] = set()
@@ -1191,6 +1307,7 @@ def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
 
     layers: list[dict] = []
     color = layer.color or "#3388ff"
+    fill_color = fill_color_expr if fill_color_expr is not None else color
     # User-set opacity / width win over emphasis defaults; record the keys left at
     # default in the _gbx_emphasis sidecar so build_html fills them per emphasis.
     user_opacity = layer.opacity is not None
@@ -1200,7 +1317,7 @@ def _vector_or_grid(layer, idx: int) -> tuple[dict, list[dict], int]:
     # Polygons → fill + outline line.
     if geom_types & {"Polygon", "MultiPolygon"}:
         if getattr(layer, "fill", True):
-            fill_paint = {"fill-color": color, "fill-opacity": opacity}
+            fill_paint = {"fill-color": fill_color, "fill-opacity": opacity}
             fill_pending = []
             if not user_opacity:
                 fill_pending.append("fill-opacity")

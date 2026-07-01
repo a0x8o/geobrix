@@ -108,6 +108,85 @@ def test_vector_layer_becomes_geojson_source_and_fill_layer():
     assert embed > 0
 
 
+def test_vector_grid_fill_is_data_driven_by_column_cmap():
+    """A column+cmap layer (e.g. an H3 solar-score grid) gets a PER-FEATURE fill color
+    from the colormap — fill-color = ['get','_gbx_color'] and the GeoJSON carries varied
+    _gbx_color values across differing column values (not one flat fill)."""
+    polys = [
+        Polygon([(x, 37.7), (x + 0.01, 37.7), (x + 0.01, 37.71), (x, 37.71)])
+        for x in (-122.50, -122.49, -122.48)
+    ]
+    gdf = gpd.GeoDataFrame({"solar": [0.1, 0.5, 0.9]}, geometry=polys, crs="EPSG:4326")
+    sources, layers, _ = layer_to_sources_layers(
+        vector_layer(gdf, column="solar", cmap="RdYlGn"), 0
+    )
+    fill = next(ly for ly in layers if ly["type"] == "fill")
+    assert fill["paint"]["fill-color"] == ["get", "_gbx_color"], fill["paint"]["fill-color"]
+    colors = [f["properties"]["_gbx_color"] for f in sources["gbx0"]["data"]["features"]]
+    assert len(set(colors)) == 3, f"expected 3 distinct ramp colors, got {colors}"
+
+
+def test_vector_explicit_color_overrides_cmap():
+    """An explicit scalar color wins over column/cmap (flat fill, no _gbx_color)."""
+    gdf = gpd.GeoDataFrame(
+        {"solar": [0.1, 0.9]},
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)]),
+            Polygon([(-122.3, 37.7), (-122.2, 37.7), (-122.2, 37.8), (-122.3, 37.8)]),
+        ],
+        crs="EPSG:4326",
+    )
+    sources, layers, _ = layer_to_sources_layers(
+        vector_layer(gdf, column="solar", color="#ff0000"), 0
+    )
+    fill = next(ly for ly in layers if ly["type"] == "fill")
+    assert fill["paint"]["fill-color"] == "#ff0000"
+
+
+def test_cmap_hex_colors_ramp_and_degenerate():
+    from databricks.labs.gbx.vizx._maplibre import _cmap_hex_colors
+
+    ramp = _cmap_hex_colors([0.0, 0.5, 1.0], "viridis")
+    assert len(ramp) == 3 and len(set(ramp)) == 3 and all(c.startswith("#") for c in ramp)
+    same = _cmap_hex_colors([5, 5, 5], "viridis")  # single value -> mid-ramp, all equal
+    assert len(set(same)) == 1
+    grey = _cmap_hex_colors([None, float("nan")], "viridis")  # non-finite -> grey
+    assert grey == ["#cccccc", "#cccccc"]
+
+
+def test_build_html_renders_cmap_legend_for_data_driven_layer():
+    """A column+cmap layer adds a colormap legend (gradient bar + value range) to the
+    HTML, and the _gbx_legend sidecar is stripped from the serialized sources."""
+    polys = [
+        Polygon([(x, 37.7), (x + 0.01, 37.7), (x + 0.01, 37.71), (x, 37.71)])
+        for x in (-122.50, -122.49, -122.48)
+    ]
+    from databricks.labs.gbx.vizx._maplibre import build_html
+
+    gdf = gpd.GeoDataFrame({"solar": [0.1, 0.5, 0.9]}, geometry=polys, crs="EPSG:4326")
+    prepared = [layer_to_sources_layers(vector_layer(gdf, column="solar", cmap="RdYlGn"), 0)]
+    html = build_html(prepared)
+    assert "linear-gradient(to right" in html, "no cmap legend gradient in the HTML"
+    assert "solar" in html  # legend label defaults to the column name
+    assert "_gbx_legend" not in html  # sidecar must not leak into the MapLibre sources
+
+
+def test_build_html_no_legend_without_data_driven_layer():
+    """A flat (explicit-color) layer adds no legend."""
+    gdf = gpd.GeoDataFrame(
+        {"v": [1]},
+        geometry=[
+            Polygon([(-122.5, 37.7), (-122.4, 37.7), (-122.4, 37.8), (-122.5, 37.8)])
+        ],
+        crs="EPSG:4326",
+    )
+    from databricks.labs.gbx.vizx._maplibre import build_html
+
+    prepared = [layer_to_sources_layers(vector_layer(gdf, color="#ff0000"), 0)]
+    html = build_html(prepared)
+    assert "linear-gradient(to right" not in html
+
+
 def test_vector_layer_polygon_gets_fill_and_line_layers():
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
