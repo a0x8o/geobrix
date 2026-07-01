@@ -1204,21 +1204,24 @@ def prepare_layers(
     }
 
 
-def _pmtiles_register_js(sid: str, info: dict, uid: str) -> str:
+def _pmtiles_register_js(sid: str, info: dict, uid: str = "") -> str:
     """Return the JS snippet that registers one PMTiles source with the protocol.
 
     For ``"url"`` mode the archive is fetched on demand from the remote URL (keyed by
     that URL). For ``"embed"`` mode the bytes are base64-encoded into a JS ``Uint8Array``
-    wrapped in a ``File`` → ``pmtiles.FileSource`` keyed by ``uid_sid`` (per-map unique).
+    wrapped in a ``File`` → ``pmtiles.FileSource`` keyed by ``uid_sid`` (per-map unique)
+    when ``uid`` is given, or by ``sid`` alone when it is empty.
     """
     if info["mode"] == "url":
         return f"  proto.add(new pmtiles.PMTiles({_json_for_script(info['url'])}));\n"
     # Embed mode: base64 → Uint8Array → File → FileSource.
     # The File name IS the protocol key (FileSource.getKey() returns it) and MUST match
-    # the source URL "pmtiles://<uid>_<sid>" (see build_html). The per-map `uid` prefix
-    # keeps keys unique when several maps add archives to the one shared protocol; the
-    # name must NOT carry a ".pmtiles" suffix (that mismatched the URL -> blank map).
-    key = f"{uid}_{sid}"
+    # the source URL (see build_html). A per-map `uid` prefix keeps keys unique when
+    # several maps add archives to the one shared protocol (URL "pmtiles://<uid>_<sid>");
+    # callers that keep the bare "pmtiles://<sid>" URL (e.g. the dynamic widget) pass no
+    # uid and key by `sid` alone. The name must NOT carry a ".pmtiles" suffix (that
+    # mismatched the URL -> blank map).
+    key = f"{uid}_{sid}" if uid else sid
     b64 = base64.b64encode(info["bytes"]).decode("ascii")
     return (
         f"  const _b{sid} = Uint8Array.from(atob({json.dumps(b64)}), c => c.charCodeAt(0));\n"

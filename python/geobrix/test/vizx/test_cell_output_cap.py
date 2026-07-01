@@ -98,13 +98,24 @@ def _result(mode):
 
 
 def test_plot_interactive_raises_cap_on_interactive_when_enabled(monkeypatch):
+    import builtins
+
     calls = []
     monkeypatch.setattr(IV, "_raise_cell_output_cap", lambda: (calls.append(1) or True))
     monkeypatch.setattr(M, "prepare_layers", lambda *a, **k: _result("interactive"))
     monkeypatch.setattr(M, "build_html", lambda *a, **k: "<div>map</div>")
-    monkeypatch.setattr(
-        IV, "_notebook_display_html", lambda: None
-    )  # -> return html str
+    monkeypatch.setattr(IV, "_notebook_display_html", lambda: None)  # no displayHTML
+    # No IPython.display either -> plot_interactive returns the html str (its no-display
+    # channel fallback), so we can assert on it. IPython IS present in the light CI env,
+    # so without this the IPython.display path renders + returns None.
+    _real_import = builtins.__import__
+
+    def _no_ipython(name, *a, **k):
+        if name == "IPython.display":
+            raise ImportError("disabled for test")
+        return _real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ipython)
 
     out = IV.plot_interactive(_LYRS, set_cell_max_output=True)
     assert out == "<div>map</div>"
