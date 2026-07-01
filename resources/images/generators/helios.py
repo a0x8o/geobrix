@@ -498,10 +498,10 @@ def g_shard_grid(cx, cy, color, tint):
     )
     # Four quadrant shards — each tinted a slightly different shade
     shard_fills = [
-        (tint, "0.95"),   # top-left    — 11_326_791
-        (tint, "0.65"),   # top-right   — 11_327_791
-        (tint, "0.75"),   # bottom-left — 11_326_792
-        (tint, "0.50"),   # bottom-right— 11_327_792
+        (tint, "0.95"),        # top-left     — 11_326_791
+        (tint, "0.65"),        # top-right    — 11_327_791
+        ("#D8E8F5", "0.9"),    # bottom-left  — 11_326_792 (open water — no archive)
+        (tint, "0.50"),        # bottom-right — 11_327_792
     ]
     hw, hh = tw / 2, th / 2
     quadrants = [
@@ -543,7 +543,7 @@ def g_shard_grid(cx, cy, color, tint):
     labels = [
         (tx + hw * 0.5, ty + hh * 0.5, "326/791"),
         (tx + hw * 1.5, ty + hh * 0.5, "327/791"),
-        (tx + hw * 0.5, ty + hh * 1.5, "326/792"),
+        (tx + hw * 0.5, ty + hh * 1.5, "water"),
         (tx + hw * 1.5, ty + hh * 1.5, "327/792"),
     ]
     for (lx, ly, lbl) in labels:
@@ -564,10 +564,11 @@ def g_shard_grid(cx, cy, color, tint):
 
 
 def g_multi_archive(cx, cy, color, tint):
-    """Row of 4 small PMTiles archive icons — one archive per shard."""
+    """Small PMTiles archive icons — one per shard. SF yields three (the SW z11
+    parent is open water, so it produces no archive)."""
     out = []
-    # 4 small archive icons arranged in a 2×2 grid
-    positions = [(-52, -28), (8, -28), (-52, 28), (8, 28)]
+    # 3 small archive icons — two over one (SF produces three shard archives)
+    positions = [(-52, -28), (8, -28), (-22, 28)]
     aw, ah = 56, 38
     for (dx, dy) in positions:
         ax = cx + dx
@@ -606,7 +607,7 @@ def g_multi_archive(cx, cy, color, tint):
     out.append(
         f'<text x="{cx}" y="{cy + 66}" text-anchor="middle" '
         f'font-family="ui-monospace, Menlo, monospace" font-size="10" '
-        f'font-weight="700" fill="{color}">4 shards</text>'
+        f'font-weight="700" fill="{color}">3 shards</text>'
     )
     return "".join(out)
 
@@ -621,7 +622,7 @@ def g_mosaic_catalog(cx, cy, color, tint):
     tiles = [
         (cx - half, cy - half - 8, tint, "0.90", "326\n791"),
         (cx + gap/2, cy - half - 8, tint, "0.65", "327\n791"),
-        (cx - half, cy + gap/2 - 8, tint, "0.75", "326\n792"),
+        (cx - half, cy + gap/2 - 8, "#D8E8F5", "0.9", "water"),
         (cx + gap/2, cy + gap/2 - 8, tint, "0.50", "327\n792"),
     ]
     for (tx, ty, fill, opacity, lbl) in tiles:
@@ -877,9 +878,9 @@ NOTEBOOKS = {
         "subtitle": "NAIP GeoTIFF → web-mercator reproject → XYZ pyramid → raster PMTiles → inline map",
         "stages": [
             Stage(title="NAIP aerial imagery",
-                  subtitle="Stage a cloud-optimized NAIP GeoTIFF for SF via Planetary Computer STAC",
+                  subtitle="NaipDownloader stages a cloud-optimized NAIP GeoTIFF for SF via Planetary Computer STAC",
                   glyph=g_aerial_swatch,
-                  chip_text="binaryFile / gtiff_gbx"),
+                  chip_text="NaipDownloader"),
             Stage(title="Web-mercator reproject",
                   subtitle="gbx_rst_to_webmercator aligns the raster to the slippy-map tile grid (EPSG:3857)",
                   glyph=g_webmercator_globe,
@@ -903,13 +904,13 @@ NOTEBOOKS = {
         "subtitle": "USGS 3DEP DEM → COG catalog → slope/hillshade → PMTiles → inline map",
         "stages": [
             Stage(title="USGS 3DEP DEM",
-                  subtitle="StacClient fetches the SF elevation tile; gbx_rst_cog_convert writes COGs to a STAC Delta catalog",
+                  subtitle="DemDownloader fetches the SF elevation tile; gbx_rst_cog_convert writes COGs to the Delta catalog",
                   glyph=g_contour_dem,
-                  chip_text="gbx_rst_cog_convert"),
+                  chip_text="DemDownloader"),
             Stage(title="COG + STAC catalog",
-                  subtitle="COGs indexed in a queryable Delta table via StacClient — repeatable and auditable",
+                  subtitle="COGs indexed in a queryable Delta table — footprint + CRS via gbx_rst_boundingbox / gbx_rst_srid",
                   glyph=g_cog_catalog,
-                  chip_text="StacClient"),
+                  chip_text="gbx_rst_boundingbox"),
             Stage(title="Slope / hillshade",
                   subtitle="gbx_rst_slope + gbx_rst_hillshade derive solar-relevant terrain metrics per tile",
                   glyph=g_hillshade_relief,
@@ -920,7 +921,7 @@ NOTEBOOKS = {
                   chip_text="plot_cog / plot_pmtiles"),
         ],
         "footer_chips": [
-            "gbx_rst_cog_convert", "StacClient",
+            "DemDownloader", "gbx_rst_cog_convert", "gbx_rst_boundingbox",
             "gbx_rst_slope", "gbx_rst_hillshade",
             "gbx_rst_xyzpyramid", "plot_cog", "plot_pmtiles",
         ],
@@ -934,7 +935,7 @@ NOTEBOOKS = {
                   glyph=g_vector_tile_grid,
                   chip_text="gbx_st_asmvt_pyramid"),
             Stage(title="Shard assignment",
-                  subtitle="shiftright(x, z−11) maps every tile to a coarse z11 parent — four non-overlapping SF shards",
+                  subtitle="shiftright(x, z−11) maps every tile to a coarse z11 parent — non-overlapping SF shards (only tiles with data become archives)",
                   glyph=g_shard_grid,
                   chip_text="shiftright(x, z−shard_z)"),
             Stage(title="Per-shard archives",
