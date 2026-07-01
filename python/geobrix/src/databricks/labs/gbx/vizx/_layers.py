@@ -1,0 +1,154 @@
+"""Layer model for the unified VizX viewers (vector / raster / grid / pmtiles)."""
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+_VALID = {"vector", "raster", "grid", "pmtiles"}
+
+
+@dataclass
+class Layer:
+    kind: str
+    data: Any
+    geom_col: Optional[str] = None
+    cellid_col: Optional[str] = None
+    column: Optional[str] = None
+    grid_system: Optional[str] = None
+    grid_conf: Optional[dict] = None
+    cmap: str = "viridis"
+    scale: str = "linear"
+    opacity: Optional[float] = None
+    color: Optional[str] = None
+    width: Optional[float] = None
+    fill: bool = True
+    band: Optional[int] = None
+    style: Optional[dict] = None
+    simplify: Optional[dict] = None
+    label: Optional[str] = None
+
+    def __post_init__(self):
+        if self.kind not in _VALID:
+            raise ValueError(f"Layer.kind must be one of {_VALID}, got {self.kind!r}")
+
+
+def vector_layer(
+    data,
+    *,
+    geom_col=None,
+    column=None,
+    cmap="viridis",
+    scale="linear",
+    fill=True,
+    color=None,
+    width=None,
+    opacity=None,
+    simplify=None,
+    label=None,
+):
+    return Layer(
+        "vector",
+        data,
+        geom_col=geom_col,
+        column=column,
+        cmap=cmap,
+        scale=scale,
+        fill=fill,
+        color=color,
+        width=width,
+        opacity=opacity,
+        simplify=simplify,
+        label=label,
+    )
+
+
+def raster_layer(data, *, band=None, cmap="viridis", opacity=1.0, label=None):
+    return Layer("raster", data, band=band, cmap=cmap, opacity=opacity, label=label)
+
+
+def grid_layer(
+    data,
+    *,
+    grid_system,
+    cellid_col=None,
+    column=None,
+    cmap="viridis",
+    scale="linear",
+    opacity=0.7,
+    grid_conf=None,
+    label=None,
+):
+    """A grid (H3 / BNG / quadbin) layer, colored per cell by ``column`` through ``cmap``.
+
+    ``scale`` controls the value→color mapping: ``"linear"`` (default) spreads color
+    evenly across min..max; ``"quantile"`` spreads by percentile rank, so a skewed
+    distribution (e.g. most cells holding a small count with a long tail) stays visually
+    distinguishable instead of collapsing into one end of the colormap.
+    """
+    return Layer(
+        "grid",
+        data,
+        grid_system=grid_system,
+        cellid_col=cellid_col,
+        column=column,
+        cmap=cmap,
+        scale=scale,
+        opacity=opacity,
+        grid_conf=grid_conf,
+        label=label,
+    )
+
+
+def pmtiles_layer(
+    data, *, style=None, simplify=None, label=None, opacity=None, color=None
+):
+    """A PMTiles layer (raster or vector, auto-detected from the archive tile type).
+
+    ``opacity`` sets raster-opacity (raster tiles) or fill-opacity (vector tiles);
+    ``color`` sets the fill-color for vector tiles. Both default to None → the tier's
+    standard defaults (raster-opacity 1.0; vector fill from ``emphasis``). Use a low
+    ``opacity`` to make a PMTiles layer a muted underlay/context in a multi-layer overlay.
+    """
+    return Layer(
+        "pmtiles",
+        data,
+        style=style,
+        simplify=simplify,
+        label=label,
+        opacity=opacity,
+        color=color,
+    )
+
+
+def _looks_pmtiles(obj) -> bool:
+    if isinstance(obj, (bytes, bytearray)):
+        return obj[:7] == b"PMTiles"
+    if isinstance(obj, str):
+        return obj.endswith(".pmtiles")
+    return False
+
+
+def as_layers(obj) -> list:
+    """Coerce a Layer / list[Layer] / bare input into list[Layer]."""
+    if isinstance(obj, (list, tuple)) and len(obj) == 0:
+        raise ValueError("as_layers: no layers provided")
+    if isinstance(obj, Layer):
+        return [obj]
+    if (
+        isinstance(obj, (list, tuple))
+        and obj
+        and all(isinstance(x, Layer) for x in obj)
+    ):
+        return list(obj)
+    if _looks_pmtiles(obj):
+        return [pmtiles_layer(obj)]
+    # bare raster: a path to a known raster ext, ndarray, or tile struct -> raster; else vector.
+    if isinstance(obj, str) and obj.lower().endswith((".tif", ".tiff", ".cog")):
+        return [raster_layer(obj)]
+    try:
+        import numpy as np
+
+        if isinstance(obj, np.ndarray):
+            return [raster_layer(obj)]
+    except ImportError:
+        pass
+    return [vector_layer(obj)]

@@ -436,7 +436,9 @@ def test_file_gdb_multi_fragment_streaming(spark, tmp_path):
     from shapely import from_wkb as _from_wkb
 
     if importlib.util.find_spec("osgeo") is None:
-        pytest.skip("native osgeo (heavy GDAL natives) not present; file_gdb_gbx write requires osgeo")
+        pytest.skip(
+            "native osgeo (heavy GDAL natives) not present; file_gdb_gbx write requires osgeo"
+        )
 
     register(spark)
     # Build a small dataset that is guaranteed to span multiple partitions. Use
@@ -444,13 +446,17 @@ def test_file_gdb_multi_fragment_streaming(spark, tmp_path):
     from shapely import Polygon as _Polygon
 
     def _box(x, y):
-        return bytearray(to_wkb(_Polygon([(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1), (x, y)])))
+        return bytearray(
+            to_wkb(_Polygon([(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1), (x, y)]))
+        )
 
     rows = [(f"feat_{i}", i * 10, _box(float(i), 0.0), "4326", "") for i in range(10)]
     df = spark.createDataFrame(
         rows,
         schema="name string, pop int, geom_0 binary, geom_0_srid string, geom_0_srid_proj string",
-    ).repartition(3, F.col("name"))  # force >=2 fragments
+    ).repartition(
+        3, F.col("name")
+    )  # force >=2 fragments
 
     out = str(tmp_path / "multi.gdb")
     df.write.format("file_gdb_gbx").mode("overwrite").save(out)
@@ -463,16 +469,30 @@ def test_file_gdb_multi_fragment_streaming(spark, tmp_path):
 
     # Attribute values must survive intact.
     names_back = {r["name"] for r in rows_back}
-    assert names_back == {f"feat_{i}" for i in range(10)}, f"name mismatch: {names_back}"
+    assert names_back == {
+        f"feat_{i}" for i in range(10)
+    }, f"name mismatch: {names_back}"
     pops_back = {r["name"]: r["pop"] for r in rows_back}
     for i in range(10):
-        assert pops_back[f"feat_{i}"] == i * 10, f"pop mismatch for feat_{i}: {pops_back[f'feat_{i}']}"
+        assert (
+            pops_back[f"feat_{i}"] == i * 10
+        ), f"pop mismatch for feat_{i}: {pops_back[f'feat_{i}']}"
 
     # Geometry must survive (non-null, correct type). OpenFileGDB promotes Polygon
     # to MultiPolygon in the layer geometry type, so accept both.
-    gcol = next(f.name for f in back.schema.fields if f.name not in ("name", "pop") and not f.name.endswith(("_srid", "_srid_proj")))
-    geom_types = {_from_wkb(bytes(r[gcol])).geom_type for r in rows_back if r[gcol] is not None}
-    assert geom_types <= {"Polygon", "MultiPolygon"}, f"geometry type mismatch: {geom_types}"
+    gcol = next(
+        f.name
+        for f in back.schema.fields
+        if f.name not in ("name", "pop")
+        and not f.name.endswith(("_srid", "_srid_proj"))
+    )
+    geom_types = {
+        _from_wkb(bytes(r[gcol])).geom_type for r in rows_back if r[gcol] is not None
+    }
+    assert geom_types <= {
+        "Polygon",
+        "MultiPolygon",
+    }, f"geometry type mismatch: {geom_types}"
     assert len(geom_types) > 0, "no non-null geometries read back"
 
 
@@ -492,9 +512,10 @@ def test_file_gdb_tx_batch_boundary(spark, tmp_path, monkeypatch):
     """
     import importlib.util
 
-    import databricks.labs.gbx.ds.vector as _vec_mod
     from shapely import Polygon as _Polygon
     from shapely import from_wkb as _from_wkb
+
+    import databricks.labs.gbx.ds.vector as _vec_mod
 
     if importlib.util.find_spec("osgeo") is None:
         pytest.skip(
@@ -509,11 +530,7 @@ def test_file_gdb_tx_batch_boundary(spark, tmp_path, monkeypatch):
 
     def _box(x, y):
         return bytearray(
-            to_wkb(
-                _Polygon(
-                    [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1), (x, y)]
-                )
-            )
+            to_wkb(_Polygon([(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1), (x, y)]))
         )
 
     # 7 features, 2 partitions -> >=2 fragments; batch=3 means commits at
@@ -536,13 +553,13 @@ def test_file_gdb_tx_batch_boundary(spark, tmp_path, monkeypatch):
 
     # (b) attribute values survive
     name_to_val = {r["name"]: r["val"] for r in rows_back}
-    assert set(name_to_val.keys()) == {f"r{i}" for i in range(7)}, (
-        f"name set mismatch: {set(name_to_val.keys())}"
-    )
+    assert set(name_to_val.keys()) == {
+        f"r{i}" for i in range(7)
+    }, f"name set mismatch: {set(name_to_val.keys())}"
     for i in range(7):
-        assert name_to_val[f"r{i}"] == i * 5, (
-            f"val mismatch for r{i}: got {name_to_val[f'r{i}']}"
-        )
+        assert (
+            name_to_val[f"r{i}"] == i * 5
+        ), f"val mismatch for r{i}: got {name_to_val[f'r{i}']}"
 
     # (c) geometry survives (non-null; OpenFileGDB may promote Polygon->MultiPolygon)
     gcol = next(
@@ -552,13 +569,12 @@ def test_file_gdb_tx_batch_boundary(spark, tmp_path, monkeypatch):
         and not f.name.endswith(("_srid", "_srid_proj"))
     )
     geom_types = {
-        _from_wkb(bytes(r[gcol])).geom_type
-        for r in rows_back
-        if r[gcol] is not None
+        _from_wkb(bytes(r[gcol])).geom_type for r in rows_back if r[gcol] is not None
     }
-    assert geom_types <= {"Polygon", "MultiPolygon"}, (
-        f"unexpected geometry types: {geom_types}"
-    )
+    assert geom_types <= {
+        "Polygon",
+        "MultiPolygon",
+    }, f"unexpected geometry types: {geom_types}"
     assert len(geom_types) > 0, "all geometries were null after round-trip"
 
 

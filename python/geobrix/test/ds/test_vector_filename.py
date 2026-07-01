@@ -10,8 +10,7 @@ import importlib.util
 import os
 
 import pytest
-from shapely import Point
-from shapely import to_wkb
+from shapely import Point, to_wkb
 
 from databricks.labs.gbx.ds.register import register
 from databricks.labs.gbx.ds.vector import (
@@ -31,8 +30,12 @@ def test_canonical_ext():
 
 def test_complete_ext_appends_when_missing():
     assert _complete_ext("roads", ".shp.zip") == "roads.shp.zip"
-    assert _complete_ext("roads.shp", ".shp.zip") == "roads.shp.zip"  # partial -> complete
-    assert _complete_ext("roads.shp.zip", ".shp.zip") == "roads.shp.zip"  # already complete
+    assert (
+        _complete_ext("roads.shp", ".shp.zip") == "roads.shp.zip"
+    )  # partial -> complete
+    assert (
+        _complete_ext("roads.shp.zip", ".shp.zip") == "roads.shp.zip"
+    )  # already complete
     assert _complete_ext("city", ".gpkg") == "city.gpkg"
     assert _complete_ext("city.gpkg", ".gpkg") == "city.gpkg"
 
@@ -73,8 +76,9 @@ def test_filename_extension_completed(tmp_path):
 
 
 def test_writer_resolves_gpkg_stem(tmp_path):
-    from databricks.labs.gbx.ds.vector import VectorGbxWriter
     from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
+
+    from databricks.labs.gbx.ds.vector import VectorGbxWriter
 
     sch = StructType(
         [StructField("geom", BinaryType()), StructField("geom_srid", IntegerType())]
@@ -101,8 +105,7 @@ def test_writer_resolves_gpkg_stem(tmp_path):
 
 def _make_df(spark):
     rows = [
-        (str(i), bytearray(to_wkb(Point(float(i), 51.0))), "4326", "")
-        for i in range(3)
+        (str(i), bytearray(to_wkb(Point(float(i), 51.0))), "4326", "") for i in range(3)
     ]
     return spark.createDataFrame(
         rows,

@@ -1,0 +1,177 @@
+---
+sidebar_position: 7
+title: 3DEP Downloader (DEM)
+---
+
+## 3DEP Downloader (DEM)
+
+`DemDownloader` fetches **USGS 3DEP (3D Elevation Program)** seamless elevation for any US bounding-box AOI via the [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/) STAC API and stages the DEM GeoTIFFs into a Unity Catalog Volume.
+
+3DEP provides bare-earth digital elevation over the United States as a seamless mosaic, offered at multiple ground resolutions — typically **10 m** (1/3 arc-second) and **30 m** (1 arc-second). The downloader selects a resolution by **ground sample distance (gsd)** rather than by year.
+
+:::note Prerequisites
+- GeoBrix installed (wheel includes `databricks.labs.gbx.sample`)
+- Unity Catalog Volume already exists at `/Volumes/{catalog}/{schema}/{volume}/...`
+- `pystac-client` and `planetary-computer` packages installed: `%pip install pystac-client planetary-computer`
+- 3DEP coverage is the United States only
+:::
+
+---
+
+## How It Works
+
+`DemDownloader` follows the same **discover → download → read** pattern as `NaipDownloader` and `OvertureClient`, but its selection axis is **resolution (gsd)**, not year:
+
+1. **`discover(bbox, resolution=None)`** — driver-side STAC search against the `3dep-seamless` collection. Returns one row per distinct DEM `data` asset intersecting the AOI: `item_id`, `gsd`, `item_bbox`, `href`. Pass a `resolution` (gsd in metres) to pre-filter, or leave it `None` to see all available tiers.
+
+2. **`download(bbox, out_dir, resolution="finest", ...)`** — selects a gsd tier, then fans out the per-tile downloads as parallel Spark tasks via `StacClient.download()`. Each tile is **windowed to the AOI on read** (`bbox` + `bbox_crs`) so only the relevant pixels are stored, with correct georeferencing handled in-product. Returns a metadata DataFrame: `item_id`, `asset_name`, `out_file_path`, `out_file_sz`, `is_out_file_valid`, `last_update`.
+
+3. **`read(out_dir)`** — loads the staged GeoTIFFs from `out_dir` into a Spark tile DataFrame using the `raster_gbx` data source (the light-tier pyrx raster reader). Returns a DataFrame with a `tile` struct column ready for GeoBrix RasterX functions.
+
+Serverless-safe: no `spark.conf.set`, `_jvm`, `.rdd`, `cache`, or `persist` — parallelism comes from `StacClient.download()`'s Spark fan-out.
+
+---
+
+## API Reference
+
+### `DemDownloader`
+
+```python
+from databricks.labs.gbx.sample.dem import DemDownloader
+
+downloader = DemDownloader()
+# Defaults: Planetary Computer catalog, planetary_computer signing,
+#           3dep-seamless collection, "data" asset
+```
+
+#### `discover(bbox, resolution=None, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bbox` | `(minx, miny, maxx, maxy)` | AOI in EPSG:4326 (WGS84 longitude/latitude) |
+| `resolution` | `int \| None` | Keep only items whose gsd (metres) equals this. `None` returns all available tiers. |
+| `spark` | `SparkSession \| None` | Active SparkSession. Defaults to `SparkSession.getActiveSession()`. |
+
+Returns a DataFrame with columns: `item_id` (str), `gsd` (int), `item_bbox` (array\<double\>), `href` (str).
+
+#### `download(bbox, out_dir, resolution="finest", bbox_crs="EPSG:4326", max_mpp=None, partitions=None, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bbox` | `(minx, miny, maxx, maxy)` | AOI in EPSG:4326 |
+| `out_dir` | `str` | Output directory — a UC Volume path (e.g. `/Volumes/...`) or local path |
+| `resolution` | `int \| "finest"` | `"finest"` (default) picks the **minimum** gsd (e.g. 10 m over 30 m). An integer selects that exact gsd. When the source exposes no gsd property, `"finest"` keeps all matching items (graceful no-op). |
+| `bbox_crs` | `str` | CRS of the `bbox` parameter (default `"EPSG:4326"`). |
+| `max_mpp` | `float \| None` | Maximum pixel size in source-CRS units for decimated reads. `None` (default) keeps native resolution — a small AOI over ~10 m 3DEP needs no decimation. |
+| `partitions` | `int \| None` | Target partition count for the `spark.range` fan-out. `None` → one task per tile. |
+| `spark` | `SparkSession \| None` | Active SparkSession. |
+
+Returns a metadata DataFrame with columns: `item_id`, `asset_name`, `out_file_path`, `out_file_sz`, `is_out_file_valid`, `last_update`.
+
+#### `read(out_dir, spark=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `out_dir` | `str` | Root directory written by `download()` |
+| `spark` | `SparkSession \| None` | Active SparkSession. |
+
+Returns a Spark DataFrame with a `tile` struct column, partitioned by source path — ready for GeoBrix RasterX operations.
+
+---
+
+### `download_dem_aoi` (convenience function)
+
+Combines discover + download in a single call:
+
+```python
+from databricks.labs.gbx.sample.dem import download_dem_aoi
+
+download_dem_aoi(
+    spark,
+    bbox,
+    out_dir,
+    resolution="finest",   # int (exact gsd) or "finest" (min gsd)
+    max_mpp=None,
+    # **kw forwarded to DemDownloader.download() — e.g. partitions=, bbox_crs=
+)
+```
+
+---
+
+## Copy-Paste Example
+
+The example below downloads the finest-resolution 3DEP DEM for a San Francisco AOI into a UC Volume, then reads the tiles into a Spark DataFrame for terrain analysis.
+
+```python
+# Install dependencies if not already present
+# %pip install pystac-client planetary-computer
+
+from databricks.labs.gbx.sample.dem import DemDownloader
+
+# San Francisco AOI (lon/lat, EPSG:4326)
+SF_BBOX = (-122.52, 37.70, -122.35, 37.83)
+
+VOLUME = "/Volumes/main/default/geobrix_samples/dem"
+
+downloader = DemDownloader()
+
+# Step 1 — discover: see which gsd tiers are available for this AOI
+items = downloader.discover(SF_BBOX)
+items.groupBy("gsd").count().orderBy("gsd").show()
+# +---+-----+
+# |gsd|count|
+# +---+-----+
+# | 10|   1 |
+# | 30|   1 |
+# +---+-----+
+
+# Step 2 — download: fetch the finest tier (or pin a gsd with resolution=30)
+meta = downloader.download(SF_BBOX, VOLUME, resolution="finest")
+meta.select("item_id", "out_file_path", "out_file_sz", "is_out_file_valid").show(truncate=False)
+
+# Step 3 — read: load tiles into Spark for GeoBrix RasterX operations
+tiles = downloader.read(VOLUME)
+tiles.printSchema()
+```
+
+### One-shot convenience
+
+```python
+from databricks.labs.gbx.sample.dem import download_dem_aoi
+
+meta = download_dem_aoi(
+    spark,
+    bbox=SF_BBOX,
+    out_dir=VOLUME,
+    resolution="finest",
+)
+meta.show()
+```
+
+### Use the tiles with RasterX
+
+A DEM tile drives terrain analysis directly — slope, aspect, and hillshade:
+
+```python
+from databricks.labs.gbx.rasterx import functions as rst
+
+terrain = tiles.select(
+    rst.rst_slope("tile").alias("slope"),
+    rst.rst_aspect("tile").alias("aspect"),
+    rst.rst_hillshade("tile").alias("hillshade"),
+)
+```
+
+:::tip Resolution selection
+`resolution="finest"` picks the single smallest gsd (highest resolution) in the STAC results — 10 m over 30 m for 3DEP. To compare tiers or inspect what's available, call `discover()` first and inspect the `gsd` column before downloading.
+:::
+
+:::info 3DEP coverage
+3DEP covers the **United States**. It is a bare-earth elevation product (a DEM), not a surface model — building and canopy heights are not included.
+:::
+
+---
+
+## Notebook Reference
+
+`DemDownloader` is used in the [Helios NB-03 notebook](../notebooks/helios) to stage a 3DEP DEM for San Francisco, then derive slope, aspect, hillshade, and a per-H3-cell solar-suitability score.

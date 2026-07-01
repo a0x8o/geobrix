@@ -1,11 +1,11 @@
 ---
 sidebar_position: 11
-title: VizX Function Reference
+title: VizX
 ---
 
-import VizXIcon from '../../../resources/images/VizX.png';
+import VizXIcon from '../../../resources/images/brand/VizX.png';
 
-# <img src={VizXIcon} alt="VizX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> Function Reference
+# <img src={VizXIcon} alt="VizX" style={{height: '3em', width: 'auto', verticalAlign: 'middle', marginRight: '0.5rem'}} /> VizX
 
 `databricks.labs.gbx.vizx` renders rasters and turns Spark DataFrames into GeoDataFrames for interactive maps. It is **tier-agnostic** — the raster plotters take tile bytes (use them with `pyrx` *or* `rasterx` tiles), and the vector adapters take any Spark DataFrame.
 
@@ -36,339 +36,30 @@ from databricks.labs.gbx.vizx import (
     plot_mask_layers,
     plot_static,
     plot_interactive,
+    plot_pmtiles,
+    plot_cog,
     as_gdf,
     cells_as_gdf,
     grid_as_gdf,
 )
+from databricks.labs.gbx.pmtiles import pmtiles_info
 ```
 
-## Raster rendering
-
-Both plotters auto-decimate rasters larger than `max_pixels` on either axis, and apply a per-band 2nd–98th percentile stretch to integer rasters whose values exceed 255 (typical for EO data — Sentinel-2 UInt16 reflectance, Landsat, etc.) so the visible range isn't clipped. NoData is honored (masked) and excluded from the stretch statistics.
-
-The `composite` parameter controls how bands are combined into a single image:
-
-| `composite` value | Behaviour |
-|---|---|
-| `"auto"` (default) | 1 band → viridis colormap; 3+ bands → RGB composite |
-| `"depth"` | Per-pixel count of bands covering each pixel, rendered as a viridis gradient; pixels covered by no band are transparent |
-
-`composite="depth"` is intended for multi-band presence-mask stacks (e.g. rasterized H3 cells from several thresholds) where an RGB composite would appear mostly black. For single-band constant-value masks — such as a solid coverage footprint — `composite="auto"` renders the footprint as a solid viridis tone over a light-grey background rather than a blank plot.
-
-### `plot_raster`
-
-```python
-plot_raster(raster_bytes, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto")
-```
-
-Render a raster from its in-memory bytes — e.g. a tile's `raster` field collected from a GeoBrix DataFrame:
-
-```python
-from databricks.labs.gbx.vizx import plot_raster
-
-row = df.select("tile").first()
-plot_raster(row["tile"]["raster"])
-
-# For a multi-band presence-mask stack, show how many bands cover each pixel:
-plot_raster(row["tile"]["raster"], composite="depth")
-```
-
-### `plot_file`
-
-```python
-plot_file(path, *, fig_w=10, fig_h=10, max_pixels=2000, composite="auto")
-```
-
-Render a raster from disk (GeoTIFF, VRT, …) with the same decimation + stretch pipeline. A leading `dbfs:` or `file:` scheme is stripped automatically, so scheme-qualified Databricks paths (`dbfs:/Volumes/…`, `file:///Volumes/…`) work as well as the bare FUSE path:
-
-```python
-from databricks.labs.gbx.vizx import plot_file
-
-plot_file("/Volumes/main/geobrix_samples/geobrix-examples/nyc/dem.tif")
-
-# Coverage-depth view of a multi-band stack on disk:
-plot_file("/Volumes/main/my_schema/my_vol/sentinel_stack.tif", composite="depth")
-```
-
-### `plot_mask_layers`
-
-```python
-plot_mask_layers(layers, *, fig_w=10, fig_h=8, max_pixels=2000, colors=None, title="coverage layers")
-```
-
-Overlay several single-band presence-mask tiles on one axes, each drawn as a solid colour with a legend. Useful for multi-threshold coverage views — for example, showing which H3 cells contain data at each of several observation-count thresholds.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `layers` | `list[tuple[str, bytes]]` | — | List of `(label, raster_bytes)` pairs. Each raster must be a single-band presence mask. |
-| `fig_w` | `float` | `10` | Figure width in inches. |
-| `fig_h` | `float` | `8` | Figure height in inches. |
-| `max_pixels` | `int` | `2000` | Decimate above this longest-edge pixel count before rendering. |
-| `colors` | `list` or `None` | `None` | Matplotlib color values, one per layer. Defaults to the `tab10` qualitative cycle. |
-| `title` | `str` | `"coverage layers"` | Axes title. |
-
-All tiles must share the same grid and extent — for example, produced on a shared canvas via [`rst_h3_gridspec`](./raster-functions#h3-grid). Layers are drawn in order: pass the largest footprint first and the smallest last so nested coverage remains visible.
-
-```python
-from databricks.labs.gbx.vizx import plot_mask_layers
-
-# Each raster is a single-band H3 presence mask for a different threshold.
-# Tiles share the same canvas (same gridspec extent).
-plot_mask_layers(
-    [
-        ("≥ 1 observation",  tier1_raster_bytes),
-        ("≥ 10 observations", tier2_raster_bytes),
-        ("≥ 50 observations", tier3_raster_bytes),
-    ],
-    title="NYC observation coverage by threshold",
-)
-```
-
-See the [H3 rasterize notebook](../notebooks/h3-rasterize) for a full worked example of building shared-canvas presence-mask layers.
-
-## Vector adapters
-
-The vector adapters collect to the driver for interactive mapping. By default they cap the collect at `max_rows=10_000` and emit a warning if the input has more rows (pass `max_rows=None` to collect everything — at your own risk on large frames). The returned `GeoDataFrame` is in EPSG:4326, ready for `.plot()` (matplotlib) or — for an interactive map — [`plot_interactive`](#plot_interactive).
-
-For interactive (pan/zoom) maps, prefer [`plot_interactive`](#plot_interactive) over a raw `GeoDataFrame.explore()`: it is scale-safe (bare `.explore()` embeds every vertex inline, so millions of vertices hang folium and render blank) and Databricks-safe (it renders via `displayHTML`, whereas a returned folium map does not auto-render in a Databricks notebook). Calling `gdf.explore()` directly still works for small in-memory frames in plain Jupyter.
-
-### `as_gdf`
-
-```python
-as_gdf(df, wkt_col="wkt", *, max_rows=10_000)
-```
-
-Convert a Spark DataFrame with a WKT geometry column into a `geopandas.GeoDataFrame`. Non-geometry columns are preserved; the WKT column is replaced by the geometry:
-
-```python
-from databricks.labs.gbx.vizx import as_gdf
-
-gdf = as_gdf(df_with_wkt, wkt_col="wkt")
-gdf.explore()   # interactive folium map (needs the [vizx] extra)
-```
-
-### `cells_as_gdf`
-
-```python
-cells_as_gdf(df, cell_col="cellid", extra_cols=(), *, max_rows=10_000, dissolve_by=None)
-```
-
-Convert a DataFrame of H3 cell ids into a `GeoDataFrame` of cell-boundary polygons (boundaries computed with the `h3` library). Carry through attribute columns with `extra_cols`.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `df` | `DataFrame` | — | Spark DataFrame with an H3 cell-id column. |
-| `cell_col` | `str` | `"cellid"` | Name of the column containing H3 cell ids (bigint). |
-| `extra_cols` | `tuple` or `list` | `()` | Additional columns to carry through to the GeoDataFrame. |
-| `max_rows` | `int` or `None` | `10_000` | Row cap before the collect; `None` collects all rows. |
-| `dissolve_by` | `str` or `None` | `None` | When set, dissolve cell polygons by this column, returning one footprint polygon per distinct value instead of one row per cell. Must be in `extra_cols`. |
-
-Without `dissolve_by`, each row represents one cell (useful for per-cell tooltips in `.explore()`). With `dissolve_by`, rows are merged per group into a single union footprint — far fewer geometries for large cell sets:
-
-```python
-from databricks.labs.gbx.vizx import cells_as_gdf
-
-# Per-cell choropleth:
-gdf = cells_as_gdf(df_cells, cell_col="cellid", extra_cols=["count"])
-gdf.explore(column="count")   # choropleth (needs mapclassify, bundled in [vizx])
-
-# Dissolve to one footprint polygon per category:
-gdf_dissolved = cells_as_gdf(
-    df_cells,
-    cell_col="cellid",
-    extra_cols=["category"],
-    dissolve_by="category",
-)
-gdf_dissolved.explore()
-```
-
-### `grid_as_gdf`
-
-```python
-grid_as_gdf(grid, srid=None)
-```
-
-Convert a grid spec — as returned by [`rst_h3_gridspec`](./raster-functions#h3-grid) — into a 1-row `GeoDataFrame` of its bounding-box rectangle in EPSG:4326. Compose with `cells_as_gdf(...).explore()` to overlay the shared canvas boundary over the H3 cells it contains.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `grid` | `Row`, `dict` | — | A Spark Row or dict with `xmin`, `ymin`, `xmax`, `ymax` fields — the struct that `rst_h3_gridspec` returns in its `grid` field. |
-| `srid` | `int` or `None` | `None` | CRS override. Falls back to the grid's own `srid` field; if both are absent, EPSG:4326 is assumed. When the source CRS is not 4326, the bounding box is reprojected via `pyproj`. |
-
-Optional metadata fields `pixel_size`, `width`, and `height` are carried through if present on the input.
-
-```python
-from databricks.labs.gbx.vizx import cells_as_gdf, grid_as_gdf
-
-# grid_row is the 'grid' field from an rst_h3_gridspec result
-grid_gdf = grid_as_gdf(grid_row)
-cells_gdf = cells_as_gdf(df_cells, cell_col="cellid", extra_cols=["count"])
-
-# Compose: H3 cells as a choropleth with the canvas boundary drawn on top
-m = cells_gdf.explore(column="count")
-grid_gdf.explore(m=m, color="black", style_kwds={"fill": False})
-```
-
-See the [H3 rasterize notebook](../notebooks/h3-rasterize) for a worked example pairing `grid_as_gdf` with `cells_as_gdf` to build a shared-canvas overlay.
-
-## Vector static maps
-
-`plot_static` renders Spark- or GeoPandas-derived geometries (or H3 cells) over
-a basemap as a **static** matplotlib figure — the GitHub-renderable counterpart
-to `GeoDataFrame.explore()` (whose Leaflet/folium output renders a blank
-*"Make this Notebook Trusted"* placeholder on GitHub and the docs site).
-
-The basemap is fetched from a web tile server (via `contextily`) **at execution
-time** and rasterized into the figure, so it bakes into the committed notebook
-output PNG — GitHub then displays it with no network. If the executing
-environment has no egress, the map renders without a basemap and a warning is
-emitted (never a hard error).
-
-### `plot_static`
-
-```python
-plot_static(
-    data, *, geom_col=None, grid_system=None, grid_conf=None, column=None,
-    cmap="viridis", legend=True, basemap=True, basemap_source=None, alpha=0.8,
-    edgecolor="face", fill=True, markersize=None, title=None, fig_w=10, fig_h=10,
-    max_rows=10_000, srid=None, ax=None,
-)
-```
-
-`data` is a Spark DataFrame **or** a `geopandas.GeoDataFrame`. Returns the
-matplotlib `Axes`; pass it back via `ax=` to overlay layers on one map. Every
-layer is reprojected to Web Mercator (EPSG:3857), so a `basemap=False` overlay
-lines up with a basemap layer on the same axes. `plot_static` does **not** call
-`pyplot.show()` — in a notebook the figure auto-displays at cell end with all
-overlaid layers; a script can call `plt.show()` itself. Pass `fill=False` to
-draw geometries as outlines only (no face), so a boundary doesn't cover the
-layers beneath it.
-
-**Geometry columns** accept the same encodings as every other `gbx_st_*`
-function — WKT, EWKT, WKB, EWKB, and native `GEOMETRY` / `GEOGRAPHY` (coerced
-in-Spark via `st_asbinary`). Set **`grid_system`** to treat the column as DGGS
-cell ids instead:
-
-| `grid_system` | Behaviour |
-|---|---|
-| `None` (default) | Column is a geometry encoding (WKT/EWKT/WKB/EWKB/`GEOMETRY`/`GEOGRAPHY`). |
-| `'h3'` | H3 cell ids (string index **or** bigint) → cell-boundary polygons (lon/lat). |
-| `'quadbin'` | Quadbin cell ids (bigint) → tile-boundary polygons (lon/lat). |
-| `'bng'` | British National Grid cell ids (string, e.g. `"TQ38"`) → cell polygons in EPSG:27700. |
-| `'custom'` | Custom-grid cell ids → cell polygons; **requires `grid_conf=`** (the grid spec that defines the grid). CRS comes from the grid's `srid`. |
-
-Cell boundaries reuse the lightweight GridX cell→geometry implementations, so
-they match `gbx_h3_*` / `gbx_quadbin_aswkb` / `gbx_bng_aswkb` / `gbx_custom_cellaswkb`
-exactly. Each grid's native CRS is honoured (BNG is metres in EPSG:27700) and
-reprojected to Web Mercator for the basemap. A custom grid whose `srid` is `<= 0`
-has no CRS, so its basemap is skipped (with a warning); pass `basemap=False`.
-
-For a custom grid, `grid_conf` is the grid-spec `Row`/dict — the same struct the
-custom GridX functions consume (`bound_x_min`/`bound_x_max`, `bound_y_min`/`bound_y_max`,
-`cell_splits`, `root_cell_size_x`/`root_cell_size_y`, `srid`):
-
-```python
-plot_static(cells_df, grid_system="custom", grid_conf=grid_spec, column="value")
-```
-
-```python
-from databricks.labs.gbx.vizx import plot_static
-
-# H3 choropleth over a basemap, then overlay the shared-canvas boundary as a
-# red outline (fill=False so it doesn't cover the cells; basemap=False so it
-# doesn't re-fetch tiles). Both layers reproject to 3857, so they align.
-ax = plot_static(cells_df, grid_system="h3", column="count", title="Coverage")
-plot_static(grid_gdf, ax=ax, fill=False, edgecolor="red", basemap=False)
-```
-
-`basemap_source` overrides the default `contextily.providers.CartoDB.Positron`;
-`basemap=False` skips tiles entirely (deterministic, no network).
-
-## Vector interactive maps
-
-`plot_interactive` is the **interactive twin of `plot_static`** — same input
-model (a `geopandas.GeoDataFrame`, or a Spark DataFrame via `geom_col` /
-`grid_system`), but it renders a pan/zoom [folium](https://python-visualization.github.io/folium/)
-map instead of a static matplotlib figure. It is the recommended way to get an
-interactive map from GeoBrix results: it is **scale-safe** and
-**Databricks-safe**, neither of which a bare `GeoDataFrame.explore()` is.
-
-- **Scale-safe.** A raw `.explore()` embeds every vertex inline, so a few million
-  vertices hang folium and render a blank map. `plot_interactive` counts vertices
-  and, above a threshold, automatically falls back to a rasterized image overlay
-  (a viridis PNG laid over the basemap) that scales to millions of vertices.
-- **Databricks-safe.** It renders via `displayHTML` internally. Returning a folium
-  map (or calling `.explore()`) does **not** auto-render in a Databricks notebook;
-  `plot_interactive` does the right thing in both Databricks and plain Jupyter.
-
-### `plot_interactive`
-
-```python
-plot_interactive(
-    data, *, column=None, geom_col=None, grid_system=None, grid_conf=None,
-    max_rows=10_000, sample_seed=None, srid=None, mode="auto",
-    max_vertices=60_000, max_px=1400, opacity=0.65, debug_level=1, **explore_kw,
-)
-```
-
-`data` is a Spark DataFrame **or** a `geopandas.GeoDataFrame`, resolved exactly as
-`plot_static` does — set `grid_system` to decode cell ids (`'h3'`, `'quadbin'`,
-`'bng'`, `'custom'` with `grid_conf=`) to boundary polygons, otherwise the geometry
-column is read via `geom_col` (auto-detected if omitted). The map renders as the
-function's last statement: in Databricks via `displayHTML` (returns `None`), in
-plain Jupyter by returning the folium map (which auto-renders). Extra keyword
-arguments are forwarded to `.explore()`.
-
-The **`mode`** parameter picks the rendering path:
-
-| `mode` value | Behaviour |
-|---|---|
-| `"auto"` (default) | Full vector `.explore()` when the total vertex count is ≤ `max_vertices`, otherwise the raster image overlay. Announces the chosen path at `debug_level >= 1`. |
-| `"detailed"` | Always geopandas `.explore()` — full vector, with per-feature hover / popups. Over `max_vertices` it warns that rendering may be slow and proceeds anyway. |
-| `"fast"` | Always rasterize the polygons to a PNG folium `ImageOverlay` — complete and scales to millions of vertices, but a flat image with no per-feature hover. |
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `column` | `str` or `None` | `None` | Column to colour by (choropleth for `.explore()`; value/category ramp for the overlay). |
-| `geom_col` | `str` or `None` | `None` | Geometry column on a Spark DataFrame (auto-detected if omitted). |
-| `grid_system` | `str` or `None` | `None` | Decode the column as DGGS cell ids: `'h3'`, `'quadbin'`, `'bng'`, `'custom'`. |
-| `grid_conf` | `Row`, `dict` or `None` | `None` | Grid spec for `grid_system='custom'`. |
-| `max_rows` | `int` or `None` | `10_000` | Row cap before the Spark → GeoDataFrame collect; `None` collects everything. |
-| `sample_seed` | `int` or `None` | `None` | How the `max_rows` cap is filled: `None` takes the first `max_rows` rows; an int draws a reproducible seeded sample. |
-| `srid` | `int` or `None` | `None` | CRS override for the input geometries. |
-| `mode` | `str` | `"auto"` | `"auto"` / `"detailed"` / `"fast"` (see table above). |
-| `max_vertices` | `int` | `60_000` | Auto crossover threshold (and the detailed-mode slow-render warning trigger). |
-| `max_px` | `int` | `1400` | Longest-edge pixel resolution of the `fast` raster overlay. |
-| `opacity` | `float` | `0.65` | Overlay fill opacity. |
-| `debug_level` | `int` | `1` | `0` silent / `1` key decisions + warnings / `2+` verbose internals. |
-
-```python
-from databricks.labs.gbx.vizx import plot_interactive
-
-# Interactive H3 choropleth straight from a Spark DataFrame — picks the vector
-# path for a small cell set, the raster overlay automatically once it's large.
-plot_interactive(cells_df, grid_system="h3", column="band_level")
-```
-
-When the input is many small geometries (so the `max_rows` cap fires on the
-`fast` path), `plot_interactive` advises pre-aggregating with `st_union_agg` /
-`rst_h3_rasterize_agg` so the frame stays few-rows-many-vertices and the cap
-never truncates coverage.
-
-## Escape hatches
-
-When you need raster math that isn't in the `rst_*` surface, drop down to NumPy / rasterio per tile with the [pyrx escape hatches](./raster-functions#escape-hatches) (`tile_to_numpy`, `rst_apply`).
+## What's in VizX
+
+| Sub-page | What it covers | When to use it |
+|---|---|---|
+| [Multi-Layer Compositor](./vizx-layers) | `plot_static` / `plot_interactive` with multiple layers; embed-size ladder; audit; simplify | Overlaying vector, raster, grid, and PMTiles layers in one map |
+| [PMTiles Viewers](./vizx-pmtiles) | `pmtiles_info`, `plot_pmtiles`, `plot_cog` | Inspecting and rendering PMTiles archives and COGs inline |
+| [Vector](./vizx-vector) | `plot_interactive` (single-layer), `plot_static` (single-layer), `as_gdf`, `cells_as_gdf`, `grid_as_gdf` | Interactive and static single-layer maps; converting DataFrames to GeoDataFrames |
+| [Raster](./vizx-raster) | `plot_raster`, `plot_file`, `plot_mask_layers`, escape hatches | Rendering raster tiles from bytes or disk |
 
 ## Next steps
 
+- [Multi-Layer Compositor](./vizx-layers) — layer types, embed-size ladder, ephemeral/durable simplify, scale guidance
+- [PMTiles Viewers](./vizx-pmtiles) — `pmtiles_info`, `plot_pmtiles`, `plot_cog`
+- [Vector](./vizx-vector) — interactive and static single-layer maps, vector adapters
+- [Raster](./vizx-raster) — raster rendering, escape hatches
 - [RasterX Function Reference](./raster-functions)
-- [RasterX Readers](../readers/raster)
 - [STAC Client](./stac)
+- [Helios notebooks](../notebooks/helios) — worked end-to-end example using `plot_pmtiles`, `plot_cog`, and `pmtiles_info` to render San Francisco tilesets inline.

@@ -79,22 +79,104 @@ def _validate(fmt: str, size: int, resampling: str) -> tuple:
     return fmt_u, s, _RESAMPLING_MAP[resamp_l]
 
 
-def render_tile(ds, z, x, y, fmt="PNG", size=256, resampling="bilinear") -> bytes:
+def _validate_rescale(rescale):
+    """Normalize/validate the rescale arg.
+
+    Returns the string ``"auto"`` / ``"none"``, or a normalized ``(min, max)``
+    float tuple. ``None`` -> ``"auto"``. Raises ValueError on anything else.
+    """
+    if rescale is None:
+        return "auto"
+    if isinstance(rescale, str):
+        r = rescale.lower()
+        if r in ("auto", "none"):
+            return r
+        raise ValueError(
+            f"rst_tilexyz: rescale must be 'auto', 'none', or a (min, max) pair; "
+            f"got string '{rescale}'"
+        )
+    # Sequence -> (min, max)
+    try:
+        lo, hi = rescale  # unpacks exactly two; else ValueError
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"rst_tilexyz: rescale tuple must have exactly two numbers (min, max); "
+            f"got {rescale!r}"
+        )
+    lo, hi = float(lo), float(hi)
+    if not (lo < hi):
+        raise ValueError(
+            f"rst_tilexyz: rescale (min, max) must have min < max; got ({lo}, {hi})"
+        )
+    return (lo, hi)
+
+
+def _resolve_in_range(ds, rescale):
+    """Resolve the per-band ``in_range`` for rio-tiler render, or None for no rescale.
+
+    - ``"none"`` -> None (today's full-dtype-range behavior).
+    - explicit ``(min, max)`` -> that pair repeated for every band.
+    - ``"auto"``:
+        * uint8 source -> None (already display-ready; pass through unchanged).
+        * non-uint8 -> per-band whole-dataset (min, max) via rasterio statistics.
+          A constant band (min == max) is widened to (min, min + 1).
+    """
+    mode = _validate_rescale(rescale)
+    if mode == "none":
+        return None
+    nbands = ds.count
+    if isinstance(mode, tuple):
+        return [mode] * nbands
+    # mode == "auto"
+    if np.dtype(ds.dtypes[0]) == np.uint8:
+        return None
+    out = []
+    for b in range(1, nbands + 1):
+        stats = ds.statistics(b, approx=False)
+        lo, hi = float(stats.min), float(stats.max)
+        if not (lo < hi):
+            hi = lo + 1.0
+        out.append((lo, hi))
+    return out
+
+
+def render_tile(
+    ds,
+    z,
+    x,
+    y,
+    fmt="PNG",
+    size=256,
+    resampling="bilinear",
+    rescale="auto",
+    in_range=None,
+) -> bytes:
     """Render a single web-mercator (z, x, y) tile from open dataset ``ds``.
 
-    Validates inputs (raises ValueError on bad format/size/resampling). Out-of-
-    extent / empty tiles, or any hard render failure, return a transparent PNG
-    of ``size`` x ``size`` (mirrors heavyweight: PNG regardless of ``fmt``).
+    Validates inputs (raises ValueError on bad format/size/resampling/rescale).
+    Out-of-extent / empty tiles, or any hard render failure, return a transparent
+    PNG of ``size`` x ``size`` (mirrors heavyweight: PNG regardless of ``fmt``).
+
+    ``rescale`` controls 8-bit encoding contrast (see _resolve_in_range): "auto"
+    (default) rescales non-8-bit rasters by whole-dataset min/max and passes uint8
+    through unchanged; "none" keeps the raw full-dtype-range mapping; a (min, max)
+    pair sets explicit bounds. ``in_range`` (internal) lets the pyramid path pass a
+    precomputed per-band range so stats are read once, not per tile; when given it
+    overrides ``rescale``.
     """
     from rio_tiler.errors import TileOutsideBounds  # lazy: see module-top note
     from rio_tiler.io import Reader
 
     fmt_u, s, resamp_name = _validate(fmt, size, resampling)
+    if in_range is None:
+        in_range = _resolve_in_range(ds, rescale)  # may raise ValueError on bad rescale
     try:
         with Reader(None, dataset=ds) as cog:
             img = cog.tile(
                 int(x), int(y), int(z), tilesize=s, resampling_method=resamp_name
             )
+            if in_range is not None:
+                img = img.post_process(in_range=in_range)
             out = img.render(img_format=fmt_u)
         if not out:
             return transparent_png(s)
@@ -138,16 +220,21 @@ def intersecting_tiles(ds, min_z, max_z) -> list:
     return out
 
 
-def iter_pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear"):
+def iter_pyramid(
+    ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear", rescale="auto"
+):
     """Render every intersecting (z, x, y) tile across [min_z, max_z], streaming.
 
     Yields ``(z, x, y, bytes)`` tuples one tile at a time — never buffers the full
-    pyramid (large-fan-out OOM guard). Validates zoom guards, the render args, and
-    the tile-count guard BEFORE rendering (and yielding) any tile.
+    pyramid (large-fan-out OOM guard). Validates zoom guards, the render args, the
+    rescale arg, and the tile-count guard BEFORE rendering any tile. The rescale
+    ``in_range`` is resolved ONCE so every tile shares one 8-bit mapping (no seams)
+    and source statistics are read a single time.
     """
     lo, hi = _validate_zoom_range(min_z, max_z)
     # Validate render args up front (so bad format/size fails fast, not per-tile).
     _validate(fmt, size, resampling)
+    in_range = _resolve_in_range(ds, rescale)  # once; also validates rescale
     west, south, east, north = _wgs84_bounds(ds)
 
     # Count guard first — never materialize a giant list to count.
@@ -159,11 +246,13 @@ def iter_pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear"):
 
     for z in range(lo, hi + 1):
         for t in _TMS.tiles(west, south, east, north, [z]):
-            b = render_tile(ds, t.z, t.x, t.y, fmt, size, resampling)
+            b = render_tile(ds, t.z, t.x, t.y, fmt, size, resampling, in_range=in_range)
             yield (t.z, t.x, t.y, b)
 
 
-def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> list:
+def pyramid(
+    ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear", rescale="auto"
+) -> list:
     """Render every intersecting (z, x, y) tile across [min_z, max_z].
 
     Returns a list of ``{"z","x","y","bytes"}`` dicts. List-materializing wrapper
@@ -171,7 +260,7 @@ def pyramid(ds, min_z, max_z, fmt="PNG", size=256, resampling="bilinear") -> lis
     """
     return [
         {"z": z, "x": x, "y": y, "bytes": b}
-        for z, x, y, b in iter_pyramid(ds, min_z, max_z, fmt, size, resampling)
+        for z, x, y, b in iter_pyramid(ds, min_z, max_z, fmt, size, resampling, rescale)
     ]
 
 

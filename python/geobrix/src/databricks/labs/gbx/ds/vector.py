@@ -144,7 +144,15 @@ _CANONICAL_EXT = {
     "OpenFileGDB": ".gdb",
 }
 # Recognized geo extensions, longest-first, so multi-part suffixes match before their parts.
-_RECOGNIZED_EXTS = (".shp.zip", ".gdb.zip", ".pmtiles", ".gpkg", ".geojson", ".gdb", ".shp")
+_RECOGNIZED_EXTS = (
+    ".shp.zip",
+    ".gdb.zip",
+    ".pmtiles",
+    ".gpkg",
+    ".geojson",
+    ".gdb",
+    ".shp",
+)
 
 
 def _canonical_ext(driver: str, zip_enabled: bool) -> str:
@@ -182,7 +190,7 @@ def _complete_ext(name: str, ext: str) -> str:
     for k in range(1, ext.count(".") + 1):
         suffix = "." + ".".join(ext.strip(".").split(".")[:k])
         if low.endswith(suffix) and ext.startswith(suffix):
-            return name + ext[len(suffix):]
+            return name + ext[len(suffix) :]
     # Reject a DIFFERENT recognized geo extension rather than double-append.
     for other in _RECOGNIZED_EXTS:
         if other != ext and low.endswith(other):
@@ -859,10 +867,16 @@ class VectorGbxWriter(DataSourceWriter):
             "ESRI Shapefile",
             "OpenFileGDB",
         )
-        self._file_name = opts.get("filename")  # .option("fileName", ...) (opts are lower-cased)
+        self._file_name = opts.get(
+            "filename"
+        )  # .option("fileName", ...) (opts are lower-cased)
         # Single-file/unit writers (gpkg/geojson, shapefile+zip, file_gdb): adaptive naming.
         # Non-zip shapefile remains a directory bundle (existing behavior; not single-file).
-        if self.driver in ("GPKG", "GeoJSON") or self.zip or self.driver == "OpenFileGDB":
+        if (
+            self.driver in ("GPKG", "GeoJSON")
+            or self.zip
+            or self.driver == "OpenFileGDB"
+        ):
             ext = _canonical_ext(self.driver, self.zip)
             self.path = _resolve_single_file_output(self.path, self._file_name, ext)
         self.overwrite = overwrite
@@ -1121,7 +1135,9 @@ class VectorGbxWriter(DataSourceWriter):
                 os.remove(local_out)
             self._write_local_classic(tables, local_out, geom_type, crs)
 
-    def _write_local_osgeo_gdb(self, frags, local_out, geom_type, crs) -> None:
+    def _write_local_osgeo_gdb(  # noqa: C901
+        self, frags, local_out, geom_type, crs
+    ) -> None:
         """Hybrid FileGDB path. pyogrio's bundled GDAL has a read-only OpenFileGDB
         driver; the native GDAL from the heavyweight GDAL init script has write. Use
         osgeo.ogr (native) to encode the .gdb. Requires those natives -- raises a clear

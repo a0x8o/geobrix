@@ -435,6 +435,90 @@ def test_download_emits_last_update_column(spark_with_fake_catalog, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P1 — range-scan fan-out: N tasks, no Exchange in plan
+# ---------------------------------------------------------------------------
+
+
+def test_download_range_scan_fanout(spark, tmp_path):
+    """P1: download uses spark.range fan-out so N=4 targets → 4 partitions.
+
+    Asserts:
+      (a) result.rdd.getNumPartitions() == 4  (range scan survives AQE)
+      (b) all 4 targets produce one output row with a non-null out_file_path
+      (c) the physical plan contains 'Range' (confirming the range-scan approach)
+
+    Note: asserting absence of 'Exchange' is brittle because downstream
+    withColumn calls can re-introduce one; getNumPartitions is the robust signal.
+    """
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from databricks.labs.gbx.stac import StacClient
+
+    # Build 4 real GTiff files to serve as local "downloaded" assets.
+    src_paths = []
+    for i in range(4):
+        src = tmp_path / f"asset_{i}.tif"
+        with rasterio.open(
+            str(src),
+            "w",
+            driver="GTiff",
+            height=4,
+            width=4,
+            count=1,
+            dtype="uint8",
+            crs="EPSG:4326",
+            transform=from_origin(0, 4, 1, 1),
+        ) as dst:
+            dst.write((np.arange(16, dtype="uint8")).reshape(1, 4, 4))
+        src_paths.append(str(src))
+
+    out_dir = tmp_path / "volume"
+
+    # Build a 4-row DataFrame with local-file hrefs (no network, no signing needed).
+    rows = [(f"item{i}", f"band{i}", src_paths[i]) for i in range(4)]
+    search_df = spark.createDataFrame(rows, ["item_id", "asset_name", "href"])
+
+    client = StacClient.__new__(StacClient)
+    client.sign = None  # identity signer
+
+    # bbox=(1,1,3,3) windows each local GTiff — windowed_download opens local
+    # paths directly via rasterio without going through requests.get, so no
+    # fake HTTP getter is needed.
+    result = client.download(
+        search_df,
+        str(out_dir),
+        validate=True,
+        max_tries=1,
+        partitions=4,
+        bbox=(1, 1, 3, 3),
+    )
+
+    # (a) 4 partitions from the range scan
+    assert (
+        result.rdd.getNumPartitions() == 4
+    ), f"Expected 4 partitions (range-scan fan-out); got {result.rdd.getNumPartitions()}"
+
+    # (b) all 4 rows have a valid output path
+    collected = result.collect()
+    assert len(collected) == 4, f"Expected 4 result rows; got {len(collected)}"
+    for row in collected:
+        assert (
+            row["out_file_path"] is not None
+        ), f"out_file_path is None for {row['item_id']}/{row['asset_name']}"
+        assert (
+            row["is_out_file_valid"] is True
+        ), f"is_out_file_valid is False for {row['item_id']}/{row['asset_name']}"
+
+    # (c) physical plan contains 'Range' (confirms range-scan approach, not shuffle)
+    plan_str = result._jdf.queryExecution().executedPlan().toString()
+    assert (
+        "Range" in plan_str
+    ), f"Expected 'Range' in physical plan (range-scan fan-out); plan: {plan_str[:500]}"
+
+
+# ---------------------------------------------------------------------------
 # I3 — idempotency: already-valid file is not re-fetched
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1164 562" width="1164" height="562" style="font-family:Inter, -apple-system, system-ui, sans-serif;">
+<defs>
+  <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+    <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#0F1B2A" flood-opacity="0.07"/>
+  </filter>
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#FAFBFC"/>
+    <stop offset="1" stop-color="#F1F4F8"/>
+  </linearGradient>
+  <clipPath id="stripe_clip_0"><rect x="32" y="102" rx="8" ry="8" width="220" height="64"/></clipPath>
+  <clipPath id="stripe_clip_1"><rect x="32" y="180" rx="8" ry="8" width="220" height="64"/></clipPath>
+  <clipPath id="stripe_clip_2"><rect x="32" y="258" rx="8" ry="8" width="220" height="64"/></clipPath>
+  <clipPath id="stripe_clip_3"><rect x="32" y="336" rx="8" ry="8" width="220" height="64"/></clipPath>
+  <clipPath id="comp_top_clip"><rect x="332" y="196" rx="14" ry="14" width="180" height="110"/></clipPath>
+</defs>
+<rect x="0" y="0" width="1164" height="562" fill="url(#bg)"/>
+<text x="582" y="46" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="26" font-weight="800" fill="#0F1B2A" text-anchor="middle">VizX Multi-Layer Compositor</text>
+<text x="582" y="72" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="14" font-weight="400" fill="#3F4D5E" text-anchor="middle">Layer types  -&gt;  unified renderer  -&gt;  embed-size ladder  -&gt;  output</text>
+<rect x="32" y="102" rx="8" ry="8" width="220" height="64" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="32" y="102" width="10" height="64" fill="#1F6FB5" clip-path="url(#stripe_clip_0)"/>
+<text x="147" y="124" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#1F6FB5" text-anchor="middle">vector_layer(data)</text>
+<text x="147" y="142" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="middle">GeoDataFrame / Spark DF / WKT</text>
+<rect x="32" y="180" rx="8" ry="8" width="220" height="64" fill="#FCE9E2" stroke="#E04E2A" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="32" y="180" width="10" height="64" fill="#E04E2A" clip-path="url(#stripe_clip_1)"/>
+<text x="147" y="202" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#E04E2A" text-anchor="middle">raster_layer(data)</text>
+<text x="147" y="220" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="middle">Path / bytes / ndarray</text>
+<rect x="32" y="258" rx="8" ry="8" width="220" height="64" fill="#D5ECEC" stroke="#0F8E8B" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="32" y="258" width="10" height="64" fill="#0F8E8B" clip-path="url(#stripe_clip_2)"/>
+<text x="147" y="280" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#0F8E8B" text-anchor="middle">grid_layer(data, grid_system=)</text>
+<text x="147" y="298" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="middle">H3 / BNG / Quadbin cell ids</text>
+<rect x="32" y="336" rx="8" ry="8" width="220" height="64" fill="#EDE8F5" stroke="#6B4FA0" stroke-width="1.5" filter="url(#sh)"/>
+<rect x="32" y="336" width="10" height="64" fill="#6B4FA0" clip-path="url(#stripe_clip_3)"/>
+<text x="147" y="358" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="700" fill="#6B4FA0" text-anchor="middle">pmtiles_layer(data)</text>
+<text x="147" y="376" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="middle">.pmtiles bytes, path, or URL</text>
+<rect x="24" y="94" rx="12" ry="12" width="236" height="314" fill="none" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="5,4"/>
+<rect x="332" y="196" rx="14" ry="14" width="180" height="110" fill="#FFFFFF" stroke="#E5E7EB" stroke-width="1"/>
+<rect x="332" y="196" width="180" height="12" fill="#0F1B2A" clip-path="url(#comp_top_clip)"/>
+<text x="422" y="234" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="16" font-weight="800" fill="#0F1B2A" text-anchor="middle">Compositor</text>
+<text x="422" y="252" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#3F4D5E" text-anchor="middle">plot_static /</text>
+<text x="422" y="268" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#3F4D5E" text-anchor="middle">plot_interactive</text>
+<text x="422" y="290" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">Layers drawn in list order</text>
+<line x1="262" y1="251" x2="323" y2="251" stroke="#1F6FB5" stroke-width="2" stroke-linecap="round"/><polygon points="332,251 323,247 323,255" fill="#1F6FB5"/>
+<rect x="582" y="102" rx="10" ry="10" width="280" height="70" fill="#DFF0E5" stroke="#1E8E3E" stroke-width="1"/>
+<rect x="592" y="112" rx="6" ry="6" width="28" height="28" fill="#1E8E3E"/>
+<text x="606" y="130" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">1</text>
+<text x="632" y="128" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1E8E3E" text-anchor="start">URL stream</text>
+<text x="632" y="146" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">FetchSource -- range-read (any size)</text>
+<rect x="746" y="150" rx="9" width="108" height="18" fill="#1E8E3E" fill-opacity="0.15" stroke="#1E8E3E" stroke-width="0.8"/>
+<text x="800" y="163" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1E8E3E" text-anchor="middle">indefinite size</text>
+<rect x="582" y="184" rx="10" ry="10" width="280" height="70" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1"/>
+<rect x="592" y="194" rx="6" ry="6" width="28" height="28" fill="#1F6FB5"/>
+<text x="606" y="212" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">2</text>
+<text x="632" y="210" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1F6FB5" text-anchor="start">Embed</text>
+<text x="632" y="228" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">Embed inline (base64 FileSource)</text>
+<rect x="746" y="232" rx="9" width="108" height="18" fill="#1F6FB5" fill-opacity="0.15" stroke="#1F6FB5" stroke-width="0.8"/>
+<text x="800" y="245" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#1F6FB5" text-anchor="middle">no server needed</text>
+<rect x="582" y="266" rx="10" ry="10" width="280" height="70" fill="#FCE9E2" stroke="#E04E2A" stroke-width="1"/>
+<rect x="592" y="276" rx="6" ry="6" width="28" height="28" fill="#E04E2A"/>
+<text x="606" y="294" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">3</text>
+<text x="632" y="292" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#E04E2A" text-anchor="start">Simplify</text>
+<text x="632" y="310" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">tippecanoe -&gt; budget PMTiles</text>
+<rect x="746" y="314" rx="9" width="108" height="18" fill="#E04E2A" fill-opacity="0.15" stroke="#E04E2A" stroke-width="0.8"/>
+<text x="800" y="327" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#E04E2A" text-anchor="middle">scale to budget</text>
+<rect x="582" y="348" rx="10" ry="10" width="280" height="70" fill="#F1F4F8" stroke="#3F4D5E" stroke-width="1"/>
+<rect x="592" y="358" rx="6" ry="6" width="28" height="28" fill="#3F4D5E"/>
+<text x="606" y="376" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="13" font-weight="800" fill="#FFFFFF" text-anchor="middle">4</text>
+<text x="632" y="374" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#3F4D5E" text-anchor="start">Static</text>
+<text x="632" y="392" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#3F4D5E" text-anchor="start">plot_static (matplotlib / PNG)</text>
+<rect x="746" y="396" rx="9" width="108" height="18" fill="#3F4D5E" fill-opacity="0.15" stroke="#3F4D5E" stroke-width="0.8"/>
+<text x="800" y="409" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#3F4D5E" text-anchor="middle">always works</text>
+<line x1="560" y1="172" x2="560" y2="184" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
+<text x="560" y="182" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">else</text>
+<line x1="560" y1="254" x2="560" y2="266" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
+<text x="560" y="264" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">else</text>
+<line x1="560" y1="336" x2="560" y2="348" stroke="#7A8794" stroke-width="1.5" stroke-dasharray="3,3"/>
+<text x="560" y="346" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="9" font-weight="400" fill="#7A8794" text-anchor="middle">else</text>
+<line x1="518" y1="251" x2="573" y2="251" stroke="#0F1B2A" stroke-width="2" stroke-linecap="round"/><polygon points="582,251 573,247 573,255" fill="#0F1B2A"/>
+<rect x="932" y="169" rx="10" ry="10" width="200" height="100" fill="#EDE8F5" stroke="#6B4FA0" stroke-width="1"/>
+<text x="1032" y="195" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#6B4FA0" text-anchor="middle">plot_interactive</text>
+<text x="1032" y="215" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">MapLibre GL HTML</text>
+<text x="1032" y="231" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">self-contained, no server</text>
+<text x="1032" y="247" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">Serverless / classic DBR</text>
+<rect x="932" y="343" rx="10" ry="10" width="200" height="80" fill="#E3EEF8" stroke="#1F6FB5" stroke-width="1"/>
+<text x="1032" y="369" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#1F6FB5" text-anchor="middle">plot_static</text>
+<text x="1032" y="389" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#3F4D5E" text-anchor="middle">matplotlib Axes</text>
+<text x="1032" y="405" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="10" font-weight="400" fill="#7A8794" text-anchor="middle">GitHub-renderable PNG</text>
+<rect x="574" y="94" rx="12" ry="12" width="296" height="250" fill="none" stroke="#6B4FA0" stroke-width="1.2" stroke-dasharray="5,4"/>
+<line x1="872" y1="219" x2="923" y2="219" stroke="#6B4FA0" stroke-width="2" stroke-linecap="round"/><polygon points="932,219 923,215 923,223" fill="#6B4FA0"/>
+<line x1="868" y1="383" x2="923" y2="383" stroke="#1F6FB5" stroke-width="2" stroke-linecap="round"/><polygon points="932,383 923,379 923,387" fill="#1F6FB5"/>
+<rect x="32" y="440" rx="10" ry="10" width="830" height="60" fill="#FFFFF0" stroke="#C8B800" stroke-width="1"/>
+<text x="52" y="462" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="12" font-weight="700" fill="#7A6800" text-anchor="start">Proactive check -- run before rendering:</text>
+<text x="52" y="484" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" font-weight="400" fill="#7A6800" text-anchor="start">audit_layers(layers)  or  plot_interactive(layers, dry_run=True)</text>
+<text x="582" y="542" font-family="Inter, -apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#7A8794" text-anchor="middle">databrickslabs/geobrix  .  gbx.vizx  .  MapLibre GL JS + pmtiles.js</text>
+</svg>

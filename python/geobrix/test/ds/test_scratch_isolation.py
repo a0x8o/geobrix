@@ -11,8 +11,6 @@ from __future__ import annotations
 import os
 import time
 
-import pytest
-
 from databricks.labs.gbx.ds import _scratch
 from databricks.labs.gbx.ds.vector import VectorGbxReader
 
@@ -82,7 +80,11 @@ def test_gc_local_temp_removes_stale_only(tmp_path, monkeypatch):
     old = os.path.join(str(tmp_path), "gbx_vecout_old")
     new = os.path.join(str(tmp_path), "gbx_vecout_new")
     other = os.path.join(str(tmp_path), "unrelated_dir")
-    for d, age in ((old, _scratch.DEFAULT_STALE_TTL_SECONDS + 100), (new, 5), (other, _scratch.DEFAULT_STALE_TTL_SECONDS + 100)):
+    for d, age in (
+        (old, _scratch.DEFAULT_STALE_TTL_SECONDS + 100),
+        (new, 5),
+        (other, _scratch.DEFAULT_STALE_TTL_SECONDS + 100),
+    ):
         os.makedirs(d)
         when = time.time() - age
         os.utime(d, (when, when))

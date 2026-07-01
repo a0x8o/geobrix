@@ -1,0 +1,163 @@
+---
+sidebar_position: 5
+title: Overture Maps Downloader
+---
+
+## Overture Maps Downloader
+
+`OvertureClient` fetches [Overture Maps](https://overturemaps.org/) GeoParquet data for any bounding-box AOI and stages it into a Unity Catalog Volume. It covers all Overture themes — **buildings**, **transportation**, **places**, **base**, **divisions**, and more — filtered to your exact area of interest at download time.
+
+:::note Prerequisites
+- GeoBrix installed (wheel includes `databricks.labs.gbx.sample`)
+- Unity Catalog Volume already exists at `/Volumes/{catalog}/{schema}/{volume}/...`
+- The `overturemaps` CLI is recommended for fast bbox pushdown (install via `pip install overturemaps`); the client falls back to distributed Spark reads from Overture's public GeoParquet if the CLI is absent
+:::
+
+---
+
+## How It Works
+
+The client follows a **discover → download → read** pattern that separates metadata inspection from data I/O:
+
+1. **`discover(bbox, themes=None, release=None)`** — driver-side, metadata-only. Queries the Overture STAC catalog and returns a DataFrame (one row per intersecting GeoParquet asset) with columns `theme`, `type`, `href`, `asset_bbox`, `release`. No data is downloaded at this step.
+
+2. **`download(assets_df, out_dir, *, bbox=None, table=None, ...)`** — distributed I/O. Routes to the fastest available path:
+   - **CLI path** (preferred): when `bbox` is provided and the `overturemaps` CLI is installed, runs `overturemaps download --stac --bbox=...` per `(theme, type)` pair — server-side pushdown, minimal data transfer.
+   - **Distributed Spark path**: when assets resolve to cloud object-store paths (s3://, abfss://, etc.) or FUSE-mounted Volumes, reads GeoParquet directly with bbox struct predicate pushdown.
+   - **HTTP fallback**: whole-file download fanned out across Spark tasks for any other href scheme.
+   
+   All paths are idempotent — existing valid files are skipped on re-runs.
+
+3. **`read(source, theme=None, type=None, bbox=None)`** — loads staged GeoParquet back into a Spark DataFrame. `source` can be a Volume directory, a metadata Delta table name, or the metadata DataFrame returned by `download()`.
+
+---
+
+## API Reference
+
+### `OvertureClient`
+
+```python
+from databricks.labs.gbx.sample.overture import OvertureClient
+
+client = OvertureClient(
+    release=None,   # str or None — e.g. "2024-07-22". None → latest available.
+)
+```
+
+#### `discover(bbox, themes=None, release=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `bbox` | `(minx, miny, maxx, maxy)` | AOI in EPSG:4326 (WGS84 longitude/latitude) |
+| `themes` | `list[str] \| None` | Theme filter, e.g. `["buildings", "places"]`. `None` returns all themes. |
+| `release` | `str \| None` | Release date string (e.g. `"2024-07-22"`). `None` uses the latest available. |
+
+Returns a DataFrame with columns: `theme`, `type`, `href`, `asset_bbox`, `release`.
+
+#### `download(assets_df, out_dir, *, bbox=None, table=None, validate=True, max_tries=5, partitions=None, force=False) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `assets_df` | `DataFrame` | Output of `discover()` |
+| `out_dir` | `str` | Root output directory — a UC Volume path (e.g. `/Volumes/...`) or local path |
+| `bbox` | `(minx, miny, maxx, maxy) \| None` | AOI for CLI bbox pushdown. Strongly recommended when the CLI is installed. |
+| `table` | `str \| None` | Optional Delta table name. When set, metadata is persisted via idempotent MERGE keyed by `(theme, type, source)`. |
+| `validate` | `bool` | Read-back one row per asset to confirm the parquet is valid (default `True`). |
+| `max_tries` | `int` | HTTP retry count for the fallback download path (default `5`). |
+| `partitions` | `int \| None` | Target partition count for distributed writes. `None` → one partition per asset. |
+| `force` | `bool` | Re-download even if the target already exists and is valid (CLI path only). |
+
+Returns a metadata DataFrame with columns: `theme`, `type`, `source`, `path`, `out_file_sz`, `is_out_file_valid`, `last_update`, `asset_bbox`, `release`, `href`.
+
+#### `read(source, theme=None, type=None, bbox=None) → DataFrame`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `source` | `str \| DataFrame` | Volume directory, metadata Delta table name, or metadata DataFrame from `download()` |
+| `theme` | `str \| None` | Filter to a single theme subdirectory (used with directory `source`) |
+| `type` | `str \| None` | Filter to a single type subdirectory (used with directory `source`, alongside `theme`) |
+| `bbox` | `(minx, miny, maxx, maxy) \| None` | AOI filter applied to the Overture `bbox` struct column when present |
+
+Returns a Spark DataFrame of GeoParquet records for the requested area.
+
+---
+
+### `download_overture_aoi` (convenience function)
+
+Combines discover + download in a single call:
+
+```python
+from databricks.labs.gbx.sample.overture import download_overture_aoi
+
+download_overture_aoi(
+    bbox,
+    out_dir,
+    themes=None,    # list[str] or None
+    release=None,   # str or None
+    table=None,     # str or None — optional metadata Delta table
+)
+```
+
+---
+
+## Copy-Paste Example
+
+The example below downloads Overture **buildings** and **places** for a San Francisco downtown bounding box into a UC Volume, then reads them back as a Spark DataFrame.
+
+```python
+# Install the overturemaps CLI for fastest bbox pushdown (recommended)
+# %pip install overturemaps
+
+from databricks.labs.gbx.sample.overture import OvertureClient
+
+# San Francisco downtown AOI (lon/lat, EPSG:4326)
+SF_BBOX = (-122.4194, 37.7749, -122.3894, 37.8049)
+
+VOLUME = "/Volumes/main/default/geobrix_samples/overture"
+
+client = OvertureClient()
+
+# Step 1 — discover: metadata only, no data downloaded yet
+assets = client.discover(SF_BBOX, themes=["buildings", "places"])
+assets.show()
+# +----------+----------+--------------------+--------------------+----------+
+# | theme    | type     | href               | asset_bbox         | release  |
+# +----------+----------+--------------------+--------------------+----------+
+# | buildings| building | s3://overture-...  | [-180.0, -90.0,... | 2024-... |
+# | places   | place    | s3://overture-...  | [-180.0, -90.0,... | 2024-... |
+# +----------+----------+--------------------+--------------------+----------+
+
+# Step 2 — download: distributed write to Volume
+meta = client.download(assets, VOLUME, bbox=SF_BBOX)
+meta.select("theme", "type", "out_file_sz", "is_out_file_valid").show()
+
+# Step 3 — read: load the staged GeoParquet back into Spark
+buildings = client.read(VOLUME, theme="buildings", type="building", bbox=SF_BBOX)
+buildings.printSchema()
+buildings.select("id", "geometry", "names").show(5, truncate=True)
+```
+
+### One-shot convenience
+
+```python
+from databricks.labs.gbx.sample.overture import download_overture_aoi
+
+# Discover + download in a single call
+meta = download_overture_aoi(
+    bbox=SF_BBOX,
+    out_dir=VOLUME,
+    themes=["buildings"],
+    table="main.default.overture_sf_meta",   # optional: persist metadata to Delta
+)
+meta.show()
+```
+
+:::tip Re-runs are safe
+`download()` skips any asset that already exists and is a valid parquet file. Pass `force=True` to the CLI path to overwrite.
+:::
+
+---
+
+## Notebook Reference
+
+The [Helios NB-01 notebook](../notebooks/helios) uses Overture building footprints (via `OvertureClient`) as the vector layer in a San Francisco tiling series that produces interactive PMTiles maps.

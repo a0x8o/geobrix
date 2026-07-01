@@ -1516,9 +1516,12 @@ def rst_tilexyz_sql_example():
     """Render a single web-mercator XYZ tile to PNG bytes"""
     return """
 -- Render tile (z=10, x=512, y=512) as 256x256 PNG bytes.
+-- rescale='auto' (default) rescales non-8-bit imagery by whole-dataset min/max
+-- for display contrast; 'none' keeps the raw full-dtype-range mapping; a
+-- 'min,max' string sets explicit bounds.
 SELECT
     path,
-    gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png
+    gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear', 'auto') as tile_png
 FROM rasters;
 """
 
@@ -1536,6 +1539,8 @@ def rst_xyzpyramid_sql_example():
     """Generate one row per (z, x, y) tile across a zoom range"""
     return """
 -- Explode a raster into per-tile rows across zoom levels 4..6 (PNG, 256px).
+-- Optional trailing rescale arg (default 'auto') controls 8-bit display contrast:
+--   gbx_rst_xyzpyramid(tile, 4, 6, 'PNG', 256, 'bilinear', 'auto')
 SELECT
     path,
     t.tile.z as z,

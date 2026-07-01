@@ -21,7 +21,7 @@ sit in the cube's isometric perspective (same trick the references use).
 
 Re-render after editing this script:
 
-    python3 resources/images/vizx-icon.py        # writes resources/images/VizX.svg
+    python3 resources/images/generators/vizx-icon.py        # writes resources/images/brand/VizX.svg
     # High-res screenshot, then frame onto the sibling-icon canvas (7990x4098, AR 1.95,
     # artwork at ~0.91 of canvas height, centered) so VizX is a drop-in match for the
     # RasterX / VectorX / GridX PNGs. Do NOT just bbox-trim — that strips the canvas
@@ -29,14 +29,14 @@ Re-render after editing this script:
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
         --headless --disable-gpu --hide-scrollbars \\
         --force-device-scale-factor=10 --window-size=860,460 \\
-        --screenshot=/tmp/vizx_hi.png resources/images/VizX.svg
+        --screenshot=/tmp/vizx_hi.png resources/images/brand/VizX.svg
     python3 -c "from PIL import Image, ImageChops; \\
       s=Image.open('/tmp/vizx_hi.png').convert('RGB'); \\
       bb=ImageChops.difference(s, Image.new('RGB', s.size, (255,255,255))).getbbox(); \\
       c=s.crop(bb); H=4098; W=round(H*7990/4098); th=round(0.91*H); \\
       c=c.resize((round(c.width*th/c.height), th), Image.LANCZOS); \\
       cv=Image.new('RGB',(W,H),(255,255,255)); cv.paste(c,((W-c.width)//2,(H-c.height)//2)); \\
-      cv.save('resources/images/VizX.png')"
+      cv.save('resources/images/brand/VizX.png')"
 """
 import math
 import os
@@ -265,7 +265,7 @@ def render():
 
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
-    out = os.path.join(here, "VizX.svg")
+    out = os.path.join(here, "..", "brand", "VizX.svg")
     with open(out, "w") as f:
         f.write(render())
     print(f"wrote {out}")

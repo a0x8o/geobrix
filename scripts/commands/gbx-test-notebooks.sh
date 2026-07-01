@@ -117,6 +117,9 @@ fi
 
 # Single entry point: always use isolation (venv + GBX_NOTEBOOK_ISOLATED=1). Path can be a test file (.py) or notebook scope.
 PATH_ARG="${PATH_ARG:-}"
+# Single-quote the path for safe embedding in the docker exec bash -c string (handles parens, spaces, etc.)
+# Produces: 'some/path with (parens).ipynb' — single-quote-safe by escaping any embedded single quotes
+PATH_ARG_ESCAPED="${PATH_ARG//\'/\'\\\'\'}"
 NOTEBOOK_VERBOSITY="${GBX_NOTEBOOK_VERBOSITY:-}"
 PYTEST_EXTRA="-s"
 [[ "$NOTEBOOK_VERBOSITY" = "quiet" ]] && PYTEST_EXTRA=""
@@ -150,7 +153,7 @@ cd /root/geobrix
 # pre-installed there; no ad-hoc pip install needed (would defeat the
 # supply-chain hardening).
 pip install --no-deps -e /root/geobrix/python/geobrix --break-system-packages -q 2>/dev/null || true
-python3 /root/geobrix/notebooks/tests/run_notebooks_cell_by_cell.py ${PATH_ARG:+"$PATH_ARG"}
+python3 /root/geobrix/notebooks/tests/run_notebooks_cell_by_cell.py ${PATH_ARG:+'$PATH_ARG_ESCAPED'}
 "
 
 # -t allocates a pseudo-TTY so testbook's Jupyter kernel doesn't hang (common in Docker)

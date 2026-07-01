@@ -9,7 +9,7 @@ import org.gdal.ogr.{Feature, FieldDefn}
 import org.gdal.ogr.ogrConstants.{OFSTBoolean, OFTInteger, OFTInteger64, OFTReal, OFTString, wkbUnknown}
 import org.gdal.osr.SpatialReference
 
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
 import java.util.{Vector => JVector}
 import scala.jdk.CollectionConverters._
 import scala.util.Try
@@ -31,8 +31,10 @@ import scala.util.Try
   * to the driver; the driver's z0/EXTENT quantization then maps it straight back to the
   * original `[0,extent]` tile-local value (±1 from integer quantization). With `MINZOOM=0`,
   * `MAXZOOM=0`, `EXTENT=extent`, the driver produces exactly one tile at `0/0/0.pbf` and we
-  * return its raw bytes. All intermediate state lives in `/vsimem/<uuid>/` and is unlinked
-  * before returning.
+  * return its raw bytes. Intermediate state lives in a Java temp directory (not `/vsimem/`)
+  * because `gdal.GetMemFileBuffer` only works for `FileFromMemBuffer`-created files — it
+  * returns null for driver-written vsimem files, silently dropping the output. The temp
+  * directory is recursively deleted before returning.
   *
   * Attribute fields carry native OGR value types: the field type is inferred from the first
   * non-null value's Scala runtime type (Int → `OFTInteger`, Long → `OFTInteger64`,
@@ -42,8 +44,8 @@ import scala.util.Try
   *
   * GDAL resource management (per "GDAL resource management" in CLAUDE.md): every
   * OGR `Feature` and `Geometry` allocated inside the loop is `.delete()`'d immediately,
-  * the layer/datasource are closed via `ds.delete()`, and `gdal.RmdirRecursive` cleans
-  * up the `/vsimem/` directory at the end.
+  * the layer/datasource are closed via `ds.delete()`, and the temp directory tree is deleted
+  * via `Files.walkFileTree` before returning.
   */
 object MvtWriter {
 
@@ -77,8 +79,17 @@ object MvtWriter {
             )
         }
 
-        val uuid = java.util.UUID.randomUUID().toString.replace("-", "_")
-        val rootPath = s"/vsimem/gbx_mvt_$uuid"
+        // Use a real temp directory rather than /vsimem/ — gdal.GetMemFileBuffer only works
+        // for files created via gdal.FileFromMemBuffer (returning null for driver-written files),
+        // so vsimem-backed MVT creation output cannot be read back reliably. A real temp
+        // directory is cleaned up via Files.walkFileTree after reading.
+        //
+        // The OGR MVT creation driver requires the target directory to NOT exist (it creates
+        // the directory structure itself). We create a temp PARENT directory and let OGR create
+        // the actual <root> subdirectory inside it; the parent is our cleanup root.
+        val tmpParent: Path = Files.createTempDirectory("gbx_mvt_par_")
+        val tmpRoot: Path = tmpParent.resolve("tile")
+        val rootPath = tmpRoot.toAbsolutePath.toString
 
         // Create options: MAXZOOM=MINZOOM=0 → single tile at z/x/y = 0/0/0.
         val createOpts = new JVector[String]()
@@ -183,20 +194,31 @@ object MvtWriter {
             srs.delete()
         }
 
-        // Walk /vsimem/<uuid>/ to find the .pbf file emitted by the MVT driver. With
-        // MAXZOOM=MINZOOM=0 there should be exactly one — at <root>/0/0/0.pbf. If no .pbf
-        // was written (empty group), return an empty Array[Byte] (caller treats as
-        // "non-null, empty layer").
-        val pbfPath = findPbf(rootPath)
+        // Find the .pbf file emitted by the MVT driver (at <root>/0/0/0.pbf with
+        // MAXZOOM=MINZOOM=0). Read it with standard Java file I/O; delete the entire
+        // temp directory tree afterward.
+        val pbfFile = Paths.get(rootPath, "0", "0", "0.pbf")
         val bytes =
-            if (pbfPath == null) Array.emptyByteArray
-            else {
-                val buf = gdal.GetMemFileBuffer(pbfPath)
-                if (buf == null) Array.emptyByteArray else buf
+            if (Files.exists(pbfFile)) {
+                Try(Files.readAllBytes(pbfFile)).getOrElse(Array.emptyByteArray)
+            } else {
+                Array.emptyByteArray
             }
 
-        // Clean up the entire /vsimem/<uuid>/ tree (metadata.json + tile dirs).
-        gdal.RmdirRecursive(rootPath)
+        // Clean up the entire temp directory tree (including tmpParent).
+        Try {
+            Files.walkFileTree(tmpParent, new java.nio.file.SimpleFileVisitor[Path] {
+                import java.nio.file.{FileVisitResult, attribute}
+                override def visitFile(file: Path, attrs: attribute.BasicFileAttributes): FileVisitResult = {
+                    Files.deleteIfExists(file)
+                    FileVisitResult.CONTINUE
+                }
+                override def postVisitDirectory(dir: Path, exc: java.io.IOException): FileVisitResult = {
+                    Files.deleteIfExists(dir)
+                    FileVisitResult.CONTINUE
+                }
+            })
+        }
 
         bytes
     }
@@ -265,8 +287,11 @@ object MvtWriter {
       * has no equivalent yet — and the call has to happen on the *executor* JVM
       * before any OGR access, not just on the driver. Idempotent guard avoids
       * reloading the library.
+      *
+      * Package-private so `MvtDecoder` (same package) can call the shared guard
+      * without duplicating the load path.
       */
-    private def ensureNativeLoaded(): Unit = {
+    private[mvt] def ensureNativeLoaded(): Unit = {
         if (!nativeLoaded) {
             nativeLock.synchronized {
                 if (!nativeLoaded) {
@@ -278,22 +303,6 @@ object MvtWriter {
                 }
             }
         }
-    }
-
-    /**
-      * Find the first `.pbf` file under `/vsimem/<root>/`. Uses `gdal.ReadDirRecursive`,
-      * which returns relative paths. Returns the absolute path of the first `.pbf` found,
-      * or `null` if none.
-      */
-    private def findPbf(root: String): String = {
-        val entries = gdal.ReadDirRecursive(root)
-        if (entries == null) return null
-        val it = entries.asScala.iterator
-        while (it.hasNext) {
-            val rel = it.next().toString
-            if (rel.endsWith(".pbf")) return s"$root/$rel"
-        }
-        null
     }
 
 }

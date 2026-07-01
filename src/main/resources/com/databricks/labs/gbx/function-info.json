@@ -275,7 +275,7 @@
       "examples": "Examples:\n      > SELECT gbx_rst_threshold(tile, '>', 100.0) AS mask FROM rasters;"
     },
     "gbx_rst_tilexyz": {
-      "examples": "Examples:\n      > SELECT path, gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear') as tile_png FROM rasters;"
+      "examples": "Examples:\n      > SELECT path, gbx_rst_tilexyz(tile, 10, 512, 512, 'PNG', 256, 'bilinear', 'auto') as tile_png FROM rasters;"
     },
     "gbx_rst_to_webmercator": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_to_webmercator(tile) as web_tile, gbx_rst_srid(gbx_rst_to_webmercator(tile)) as new_srid FROM rasters;"

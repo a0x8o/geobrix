@@ -25,7 +25,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REGISTERED_TXT = REPO_ROOT / "docs/tests-function-info/registered_functions.txt"
-DIAGRAM_PY = REPO_ROOT / "resources/images/rasterx-function-categories.py"
+DIAGRAM_PY = REPO_ROOT / "resources/images/generators/rasterx-function-categories.py"
 
 # Matches bare rst_ tokens (the pill labels used in the diagram script).
 # We require word-boundary on the left (quote or comma or open-bracket) so we
@@ -157,7 +157,7 @@ def main() -> int:
     if d4a_ok and d4b_ok:
         return 0
     print(
-        "diagram-coverage FAILED -- update resources/images/rasterx-function-categories.py"
+        "diagram-coverage FAILED -- update resources/images/generators/rasterx-function-categories.py"
         " to match the registered rst_ set, then re-render the SVG/PNG."
     )
     return 1

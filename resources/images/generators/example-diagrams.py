@@ -5,20 +5,20 @@ Renders two SVGs (xview-clipping, h3-rasterize) + matching PNGs.
 
 Re-render after editing:
 
-    python3 resources/images/example-diagrams.py
+    python3 resources/images/generators/example-diagrams.py
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
         --headless --disable-gpu --hide-scrollbars \
         --force-device-scale-factor=2 --window-size=1500,820 \
-        --screenshot=resources/images/xview-clipping.png \
-        resources/images/xview-clipping.svg
+        --screenshot=resources/images/diagrams/xview/xview-clipping.png \
+        resources/images/diagrams/xview/xview-clipping.svg
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
         --headless --disable-gpu --hide-scrollbars \
         --force-device-scale-factor=2 --window-size=1500,820 \
-        --screenshot=resources/images/h3-rasterize.png \
-        resources/images/h3-rasterize.svg
+        --screenshot=resources/images/diagrams/h3-rasterize/h3-rasterize.png \
+        resources/images/diagrams/h3-rasterize/h3-rasterize.svg
     python3 -c "
 from PIL import Image, ImageChops
-for p in ['resources/images/xview-clipping.png', 'resources/images/h3-rasterize.png']:
+for p in ['resources/images/diagrams/xview/xview-clipping.png', 'resources/images/diagrams/h3-rasterize/h3-rasterize.png']:
     img = Image.open(p).convert('RGB')
     diff = ImageChops.difference(img, Image.new('RGB', img.size, (255,255,255)))
     bbox = diff.getbbox()
@@ -322,13 +322,18 @@ H3_RASTERIZE = dict(
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
 
+    _NAME_TO_SUBDIR = {
+        "xview-clipping": os.path.join(here, "..", "diagrams", "xview"),
+        "h3-rasterize":   os.path.join(here, "..", "diagrams", "h3-rasterize"),
+    }
+
     diagrams = [
         ("xview-clipping", XVIEW_CLIPPING),
         ("h3-rasterize",   H3_RASTERIZE),
     ]
 
     for name, kwargs in diagrams:
-        svg_path = os.path.join(here, f"{name}.svg")
+        svg_path = os.path.join(_NAME_TO_SUBDIR[name], f"{name}.svg")
         svg = render_diagram(**kwargs)
         with open(svg_path, "w", encoding="utf-8") as f:
             f.write(svg)

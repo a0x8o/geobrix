@@ -70,9 +70,9 @@ For each new function: add an MDX reference section to its consolidated Function
 ## Phase C — Diagram + release notes
 
 ### Task C1: Refresh RasterX function-categories diagram
-**Files:** `resources/images/rasterx-function-categories.py`, regenerated PNG.
+**Files:** `resources/images/generators/rasterx-function-categories.py`, regenerated PNG.
 - [ ] **Step 1:** Update the script's hardcoded `CARDS_LEFT`/`CARDS_RIGHT` function lists to include the 42 missing rst_ functions (categorize sensibly into existing/added cards) and fix the hardcoded count string (`"65 SQL functions"` → the current count). Keep ASCII.
-- [ ] **Step 2:** Regenerate per the script docstring: `python3 resources/images/rasterx-function-categories.py` then the Chrome-headless screenshot to `resources/images/rasterx-function-categories.png`. (Verify the PNG referenced by `docs/docs/api/rasterx-functions.mdx` updates.)
+- [ ] **Step 2:** Regenerate per the script docstring: `python3 resources/images/generators/rasterx-function-categories.py` then the Chrome-headless screenshot to `resources/images/diagrams/rasterx/rasterx-function-categories.png`. (Verify the PNG referenced by `docs/docs/api/rasterx-functions.mdx` updates.)
 - [ ] **Step 3:** Build-verify the image renders. Commit `docs(images): refresh rasterx function-categories diagram for current function set`.
 
 ### Task C2: Update beta release notes
@@ -97,7 +97,7 @@ Each QC check: add to `<repo>/.claude/qc-judge/config.json` (project config), `c
 - [ ] Add to `check-doc-coverage.py` (or a sibling) a check that each registered function's `*_sql_example_output` in `docs/tests/python/api/*.py` is NOT placeholder-only (a table whose only data row is `...`/empty, or a bare non-table string). Allow the binary descriptor convention (`[GTiff tile...]`, `<WKB ...>`). Wire into the same/related qc check. Negative-test. Commit `feat(qc): flag placeholder-only SQL example outputs`.
 
 ### Task D4: Q3 — rasterx diagram staleness
-- [ ] Add `docs/scripts/check-diagram-coverage.py` (or extend): parse the function names listed in `resources/images/rasterx-function-categories.py` and verify they cover all `gbx_rst_*` in `registered_functions.txt` (and the count string matches). Exit 1 on drift. Add a `diagram-coverage` qc command check. Negative-test. Commit `feat(qc): rasterx diagram coverage check`.
+- [ ] Add `docs/scripts/check-diagram-coverage.py` (or extend): parse the function names listed in `resources/images/generators/rasterx-function-categories.py` and verify they cover all `gbx_rst_*` in `registered_functions.txt` (and the count string matches). Exit 1 on drift. Add a `diagram-coverage` qc command check. Negative-test. Commit `feat(qc): rasterx diagram coverage check`.
 
 ### Task D5: Q4 — reliable release-notes check (deterministic)
 - [ ] Replace/augment the project's `release-notes-current`: add a `release-notes-functions` command check — for each `gbx_*` name ADDED to `registered_functions.txt` within `$QC_RANGE` (`git diff $QC_RANGE -- docs/tests-function-info/registered_functions.txt | grep '^+gbx_'`), verify it appears in `docs/docs/beta-release-notes.mdx`; exit 1 listing unmentioned new functions. Deterministic (no LLM timeout/leniency). Add to qc config; in the project config, disable the flaky LLM `release-notes-current` (`{"enabled": false}`) in favor of this. Negative-test. Commit `feat(qc): deterministic release-notes-functions check; disable flaky LLM release-notes check`.

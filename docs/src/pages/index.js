@@ -2,6 +2,7 @@ import React from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
 
@@ -10,6 +11,11 @@ function HomepageHeader() {
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className="container">
+        <img
+          src={useBaseUrl('/img/databricks-labs-logo.png')}
+          alt="Databricks Labs"
+          className={styles.heroLogo}
+        />
         <h1 className="hero__title">{siteConfig.title}</h1>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
         <div className={styles.buttons}>
@@ -125,7 +131,8 @@ export default function Home() {
                 <pre>
                   <code>
 {`# Install the lightweight wheel (single library, no JAR, no GDAL)
-%pip install geobrix
+# Stage the wheel on a Unity Catalog Volume, then install the quoted PEP 508 named form:
+%pip install --quiet "geobrix[light] @ file:///Volumes/<catalog>/<schema>/<volume>/geobrix-<version>-py3-none-any.whl"
 
 # Import and register functions
 from databricks.labs.gbx.pyrx import functions as rx

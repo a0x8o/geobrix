@@ -14,8 +14,17 @@ from databricks.labs.gbx.sample._bundle import (
     run_complete_bundle,
     run_essential_bundle,
 )
+from databricks.labs.gbx.sample.dem import DemDownloader, download_dem_aoi
+from databricks.labs.gbx.sample.naip import NaipDownloader, download_naip_aoi
+from databricks.labs.gbx.sample.overture import OvertureClient, download_overture_aoi
 
 __all__ = [
+    "DemDownloader",
+    "NaipDownloader",
+    "OvertureClient",
+    "download_dem_aoi",
+    "download_naip_aoi",
+    "download_overture_aoi",
     "get_temp_dir",
     "get_volumes_path",
     "run_complete_bundle",

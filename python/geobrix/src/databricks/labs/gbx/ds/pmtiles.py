@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional
 
 from pmtiles.tile import Compression, TileType, zxy_to_tileid
-from pyspark.sql.datasource import DataSource, DataSourceWriter, WriterCommitMessage
+from pyspark.sql.datasource import (
+    DataSource,
+    DataSourceReader,
+    DataSourceWriter,
+    WriterCommitMessage,
+)
 from pyspark.sql.types import BinaryType, IntegerType, StructField, StructType
 
 from databricks.labs.gbx.ds import _scratch
@@ -74,6 +79,22 @@ class PMTilesGbxDataSource(DataSource):
 
     def schema(self) -> StructType:
         return INPUT_SCHEMA
+
+    def reader(self, schema: StructType) -> DataSourceReader:
+        # Per-branch (lazy) imports so the raster reader works before the archive
+        # reader exists (Task 2 lands before Task 3).
+        source = self.options.get("source", "raster").lower()
+        if source == "raster":
+            from databricks.labs.gbx.ds._pmtiles_read import PMtilesRasterReader
+
+            return PMtilesRasterReader(self.options)
+        if source == "archive":
+            from databricks.labs.gbx.ds._pmtiles_read import PMtilesArchiveReader
+
+            return PMtilesArchiveReader(self.options)
+        raise ValueError(
+            f"pmtiles_gbx: unknown source={source!r} (use 'raster' or 'archive')"
+        )
 
     def writer(self, schema: StructType, overwrite: bool) -> DataSourceWriter:
         assert_input_schema(schema)

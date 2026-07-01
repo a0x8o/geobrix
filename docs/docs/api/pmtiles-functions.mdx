@@ -179,12 +179,23 @@ The 4-argument form omits the metadata JSON (defaults to `'{}'`):
 
 <CodeFromTest code={pmtilesSqlCode} functionName="pmtiles_agg_4arg_sql_example" language="sql" source="docs/tests/python/api/pmtiles_functions_sql.py" testFile="docs/tests/python/api/test_pmtiles_functions_sql.py" />
 
+### Duplicate tile coordinates
+
+When multiple rows share the same tile coordinates `(z, x, y)`:
+
+- **Vector (MVT) tiles** — features from all matching rows are combined into one multi-feature tile. Features from different layers are kept in their respective layers; attributes are preserved per feature.
+- **Raster tiles (PNG, JPEG, WebP)** — the first non-null tile is used; subsequent tiles for the same coordinates are ignored (raster images cannot be meaningfully combined).
+
+Tile type is detected automatically from the content of the first non-null payload (see [Tile-type detection](#tile-type-detection) above).
+
 ### Typical pipelines
 
 - **Raster pyramid:** `gbx_rst_xyzpyramid(tile, minZoom, maxZoom)` produces per-tile rows of PNG bytes — pipe straight into `gbx_pmtiles_agg`.
-- **Vector pyramid:** `gbx_st_asmvt_pyramid(geom_wkb, attrs, minZoom, maxZoom, layer)` produces per-tile MVT bytes — pipe straight into `gbx_pmtiles_agg`.
+- **Vector pyramid:** `gbx_st_asmvt_pyramid(geom_wkb, attrs, minZoom, maxZoom, layer)` produces per-tile MVT bytes — pipe straight into `gbx_pmtiles_agg`. Because `gbx_st_asmvt_pyramid` emits one row per feature, the aggregate merges all features that share a tile coordinate into a single multi-feature tile.
 
 For pyramids that exceed the Spark cell ceiling, use the [PMTiles Writer](../writers/pmtiles) instead.
+
+See the [Helios notebooks](../notebooks/helios) for a worked end-to-end example: `gbx_pmtiles_agg` packages vector MVT tiles (NB01), a raster XYZ pyramid (NB02), and a hillshade pyramid (NB03) into separate PMTiles archives over a San Francisco AOI.
 
 ---
 
@@ -230,4 +241,5 @@ PMTiles is designed to be served as a single static file via HTTP `Range` reques
 
 - [PMTiles Writer](../writers/pmtiles) — DataSource for streaming large pyramids to disk.
 - [Raster Functions](./raster-functions#rst_xyzpyramid) — Generate tile bytes with `gbx_rst_xyzpyramid`.
+- [Helios notebooks](../notebooks/helios) — worked end-to-end example using `gbx_pmtiles_agg` for all three data modalities (vector MVT, raster XYZ, hillshade).
 - [VectorX Function Reference](./vectorx-functions) — Generate MVT tiles with `gbx_st_asmvt_pyramid`.

@@ -2484,7 +2484,7 @@ def rst_derivedband(tile_expr: ColLike, pyfunc: ColLike, func_name: ColLike) -> 
 
 # --- Tier 1h: web-mercator XYZ tiling UDFs ---------------------------------
 @f.udf(BinaryType())
-def _tilexyz_udf(tile, z, x, y, format, size, resampling):
+def _tilexyz_udf(tile, z, x, y, format, size, resampling, rescale=None):
     # Mirror heavyweight: rst_tilexyz NEVER returns null — a null/empty tile or
     # any hard failure yields a transparent PNG (slippy-map servers need a 200).
     sz = int(size) if size is not None else 256
@@ -2495,8 +2495,9 @@ def _tilexyz_udf(tile, z, x, y, format, size, resampling):
     _env.configure_gdal_env()
     fmt = str(format) if format is not None else "PNG"
     resamp = str(resampling) if resampling is not None else "bilinear"
+    rsc = rescale if rescale is not None else "auto"
     with _serde.open_tile(bytes(tile["raster"])) as ds:
-        return xyz.render_tile(ds, int(z), int(x), int(y), fmt, sz, resamp)
+        return xyz.render_tile(ds, int(z), int(x), int(y), fmt, sz, resamp, rescale=rsc)
 
 
 _XYZPYRAMID_ROW_SCHEMA = StructType(
@@ -2518,7 +2519,11 @@ class _RstXyzPyramidUDTF:
     tile-count guards fire up front before any tile is rendered or yielded.
     """
 
-    def eval(self, tile, min_z, max_z, format, size, resampling):
+    def eval(
+        self, tile, min_z, max_z, format=None, size=None, resampling=None, rescale=None
+    ):
+        # Defaults make format/size/resampling/rescale optional in the SQL UDTF call
+        # (gbx_rst_xyzpyramid(tile, min_z, max_z)). None maps to PNG/256/bilinear/auto.
         if tile is None or tile["raster"] is None:
             return
         from databricks.labs.gbx.pyrx import _env
@@ -2527,9 +2532,10 @@ class _RstXyzPyramidUDTF:
         fmt = str(format) if format is not None else "PNG"
         sz = int(size) if size is not None else 256
         resamp = str(resampling) if resampling is not None else "bilinear"
+        rsc = rescale if rescale is not None else "auto"
         with _serde.open_tile(bytes(tile["raster"])) as ds:
             for z, x, y, b in xyz.iter_pyramid(
-                ds, int(min_z), int(max_z), fmt, sz, resamp
+                ds, int(min_z), int(max_z), fmt, sz, resamp, rsc
             ):
                 yield (z, x, y, b)
 
@@ -2542,6 +2548,7 @@ def rst_tilexyz(
     format: ColLike = "PNG",
     size: ColLike = 256,
     resampling: ColLike = "bilinear",
+    rescale: ColLike = "auto",
 ) -> Column:
     """Render a single web-mercator XYZ slippy-map tile from the raster.
 
@@ -2555,16 +2562,36 @@ def rst_tilexyz(
         size:       Output tile side in pixels, in (0, 4096]. Default 256.
         resampling: GDAL warp resampling name (near, bilinear (default), cubic,
                     cubicspline, lanczos, average, mode, max, min, med, q1, q3).
+        rescale:    8-bit encoding contrast: "auto" (default) rescales non-8-bit
+                    rasters by whole-dataset per-band min/max and passes uint8
+                    through unchanged; "none" keeps the raw full-dtype-range
+                    mapping. (An explicit (min, max) pair is supported by the
+                    direct core/UDF API; see the Note below.)
+
+    Note:
+        The ``rescale`` Column wrapper supports the ``"auto"``/``"none"`` string
+        modes and a Column expression; a numeric ``(min, max)`` tuple is
+        supported only by the direct/core/UDF API, not the Column wrapper.
 
     Returns:
         BINARY image bytes. Out-of-extent / empty tiles (and any hard failure)
         return a transparent RGBA PNG of ``size`` x ``size`` — NEVER null — so
         slippy-map servers always get a 200-status body.
     """
+    if isinstance(rescale, (tuple, list)):
+        raise ValueError(
+            "rst_tilexyz: an explicit (min, max) rescale tuple is not supported "
+            "through the Column API; pass rescale='auto' or 'none' (or a Column), "
+            "or use the core/UDF path for explicit bounds."
+        )
     fmt = f.lit(format) if isinstance(format, str) else _col(format)
     sz = f.lit(size) if isinstance(size, int) else _col(size)
     resamp = f.lit(resampling) if isinstance(resampling, str) else _col(resampling)
-    return _tilexyz_udf(_col(tile), _col(z), _col(x), _col(y), fmt, sz, resamp)
+    if isinstance(rescale, str):
+        rsc = f.lit(rescale)
+    else:
+        rsc = _col(rescale)
+    return _tilexyz_udf(_col(tile), _col(z), _col(x), _col(y), fmt, sz, resamp, rsc)
 
 
 def rst_xyzpyramid(
@@ -2597,6 +2624,8 @@ def rst_xyzpyramid(
         format:     "PNG" (default), "JPEG", or "WEBP".
         size:       Output tile side in pixels, in (0, 4096]. Default 256.
         resampling: GDAL warp resampling name (default "bilinear").
+        rescale:    8-bit encoding contrast: "auto" (default), "none", or a
+                    (min, max) pair. See rst_tilexyz.
     """
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "

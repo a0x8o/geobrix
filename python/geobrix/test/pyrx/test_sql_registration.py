@@ -105,6 +105,26 @@ def test_register_enables_xyzpyramid_sql(spark):
     assert n >= 1
 
 
+def test_register_enables_xyzpyramid_minimal_args_sql(spark):
+    # Regression: before the fix, eval(self, tile, min_z, max_z, format, size,
+    # resampling) required all 6 args — the 3-arg SQL call raised
+    # UDTF_EVAL_METHOD_ARGUMENTS_DO_NOT_MATCH_SIGNATURE.
+    # Now format/size/resampling default to PNG/256/bilinear in eval(), matching
+    # the documented signature: gbx_rst_xyzpyramid(tile, min_z, max_z [,...]).
+    prx.register(spark)
+    _rgb_tile_view(spark)
+    n_minimal = spark.sql(
+        "SELECT count(*) AS n FROM t, " "LATERAL gbx_rst_xyzpyramid(tile, 1, 2) p"
+    ).first()["n"]
+    assert n_minimal > 0
+    # Same tile-count as the explicit-format call — defaults match.
+    n_explicit = spark.sql(
+        "SELECT count(*) AS n FROM t, "
+        "LATERAL gbx_rst_xyzpyramid(tile, 1, 2, 'PNG', 256, 'bilinear') p"
+    ).first()["n"]
+    assert n_minimal == n_explicit
+
+
 def test_register_enables_h3_rastertogrid_sql(spark):
     prx.register(spark)
     _tile_view(spark, width=4, height=3, epsg=4326)

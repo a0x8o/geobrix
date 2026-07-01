@@ -106,4 +106,118 @@ class WebMercatorTileTest extends AnyFunSuite with BeforeAndAfterAll {
         }
         total should be > RST_XYZPyramid.MAX_TILE_COUNT
     }
+
+    test("OperatorOptions PNG branch injects -scale when scale option supplied") {
+        val withScale = com.databricks.labs.gbx.rasterx.operator.OperatorOptions.appendOptions(
+          "gdal_translate",
+          Map("format" -> "PNG", "scale" -> "-scale_1 8000 12000 0 255"),
+          srcDs
+        )
+        withScale should include("-ot Byte")
+        withScale should include("-a_nodata none")
+        withScale should include("-scale_1 8000 12000 0 255")
+    }
+
+    test("OperatorOptions PNG branch unchanged when no scale option") {
+        val noScale = com.databricks.labs.gbx.rasterx.operator.OperatorOptions.appendOptions(
+          "gdal_translate", Map("format" -> "PNG"), srcDs
+        )
+        noScale shouldBe "gdal_translate -of PNG -ot Byte -a_nodata none"
+        noScale should not include "-scale"
+    }
+
+    /** Decode PNG bytes via GDAL and return (min, max) of the first band's non-zero
+     *  (i.e. data, ignoring transparent) pixels.
+     */
+    private def pngBandSpread(bytes: Array[Byte]): (Int, Int) = {
+        val path = s"/vsimem/parity_decode_${java.util.UUID.randomUUID().toString.replace("-", "")}.png"
+        gdal.FileFromMemBuffer(path, bytes)
+        val ds = gdal.Open(path)
+        try {
+            val band = ds.GetRasterBand(1)
+            val buf = Array.ofDim[Byte](ds.GetRasterXSize * ds.GetRasterYSize)
+            band.ReadRaster(0, 0, ds.GetRasterXSize, ds.GetRasterYSize, buf)
+            val vals = buf.map(_ & 0xff).filter(_ > 0)
+            if (vals.isEmpty) (0, 0) else (vals.min, vals.max)
+        } finally {
+            ds.delete(); gdal.Unlink(path)
+        }
+    }
+
+    /** 64×64 uint16 raster, EPSG:4326, footprint (0,0)→(45,45), values ramped over [8000,12000].
+     *
+     *  Covers lon 0..45°, lat 0..45° — entirely within z=2 tile (x=2, y=1) which spans
+     *  lon 0..90° and lat 0..~66.5°. At 64px tile size the source is large enough that
+     *  the ramp maps to multiple distinct byte values after rescale.
+     */
+    private def makeUint16Narrow(): Dataset = {
+        val drv = gdal.GetDriverByName("MEM")
+        val ds = drv.Create("/vsimem/rescale_u16", 64, 64, 1, gdalconstConstants.GDT_UInt16)
+        // GeoTransform: (xmin, pxWidth, 0, ymax, 0, -pxHeight)
+        ds.SetGeoTransform(Array(0.0, 45.0 / 64, 0.0, 45.0, 0.0, -45.0 / 64))
+        val sr = new org.gdal.osr.SpatialReference(); sr.ImportFromEPSG(4326)
+        ds.SetProjection(sr.ExportToWkt())
+        val n = 64 * 64
+        val ramp = (0 until n).map(i => (8000.0 + (12000.0 - 8000.0) * i / (n - 1))).toArray
+        ds.GetRasterBand(1).WriteRaster(0, 0, 64, 64, ramp)
+        ds.GetRasterBand(1).FlushCache()
+        ds
+    }
+
+    test("RST_TileXYZ rescale=auto recovers contrast for uint16 narrow-range") {
+        val ds = makeUint16Narrow()
+        try {
+            // z=2 tile (2,1) covers lon 0..90°, lat ~0..66.5° — contains entire source (0..45°).
+            val auto = RST_TileXYZ.execute(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", "auto")
+            val (lo, hi) = pngBandSpread(auto)
+            // Auto maps [8000,12000] -> [0,255]; full ramp in tile => wide spread.
+            (hi - lo) should be > 100
+        } finally ds.delete()
+    }
+
+    test("RST_TileXYZ rescale=none clips uint16 >255 to 255 (no scale applied)") {
+        val ds = makeUint16Narrow()
+        try {
+            // z=2 tile (2,1) contains entire source. No scale => GDAL -ot Byte clips 8000-12000 to 255.
+            val none = RST_TileXYZ.execute(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", "none")
+            val (lo, hi) = pngBandSpread(none)
+            // All values 8000-12000 clip to 255 under bare -ot Byte; lo and hi are both 255.
+            hi should be >= 200
+            lo should be >= 200
+        } finally ds.delete()
+    }
+
+    test("RST_TileXYZ uint8 source: auto == none (byte-identical pass-through)") {
+        // srcDs is Float64 in this suite; build a uint8 source for the pass-through proof.
+        val drv = gdal.GetDriverByName("MEM")
+        val ds = drv.Create("/vsimem/rescale_u8", 16, 16, 1, gdalconstConstants.GDT_Byte)
+        ds.SetGeoTransform(Array(-1.0, 0.125, 0.0, 1.0, 0.0, -0.125))
+        val sr = new org.gdal.osr.SpatialReference(); sr.ImportFromEPSG(4326)
+        ds.SetProjection(sr.ExportToWkt())
+        ds.GetRasterBand(1).WriteRaster(0, 0, 16, 16, Array.fill(256)(100.0))
+        ds.GetRasterBand(1).FlushCache()
+        try {
+            val auto = RST_TileXYZ.execute(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", "auto")
+            val none = RST_TileXYZ.execute(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", "none")
+            java.util.Arrays.equals(auto, none) shouldBe true // no -scale emitted for uint8 auto
+        } finally ds.delete()
+    }
+
+    test("RST_XYZPyramid resolves ONE scale for the source and reuses it per tile") {
+        val ds = makeUint16Narrow()
+        try {
+            // The pyramid resolves the scale once from the source, then renders each tile
+            // with that same string. Simulate the loop: resolve once, render two tiles.
+            val scale = RST_TileXYZ.resolveScale(ds, "auto")
+            scale should not be empty
+            // resolveScale uses repeated -scale (not -scale_N); verify the prefix is present.
+            scale should include("-scale ")
+            val t1 = RST_TileXYZ.executeWithScale(ds, Map.empty[String, String], 2, 2, 1, "PNG", 64, "near", scale)
+            val t2 = RST_TileXYZ.executeWithScale(ds, Map.empty[String, String], 3, 4, 2, "PNG", 64, "near", scale)
+            // Both tiles produced with the SAME mapping (no seams). Spot-check one is contrast-recovered.
+            val (lo, hi) = pngBandSpread(t1)
+            (hi - lo) should be > 50
+            t2 should not be null
+        } finally ds.delete()
+    }
 }

@@ -686,6 +686,19 @@ def test_rst_xyzpyramid_array(spark):
         assert bytes(r["bytes"])[:4] == b"\x89PNG"
 
 
+def test_sql_rst_tilexyz_accepts_rescale(spark):
+    # Regression: gbx_rst_tilexyz must accept the optional 8th arg (rescale).
+    # Uses the SQL surface to verify arity after Task 4 registration.
+    prx.register(spark)
+    df = _rgb_tile_df(spark)
+    df.createOrReplaceTempView("_tilexyz_rescale")
+    row = spark.sql(
+        "SELECT gbx_rst_tilexyz(tile, 8, 41, 90, 'PNG', 256, 'bilinear', 'auto') AS png"
+        " FROM _tilexyz_rescale"
+    ).first()
+    assert row["png"] is not None and len(row["png"]) > 0
+
+
 # --- raster->grid aggregation (h3 + quadbin) --------------------------------
 def test_rst_h3_rastertogridcount(spark):
     df = _tile_df(spark, width=4, height=3, count=1)

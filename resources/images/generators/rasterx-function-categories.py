@@ -3,10 +3,10 @@
 
 Re-render after adding/removing/renaming a RasterX function:
 
-    python3 resources/images/rasterx-function-categories.py
+    python3 resources/images/generators/rasterx-function-categories.py
     # writes both:
-    #   resources/images/rasterx-function-categories.svg          (portrait, 2-col)
-    #   resources/images/rasterx-function-categories_landscape.svg (landscape, 3-col)
+    #   resources/images/diagrams/rasterx/rasterx-function-categories.svg          (portrait, 2-col)
+    #   resources/images/diagrams/rasterx/rasterx-function-categories_landscape.svg (landscape, 3-col)
 
 Rasterize portrait PNG (used by docs/packages/rasterx.mdx + docs/api/raster-functions.mdx).
 The height MUST match the "portrait canvas" the script prints — it grows as functions
@@ -14,15 +14,15 @@ are added, and a too-short window clips the bottom cards (e.g. Vector-Raster Bri
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
         --headless --disable-gpu --hide-scrollbars \\
         --force-device-scale-factor=2 --window-size=1416,<portrait_height> \\
-        --screenshot=resources/images/rasterx-function-categories.png \\
-        resources/images/rasterx-function-categories.svg
+        --screenshot=resources/images/diagrams/rasterx/rasterx-function-categories.png \\
+        resources/images/diagrams/rasterx/rasterx-function-categories.svg
 
 Rasterize landscape PNG (for slides / 16:9 decks):
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \\
         --headless --disable-gpu --hide-scrollbars \\
         --force-device-scale-factor=2 --window-size=2100,<landscape_height> \\
-        --screenshot=resources/images/rasterx-function-categories_landscape.png \\
-        resources/images/rasterx-function-categories_landscape.svg
+        --screenshot=resources/images/diagrams/rasterx/rasterx-function-categories_landscape.png \\
+        resources/images/diagrams/rasterx/rasterx-function-categories_landscape.svg
     # Landscape canvas is 2100x1200 (printed by the script on each run).
 """
 from dataclasses import dataclass, field
@@ -533,8 +533,8 @@ if __name__ == "__main__":
     import sys
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_portrait = os.path.join(script_dir, "rasterx-function-categories.svg")
-    default_landscape = os.path.join(script_dir, "rasterx-function-categories_landscape.svg")
+    default_portrait = os.path.join(script_dir, "..", "diagrams", "rasterx", "rasterx-function-categories.svg")
+    default_landscape = os.path.join(script_dir, "..", "diagrams", "rasterx", "rasterx-function-categories_landscape.svg")
 
     # Portrait (unchanged behaviour: optional explicit path as first arg)
     out_portrait = sys.argv[1] if len(sys.argv) > 1 else default_portrait

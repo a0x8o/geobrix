@@ -30,7 +30,7 @@ CONDITION TO MAINTAIN (every light-tier addition must do BOTH):
   2. Add the new light test dir to the explicit pytest dir list in the LIGHT CI
      phase (``.github/actions/pyrx_build/action.yml``), so it is actually RUN.
      The light tier is exercised ONLY in the light phase; the heavy phase skips it.
-Light test dirs so far: pyrx, pyvx, pygx, pmtiles_light, stac, plus bench + ds, viz.
+Light test dirs so far: pyrx, pyvx, pygx, pmtiles_light, stac, vizx, sample, plus bench + ds.
 """
 
 import importlib.util
@@ -46,6 +46,7 @@ _LIGHT_TEST_DIRS = [
     "pmtiles_light",
     "stac",
     "vizx",
+    "sample",
 ]
 
 # Skip the light-tier suites when their dependencies are not installed.

@@ -28,6 +28,7 @@ const sidebars = {
         'notebooks/eo-series',
         'notebooks/xview',
         'notebooks/h3-rasterize',
+        'notebooks/helios',
       ],
     },
     {
@@ -40,6 +41,9 @@ const sidebars = {
         'sample-data/vector-data',
         'sample-data/raster-data',
         'sample-data/additional',
+        'sample-data/overture-downloader',
+        'sample-data/naip-downloader',
+        'sample-data/dem-downloader',
       ],
     },
     {
@@ -89,7 +93,18 @@ const sidebars = {
         },
         { type: 'doc', id: 'api/vectorx-functions', label: 'VectorX' },
         { type: 'doc', id: 'api/gridx-functions', label: 'GridX' },
-        { type: 'doc', id: 'api/vizx', label: 'VizX' },
+        {
+          type: 'category',
+          label: 'VizX',
+          collapsed: false,
+          link: { type: 'doc', id: 'api/vizx' },
+          items: [
+            'api/vizx-layers',
+            'api/vizx-pmtiles',
+            'api/vizx-vector',
+            'api/vizx-raster',
+          ],
+        },
         { type: 'doc', id: 'api/pmtiles-functions', label: 'PMTiles' },
         { type: 'doc', id: 'api/stac', label: 'STAC' },
         {

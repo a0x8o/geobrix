@@ -79,6 +79,21 @@ class RasterGbxReader(DataSourceReader):
             raise ValueError("raster_gbx requires a 'path' (e.g. .load(path)).")
         self.size_mib = int(options.get("sizeInMB", "-1"))
         self.filter_regex = options.get("filterRegex", ".*")
+        # Optional AOI window-on-read. `bbox` is "minx,miny,maxx,maxy" in the source
+        # CRS by default; `bboxCrs` (e.g. "EPSG:4326") declares the bbox CRS and the
+        # window primitive reprojects it. None = read the whole raster (prior behavior).
+        bbox_opt = options.get("bbox")
+        if bbox_opt:
+            parts = [float(v) for v in str(bbox_opt).split(",")]
+            if len(parts) != 4:
+                raise ValueError(
+                    "raster bbox option must be 'minx,miny,maxx,maxy'; got "
+                    f"'{bbox_opt}'"
+                )
+            self.bbox = tuple(parts)
+        else:
+            self.bbox = None
+        self.bbox_crs = options.get("bboxCrs")
 
     def partitions(self) -> Sequence[InputPartition]:
         files = _listing.list_files(self.path, self.filter_regex)
@@ -100,6 +115,42 @@ class RasterGbxReader(DataSourceReader):
         # scheme-qualified to match binaryFile / heavy gdal (dbfs:/Volumes/...),
         # so a light-produced DataFrame joins cleanly against that convention.
         source = _listing.to_spark_uri(partition.file_path)
+
+        # AOI window-on-read: stage to worker-local disk (FUSE-safe sequential copy --
+        # Volume FUSE cannot serve the per-window seeks), then window from local disk.
+        # bbox disables the whole-image fast path and the multi-tile split.
+        if self.bbox is not None:
+            from databricks.labs.gbx.ds._window import window_for_bbox
+
+            staged_dir = tempfile.mkdtemp(prefix="gbx_raster_")
+            try:
+                local_path = os.path.join(
+                    staged_dir, os.path.basename(partition.file_path) or "raster.tif"
+                )
+                with (
+                    open(partition.file_path, "rb") as _src,
+                    open(local_path, "wb") as _dst,
+                ):
+                    shutil.copyfileobj(_src, _dst, length=8 * 1024 * 1024)
+                with rasterio.open(local_path) as ds:
+                    win = window_for_bbox(ds, self.bbox, self.bbox_crs)
+                    if win is None:
+                        return  # source does not overlap the AOI -> emit nothing
+                    cellid, raster_bytes, meta = _encode.encode_tile(
+                        ds,
+                        window=(
+                            int(win.col_off),
+                            int(win.row_off),
+                            int(win.width),
+                            int(win.height),
+                        ),
+                        source_path=partition.file_path,
+                        all_parents="",
+                    )
+                    yield (source, (cellid, raster_bytes, meta))
+            finally:
+                shutil.rmtree(staged_dir, ignore_errors=True)
+            return
 
         # Heavy keys the BalancedSubdivision split on RasterAccessors.memSize,
         # which for an on-disk source is the file's encoded byte size. Reuse the
