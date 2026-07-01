@@ -13,6 +13,18 @@ Where a single-node STAC script serializes search requests and downloads, `StacC
 `StacClient` requires `geobrix[light,stac]`. The `[stac]` extra pulls in `pystac-client`, `planetary-computer`, `tenacity`, and `requests`. Serverless environment version 5 (Python 3.12) is required.
 :::
 
+## Ready-made downloaders
+
+For common sources you usually don't call `StacClient` directly — the `gbx.sample` package ships AOI-driven downloaders that wrap it (or the same distributed STAC pattern) with source-specific defaults, each following a **discover → download → read** flow:
+
+| Downloader | Source | STAC backing |
+|---|---|---|
+| [Overture Maps Downloader](../sample-data/overture-downloader) — `OvertureClient` | Overture Maps (buildings, places, …) | Overture's static STAC catalog via the `overturemaps` CLI |
+| [NAIP Aerial Imagery Downloader](../sample-data/naip-downloader) — `NaipDownloader` | NAIP 1 m aerial imagery (US) | `StacClient` on Planetary Computer |
+| [3DEP Downloader (DEM)](../sample-data/dem-downloader) — `DemDownloader` | USGS 3DEP elevation (US) | `StacClient` on Planetary Computer |
+
+Reach for `StacClient` directly when you need a catalog these don't cover, or full control over the search → download → repair flow described below.
+
 ## Installation
 
 ```bash

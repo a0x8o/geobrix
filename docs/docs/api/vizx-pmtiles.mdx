@@ -44,7 +44,7 @@ Parse a `.pmtiles` archive header and count tiles. `path` is a filesystem path (
 
 ```python
 plot_pmtiles(
-    path_or_bytes, *, max_embed_mb=64, fallback=True, style=None, **map_kwargs
+    path_or_bytes, *, max_embed_mb=None, fallback=True, style=None, **map_kwargs
 )
 ```
 
@@ -59,7 +59,7 @@ Render a `.pmtiles` archive inline in a Databricks or Jupyter notebook.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `path_or_bytes` | `str` or `bytes` | — | Path to a `.pmtiles` file (Volume/DBFS scheme stripped) or the archive bytes. |
-| `max_embed_mb` | `float` | `64` | Budget for the base64-embedded archive. Exceeding it triggers the static fallback. `0` forces the static path. |
+| `max_embed_mb` | `float \| None` | `None` | Embed budget in MB. `None` (default) resolves to ~3 MB, or ~6 MB when `vizx` raises the notebook cell-output cap to its max. Exceeding it triggers the static fallback; `0` forces the static path. See the note below on the notebook ceiling. |
 | `fallback` | `bool` | `True` | When `False`, raise instead of falling back to the static render. |
 | `style` | `dict` or `None` | `None` | Override the auto-generated MapLibre style on the interactive path. |
 | `**map_kwargs` | | | On the static fallback, forwarded to the matching static plotter: `plot_raster` for raster archives (PNG/JPEG/WebP/AVIF) or `plot_static` for vector archives (MVT). Must be keyword arguments valid for that plotter — e.g. `basemap`, `column`, `cmap`, `title`, `fig_w`/`fig_h` for `plot_static`; an unrecognised keyword raises `TypeError`. Ignored on the interactive path. |
@@ -75,16 +75,23 @@ The interactive page pins CDN versions for reproducibility: MapLibre GL JS 4.7.1
   functionName="plot_pmtiles_static_example"
 />
 
-For a large archive you want to inspect interactively, omit `max_embed_mb` (or raise it) and the viewer embeds the full archive in the HTML page — no server required:
+:::warning Notebook embed ceiling
+The interactive embed is bounded by the **notebook cell-output cap**, not by `max_embed_mb` alone. Databricks caps cell output at **~10 MB by default (20 MB max**, which `vizx` raises automatically via `%set_cell_max_output_size_in_mb`), and `displayHTML` inflates the embedded payload **~2–3×** — so an archive over **~4–5 MB cannot embed inline** and takes the static fallback. Raising `max_embed_mb` past the cell ceiling does **not** help; reduce what you embed or stream from a URL instead.
+:::
+
+To inspect a small archive interactively, just call `plot_pmtiles` — it embeds inline, no server. For a large archive, drop the densest zooms until it fits, or stream full detail from a URL:
 
 ```python
-from databricks.labs.gbx.vizx import plot_pmtiles
+from databricks.labs.gbx.vizx import plot_pmtiles, pmtiles_layer, plot_interactive
 
-# Interactive map — archive embedded inline, no tile server
+# Small archive — embedded inline as an interactive map, no tile server
 plot_pmtiles("/Volumes/main/my_schema/my_vol/tiles.pmtiles")
 
-# Larger archives: raise the embed budget or accept the static fallback
-plot_pmtiles(archive_bytes, max_embed_mb=256)
+# Large archive — drop the densest zoom levels until it fits (interactive, reduced detail)
+plot_pmtiles("/Volumes/main/my_schema/my_vol/big.pmtiles", interactive_fit="downzoom")
+
+# Or stream full detail from an https:// URL — zero embed cost, always interactive
+plot_interactive([pmtiles_layer("https://example.com/big.pmtiles")])
 ```
 
 ## `plot_cog`

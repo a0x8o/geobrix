@@ -20,7 +20,7 @@ The series uses the **lightweight tier** — pure Python/PySpark bindings (`data
 :::
 
 :::note PMTiles viewer — inline, no tile server
-`plot_pmtiles` (from [`gbx.vizx`](../api/vizx)) renders a `.pmtiles` archive directly in the notebook by embedding the archive as base64 in a self-contained MapLibre GL JS page (FileSource, base64 up to ~64 MB; larger archives fall back to a static thumbnail). `plot_cog` renders a Cloud-Optimized GeoTIFF over a contextily basemap as a static matplotlib figure. See the [PMTiles function reference](../api/pmtiles-functions) for the archive aggregator and writer.
+`plot_pmtiles` (from [`gbx.vizx`](../api/vizx)) renders a `.pmtiles` archive directly in the notebook by embedding the archive as base64 in a self-contained MapLibre GL JS page (FileSource; in a Databricks notebook an archive over ~4–5 MB — after the cell-output cap and `displayHTML`'s ~2–3× inflation — falls back to a static thumbnail). `plot_cog` renders a Cloud-Optimized GeoTIFF over a contextily basemap as a static matplotlib figure. See the [PMTiles function reference](../api/pmtiles-functions) for the archive aggregator and writer.
 
 The notebooks ship with `INTERACTIVE_PLOTS = False` so the committed `.ipynb` renders fast, GitHub-compatible static maps. Set `INTERACTIVE_PLOTS = True` in `config_nb` or in a cell right after `%run ./config_nb` for interactive MapLibre multi-layer maps.
 :::
@@ -131,7 +131,7 @@ sf_buildings.pmtiles   sf_naip.pmtiles              sf_hillshade.pmtiles
 ## Gotchas
 
 - **PMTiles is driver-side only.** `gbx_pmtiles_agg` produces the archive via a distributed reduce but the final file lands on the driver Volume path — it cannot be read back via `spark.read`. Use `pmtiles_info` / `plot_pmtiles` for inspection.
-- **`plot_pmtiles` base64 size guard.** Embedding a PMTiles archive inline as base64 is capped at ~64 MB. Archives larger than that fall back to a static thumbnail. Scope the AOI or zoom range if the archive exceeds the cap.
+- **`plot_pmtiles` base64 size guard.** The inline embed is bounded by the notebook cell-output cap (~10 MB default, 20 MB max), and `displayHTML` inflates the payload ~2–3× — so an archive over **~4–5 MB** falls back to a static thumbnail. Scope the AOI/zoom range, use `interactive_fit="downzoom"`, or stream from an `https://` URL if the archive exceeds the ceiling.
 - **Overture cloud-path vs. HTTP-href.** `OvertureClient` first tries a direct cloud-storage path; if that is not reachable from the cluster network it falls back to an HTTP href. Classic clusters with S3 VPC endpoints reach the cloud path; Serverless always reaches the HTTP href.
 - **NAIP and 3DEP network reachability.** Both sources require outbound internet access. On restricted networks, the SRTM offline fallback in NB03 covers the terrain layer; NAIP has no offline fallback and NB02 will skip if the endpoint is unreachable.
 - **Repartition by column on Serverless.** A number-only `repartition(N)` is AQE-coalesced on Serverless. Always repartition by a data column (e.g., `repartition(N, "tile_x")`) before distributed UDF calls.
