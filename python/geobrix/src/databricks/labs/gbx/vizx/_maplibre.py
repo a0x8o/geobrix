@@ -1177,7 +1177,13 @@ def _gdf_for(layer) -> Any:
     from databricks.labs.gbx.vizx import _vector
 
     if layer.kind == "grid":
-        return _vector.cells_as_gdf(layer.data, cell_col=layer.cellid_col or "cellid")
+        # Carry the value column through so the data-driven fill/legend can read it —
+        # cells_as_gdf drops everything except cell_col + extra_cols, so a grid heatmap
+        # colored by `column` would otherwise lose its values and render one flat fill.
+        extra = [layer.column] if getattr(layer, "column", None) else ()
+        return _vector.cells_as_gdf(
+            layer.data, cell_col=layer.cellid_col or "cellid", extra_cols=extra
+        )
     data = layer.data
     # Already a GeoDataFrame (has a .geometry attribute).
     if hasattr(data, "geometry"):

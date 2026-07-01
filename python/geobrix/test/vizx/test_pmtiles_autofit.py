@@ -98,6 +98,27 @@ def test_autofit_drops_high_zoom_until_under_budget():
     assert report["fits"] is True
 
 
+def test_autofit_preserves_source_data_bounds():
+    """Downzoom must keep the SOURCE data bounds, not recompute a huge coarse-tile extent.
+
+    build_header_info would set bounds to the union of the KEPT tiles' grid bboxes — for a
+    low-zoom overview that balloons to a coarse-tile chunk (e.g. a z0/z1 world quadrant),
+    which then makes the viewer's fitBounds open on the globe. The rebuild must preserve
+    the original SF bounds (~-122.52..-122.35, 37.70..37.83)."""
+    from pmtiles.reader import MemorySource, Reader
+
+    archive = _multi_zoom_archive()  # z0-2, SF header bounds from _build_archive
+    target_mb = (len(archive) * 0.6) / 1_048_576  # forces a downzoom (drops z2)
+    reduced, report = autofit_archive(archive, max_embed_mb=target_mb)
+    assert report["dropped_zooms"], "this test needs an actual reduction"
+
+    hdr = Reader(MemorySource(reduced)).header()
+    assert abs(hdr["min_lon_e7"] / 1e7 - (-122.52)) < 0.01, hdr["min_lon_e7"]
+    assert abs(hdr["max_lon_e7"] / 1e7 - (-122.35)) < 0.01, hdr["max_lon_e7"]
+    assert abs(hdr["min_lat_e7"] / 1e7 - 37.70) < 0.01, hdr["min_lat_e7"]
+    assert abs(hdr["max_lat_e7"] / 1e7 - 37.83) < 0.01, hdr["max_lat_e7"]
+
+
 def test_autofit_noop_when_already_fits():
     """When the archive already fits, return it unchanged with fits=True."""
     archive = _multi_zoom_archive()

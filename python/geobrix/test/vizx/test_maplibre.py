@@ -187,6 +187,34 @@ def test_build_html_no_legend_without_data_driven_layer():
     assert "linear-gradient(to right" not in html
 
 
+def test_gdf_for_grid_carries_value_column(monkeypatch):
+    """A grid layer must pass its value column through cells_as_gdf (extra_cols), or the
+    data-driven fill/legend can't read it and the heatmap renders one flat color."""
+    from shapely.geometry import Polygon
+
+    from databricks.labs.gbx.vizx import _maplibre, _vector
+    from databricks.labs.gbx.vizx._layers import grid_layer
+
+    captured = {}
+
+    def _fake(df, cell_col="cellid", extra_cols=(), **kw):
+        captured["cell_col"] = cell_col
+        captured["extra_cols"] = list(extra_cols)
+        cols = {cell_col: [1]}
+        for c in extra_cols:
+            cols[c] = [0.5]
+        return gpd.GeoDataFrame(
+            cols, geometry=[Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])], crs="EPSG:4326"
+        )
+
+    monkeypatch.setattr(_vector, "cells_as_gdf", _fake)
+    lyr = grid_layer(object(), grid_system="h3", cellid_col="h3_cell", column="n_roofs")
+    gdf = _maplibre._gdf_for(lyr)
+    assert captured["cell_col"] == "h3_cell"
+    assert captured["extra_cols"] == ["n_roofs"]
+    assert "n_roofs" in gdf.columns
+
+
 def test_vector_layer_polygon_gets_fill_and_line_layers():
     gdf = gpd.GeoDataFrame(
         {"v": [1]},
