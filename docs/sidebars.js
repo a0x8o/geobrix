@@ -43,6 +43,7 @@ const sidebars = {
         'sample-data/additional',
         'sample-data/overture-downloader',
         'sample-data/naip-downloader',
+        'sample-data/dem-downloader',
       ],
     },
     {

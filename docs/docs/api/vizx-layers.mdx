@@ -43,6 +43,29 @@ from databricks.labs.gbx.vizx import (
 
 Each constructor exposes a `label=` argument used in audit output and map legends.
 
+## Data-driven color scale
+
+`vector_layer` and `grid_layer` color each feature/cell by a `column=` through a matplotlib `cmap=`. The `scale=` argument controls how values map onto the colormap:
+
+| `scale` | Mapping | Use when |
+|---|---|---|
+| `"linear"` (default) | Ramp position = `(value − min) / (max − min)` | Values are roughly uniform across their range. |
+| `"quantile"` | Ramp position = the value's **percentile rank** | Values are **skewed** — a dense low range with a long tail. |
+
+Linear normalization crushes a skewed distribution into one end of the ramp: if most cells hold a small value with a few large outliers (e.g. roof counts of 1–25 in a 1–128 range), nearly every cell renders as the same pale color. `"quantile"` spreads the dense range across the full ramp so those cells stay distinguishable; the legend gains a median tick to keep the (non-linear) mapping honest.
+
+```python
+from databricks.labs.gbx.vizx import grid_layer, plot_interactive
+
+# H3 roof-density heatmap — quantile so the crowded low range stays readable
+plot_interactive([
+    grid_layer(
+        cells_df, grid_system="h3", cellid_col="h3_cell",
+        column="n_roofs", cmap="YlOrRd", scale="quantile", label="roofs / cell",
+    )
+])
+```
+
 ## The embed-size ladder
 
 When total payload grows beyond the 64 MB default, `plot_interactive` walks through a four-rung ladder to find the right delivery strategy:
