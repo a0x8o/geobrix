@@ -16,13 +16,16 @@ import scala.util.{Success, Try}
   *
   * @see [[https://github.com/uber/h3-java]]
   */
-object H3 extends Serializable {
+object H3 extends GridSystem {
 
     /** Edge length in km for the given resolution. */
     def edgeLength(res: Int): Double = h3.edgeLength(res, LengthUnit.km)
 
     /** CRS for H3 (WGS84). */
     def crsID: Int = 4326
+
+    /** GridSystem: SRID the grid's cell geometries are expressed in (WGS84). */
+    def crsSrid: Int = 4326
 
     val name = "H3"
 
@@ -202,6 +205,20 @@ object H3 extends Serializable {
     /** Returns H3 cell ID containing (lon, lat) at the given resolution. */
     def pointToCellID(lon: Double, lat: Double, resolution: Int): Long = {
         h3.geoToH3(lat, lon, resolution)
+    }
+
+    /**
+      * GridSystem: candidate cells for COVERING tessellation of `bbox` at `resolution` — the
+      * enumeration step BEFORE the positive-area keep-test. H3 must buffer the bbox because hex
+      * centroids can fall outside a tight bbox while the hex still overlaps; the buffer radius is
+      * the max centroid-to-vertex distance of the centroid cell. Verbatim replication of the
+      * enumeration in [[com.databricks.labs.gbx.rasterx.operations.RasterTessellate.tessellateH3CoveringIter]]:
+      *   val bufR = H3.getBufferRadius(bbox, resolution)
+      *   H3.polyfill(bbox.buffer(bufR), resolution)
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufR = getBufferRadius(bbox, resolution)
+        polyfill(bbox.buffer(bufR), resolution)
     }
 
     /** All cell IDs within k rings of center cellID (distance <= n). */
