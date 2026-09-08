@@ -1,11 +1,21 @@
 package com.databricks.labs.gbx.rasterx.expressions
 
-import com.databricks.labs.gbx.rasterx.expressions.grid.{RST_H3_RasterToGridAvg, RST_H3_RasterToGridCount, RST_H3_RasterToGridMax, RST_H3_RasterToGridMedian, RST_H3_RasterToGridMin, RST_H3_RasterToGridStddev, RST_H3_RasterToGridSum, RST_H3_RasterToGridVariance}
+import com.databricks.labs.gbx.gridx.grid.{BNG, H3, Quadbin}
+import com.databricks.labs.gbx.rasterx.expressions.grid.{
+    RasterToGridGeneric,
+    RST_BNG_RasterToGrid,
+    RST_H3_RasterToGridAvg, RST_H3_RasterToGridCount, RST_H3_RasterToGridMax,
+    RST_H3_RasterToGridMedian, RST_H3_RasterToGridMin, RST_H3_RasterToGridStddev,
+    RST_H3_RasterToGridSum, RST_H3_RasterToGridVariance,
+    RST_Quadbin_RasterToGrid
+}
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.{Dataset, gdal}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
+
+import scala.collection.mutable
 
 class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
 
@@ -93,6 +103,28 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
             val expected = avgByCell(cellID) * cntByCell(cellID)
             sumVal shouldBe (expected +- 1e-6)
         }
+    }
+
+    test("generic execute matches per-grid avg for all three grids") {
+        val fAvg: mutable.ArrayBuffer[Double] => Double = b => b.sum / b.size
+
+        // H3: generic should match the per-grid path end-to-end (reprojection + aggregation)
+        val h3Gen = RasterToGridGeneric.execute(H3, ds, 2, fAvg)
+        val h3Cur = RST_H3_RasterToGridAvg.execute(ds, 2)
+        h3Gen.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap) shouldBe
+            h3Cur.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap)
+
+        // Quadbin: same check at resolution 10
+        val qbGen = RasterToGridGeneric.execute(Quadbin, ds, 10, fAvg)
+        val qbCur = RST_Quadbin_RasterToGrid.execute(ds, 10, fAvg)
+        qbGen.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap) shouldBe
+            qbCur.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap)
+
+        // BNG: generic called with BNG.isValid filter must match the per-grid path
+        val bngGen = RasterToGridGeneric.execute(BNG, ds, 3, fAvg, BNG.isValid)
+        val bngCur = RST_BNG_RasterToGrid.execute(ds, 3, fAvg)
+        bngGen.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap) shouldBe
+            bngCur.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap)
     }
 
     test("RST_H3_RasterToGridVariance is population variance (>=0) and stddev == its sqrt") {
