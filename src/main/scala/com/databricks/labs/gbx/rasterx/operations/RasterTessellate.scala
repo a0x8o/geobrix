@@ -3,7 +3,6 @@ package com.databricks.labs.gbx.rasterx.operations
 import com.databricks.labs.gbx.gridx.grid.{BNG, GridSystem, H3, Quadbin}
 import com.databricks.labs.gbx.rasterx.gdal.{GDAL, GDALManager, RasterDriver}
 import com.databricks.labs.gbx.rasterx.operator.GDALWarp
-import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.Dataset
 import org.gdal.gdalconst.gdalconstConstants
 import org.gdal.osr.{CoordinateTransformation, SpatialReference}
@@ -34,85 +33,6 @@ object RasterTessellate {
         if (!cellGeom.intersects(bbox)) return false
         val inter = cellGeom.intersection(bbox)
         inter != null && !inter.isEmpty && inter.getArea > 0.0
-    }
-
-    /**
-      * Clips ds to the H3 cell geometry and returns (cellId, clipped Dataset, metadata); returns null if the
-      * cell hexagon does NOT geometrically overlap the raster bbox.
-      *
-      * The covering set is defined geometrically: keep the cell iff its H3 hexagon (WGS84, same CRS as `bbox`)
-      * intersects the raster bbox. This replaces an earlier nodata-mask keep-test (`RasterAccessors.isEmpty`
-      * on the bbox-snapped warp), which over-included a fringe of cells whose hexagons sit just outside the
-      * raster (zero geometric overlap). Matches the light tier's `contain='overlap'` covering set.
-      */
-    def getTile(
-        ds: Dataset,
-        options: Map[String, String],
-        cell: Long,
-        bbox: Geometry
-    ): (Long, Dataset, Map[String, String]) = {
-        val cellGeom = H3.cellIdToGeometry(cell)
-        if (!hasPositiveAreaOverlap(cellGeom, bbox)) return null
-        val (resDs, resMtd) = ClipToGeom.clip(ds, options, cellGeom, GDAL.WSG84)
-        if (resDs == null) return null
-        resDs.SetMetadataItem("RASTERX_CELL_ID", cell.toString)
-        resDs.FlushCache()
-        (cell, resDs, resMtd)
-    }
-
-    /**
-      * Clips ds to the quadbin cell geometry and returns (cellId, clipped Dataset, metadata); returns null if the
-      * cell tile does NOT geometrically overlap the raster bbox. Clone of [[getTile]] for quadbin: the cell polygon
-      * is built from `Quadbin.cellBbox` (EPSG:4326 lon/lat, same CRS as `bbox`) and the same intersect keep-test /
-      * clip is applied.
-      */
-    def getQuadbinTile(
-        ds: Dataset,
-        options: Map[String, String],
-        cell: Long,
-        bbox: Geometry
-    ): (Long, Dataset, Map[String, String]) = {
-        val cellGeom = quadbinCellGeometry(cell)
-        if (!hasPositiveAreaOverlap(cellGeom, bbox)) return null
-        val (resDs, resMtd) = ClipToGeom.clip(ds, options, cellGeom, GDAL.WSG84)
-        if (resDs == null) return null
-        resDs.SetMetadataItem("RASTERX_CELL_ID", cell.toString)
-        resDs.FlushCache()
-        (cell, resDs, resMtd)
-    }
-
-    /** Quadbin cell -> JTS polygon (EPSG:4326, SRID 4326), built from `Quadbin.cellBbox` = (lonMin,latMin,lonMax,latMax). */
-    private def quadbinCellGeometry(cell: Long): Geometry = {
-        val (lonMin, latMin, lonMax, latMax) = Quadbin.cellBbox(cell)
-        val geom = JTS.polygonFromXYs(
-          Array((lonMin, latMin), (lonMax, latMin), (lonMax, latMax), (lonMin, latMax), (lonMin, latMin))
-        )
-        geom.setSRID(4326)
-        geom
-    }
-
-    /**
-      * Clips ds to the BNG cell geometry and returns (cellId string, clipped Dataset, metadata); returns null
-      * if the cell polygon does NOT geometrically overlap the raster bbox, or the cell is outside GB. Clone of
-      * [[getTile]] / [[getQuadbinTile]] for BNG: the cell polygon is built from `BNG.cellIdToGeometry` (EPSG:27700,
-      * same CRS as `bbox`), out-of-GB cells are dropped via `BNG.isValid`, and the clip targets the 27700 SRS.
-      * `ds` is assumed already reprojected to EPSG:27700 by the caller.
-      */
-    def getBngTile(
-        ds: Dataset,
-        options: Map[String, String],
-        cell: Long,
-        bbox: Geometry
-    ): (String, Dataset, Map[String, String]) = {
-        if (!BNG.isValid(cell)) return null
-        val cellGeom = BNG.cellIdToGeometry(cell)
-        if (!hasPositiveAreaOverlap(cellGeom, bbox)) return null
-        val (resDs, resMtd) = ClipToGeom.clip(ds, options, cellGeom, BngSR)
-        if (resDs == null) return null
-        val cellStr = BNG.format(cell)
-        resDs.SetMetadataItem("RASTERX_CELL_ID", cellStr)
-        resDs.FlushCache()
-        (cellStr, resDs, resMtd)
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -167,7 +87,12 @@ object RasterTessellate {
         case _     => GDAL.WSG84
     }
 
-    /** Validity guard: BNG rejects out-of-GB cells; all other grids accept every cell returned by pointToCellID. */
+    /**
+      * Validity guard: BNG rejects out-of-GB cells; all other grids accept every cell returned by
+      * pointToCellID. Applied in BOTH covering and centroid paths to prevent invalid (out-of-extent)
+      * cells from being emitted — mirrors the `if (!BNG.isValid(cell)) return null` guard that the
+      * former per-grid covering helpers enforced via `getBngTile`.
+      */
     private def isCellValid(grid: GridSystem, cellId: Long): Boolean =
         if (grid.crsSrid == 27700) BNG.isValid(cellId) else true
 
@@ -193,7 +118,7 @@ object RasterTessellate {
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         require(
           Modes.contains(mode),
-          s"${grid.name.toLowerCase}_tessellate mode must be one of ${Modes.mkString(", ")}; got '$mode'"
+          s"gbx_rst_${grid.name.toLowerCase}_tessellate mode must be one of ${Modes.mkString(", ")}; got '$mode'"
         )
         if (mode == "centroid") tessellateGenericCentroidIter(grid, ds, options, resolution)
         else tessellateGenericCoveringIter(grid, ds, options, resolution)
@@ -202,7 +127,8 @@ object RasterTessellate {
     /**
       * Generic covering tessellation. Candidate cells come from [[GridSystem.coveringCandidateCells]],
       * which encodes each grid's buffering strategy (H3/BNG buffer; quadbin does not). The shared
-      * positive-area keep-test and [[ClipToGeom.clip]] are then applied identically for every grid.
+      * positive-area keep-test, validity guard, and [[ClipToGeom.clip]] are applied identically for
+      * every grid.
       */
     private def tessellateGenericCoveringIter(
         grid: GridSystem,
@@ -229,14 +155,19 @@ object RasterTessellate {
                 while (cc < cells.length && nextTile == null) {
                     val cellId = cells(cc)
                     cc += 1
-                    val cellGeom = grid.cellIdToGeometry(cellId)
-                    if (hasPositiveAreaOverlap(cellGeom, bbox)) {
-                        val (resDs, resMtd) = ClipToGeom.clip(_ds, options, cellGeom, gridSR)
-                        if (resDs != null) {
-                            val rendered = grid.renderCellId(cellId)
-                            resDs.SetMetadataItem("RASTERX_CELL_ID", rendered.toString)
-                            resDs.FlushCache()
-                            nextTile = (rendered, resDs, resMtd)
+                    // Guard against out-of-extent candidates (BNG isValid) before touching
+                    // cellIdToGeometry — an invalid cell could produce a degenerate geometry and
+                    // must not be emitted (mirrors the former getBngTile guard).
+                    if (isCellValid(grid, cellId)) {
+                        val cellGeom = grid.cellIdToGeometry(cellId)
+                        if (hasPositiveAreaOverlap(cellGeom, bbox)) {
+                            val (resDs, resMtd) = ClipToGeom.clip(_ds, options, cellGeom, gridSR)
+                            if (resDs != null) {
+                                val rendered = grid.renderCellId(cellId)
+                                resDs.SetMetadataItem("RASTERX_CELL_ID", rendered.toString)
+                                resDs.FlushCache()
+                                nextTile = (rendered, resDs, resMtd)
+                            }
                         }
                     }
                 }

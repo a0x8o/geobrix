@@ -300,28 +300,37 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
     // path and the thin wrappers agree, without altering the existing covering/centroid tests above.
     // -------------------------------------------------------------------------------------------------
 
-    test("generic tessellate cell-key set matches named wrappers (H3 covering) and BNG keys are Strings") {
-        val h3Res  = 3
-        val bngRes = BNG.getResolution("1km")
+    // -------------------------------------------------------------------------------------------------
+    // Fix 2: Replace the tautological wrapper-vs-generic H3 test with an INDEPENDENTLY-COMPUTED
+    // expected cell set, and add BNG/Quadbin covering chip-CONTENT parity checks.
+    // -------------------------------------------------------------------------------------------------
 
-        // H3: generic cell-key set must equal the named-wrapper cell-key set.
-        val wrapperH3Keys: Set[Long] = {
-            val iter = RasterTessellate.tessellateH3Iter(freshDs(), Map.empty, h3Res, "covering")
-            try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k }.toSet
-            finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
-        }
+    test("generic tessellate H3 covering keys match independently-computed expected cell set") {
+        val h3Res  = 3
+        // Independent expected cell set: buffer the bbox, polyfill, keep only positive-area overlap.
+        val bboxGeom: Geometry = BoundingBox.bbox(ds, GDAL.WSG84)
+        val bufR = H3.getBufferRadius(bboxGeom, h3Res)
+        val expectedH3Keys: Set[Long] = H3.polyfill(bboxGeom.buffer(bufR), h3Res).filter { cell =>
+            val hex = H3.cellIdToGeometry(cell)
+            val inter = if (hex.intersects(bboxGeom)) hex.intersection(bboxGeom) else null
+            inter != null && !inter.isEmpty && inter.getArea > 0.0
+        }.toSet
+
+        expectedH3Keys should not be empty
+
         val genericH3Keys: Set[Long] = {
             val iter = RasterTessellate.tessellate(H3, freshDs(), Map.empty, h3Res, "covering")
             try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k.asInstanceOf[Long] }.toSet
             finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
         }
-        withClue(s"generic H3 keys differ from named-wrapper keys: ") {
-            genericH3Keys shouldBe wrapperH3Keys
+        withClue(s"generic tessellate H3 keys differ from independently-computed expected set: ") {
+            genericH3Keys shouldBe expectedH3Keys
         }
 
         // BNG via the generic path must emit String keys (renderCellId returns BNG.format(cell)).
         // Use the GB-aligned fixture (EPSG:27700, London area) — MODIS h10v07 is in SE Asia and
         // produces no cells when warped to 27700 (it doesn't overlap GB).
+        val bngRes = BNG.getResolution("1km")
         val genericBngKeys: Seq[Any] = {
             val iter = RasterTessellate.tessellate(BNG, bngAlignedDs(), Map.empty, bngRes, "covering")
             try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k }.toList
@@ -335,6 +344,105 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
                 k shouldBe a [String]
             }
         )
+    }
+
+    test("BNG covering chip content: aligned raster yields RST_Max non-null for data cells and null for all-NoData cells") {
+        val res = BNG.getResolution("1km")
+        // All-data raster: every chip has valid pixels -> RST_Max must be non-null.
+        val iter = RasterTessellate.tessellateBngIter(bngAlignedDs(fill = Some(42.0)), Map.empty, res, "covering")
+        var count = 0
+        try {
+            iter.foreach { case (_, chip, _) =>
+                val mx = RST_Max.execute(chip).headOption.orNull
+                withClue(s"BNG covering chip from all-data raster must have non-null RST_Max: ") {
+                    mx should not be null
+                }
+                RasterDriver.releaseDataset(chip)
+                count += 1
+            }
+        } finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        withClue(s"bngAlignedDs covers exactly 4 whole 1km cells: ") { count shouldBe 4 }
+
+        // All-NoData raster: every chip is all-nodata -> RST_Max must be null.
+        val iterNd = RasterTessellate.tessellateBngIter(bngAlignedDs(fill = None), Map.empty, res, "covering")
+        var ndCount = 0
+        try {
+            iterNd.foreach { case (_, chip, _) =>
+                val mx = RST_Max.execute(chip).headOption.orNull
+                withClue(s"BNG covering chip from all-NoData raster must have null RST_Max: ") {
+                    mx shouldBe null
+                }
+                RasterDriver.releaseDataset(chip)
+                ndCount += 1
+            }
+        } finally iterNd match { case ac: AutoCloseable => ac.close(); case _ => }
+        withClue(s"bngAlignedDs all-NoData still emits 4 cells (positive-area cells kept): ") {
+            ndCount shouldBe 4
+        }
+    }
+
+    test("Quadbin covering chip content: aligned raster yields RST_Max non-null for data cells and null for all-NoData cells") {
+        val z = 12
+        // All-data: RST_Max non-null for every chip.
+        val iter = RasterTessellate.tessellateQuadbinIter(quadbinAlignedDs(z, fill = Some(42.0)), Map.empty, z, "covering")
+        var count = 0
+        try {
+            iter.foreach { case (_, chip, _) =>
+                val mx = RST_Max.execute(chip).headOption.orNull
+                withClue(s"Quadbin covering chip from all-data raster must have non-null RST_Max: ") {
+                    mx should not be null
+                }
+                RasterDriver.releaseDataset(chip)
+                count += 1
+            }
+        } finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        withClue(s"quadbinAlignedDs(z=$z) covers exactly 4 child cells: ") { count shouldBe 4 }
+
+        // All-NoData: RST_Max null for every chip.
+        val iterNd = RasterTessellate.tessellateQuadbinIter(quadbinAlignedDs(z, fill = None), Map.empty, z, "covering")
+        var ndCount = 0
+        try {
+            iterNd.foreach { case (_, chip, _) =>
+                val mx = RST_Max.execute(chip).headOption.orNull
+                withClue(s"Quadbin covering chip from all-NoData raster must have null RST_Max: ") {
+                    mx shouldBe null
+                }
+                RasterDriver.releaseDataset(chip)
+                ndCount += 1
+            }
+        } finally iterNd match { case ac: AutoCloseable => ac.close(); case _ => }
+        withClue(s"quadbinAlignedDs all-NoData still emits 4 cells: ") { ndCount shouldBe 4 }
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // Fix 3: Regression test for the covering-path isValid guard (Fix 1 in the review).
+    //
+    // Asserts that every String key emitted by the BNG covering path parses to a BNG-valid cell id.
+    // This documents the invariant enforced by `isCellValid` in tessellateGenericCoveringIter.
+    // Standard GB-area fixtures already satisfy this trivially; the guard is a defensive net for
+    // edge-case inputs (rasters near or outside the BNG extent) where BNG.polyfill's flood-fill
+    // could in principle yield out-of-extent cell ids that the old getBngTile.isValid check filtered.
+    // -------------------------------------------------------------------------------------------------
+
+    test("BNG covering emits only BNG-valid cells (isCellValid guard invariant)") {
+        val res = BNG.getResolution("1km")
+        // Collect String keys from both the aligned (all-data) and all-NoData variants.
+        def collectKeys(d: Dataset): Seq[String] = {
+            val iter = RasterTessellate.tessellateBngIter(d, Map.empty, res, "covering")
+            try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k }.toList
+            finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        }
+        val allKeys = collectKeys(bngAlignedDs(fill = Some(42.0))) ++ collectKeys(bngAlignedDs(fill = None))
+        allKeys should not be empty
+        allKeys.foreach { k =>
+            val parsed = BNG.parseOrNull(k)
+            withClue(s"BNG covering emitted key '$k' that could not be parsed as a BNG reference: ") {
+                parsed should not be null
+            }
+            withClue(s"BNG covering emitted key '$k' (Long=${if (parsed != null) parsed.longValue() else "null"}) that fails BNG.isValid: ") {
+                BNG.isValid(parsed.longValue()) shouldBe true
+            }
+        }
     }
 
 }
