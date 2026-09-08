@@ -292,4 +292,49 @@ class RasterTessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         }
     }
 
+    // -------------------------------------------------------------------------------------------------
+    // Generic tessellate path: cell-key set parity and type contract.
+    //
+    // Verifies that the generic `tessellate(GridSystem, …)` produces the same cell set as the named
+    // wrapper for H3, and that BNG keys are Strings (not Longs). These assertions prove the generic
+    // path and the thin wrappers agree, without altering the existing covering/centroid tests above.
+    // -------------------------------------------------------------------------------------------------
+
+    test("generic tessellate cell-key set matches named wrappers (H3 covering) and BNG keys are Strings") {
+        val h3Res  = 3
+        val bngRes = BNG.getResolution("1km")
+
+        // H3: generic cell-key set must equal the named-wrapper cell-key set.
+        val wrapperH3Keys: Set[Long] = {
+            val iter = RasterTessellate.tessellateH3Iter(freshDs(), Map.empty, h3Res, "covering")
+            try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k }.toSet
+            finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        }
+        val genericH3Keys: Set[Long] = {
+            val iter = RasterTessellate.tessellate(H3, freshDs(), Map.empty, h3Res, "covering")
+            try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k.asInstanceOf[Long] }.toSet
+            finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        }
+        withClue(s"generic H3 keys differ from named-wrapper keys: ") {
+            genericH3Keys shouldBe wrapperH3Keys
+        }
+
+        // BNG via the generic path must emit String keys (renderCellId returns BNG.format(cell)).
+        // Use the GB-aligned fixture (EPSG:27700, London area) — MODIS h10v07 is in SE Asia and
+        // produces no cells when warped to 27700 (it doesn't overlap GB).
+        val genericBngKeys: Seq[Any] = {
+            val iter = RasterTessellate.tessellate(BNG, bngAlignedDs(), Map.empty, bngRes, "covering")
+            try iter.map { case (k, resDs, _) => RasterDriver.releaseDataset(resDs); k }.toList
+            finally iter match { case ac: AutoCloseable => ac.close(); case _ => }
+        }
+        withClue("generic BNG tessellate on GB-aligned raster must emit cells: ") {
+            genericBngKeys should not be empty
+        }
+        genericBngKeys.foreach(k =>
+            withClue(s"expected BNG key to be a String, got ${k.getClass.getName}: $k") {
+                k shouldBe a [String]
+            }
+        )
+    }
+
 }
