@@ -208,13 +208,10 @@ object H3 extends GridSystem {
     }
 
     /**
-      * GridSystem: candidate cells for COVERING tessellation of `bbox` at `resolution` — the
-      * enumeration step BEFORE the positive-area keep-test. H3 must buffer the bbox because hex
-      * centroids can fall outside a tight bbox while the hex still overlaps; the buffer radius is
-      * the max centroid-to-vertex distance of the centroid cell. Verbatim replication of the
-      * enumeration in [[com.databricks.labs.gbx.rasterx.operations.RasterTessellate.tessellateH3CoveringIter]]:
-      *   val bufR = H3.getBufferRadius(bbox, resolution)
-      *   H3.polyfill(bbox.buffer(bufR), resolution)
+      * Covering-tessellation candidate cells: verbatim replication of the buffered-polyfill
+      * enumeration used for H3 covering (buffer the bbox by the resolution's buffer radius,
+      * then polyfill). H3 must buffer because hex centroids can fall outside a tight bbox
+      * while the hex still overlaps.
       */
     def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
         val bufR = getBufferRadius(bbox, resolution)
