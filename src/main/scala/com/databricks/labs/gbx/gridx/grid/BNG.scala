@@ -27,7 +27,7 @@ import scala.util.{Success, Try}
   *   [[https://en.wikipedia.org/wiki/Ordnance_Survey_National_Grid]]
   */
 //noinspection ScalaWeakerAccess
-object BNG extends Serializable {
+object BNG extends GridSystem {
 
     /** StructType for a BNG cell: cellid (idType), core (Boolean), chip (Binary). */
     def cellType(idType: DataType): StructType =
@@ -41,6 +41,9 @@ object BNG extends Serializable {
 
     /** CRS for BNG (EPSG:27700). */
     def crsID: Int = 27700
+
+    /** [[GridSystem.crsSrid]] — EPSG:27700 (British National Grid). */
+    def crsSrid: Int = crsID
 
     val name = "BNG"
 
@@ -203,9 +206,9 @@ object BNG extends Serializable {
       * @param resolution
       *   A resolution of the indices.
       * @return
-      *   A set of indices representing the input geometry.
+      *   A lazy iterator of indices representing the input geometry.
       */
-    def polyfill(geometry: Geometry, resolution: Int): Iterator[Long] = {
+    def polyfillIter(geometry: Geometry, resolution: Int): Iterator[Long] = {
         if (geometry.isEmpty) return Iterator.empty
 
         val startPoints = geometry.getCoordinates ++ geometry.getCentroid.getCoordinates
@@ -248,6 +251,46 @@ object BNG extends Serializable {
                 result
             }
         }
+    }
+
+    /**
+      * [[GridSystem.polyfill]] — adapts [[polyfillIter]] to the `Seq[Long]` contract required by the
+      * trait. Callers that need lazy streaming should use [[polyfillIter]] directly.
+      *
+      * @param geometry
+      *   Input geometry to be represented.
+      * @param resolution
+      *   A resolution of the indices.
+      * @return
+      *   A sequence of cell IDs representing the input geometry.
+      */
+    override def polyfill(geometry: Geometry, resolution: Int): Seq[Long] =
+        polyfillIter(geometry, resolution).toSeq
+
+    /**
+      * [[GridSystem.renderCellId]] — renders a BNG cell id as its user-facing formatted string
+      * (e.g. "TL3098"), unlike H3/quadbin which emit the raw Long.
+      */
+    override def renderCellId(cellID: Long): Any = format(cellID)
+
+    /**
+      * [[GridSystem.coveringCandidateCells]] — candidate cells for covering tessellation of a raster
+      * bbox in EPSG:27700. The bbox is buffered by the cell half-diagonal before polyfill because
+      * [[polyfillIter]] is a centroid flood-fill: a cell whose square overlaps the bbox but whose
+      * centroid sits just outside would be missed without the buffer. The positive-area keep-test
+      * applied downstream drops any buffered-but-non-overlapping fringe cell. Returns internal Long
+      * cell ids; call [[renderCellId]] to convert to the user-facing BNG string.
+      *
+      * @param bbox
+      *   Raster bounding-box polygon in EPSG:27700.
+      * @param resolution
+      *   BNG resolution index.
+      * @return
+      *   Candidate cell ids (Long) for the covering set.
+      */
+    override def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufR = getBufferRadius(bbox, resolution)
+        polyfill(bbox.buffer(bufR), resolution)
     }
 
     /**
