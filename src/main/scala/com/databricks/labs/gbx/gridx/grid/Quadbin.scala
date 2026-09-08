@@ -1,5 +1,8 @@
 package com.databricks.labs.gbx.gridx.grid
 
+import com.databricks.labs.gbx.vectorx.jts.JTS
+import org.locationtech.jts.geom.Geometry
+
 /** CARTO quadbin v0 cell-math. Pure functions; no Spark / no GDAL dependency.
   *
   * Layout (64-bit Long) — matches the canonical
@@ -13,7 +16,7 @@ package com.databricks.labs.gbx.gridx.grid
   * internally. The grid is the standard XYZ "slippy map" tile grid (x increases east,
   * y increases south).
   */
-object Quadbin extends Serializable {
+object Quadbin extends GridSystem {
 
     /** Header constant: bit 62 set. */
     private[gbx] val HEADER: Long = 0x4000000000000000L
@@ -138,6 +141,58 @@ object Quadbin extends Serializable {
     private def tile2lat(yTile: Double, n: Double): Double = {
         val nRad = math.Pi - 2.0 * math.Pi * yTile / n
         math.atan(0.5 * (math.exp(nRad) - math.exp(-nRad))) * 180.0 / math.Pi
+    }
+
+    // ---- GridSystem implementation ----
+
+    /** Stable grid name. */
+    def name: String = "QUADBIN"
+
+    /** SRID for quadbin cell geometries (WGS84 lon/lat). */
+    def crsSrid: Int = 4326
+
+    /** Valid resolutions for quadbin (0..MAX_RESOLUTION). */
+    def resolutions: Set[Int] = (0 to MAX_RESOLUTION).toSet
+
+    /** GridSystem: index a (lon, lat) point to the quadbin cell at resolution. */
+    def pointToCellID(x: Double, y: Double, resolution: Int): Long = pointToCell(x, y, resolution)
+
+    /** GridSystem: quadbin cell -> its axis-aligned bounding-box polygon in EPSG:4326. */
+    def cellIdToGeometry(cellID: Long): Geometry = {
+        val (lonMin, latMin, lonMax, latMax) = cellBbox(cellID)
+        val geom = JTS.polygonFromXYs(
+            Array((lonMin, latMin), (lonMax, latMin), (lonMax, latMax), (lonMin, latMax), (lonMin, latMin))
+        )
+        geom.setSRID(4326)
+        geom
+    }
+
+    /** GridSystem: cells whose geometry intersects the input geometry at resolution. */
+    def polyfill(geometry: Geometry, resolution: Int): Seq[Long] = {
+        val e = geometry.getEnvelopeInternal
+        polyfillBbox((e.getMinX, e.getMinY, e.getMaxX, e.getMaxY), resolution)
+            .filter(c => cellIdToGeometry(c).intersects(geometry))
+            .toSeq
+    }
+
+    /**
+      * GridSystem: candidate cells for COVERING tessellation of a raster bbox.
+      *
+      * Replicates the Quadbin covering enumeration verbatim: envelope -> polyfillBbox
+      * directly, with NO buffer. Quadbin tiles are axis-aligned rectangles so every
+      * overlapping tile's corner is included in the two-corner tile lookup that
+      * polyfillBbox performs; a centroid-blind-spot buffer is not needed (unlike H3
+      * hexagons, whose centroids can fall outside a tight bbox while the hex still
+      * overlaps, or BNG squares whose polyfill is centroid-based). Confirmed by the
+      * Task-0 spike and replicated from the Quadbin covering branch in
+      * RasterTessellate (tessellateQuadbinCoveringIter):
+      *
+      *   val env = bbox.getEnvelopeInternal
+      *   val cells = Quadbin.polyfillBbox((env.getMinX, env.getMinY, env.getMaxX, env.getMaxY), resolution)
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val env = bbox.getEnvelopeInternal
+        polyfillBbox((env.getMinX, env.getMinY, env.getMaxX, env.getMaxY), resolution).toSeq
     }
 
     /** Centroid of cell in EPSG:4326 (lon, lat). */
