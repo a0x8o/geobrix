@@ -36,3 +36,26 @@ trait GridSystem extends Serializable {
    */
   def renderCellId(cellID: Long): Any = cellID
 }
+
+object GridSystem {
+  /**
+   * Returns the GridSystem instance for the given name.
+   * Recognised names (case-insensitive): H3, BNG, QUADBIN, CUSTOM.
+   * CUSTOM requires a GridConf; supplying conf=None for CUSTOM throws IllegalArgumentException.
+   * An unrecognised name throws IllegalArgumentException.
+   */
+  def forName(name: String, conf: Option[GridConf] = None): GridSystem =
+    name.toUpperCase match {
+      case "H3"      => H3
+      case "BNG"     => BNG
+      case "QUADBIN" => Quadbin
+      case "CUSTOM"  =>
+        val c = conf.getOrElse(
+          throw new IllegalArgumentException(
+            "GridConf is required for a CUSTOM grid; pass conf=Some(GridConf(...))"
+          )
+        )
+        CustomGridSystem(c)
+      case n         => throw new IllegalArgumentException(s"Unknown grid: $n")
+    }
+}

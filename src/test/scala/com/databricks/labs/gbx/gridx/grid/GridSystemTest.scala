@@ -10,4 +10,13 @@ class GridSystemTest extends AnyFunSuite {
     Set("name", "crsSrid", "resolutions", "pointToCellID", "cellIdToGeometry",
         "polyfill", "renderCellId").subsetOf(members) shouldBe true
   }
+
+  test("GridSystem.forName resolves the four grids") {
+    GridSystem.forName("H3").name shouldBe "H3"
+    GridSystem.forName("BNG").name shouldBe "BNG"
+    GridSystem.forName("QUADBIN").name shouldBe "QUADBIN"
+    GridSystem.forName("CUSTOM", Some(GridConf(0, 100, 0, 100, 2, 10, 10, Some(27700)))).name shouldBe "CUSTOM"
+    an [IllegalArgumentException] should be thrownBy GridSystem.forName("NOPE")
+    an [IllegalArgumentException] should be thrownBy GridSystem.forName("CUSTOM", None)
+  }
 }
