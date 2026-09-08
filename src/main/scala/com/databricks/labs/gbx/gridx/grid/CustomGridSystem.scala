@@ -9,15 +9,16 @@ import org.locationtech.jts.geom.{Coordinate, Geometry}
 import scala.util.{Success, Try}
 
 //noinspection ScalaWeakerAccess
-case class CustomGridSystem(conf: GridConf) extends Serializable {
+case class CustomGridSystem(conf: GridConf) extends GridSystem {
 
     def crsID: Int =
         conf.crsID.getOrElse(
           throw new Error("CRS ID is not defined for this grid system")
         )
 
-    val name =
-        f"CUSTOM(${conf.boundXMin}, ${conf.boundXMax}, ${conf.boundYMin}, ${conf.boundYMax}, ${conf.cellSplits}, ${conf.rootCellSizeX}, ${conf.rootCellSizeY})"
+    val name: String = "CUSTOM"
+
+    def crsSrid: Int = crsID
 
     def getResolutionStr(resolution: Int): String = resolution.toString
 
@@ -176,6 +177,25 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
             .map(cell => pointToCellID(cell._1, cell._2, resolution))
 
         result
+    }
+
+    /**
+      * Candidate cells for covering tessellation of a raster bounding box.
+      *
+      * Custom polyfill is centroid-based, so covering enumeration buffers by one cell
+      * dimension to include cells that overlap the bbox but whose centroid lies outside;
+      * the covering keep-test removes any non-overlapping extras.
+      *
+      * @param bbox
+      *   Raster bounding-box polygon in the grid's native CRS.
+      * @param resolution
+      *   Grid resolution at which to enumerate candidate cells.
+      * @return
+      *   Candidate cell ids (Long) for the covering set.
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufferDist = math.max(getCellWidth(resolution), getCellHeight(resolution))
+        polyfill(bbox.buffer(bufferDist), resolution)
     }
 
     def getCellResolution(cellId: Long): Int = {
