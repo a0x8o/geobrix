@@ -178,14 +178,11 @@ object Quadbin extends GridSystem {
     /**
       * GridSystem: candidate cells for COVERING tessellation of a raster bbox.
       *
-      * Replicates the Quadbin covering enumeration verbatim: envelope -> polyfillBbox
-      * directly, with NO buffer. Quadbin tiles are axis-aligned rectangles so every
-      * overlapping tile's corner is included in the two-corner tile lookup that
-      * polyfillBbox performs; a centroid-blind-spot buffer is not needed (unlike H3
-      * hexagons, whose centroids can fall outside a tight bbox while the hex still
-      * overlaps, or BNG squares whose polyfill is centroid-based). Confirmed by the
-      * Task-0 spike and replicated from the Quadbin covering branch in
-      * RasterTessellate (tessellateQuadbinCoveringIter):
+      * Raw polyfill of the bbox envelope, without a buffer — axis-aligned tiles
+      * already include every overlapping cell via the two-corner tile lookup that
+      * polyfillBbox performs. A centroid-blind-spot buffer is not needed because
+      * quadbin tiles are rectangles (unlike H3 hexagons or BNG squares, whose
+      * polyfill is centroid-based and requires a bbox buffer to capture edge cells).
       *
       *   val env = bbox.getEnvelopeInternal
       *   val cells = Quadbin.polyfillBbox((env.getMinX, env.getMinY, env.getMaxX, env.getMaxY), resolution)

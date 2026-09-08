@@ -4,9 +4,9 @@ import org.locationtech.jts.geom.Geometry
 
 /**
  * Common interface for GeoBrix discrete grid systems (H3, BNG, quadbin, custom).
- * Instance-based: custom carries its GridConf; H3/BNG/Quadbin are singleton-backed
- * instances. Stage 1 defines only the members the raster tessellation/aggregation
- * paths consume; neighbourhood/formatting members are added in Stage 3.
+ * Instance-based so a custom grid can carry its own configuration; H3/BNG/Quadbin
+ * are singleton-backed instances. Defines the members consumed by raster
+ * tessellation/aggregation and neighbourhood/formatting paths.
  */
 trait GridSystem extends Serializable {
   /** Stable grid name, e.g. "H3", "BNG", "QUADBIN", "CUSTOM". */
@@ -23,11 +23,11 @@ trait GridSystem extends Serializable {
   def polyfill(geometry: Geometry, resolution: Int): Seq[Long]
   /**
    * Candidate cells for COVERING tessellation of a raster bbox — the enumeration step
-   * BEFORE the positive-area keep-test. Grid-specific by necessity: H3 must buffer the bbox
-   * (hex centroids can fall outside a tight bbox while the hex still overlaps) whereas quadbin
-   * and BNG (rectangular) enumerate the bbox directly. Each grid lifts its CURRENT enumeration
-   * verbatim (Task 0 spike confirmed quadbin's is already `polyfillBbox(env)`); the generic
-   * tessellate (Task 8) applies one shared keep-test to whatever this returns.
+   * BEFORE the positive-area keep-test. Grid-specific by necessity: quadbin enumerates
+   * the bbox directly (its two-corner tile lookup already includes every overlapping cell);
+   * H3 and BNG buffer the bbox because their polyfill is centroid-based and would otherwise
+   * miss cells that overlap but whose centroid lies outside. The generic tessellate path
+   * applies one shared keep-test to whatever this method returns.
    */
   def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long]
   /**
