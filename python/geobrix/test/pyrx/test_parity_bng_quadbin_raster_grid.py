@@ -177,14 +177,20 @@ def _small_covering_raster_4326():
 
 
 def _small_covering_bng_raster():
-    """4x4 EPSG:27700 raster (16 pixels, 1000 m each) over central London.
+    """4x4 EPSG:27700 raster (16 pixels, 1000 m each) with origin offset to straddle
+    BNG 1 km cell boundaries.
 
-    Performance guard for BNG covering tests.  At BNG res=1 (100 km cells) the
-    entire 4 km × 4 km footprint fits in a single cell, giving very few geometry
-    intersections.
+    Origin (530300, 181700): BNG 1 km cell boundaries fall at every exact 1000 m;
+    the 300 m offset means every pixel spans one internal boundary in x and one in y,
+    so each pixel has fractional overlap (weights ≈ 0.49/0.21/0.21/0.09) with its
+    four neighbouring BNG 1 km cells.  This prevents the degenerate all-1.0-weight
+    case that occurs when pixels are grid-aligned to cell boundaries.
+
+    Use with ``_RTG_COVERING_RES["bng"] = 3`` (1 km cells).  16 pixels × ~4 cells each
+    = ~64 JTS/shapely intersection operations — fast even for the covering O(pixels) path.
     """
     data = np.arange(1, 17, dtype="float32").reshape(4, 4)
-    return _gtiff_bytes(data, epsg=27700, origin=(530000.0, 182000.0), px=1000.0)
+    return _gtiff_bytes(data, epsg=27700, origin=(530300.0, 181700.0), px=1000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +747,7 @@ def test_bng_rasterize_agg_mask_parity(spark_with_jar):
 # is O(pixels × candidate-cells-per-pixel); coarse resolution → 1-4 cells →
 # fast geometry intersection).
 _RTG_CENTROID_RES = {"h3": 7, "bng": 3, "quadbin": 12}
-_RTG_COVERING_RES = {"h3": 4, "bng": 1, "quadbin": 8}
+_RTG_COVERING_RES = {"h3": 4, "bng": 3, "quadbin": 8}  # bng=3 (1km) matches _small_covering_bng_raster fixture
 
 # Tessellate configs indexed by grid name.
 _TESS_CONFIG = {
@@ -789,6 +795,30 @@ def _parity_cmp(light, heavy, *, label, tol=1e-9):
             f"{label} cell {key} measure diverged: "
             f"light={lv_f} heavy={hv_f} (diff={abs(lv_f - hv_f):.3e} > tol={threshold:.3e})"
         )
+
+
+def _is_chip_all_nodata(raster_bytes):
+    """True iff the chip raster contains only NoData pixels (no valid data).
+
+    Used to verify that covered-but-empty chips are genuinely all-NoData in both tiers.
+    The chips may have different pixel dimensions (accepted divergence between tiers);
+    this function only checks whether every pixel equals the declared NoData value.
+    Returns True for ``None`` input (a null raster is treated as all-NoData).
+    """
+    if raster_bytes is None:
+        return True
+    from databricks.labs.gbx.pyrx import _serde
+
+    with _serde.open_tile(raster_bytes) as ds:
+        nodata = ds.nodata
+        arr = ds.read(1)
+        if nodata is None:
+            # No declared NoData — treat NaN as NoData for float rasters.
+            return bool(np.all(np.isnan(arr.astype("float64"))))
+        nd_f = float(nodata)
+        if np.isnan(nd_f):
+            return bool(np.all(np.isnan(arr.astype("float64"))))
+        return bool(np.all(arr == nodata))
 
 
 @pytest.mark.parametrize("agg", ["avg", "count"])
@@ -846,6 +876,22 @@ def test_rastertogrid_coverage_assignment_parity(spark_with_jar, grid, coverage,
     assert heavy, f"{label}: heavy emitted no cells"
 
     _parity_cmp(light, heavy, label=label, tol=tol)
+
+    # BNG covering non-degeneracy guard: the origin-offset fixture must produce genuinely
+    # fractional area-fraction weights (< 1.0).  For the ``count`` agg in covering mode,
+    # the cell count equals the sum of area fractions from all overlapping pixels.  If ALL
+    # weights were 1.0 (degenerate grid-aligned fixture), every cell count would be an
+    # integer.  At least one fractional count proves the fixture exercises partial coverage.
+    if grid == "bng" and assignment == "covering" and agg == "count":
+        non_integer_found = any(
+            v is not None and abs(v - round(v)) > 1e-6
+            for v in light.values()
+        )
+        assert non_integer_found, (
+            "BNG covering fixture is degenerate: all count values are integers "
+            "(area-fraction weights all equal 1.0). "
+            "Fix: stagger the raster origin so pixels straddle BNG cell boundaries."
+        )
 
     # complete ⊇ sparse: verify the superset relationship using a second sparse call.
     if coverage == "complete":
@@ -939,6 +985,60 @@ def test_tessellate_coverage_assignment_parity(spark_with_jar, grid, coverage, a
         assert heavy_sparse_ids <= heavy_ids, (
             f"{label}: sparse cell set not subset of complete (heavy)"
         )
+
+        # Empty-chip NoData check: cells that appear in complete but NOT in sparse
+        # are "covered-but-empty" cells — their chips must be all-NoData in BOTH tiers.
+        #
+        # ACCEPTED DIMENSION DIVERGENCE: heavy synthesises a full-source-extent all-NoData
+        # chip; light synthesises a 1×1 all-NoData chip.  We intentionally do NOT assert
+        # equal pixel dimensions — only NoData-ness.
+        all_empty_ids = (light_ids - light_sparse_ids) | (heavy_ids - heavy_sparse_ids)
+        if all_empty_ids:
+            from pyspark.sql import functions as _f
+            from databricks.labs.gbx.pyrx import functions as _prx
+            from databricks.labs.gbx.rasterx import functions as _hx
+
+            # Collect (cellid, raster bytes) from light FIRST (SQL name shared).
+            _prx.register(spark)
+            _df_c = spark.createDataFrame([(bytearray(raster),)], ["raster"]).select(
+                _prx.rst_fromcontent("raster", _f.lit("GTiff")).alias("tile")
+            )
+            _df_c.createOrReplaceTempView("_ras_empty_nodata_check")
+            _l_rows = spark.sql(
+                f"SELECT t.cellid AS cid, t.raster AS r "
+                f"FROM _ras_empty_nodata_check, "
+                f"LATERAL {sql_name}(tile, {resolution}, '{assignment}', '{coverage}') t"
+            ).collect()
+            _l_chips = {
+                _tess_id(r["cid"], bng=is_bng): (bytes(r["r"]) if r["r"] is not None else None)
+                for r in _l_rows
+            }
+
+            # Collect from heavy AFTER re-registering heavy.
+            _hx.register(spark)
+            _h_rows = (
+                _df_c.select(
+                    getattr(_hx, fn_name)(
+                        _f.col("tile"), _f.lit(resolution), assignment, coverage
+                    ).alias("tt")
+                )
+                .select(_f.col("tt.cellid").alias("cid"), _f.col("tt.raster").alias("r"))
+                .collect()
+            )
+            _h_chips = {
+                _tess_id(r["cid"], bng=is_bng): (bytes(r["r"]) if r["r"] is not None else None)
+                for r in _h_rows
+            }
+
+            for cid in all_empty_ids:
+                assert _is_chip_all_nodata(_l_chips.get(cid)), (
+                    f"{label}: light chip for empty cell {cid} contains valid pixels "
+                    "(expected all-NoData for covered-but-empty cell)"
+                )
+                assert _is_chip_all_nodata(_h_chips.get(cid)), (
+                    f"{label}: heavy chip for empty cell {cid} contains valid pixels "
+                    "(expected all-NoData for covered-but-empty cell)"
+                )
 
 
 # ---------------------------------------------------------------------------
