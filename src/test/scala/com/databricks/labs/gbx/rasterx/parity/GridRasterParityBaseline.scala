@@ -1,6 +1,7 @@
 package com.databricks.labs.gbx.rasterx.parity
 
-import com.databricks.labs.gbx.rasterx.expressions.grid.{RST_BNG_RasterToGrid, RST_H3_RasterToGridAvg, RST_Quadbin_RasterToGrid}
+import com.databricks.labs.gbx.gridx.grid.H3
+import com.databricks.labs.gbx.rasterx.expressions.grid.{RST_BNG_RasterToGrid, RST_H3_RasterToGridAvg, RST_Quadbin_RasterToGrid, RasterToGridGeneric}
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.{Dataset, gdal}
 import org.scalatest.BeforeAndAfterAll
@@ -51,6 +52,16 @@ class GridRasterParityBaselineTest extends AnyFunSuite with BeforeAndAfterAll {
     val out = GridRasterParityBaseline.quadbinGrid(ds, 10)
     GridRasterParityBaseline.digest(out.map(_.map { case (c, v) => (c.toString, v) })) shouldBe
       GridRasterParityBaseline.QUADBIN_AVG_RES10
+  }
+
+  test("sparse+centroid execute preserves H3 avg res-2 digest (Stage-2 gate)") {
+    val fAvg: mutable.ArrayBuffer[Double] => Double = b => b.sum / b.size
+    // Typed stub required: Scala 2 can't infer `_ => 0.0` for fAggW in an overloaded context.
+    val fAggWStub: mutable.ArrayBuffer[(Double, Double)] => Double = _ => 0.0
+    val out = RasterToGridGeneric.execute[Double](H3, ds, 2, "sparse", "centroid",
+      fAvg, fAggWStub, None)
+    val flat = out.map(_.collect { case (c, Some(v)) => (c.toString, v) })
+    GridRasterParityBaseline.digest(flat) shouldBe GridRasterParityBaseline.H3_AVG_RES2
   }
 }
 

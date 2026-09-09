@@ -28,12 +28,12 @@ object RasterTessellate {
       * empty all-NoData chip. This test drops those (matches the light tier). It KEEPS cells with real areal
       * overlap even if they clip to all-NoData (e.g. a cloud hole or the raster's own NoData) — those fill
       * their position in covering mode and must not be dropped, else white gaps are punched into the mosaic.
+      *
+      * Delegates to [[GridOverlap.hasPositiveAreaOverlap]] — the shared canonical implementation that
+      * [[com.databricks.labs.gbx.rasterx.expressions.grid.RasterToGridGeneric]] also uses.
       */
-    private def hasPositiveAreaOverlap(cellGeom: Geometry, bbox: Geometry): Boolean = {
-        if (!cellGeom.intersects(bbox)) return false
-        val inter = cellGeom.intersection(bbox)
-        inter != null && !inter.isEmpty && inter.getArea > 0.0
-    }
+    private def hasPositiveAreaOverlap(cellGeom: Geometry, bbox: Geometry): Boolean =
+        GridOverlap.hasPositiveAreaOverlap(cellGeom, bbox)
 
     // ------------------------------------------------------------------------------------------------
     // BNG-specific helpers shared by the generic tessellate path.

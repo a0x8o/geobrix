@@ -9,6 +9,7 @@ import com.databricks.labs.gbx.rasterx.expressions.grid.{
     RST_H3_RasterToGridSum, RST_H3_RasterToGridVariance,
     RST_Quadbin_RasterToGrid
 }
+import com.databricks.labs.gbx.rasterx.parity.GridRasterParityBaseline
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import org.gdal.gdal.{Dataset, gdal}
 import org.scalatest.BeforeAndAfterAll
@@ -20,6 +21,10 @@ import scala.collection.mutable
 class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
 
     var ds: Dataset = _
+
+    // Task-1 stub: covering path (fAggW) throws in Task 1; provide a typed stub so Scala 2
+    // can resolve the overloaded `execute` without a "missing parameter type" error on `_ => 0.0`.
+    private val fAggWStub: mutable.ArrayBuffer[(Double, Double)] => Double = _ => 0.0
 
     override def beforeAll(): Unit = {
         GDALManager.loadSharedObjects(Iterable.empty[String])
@@ -125,6 +130,28 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         val bngCur = RST_BNG_RasterToGrid.execute(ds, 3, fAvg)
         bngGen.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap) shouldBe
             bngCur.map(_.map { case (c, v) => (c.toString, v) }).map(_.toMap)
+    }
+
+    test("execute sparse+centroid reproduces Stage-1 H3 avg res-2 digest") {
+        val out = RasterToGridGeneric.execute[Double](
+            H3, ds, 2, "sparse", "centroid",
+            fAgg = b => b.sum / b.length, fAggW = fAggWStub, emptyValue = None)
+        // Some(v) unwrap → same (cell,value) shape the Stage-1 baseline hashed:
+        val flat = out.map(_.collect { case (c, Some(v)) => (c.toString, v) })
+        GridRasterParityBaseline.digest(flat) shouldBe GridRasterParityBaseline.H3_AVG_RES2
+    }
+
+    test("execute complete adds covered-but-empty cells as None (avg) beyond sparse") {
+        // Pre-typed fAvg required: Scala 2 can't infer `b` type for positional-arg overloaded calls.
+        val fAvg: mutable.ArrayBuffer[Double] => Double = b => b.sum / b.length
+        val sparse = RasterToGridGeneric.execute[Double](H3, ds, 2, "sparse", "centroid",
+            fAvg, fAggWStub, None)
+        val complete = RasterToGridGeneric.execute[Double](H3, ds, 2, "complete", "centroid",
+            fAvg, fAggWStub, None)
+        val sparseCells = sparse.head.map(_._1).toSet
+        val completeCells = complete.head.map(_._1).toSet
+        completeCells should contain allElementsOf sparseCells // superset
+        complete.head.collect { case (c, None) => c }.toSet shouldBe (completeCells -- sparseCells) // extras are None
     }
 
     test("RST_H3_RasterToGridVariance is population variance (>=0) and stddev == its sqrt") {
