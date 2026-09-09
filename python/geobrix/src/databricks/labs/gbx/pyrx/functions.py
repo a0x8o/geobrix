@@ -4544,7 +4544,7 @@ class _RstH3TessellateUDTF:
         if _tile_is_empty(tile) or resolution is None:
             yield _serde.build_error_tile("RST_H3_Tessellate: empty or unreadable tile")
             return
-        effective_mode = assignment if assignment is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
                 f"rst_h3_tessellate: assignment must be one of covering, centroid; "
@@ -4643,7 +4643,7 @@ def rst_tooverlappingtiles(
 def rst_h3_tessellate(
     tile: ColLike,
     resolution: ColLike,
-    assignment: ColLike = "covering",
+    assignment: ColLike = "centroid",
     coverage: ColLike = "complete",
 ):
     """Tessellate a raster into H3 cells (mirrors ``gbx_rst_h3_tessellate``).
@@ -4667,11 +4667,11 @@ def rst_h3_tessellate(
     Args:
         tile:       Tile struct column.
         resolution: H3 resolution in ``[0, 15]``.
-        assignment: Tessellation mode: ``"covering"`` (default) — each H3 cell
-                    that overlaps the raster extent is clipped to its hexagon
-                    boundary; ``"centroid"`` — each valid pixel is assigned to
-                    exactly one cell by its centroid (strict partition, no
-                    overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each H3
+                    cell that overlaps the raster extent is clipped to its
+                    hexagon boundary.
         coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
                     ``"sparse"`` — skip all-NoData chips.
     """
@@ -4693,7 +4693,7 @@ class _RstQuadbinTessellateUDTF:
                 "RST_Quadbin_Tessellate: empty or unreadable tile"
             )
             return
-        effective_mode = assignment if assignment is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
                 f"rst_quadbin_tessellate: assignment must be one of covering, centroid; "
@@ -4746,7 +4746,7 @@ class _RstBngTessellateUDTF:
                 "RST_BNG_Tessellate: empty or unreadable tile"
             )
             return
-        effective_mode = assignment if assignment is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
                 f"rst_bng_tessellate: assignment must be one of covering, centroid; "
@@ -4786,7 +4786,7 @@ class _RstBngTessellateUDTF:
 def rst_bng_tessellate(
     tile: ColLike,
     resolution: ColLike,
-    assignment: ColLike = "covering",
+    assignment: ColLike = "centroid",
     coverage: ColLike = "complete",
 ):
     """Tessellate a raster into BNG cells (mirrors ``gbx_rst_bng_tessellate``).
@@ -4814,10 +4814,11 @@ def rst_bng_tessellate(
         resolution: BNG resolution — an Int index (``±1..±6``: 1=100km .. 6=1m,
                     negatives=quadrants) or a resolutionMap string key
                     (e.g. ``"1km"``, ``"100m"``).
-        assignment: Tessellation mode: ``"covering"`` (default) — each BNG cell
-                    overlapping the raster extent is clipped to its square;
-                    ``"centroid"`` — each valid pixel is assigned to exactly one
-                    cell by its centroid (strict partition, no overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each BNG
+                    cell overlapping the raster extent is clipped to its
+                    square.
         coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
                     ``"sparse"`` — skip all-NoData chips.
     """
@@ -4832,7 +4833,7 @@ def rst_bng_tessellate(
 def rst_quadbin_tessellate(
     tile: ColLike,
     resolution: ColLike,
-    assignment: ColLike = "covering",
+    assignment: ColLike = "centroid",
     coverage: ColLike = "complete",
 ):
     """Tessellate a raster into quadbin cells (mirrors ``gbx_rst_quadbin_tessellate``).
@@ -4855,10 +4856,11 @@ def rst_quadbin_tessellate(
     Args:
         tile:       Tile struct column.
         resolution: Quadbin resolution in ``[0, 20]`` (polyfill limit).
-        assignment: Tessellation mode: ``"covering"`` (default) — each quadbin
-                    cell overlapping the raster extent is clipped to its bbox;
-                    ``"centroid"`` — each valid pixel is assigned to exactly one
-                    cell by its centroid (strict partition, no overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each
+                    quadbin cell overlapping the raster extent is clipped to
+                    its bbox.
         coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
                     ``"sparse"`` — skip all-NoData chips.
     """

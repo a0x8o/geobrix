@@ -1576,22 +1576,23 @@ def test_h3_tessellate_mode_sql(spark):
     df = _tile_df(spark, width=8, height=8, epsg=4326)
     prx.register(spark)
     df.createOrReplaceTempView("_ras_tessellate_mode")
-    # 2-arg (default mode) — must still work for backward compat.
+    # 2-arg (default assignment=centroid) — must still work.
     n_default = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4) t"
     ).count()
-    # explicit covering — same result as default.
+    # explicit covering — non-zero, may differ from default (centroid).
     n_cover = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4, 'covering') t"
     ).count()
-    # centroid — non-zero, may differ from covering.
+    # explicit centroid — same result as default.
     n_centroid = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4, 'centroid') t"
     ).count()
-    assert n_default == n_cover and n_cover > 0 and n_centroid > 0
+    # Default is centroid: n_default == n_centroid; covering may differ.
+    assert n_default == n_centroid and n_centroid > 0 and n_cover > 0
     # bad mode must raise.
     with pytest.raises(Exception):
         spark.sql(
