@@ -63,7 +63,7 @@
     },
     "gbx_rst_bng_rastertogridavg": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridavg(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -73,7 +73,7 @@
     },
     "gbx_rst_bng_rastertogridcount": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridcount(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -83,7 +83,7 @@
     },
     "gbx_rst_bng_rastertogridmax": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridmax(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -93,7 +93,7 @@
     },
     "gbx_rst_bng_rastertogridmedian": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridmedian(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -103,7 +103,7 @@
     },
     "gbx_rst_bng_rastertogridmin": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridmin(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -113,7 +113,7 @@
     },
     "gbx_rst_bng_rastertogridstddev": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridstddev(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -123,7 +123,7 @@
     },
     "gbx_rst_bng_rastertogridsum": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridsum(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -133,7 +133,7 @@
     },
     "gbx_rst_bng_rastertogridvariance": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_rastertogridvariance(tile, 3) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -143,7 +143,7 @@
     },
     "gbx_rst_bng_tessellate": {
       "examples": "Examples:\n      > SELECT gbx_rst_bng_tessellate(tile, '1km', 'covering') FROM rasters;",
-      "usage_args": "tile, resolution, [mode]",
+      "usage_args": "tile, resolution, [assignment], [coverage]",
       "bindings": [
         "sql",
         "python-light",
@@ -431,7 +431,7 @@
     },
     "gbx_rst_h3_rastertogridavg": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridavg(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -441,7 +441,7 @@
     },
     "gbx_rst_h3_rastertogridcount": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridcount(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -451,7 +451,7 @@
     },
     "gbx_rst_h3_rastertogridmax": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridmax(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -461,7 +461,7 @@
     },
     "gbx_rst_h3_rastertogridmedian": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridmedian(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -471,7 +471,7 @@
     },
     "gbx_rst_h3_rastertogridmin": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridmin(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -481,7 +481,7 @@
     },
     "gbx_rst_h3_rastertogridstddev": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridstddev(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -491,7 +491,7 @@
     },
     "gbx_rst_h3_rastertogridsum": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridsum(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -501,7 +501,7 @@
     },
     "gbx_rst_h3_rastertogridvariance": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_rastertogridvariance(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -511,7 +511,7 @@
     },
     "gbx_rst_h3_tessellate": {
       "examples": "Examples:\n      > SELECT gbx_rst_h3_tessellate(tile, 7, 'covering') FROM rasters;",
-      "usage_args": "tile, resolution, [mode]",
+      "usage_args": "tile, resolution, [assignment], [coverage]",
       "bindings": [
         "sql",
         "python-light",
@@ -771,7 +771,7 @@
     },
     "gbx_rst_quadbin_rastertogridavg": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridavg(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -781,7 +781,7 @@
     },
     "gbx_rst_quadbin_rastertogridcount": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridcount(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -791,7 +791,7 @@
     },
     "gbx_rst_quadbin_rastertogridmax": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridmax(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -801,7 +801,7 @@
     },
     "gbx_rst_quadbin_rastertogridmedian": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridmedian(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -811,7 +811,7 @@
     },
     "gbx_rst_quadbin_rastertogridmin": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridmin(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -821,7 +821,7 @@
     },
     "gbx_rst_quadbin_rastertogridstddev": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridstddev(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -831,7 +831,7 @@
     },
     "gbx_rst_quadbin_rastertogridsum": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridsum(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -841,7 +841,7 @@
     },
     "gbx_rst_quadbin_rastertogridvariance": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_rastertogridvariance(tile, 4) AS grid FROM multiband_rasters;",
-      "usage_args": "tile, resolution",
+      "usage_args": "tile, resolution, [coverage], [assignment]",
       "bindings": [
         "sql",
         "python-light",
@@ -851,7 +851,7 @@
     },
     "gbx_rst_quadbin_tessellate": {
       "examples": "Examples:\n      > SELECT gbx_rst_quadbin_tessellate(tile, 12, 'covering') FROM rasters;",
-      "usage_args": "tile, resolution, [mode]",
+      "usage_args": "tile, resolution, [assignment], [coverage]",
       "bindings": [
         "sql",
         "python-light",

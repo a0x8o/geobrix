@@ -1248,15 +1248,17 @@ rst_updatetype_sql_example_output = """
 
 
 def rst_h3_tessellate_sql_example():
-    """Tessellate raster to H3 grid (covering or centroid mode)"""
+    """Tessellate raster to H3 grid (assignment and coverage control)"""
     return """
 -- Heavyweight: the generator in SELECT explodes to one row per overlapping H3
--- cell, clipped to its hexagon (covering mode, default; pass 'centroid' as the
--- 3rd arg for pixel-centroid single-assignment).
+-- cell (default assignment='centroid', coverage='complete').
 SELECT gbx_rst_h3_tessellate(tile, 7, 'covering') FROM rasters;
 
 -- Lightweight (pyrx): registered as a streaming table function — call with LATERAL.
 SELECT t.* FROM rasters, LATERAL gbx_rst_h3_tessellate(tile, 7, 'covering') t;
+
+-- Explicit: assignment='centroid' (default) + coverage='complete' (default).
+SELECT t.* FROM rasters, LATERAL gbx_rst_h3_tessellate(tile, 7, 'centroid', 'complete') t;
 """
 
 
@@ -1269,16 +1271,18 @@ rst_h3_tessellate_sql_example_output = """
 
 
 def rst_quadbin_tessellate_sql_example():
-    """Tessellate a raster into CARTO quadbin v0 cells (covering or centroid mode)"""
+    """Tessellate a raster into CARTO quadbin v0 cells (assignment and coverage control)"""
     return """
 -- Heavyweight: the generator in SELECT explodes to one row per overlapping
--- quadbin cell, each chip clipped to its cell (covering mode, default; pass
--- 'centroid' as the 3rd arg for pixel-centroid single-assignment). Zoom 12 for
--- a city-scale raster.
+-- quadbin cell, each chip clipped to its cell. 3rd arg is assignment
+-- ('covering' shown; default is 'centroid'). Zoom 12 for a city-scale raster.
 SELECT gbx_rst_quadbin_tessellate(tile, 12, 'covering') FROM rasters;
 
 -- Lightweight (pyrx): registered as a streaming table function — call with LATERAL.
 SELECT t.* FROM rasters, LATERAL gbx_rst_quadbin_tessellate(tile, 12, 'covering') t;
+
+-- Explicit: assignment='centroid' (default) + coverage='complete' (default).
+SELECT t.* FROM rasters, LATERAL gbx_rst_quadbin_tessellate(tile, 12, 'centroid', 'complete') t;
 """
 
 
@@ -1293,16 +1297,18 @@ rst_quadbin_tessellate_sql_example_output = """
 
 
 def rst_bng_tessellate_sql_example():
-    """Tessellate a raster into British National Grid cells (covering or centroid mode)"""
+    """Tessellate a raster into British National Grid cells (assignment and coverage control)"""
     return """
 -- Heavyweight: the generator in SELECT explodes to one row per overlapping BNG
--- cell (covering mode, default; pass 'centroid' as the 3rd arg for
--- pixel-centroid single-assignment). '1km' == integer resolution 3; a raster in
--- any CRS is warped to EPSG:27700 first.
+-- cell. 3rd arg is assignment ('covering' shown; default is 'centroid').
+-- '1km' == integer resolution 3; a raster in any CRS is warped to EPSG:27700 first.
 SELECT gbx_rst_bng_tessellate(tile, '1km', 'covering') FROM rasters;
 
 -- Lightweight (pyrx): registered as a streaming table function — call with LATERAL.
 SELECT t.* FROM rasters, LATERAL gbx_rst_bng_tessellate(tile, '1km', 'covering') t;
+
+-- Explicit: assignment='centroid' (default) + coverage='complete' (default).
+SELECT t.* FROM rasters, LATERAL gbx_rst_bng_tessellate(tile, '1km', 'centroid', 'complete') t;
 """
 
 
@@ -1325,6 +1331,9 @@ SELECT gbx_rst_h3_rastertogridavg(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridavg(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridavg(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1343,7 +1352,7 @@ rst_h3_rastertogridavg_sql_example_output = """
 
 
 def rst_h3_rastertogridcount_sql_example():
-    """Count pixels per H3 cell"""
+    """Count pixels per H3 cell (measure is DOUBLE)"""
     return """
 -- Heavyweight: scalar ARRAY return (one element per band) — call directly;
 -- explode to flatten the per-band arrays to rows.
@@ -1351,6 +1360,9 @@ SELECT gbx_rst_h3_rastertogridcount(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridcount(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridcount(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1358,11 +1370,11 @@ rst_h3_rastertogridcount_sql_example_output = """
 +----+------------------+-------+
 |band|cellID            |measure|
 +----+------------------+-------+
-|1   |599686042433355775|256    |
-|1   |599686043374559743|240    |
-|2   |599686042433355775|256    |
+|1   |599686042433355775|256.0  |
+|1   |599686043374559743|240.0  |
+|2   |599686042433355775|256.0  |
 +----+------------------+-------+
-(pixel count per band×cell)
+(pixel count per band×cell; measure is DOUBLE)
 """
 
 
@@ -1375,6 +1387,9 @@ SELECT gbx_rst_h3_rastertogridmax(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridmax(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridmax(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1399,6 +1414,9 @@ SELECT gbx_rst_h3_rastertogridmin(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridmin(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridmin(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1423,6 +1441,9 @@ SELECT gbx_rst_h3_rastertogridmedian(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridmedian(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridmedian(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1447,6 +1468,9 @@ SELECT gbx_rst_h3_rastertogridsum(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridsum(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridsum(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1471,6 +1495,9 @@ SELECT gbx_rst_h3_rastertogridvariance(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridvariance(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridvariance(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1495,6 +1522,9 @@ SELECT gbx_rst_h3_rastertogridstddev(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_h3_rastertogridstddev(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_h3_rastertogridstddev(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1519,6 +1549,9 @@ SELECT gbx_rst_quadbin_rastertogridavg(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridavg(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridavg(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1535,7 +1568,7 @@ rst_quadbin_rastertogridavg_sql_example_output = """
 
 
 def rst_quadbin_rastertogridcount_sql_example():
-    """Count pixels per CARTO quadbin v0 cell"""
+    """Count pixels per CARTO quadbin v0 cell (measure is DOUBLE)"""
     return """
 -- Heavyweight: scalar ARRAY return (one element per band) — call directly;
 -- explode to flatten the per-band arrays to rows.
@@ -1543,6 +1576,9 @@ SELECT gbx_rst_quadbin_rastertogridcount(tile, 4) AS grid FROM multiband_rasters
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridcount(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridcount(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1550,11 +1586,11 @@ rst_quadbin_rastertogridcount_sql_example_output = """
 +----+------+-------+
 |band|cellID|measure|
 +----+------+-------+
-|1   |12345 |256    |
-|1   |12346 |240    |
-|2   |12345 |256    |
+|1   |12345 |256.0  |
+|1   |12346 |240.0  |
+|2   |12345 |256.0  |
 +----+------+-------+
-(pixel count per band×Quadbin cell)
+(pixel count per band×Quadbin cell; measure is DOUBLE)
 """
 
 
@@ -1567,6 +1603,9 @@ SELECT gbx_rst_quadbin_rastertogridmax(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridmax(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridmax(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1591,6 +1630,9 @@ SELECT gbx_rst_quadbin_rastertogridmin(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridmin(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridmin(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1615,6 +1657,9 @@ SELECT gbx_rst_quadbin_rastertogridmedian(tile, 4) AS grid FROM multiband_raster
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridmedian(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridmedian(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1639,6 +1684,9 @@ SELECT gbx_rst_quadbin_rastertogridsum(tile, 4) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridsum(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridsum(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1663,6 +1711,9 @@ SELECT gbx_rst_quadbin_rastertogridvariance(tile, 4) AS grid FROM multiband_rast
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridvariance(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridvariance(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1687,6 +1738,9 @@ SELECT gbx_rst_quadbin_rastertogridstddev(tile, 4) AS grid FROM multiband_raster
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_quadbin_rastertogridstddev(tile, 4) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_quadbin_rastertogridstddev(tile, 4, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1724,6 +1778,9 @@ SELECT gbx_rst_bng_rastertogridavg(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridavg(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridavg(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1740,7 +1797,7 @@ rst_bng_rastertogridavg_sql_example_output = """
 
 
 def rst_bng_rastertogridcount_sql_example():
-    """Count pixels per British National Grid cell"""
+    """Count pixels per British National Grid cell (measure is DOUBLE)"""
     return """
 -- Heavyweight: scalar ARRAY return (one element per band) — call directly;
 -- explode to flatten the per-band arrays to rows.
@@ -1748,6 +1805,9 @@ SELECT gbx_rst_bng_rastertogridcount(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridcount(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridcount(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1755,11 +1815,11 @@ rst_bng_rastertogridcount_sql_example_output = """
 +----+------+-------+
 |band|cellID|measure|
 +----+------+-------+
-|1   |OW5574|9      |
-|1   |OW5575|21     |
-|2   |OW5574|9      |
+|1   |OW5574|9.0    |
+|1   |OW5575|21.0   |
+|2   |OW5574|9.0    |
 +----+------+-------+
-(pixel count per band × BNG cell)
+(pixel count per band × BNG cell; measure is DOUBLE)
 """
 
 
@@ -1772,6 +1832,9 @@ SELECT gbx_rst_bng_rastertogridmax(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridmax(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridmax(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1796,6 +1859,9 @@ SELECT gbx_rst_bng_rastertogridmin(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridmin(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridmin(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1820,6 +1886,9 @@ SELECT gbx_rst_bng_rastertogridmedian(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridmedian(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridmedian(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1844,6 +1913,9 @@ SELECT gbx_rst_bng_rastertogridsum(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridsum(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridsum(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1868,6 +1940,9 @@ SELECT gbx_rst_bng_rastertogridvariance(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridvariance(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridvariance(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
@@ -1892,6 +1967,9 @@ SELECT gbx_rst_bng_rastertogridstddev(tile, 3) AS grid FROM multiband_rasters;
 
 -- Lightweight (pyrx): streaming table function — must use LATERAL.
 SELECT t.* FROM multiband_rasters, LATERAL gbx_rst_bng_rastertogridstddev(tile, 3) t;
+
+-- Explicit coverage='complete', assignment='covering' (non-default assignment).
+SELECT gbx_rst_bng_rastertogridstddev(tile, 3, 'complete', 'covering') AS grid FROM multiband_rasters;
 """
 
 
