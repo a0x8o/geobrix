@@ -113,9 +113,15 @@ object RasterToGridGeneric {
             } else {
                 // coverage == "complete": find cells that overlap the raster bbox but
                 // received no pixel centroids, and emit them with emptyValue.
+                // Release the native SpatialReference after use to prevent native-heap leaks
+                // on executors running many complete-mode aggregations.
                 val gridSr = buildGridSR(grid.crsSrid)
-                val bboxGeom = BoundingBox.bbox(workDs, gridSr)
-                val candidates = grid.coveringCandidateCells(bboxGeom, resolution)
+                val (bboxGeom, candidates) = try {
+                    val bbox = BoundingBox.bbox(workDs, gridSr)
+                    (bbox, grid.coveringCandidateCells(bbox, resolution))
+                } finally {
+                    gridSr.delete()
+                }
 
                 sparseOut.map { band =>
                     // Keys of cells already populated by the centroid loop.
@@ -125,13 +131,17 @@ object RasterToGridGeneric {
                     // (a) pass the validity guard, (b) have positive-area overlap with the
                     // bbox (same keep-test used by RasterTessellate's covering path), and
                     // (c) are not already keyed in the sparse output.
+                    // renderCellId is called exactly once per candidate (hoisted via flatMap).
                     val extraCells: Array[(Any, Option[T])] = candidates
-                        .filter { c =>
-                            !sparseRendered.contains(grid.renderCellId(c)) &&
-                            isCellValid(c) &&
-                            GridOverlap.hasPositiveAreaOverlap(grid.cellIdToGeometry(c), bboxGeom)
+                        .flatMap { c =>
+                            val key = grid.renderCellId(c)
+                            if (!sparseRendered.contains(key) &&
+                                isCellValid(c) &&
+                                GridOverlap.hasPositiveAreaOverlap(grid.cellIdToGeometry(c), bboxGeom))
+                                Some((key: Any, emptyValue))
+                            else
+                                None
                         }
-                        .map { c => (grid.renderCellId(c): Any, emptyValue) }
                         .toArray
 
                     band.map { case (c, v) => (c, Option(v)): (Any, Option[T]) } ++ extraCells

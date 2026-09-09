@@ -55,7 +55,7 @@ class GridRasterParityBaselineTest extends AnyFunSuite with BeforeAndAfterAll {
   }
 
   test("sparse+centroid execute preserves H3 avg res-2 digest (Stage-2 gate)") {
-    val fAvg: mutable.ArrayBuffer[Double] => Double = b => b.sum / b.size
+    val fAvg: mutable.ArrayBuffer[Double] => Double = b => b.sum / b.length
     // Typed stub required: Scala 2 can't infer `_ => 0.0` for fAggW in an overloaded context.
     val fAggWStub: mutable.ArrayBuffer[(Double, Double)] => Double = _ => 0.0
     val out = RasterToGridGeneric.execute[Double](H3, ds, 2, "sparse", "centroid",
@@ -73,13 +73,13 @@ object GridRasterParityBaseline {
 
   /** Thin wrapper: BNG average aggregation. Returns per-band `(cellId: String, avg: Double)`. */
   def bngGrid(ds: Dataset, resolution: Int): Array[Array[(String, Double)]] = {
-    val fAvg: mutable.ArrayBuffer[Double] => Double = buf => buf.sum / buf.size
+    val fAvg: mutable.ArrayBuffer[Double] => Double = buf => buf.sum / buf.length
     RST_BNG_RasterToGrid.execute(ds, resolution, fAvg)
   }
 
   /** Thin wrapper: Quadbin average aggregation. Returns per-band `(cellId: Long, avg: Double)`. */
   def quadbinGrid(ds: Dataset, resolution: Int): Array[Array[(Long, Double)]] = {
-    val fAvg: mutable.ArrayBuffer[Double] => Double = buf => buf.sum / buf.size
+    val fAvg: mutable.ArrayBuffer[Double] => Double = buf => buf.sum / buf.length
     RST_Quadbin_RasterToGrid.execute(ds, resolution, fAvg)
   }
 
