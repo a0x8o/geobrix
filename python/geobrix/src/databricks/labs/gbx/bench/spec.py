@@ -1963,7 +1963,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 7},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "avg"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "avg", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridavg(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -1982,7 +1984,7 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 7},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "h3", "count"
+            ds, a["resolution"], "h3", "count", coverage="sparse", assignment="centroid"
         ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridcount(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2001,7 +2003,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 7},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "max"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "max", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridmax(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2020,7 +2024,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 7},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "h3", "median"
+            ds,
+            a["resolution"],
+            "h3",
+            "median",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridmedian(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2039,7 +2048,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 7},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "min"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "min", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridmin(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2057,7 +2068,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 7},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "h3", "sum"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "h3", "sum", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridsum(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2076,7 +2089,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 7},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "h3", "variance"
+            ds,
+            a["resolution"],
+            "h3",
+            "variance",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridvariance(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2096,7 +2114,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 7},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "h3", "stddev"
+            ds,
+            a["resolution"],
+            "h3",
+            "stddev",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_h3_rastertogridstddev(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2117,7 +2140,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "avg"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "avg",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridavg(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2137,7 +2165,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "count"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "count",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridcount(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2157,7 +2190,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "max"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "max",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridmax(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2177,7 +2215,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "median"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "median",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridmedian(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2197,7 +2240,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "min"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "min",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridmin(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2217,7 +2265,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "sum"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "sum",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridsum(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2237,7 +2290,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "variance"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "variance",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridvariance(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2257,7 +2315,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 15},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "quadbin", "stddev"
+            ds,
+            a["resolution"],
+            "quadbin",
+            "stddev",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_quadbin_rastertogridstddev(t, a["resolution"]),
         fingerprint_kind="dggs_grid",
@@ -2288,7 +2351,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 3},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "bng", "avg"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "bng", "avg", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridavg(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2309,7 +2374,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 3},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "bng", "count"
+            ds,
+            a["resolution"],
+            "bng",
+            "count",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridcount(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
@@ -2330,7 +2400,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 3},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "bng", "max"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "bng", "max", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridmax(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2351,7 +2423,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 3},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "bng", "median"
+            ds,
+            a["resolution"],
+            "bng",
+            "median",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridmedian(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
@@ -2372,7 +2449,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 3},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "bng", "min"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "bng", "min", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridmin(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2392,7 +2471,9 @@ REGISTRY: Dict[str, FnSpec] = {
         "dggs",
         _BOTH,
         {"resolution": 3},
-        core_fn=lambda ds, a: gridagg.raster_to_grid(ds, a["resolution"], "bng", "sum"),
+        core_fn=lambda ds, a: gridagg.raster_to_grid(
+            ds, a["resolution"], "bng", "sum", coverage="sparse", assignment="centroid"
+        ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridsum(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
         udtf=True,  # light impl is a UDTF -> spark-path via SQL LATERAL (see FnSpec.udtf)
@@ -2413,7 +2494,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 3},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "bng", "variance"
+            ds,
+            a["resolution"],
+            "bng",
+            "variance",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridvariance(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
@@ -2435,7 +2521,12 @@ REGISTRY: Dict[str, FnSpec] = {
         _BOTH,
         {"resolution": 3},
         core_fn=lambda ds, a: gridagg.raster_to_grid(
-            ds, a["resolution"], "bng", "stddev"
+            ds,
+            a["resolution"],
+            "bng",
+            "stddev",
+            coverage="sparse",
+            assignment="centroid",
         ),
         col_fn=lambda t, a: prx.rst_bng_rastertogridstddev(t, a["resolution"]),
         fingerprint_kind="dggs_grid_str",
