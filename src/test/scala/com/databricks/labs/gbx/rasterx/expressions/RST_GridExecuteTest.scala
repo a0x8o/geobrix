@@ -190,7 +190,9 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
             fAgg = fAggStub, fAggW = fAggWSum, emptyValue = None)
         val cellSum     = out.head.collect { case (_, Some(v)) => v }.sum
         val rasterTotal = band1ValidSum(ds, H3.crsSrid)
-        cellSum shouldBe (rasterTotal +- 1e-6)
+        // Fractional tolerance: robust across rasters where accumulated FP error
+        // on millions of v*w products can exceed 1e-6 absolute.
+        cellSum shouldBe (rasterTotal +- math.max(1e-6, math.abs(rasterTotal) * 1e-9))
     }
 
     test("covering+complete: extra cells are None only when all-NoData") {
@@ -199,12 +201,22 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
             val sw = pairs.map(_._2).sum
             pairs.map { case (v, w) => v * w }.sum / sw
         }
+        // Sparse run gives the has-data cell set; complete run must be a strict superset.
+        val sparse = RasterToGridGeneric.execute[Double](H3, ds, 6, "sparse", "covering",
+            fAgg = fAggStub, fAggW = fAggWAvg, emptyValue = None)
+        val sparseKeys: Set[Any] = sparse.head.map(_._1).toSet
+
         val out = RasterToGridGeneric.execute[Double](H3, ds, 6, "complete", "covering",
             fAgg = fAggStub, fAggW = fAggWAvg, emptyValue = None)
-        // Every Some(v) must be a valid (non-NaN) double; None is permitted for all-NoData cells
+        // Positive direction: every Some(v) is a valid (non-NaN) double.
         out.head.foreach {
             case (_, Some(v)) => v.isNaN shouldBe false
             case (_, None)    => ()
+        }
+        // Negative direction: every None entry is an extra covered-but-empty cell,
+        // never a has-data cell that was silently dropped.
+        out.head.collect { case (k, None) => k }.foreach { k =>
+            sparseKeys should not contain k
         }
     }
 
