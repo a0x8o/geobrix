@@ -20,6 +20,8 @@ import org.apache.spark.sql.types.{ArrayType, BinaryType, DoubleType, StructType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.SerializableConfiguration
 import org.gdal.gdal.{Dataset, gdal}
+import org.gdal.gdalconst.gdalconstConstants
+import org.gdal.osr.{SpatialReference, osrConstants}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
@@ -30,6 +32,9 @@ import scala.collection.mutable
 class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
 
     var ds: Dataset = _
+    // Tiny synthetic raster + coarse resolution for the covering-path tests (see makeCoveringRaster).
+    private var covDs: Dataset = _
+    private val covRes = 7
 
     // Task-1 stub: covering path (fAggW) throws in Task 1; provide a typed stub so Scala 2
     // can resolve the overloaded `execute` without a "missing parameter type" error on `_ => 0.0`.
@@ -48,10 +53,12 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         Files.createDirectories(NodeFilePathUtil.rootPath)
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString.replace("file:/", "/")
         ds = gdal.Open(tifPath)
+        covDs = makeCoveringRaster()
     }
 
     override def afterAll(): Unit = {
-        ds.delete()
+        if (ds != null) ds.delete()
+        if (covDs != null) covDs.delete()
     }
 
     test("RST_H3_RasterToGridAvg should produce average cells") {
@@ -197,12 +204,11 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         // fAggStub is unused by the covering path but is required to resolve the overload.
         val fAggWSum: mutable.ArrayBuffer[(Double, Double)] => Double =
             pairs => pairs.map { case (v, w) => v * w }.sum
-        val out = RasterToGridGeneric.execute[Double](H3, ds, 6, "sparse", "covering",
+        val out = RasterToGridGeneric.execute[Double](H3, covDs, covRes, "sparse", "covering",
             fAgg = fAggStub, fAggW = fAggWSum, emptyValue = None)
         val cellSum     = out.head.collect { case (_, Some(v)) => v }.sum
-        val rasterTotal = band1ValidSum(ds, H3.crsSrid)
-        // Fractional tolerance: robust across rasters where accumulated FP error
-        // on millions of v*w products can exceed 1e-6 absolute.
+        val rasterTotal = band1ValidSum(covDs, H3.crsSrid)
+        // Fractional tolerance: robust against accumulated FP error on the v*w products.
         cellSum shouldBe (rasterTotal +- math.max(1e-6, math.abs(rasterTotal) * 1e-9))
     }
 
@@ -213,11 +219,11 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
             pairs.map { case (v, w) => v * w }.sum / sw
         }
         // Sparse run gives the has-data cell set; complete run must be a strict superset.
-        val sparse = RasterToGridGeneric.execute[Double](H3, ds, 6, "sparse", "covering",
+        val sparse = RasterToGridGeneric.execute[Double](H3, covDs, covRes, "sparse", "covering",
             fAgg = fAggStub, fAggW = fAggWAvg, emptyValue = None)
         val sparseKeys: Set[Any] = sparse.head.map(_._1).toSet
 
-        val out = RasterToGridGeneric.execute[Double](H3, ds, 6, "complete", "covering",
+        val out = RasterToGridGeneric.execute[Double](H3, covDs, covRes, "complete", "covering",
             fAgg = fAggStub, fAggW = fAggWAvg, emptyValue = None)
         // Positive direction: every Some(v) is a valid (non-NaN) double.
         out.head.foreach {
@@ -299,7 +305,7 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     test("covering avg via companion execute produces finite values") {
-        val cov = RST_H3_RasterToGridAvg.execute(ds, 6, "sparse", "covering")
+        val cov = RST_H3_RasterToGridAvg.execute(covDs, covRes, "sparse", "covering")
         cov.head.length should be > 0
         cov.head.foreach { case (_, m) => m.foreach { v => v.isNaN shouldBe false } }
         cov.head.exists { case (_, m) => m.isDefined } shouldBe true
@@ -354,6 +360,34 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Tiny in-memory EPSG:4326 raster for the covering-path tests: a few thousand pixels so the
+      * O(pixels) area-weighted split runs sub-second, yet still exercises real weighting. Pixels
+      * (~0.05°) are larger than res-7 H3 cells, so each pixel straddles several cells and produces
+      * area-fraction weights < 1. An interior NoData block guarantees covered-but-empty (None)
+      * cells under `complete` coverage. Grid CRS == raster CRS (4326), so no reprojection occurs
+      * and `band1ValidSum` is an exact mass-conservation reference. */
+    private def makeCoveringRaster(): Dataset = {
+        val w = 40; val h = 40; val nodata = -9999.0
+        val mem = gdal.GetDriverByName("MEM").Create("", w, h, 1, gdalconstConstants.GDT_Float64)
+        // origin lon -0.5, lat 52.0; 0.05° pixels → extent lon[-0.5,1.5], lat[52.0,50.0]
+        mem.SetGeoTransform(Array(-0.5, 0.05, 0.0, 52.0, 0.0, -0.05))
+        val sr = new SpatialReference()
+        sr.ImportFromEPSG(4326)
+        sr.SetAxisMappingStrategy(osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+        mem.SetProjection(sr.ExportToWkt())
+        sr.delete()
+        val buf = Array.tabulate(w * h) { i =>
+            val x = i % w; val y = i / w
+            if (x >= 14 && x < 26 && y >= 14 && y < 26) nodata // interior all-NoData block
+            else 1.0 + x + y                                    // positive ramp, all distinct-ish
+        }
+        val band = mem.GetRasterBand(1)
+        band.SetNoDataValue(nodata)
+        band.WriteRaster(0, 0, w, h, buf)
+        mem.FlushCache()
+        mem
+    }
 
     /** Sum of valid (non-masked) pixel values in band 1 of the reprojected dataset.
       * Reprojects `rawDs` to `gridSrid` using the same path as `execute`, so the total

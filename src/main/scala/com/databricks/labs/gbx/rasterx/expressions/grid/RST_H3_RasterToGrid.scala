@@ -23,6 +23,11 @@ object RST_H3_RasterToGrid {
       * @param assignment `"centroid"` (bin each pixel by its centroid, `fAgg`) or
       *                   `"covering"` (area-weighted distribution, `fAggW`)
       * @param emptyValue measure for covered-but-empty cells added by `complete`
+      *
+      * `fAgg`/`fAggW` are only ever called on NON-EMPTY buffers — a cell with no pixels never
+      * reaches a reducer; it is materialised (under `complete`) as `emptyValue`/`None` instead.
+      * Reducers may therefore assume at least one element (e.g. `.min`, `Σw > 0`). Copy-forward
+      * note for BNG/Quadbin.
       * @return per-band `(cellId: Long, Option[T])` — `None` marks a covered-but-empty cell
       *         (only under `complete` coverage with `emptyValue == None`)
       */
