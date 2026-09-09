@@ -326,16 +326,22 @@ def rst_combineavg_agg(tile: Column): Column = ColumnAdapter(RST_CombineAvgAgg.n
 
     // Generators
     def rst_h3_tessellate(tile: Column, resolution: Column): Column = ColumnAdapter(RST_H3_Tessellate.name, Seq(tile, resolution))
-    def rst_h3_tessellate(tile: Column, resolution: Column, mode: String): Column =
-        ColumnAdapter(RST_H3_Tessellate.name, Seq(tile, resolution, lit(mode)))
+    def rst_h3_tessellate(tile: Column, resolution: Column, assignment: String): Column =
+        ColumnAdapter(RST_H3_Tessellate.name, Seq(tile, resolution, lit(assignment)))
+    def rst_h3_tessellate(tile: Column, resolution: Column, assignment: String, coverage: String): Column =
+        ColumnAdapter(RST_H3_Tessellate.name, Seq(tile, resolution, lit(assignment), lit(coverage)))
     def rst_quadbin_tessellate(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_Tessellate.name, Seq(tile, resolution))
-    def rst_quadbin_tessellate(tile: Column, resolution: Column, mode: String): Column =
-        ColumnAdapter(RST_Quadbin_Tessellate.name, Seq(tile, resolution, lit(mode)))
+    def rst_quadbin_tessellate(tile: Column, resolution: Column, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_Tessellate.name, Seq(tile, resolution, lit(assignment)))
+    def rst_quadbin_tessellate(tile: Column, resolution: Column, assignment: String, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_Tessellate.name, Seq(tile, resolution, lit(assignment), lit(coverage)))
     def rst_bng_tessellate(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_Tessellate.name, Seq(tile, resolution))
-    def rst_bng_tessellate(tile: Column, resolution: Column, mode: String): Column =
-        ColumnAdapter(RST_BNG_Tessellate.name, Seq(tile, resolution, lit(mode)))
+    def rst_bng_tessellate(tile: Column, resolution: Column, assignment: String): Column =
+        ColumnAdapter(RST_BNG_Tessellate.name, Seq(tile, resolution, lit(assignment)))
+    def rst_bng_tessellate(tile: Column, resolution: Column, assignment: String, coverage: String): Column =
+        ColumnAdapter(RST_BNG_Tessellate.name, Seq(tile, resolution, lit(assignment), lit(coverage)))
     def rst_maketiles(tile: Column, sizeInMB: Column): Column =
         ColumnAdapter(RST_MakeTiles.name, Seq(tile, sizeInMB))
     def rst_retile(tile: Column, tileWidth: Column, tileHeight: Column): Column =
@@ -548,18 +554,26 @@ def rst_combineavg_agg(tile: Column): Column = ColumnAdapter(RST_CombineAvgAgg.n
     // rst_fromfile is lightweight-only (Python UDF); no Scala/JVM column helper or scalar
     // overloads (the JVM cannot read UC Volumes -- see register/#34). Use the Python/SQL binding.
     def rst_h3_tessellate(tile: Column, resolution: Int): Column = rst_h3_tessellate(tile, lit(resolution))
-    def rst_h3_tessellate(tile: Column, resolution: Int, mode: String): Column =
-        rst_h3_tessellate(tile, lit(resolution), mode)
+    def rst_h3_tessellate(tile: Column, resolution: Int, assignment: String): Column =
+        rst_h3_tessellate(tile, lit(resolution), assignment)
+    def rst_h3_tessellate(tile: Column, resolution: Int, assignment: String, coverage: String): Column =
+        rst_h3_tessellate(tile, lit(resolution), assignment, coverage)
     def rst_quadbin_tessellate(tile: Column, resolution: Int): Column = rst_quadbin_tessellate(tile, lit(resolution))
-    def rst_quadbin_tessellate(tile: Column, resolution: Int, mode: String): Column =
-        rst_quadbin_tessellate(tile, lit(resolution), mode)
+    def rst_quadbin_tessellate(tile: Column, resolution: Int, assignment: String): Column =
+        rst_quadbin_tessellate(tile, lit(resolution), assignment)
+    def rst_quadbin_tessellate(tile: Column, resolution: Int, assignment: String, coverage: String): Column =
+        rst_quadbin_tessellate(tile, lit(resolution), assignment, coverage)
     // BNG resolution accepts an Int index (±1..±6) or a String key ("1km", "100m", ...).
     def rst_bng_tessellate(tile: Column, resolution: Int): Column = rst_bng_tessellate(tile, lit(resolution))
-    def rst_bng_tessellate(tile: Column, resolution: Int, mode: String): Column =
-        rst_bng_tessellate(tile, lit(resolution), mode)
+    def rst_bng_tessellate(tile: Column, resolution: Int, assignment: String): Column =
+        rst_bng_tessellate(tile, lit(resolution), assignment)
+    def rst_bng_tessellate(tile: Column, resolution: Int, assignment: String, coverage: String): Column =
+        rst_bng_tessellate(tile, lit(resolution), assignment, coverage)
     def rst_bng_tessellate(tile: Column, resolution: String): Column = rst_bng_tessellate(tile, lit(resolution))
-    def rst_bng_tessellate(tile: Column, resolution: String, mode: String): Column =
-        rst_bng_tessellate(tile, lit(resolution), mode)
+    def rst_bng_tessellate(tile: Column, resolution: String, assignment: String): Column =
+        rst_bng_tessellate(tile, lit(resolution), assignment)
+    def rst_bng_tessellate(tile: Column, resolution: String, assignment: String, coverage: String): Column =
+        rst_bng_tessellate(tile, lit(resolution), assignment, coverage)
     def rst_maketiles(tile: Column, sizeInMB: Int): Column =
         rst_maketiles(tile, lit(sizeInMB))
     def rst_retile(tile: Column, tileWidth: Int, tileHeight: Int): Column =

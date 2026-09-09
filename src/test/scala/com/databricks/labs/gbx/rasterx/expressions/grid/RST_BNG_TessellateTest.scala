@@ -72,7 +72,7 @@ class RST_BNG_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
     test("bng tessellate covering: yields >=1 areal chip tagged with a BNG string cell id") {
         val ds = londonBngDs
         // resolution 3 = 1km cells; the 4km x 4km raster overlaps multiple 1km cells.
-        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, mode = "covering")
+        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, assignment = "covering")
         var count = 0
         while (it.hasNext) {
             val (cell, chip, _) = it.next()
@@ -91,12 +91,12 @@ class RST_BNG_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         assert(count >= 1, "covering tessellation must yield at least one chip")
     }
 
-    test("bng tessellate centroid: yields >=1 chip with distinct BNG ids and bounded pixel counts") {
+    test("bng tessellate centroid+sparse: yields >=1 chip with distinct BNG ids and bounded pixel counts") {
         val ds = londonBngDs
         val srcXSize = ds.getRasterXSize
         val srcYSize = ds.getRasterYSize
         val totalSourcePixels = srcXSize * srcYSize
-        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, mode = "centroid")
+        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, assignment = "centroid", coverage = "sparse")
         var count = 0
         var totalAssigned = 0
         val seenIds = scala.collection.mutable.Set[String]()
@@ -127,7 +127,7 @@ class RST_BNG_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
 
     test("bng tessellate: 4326 input triggers warp and still yields >=1 BNG chip") {
         val ds = london4326Ds
-        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, mode = "covering")
+        val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, assignment = "covering")
         var count = 0
         var firstChipSrWkt: String = null
         while (it.hasNext) {
@@ -156,7 +156,7 @@ class RST_BNG_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         try {
             // 1) Emitted covering set (as BNG string ids).
             val emitted = scala.collection.mutable.Set[String]()
-            val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution, mode = "covering")
+            val it = RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution, assignment = "covering")
             while (it.hasNext) {
                 val (cell, chip, _) = it.next()
                 emitted += cell
@@ -197,12 +197,21 @@ class RST_BNG_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         }
     }
 
-    test("bng tessellate: unknown mode throws IllegalArgumentException mentioning 'mode'") {
+    test("bng tessellate: unknown assignment throws IllegalArgumentException mentioning 'assignment'") {
         val ds = londonBngDs
         val ex = intercept[IllegalArgumentException] {
-            RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, mode = "bogus")
+            RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, assignment = "bogus")
         }
-        assert(ex.getMessage.contains("mode"))
+        assert(ex.getMessage.contains("assignment"))
+        RasterDriver.releaseDataset(ds)
+    }
+
+    test("bng tessellate: unknown coverage throws IllegalArgumentException mentioning 'coverage'") {
+        val ds = londonBngDs
+        val ex = intercept[IllegalArgumentException] {
+            RasterTessellate.tessellateBngIter(ds, Map.empty[String, String], resolution = 3, assignment = "covering", coverage = "bogus")
+        }
+        assert(ex.getMessage.contains("coverage"))
         RasterDriver.releaseDataset(ds)
     }
 }

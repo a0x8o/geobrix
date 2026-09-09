@@ -14,10 +14,18 @@ import scala.jdk.CollectionConverters.CollectionHasAsScala
 /** Tessellates a raster into grid cells: clips by cell geometry and yields (cellId, Dataset, metadata) per cell. */
 object RasterTessellate {
 
-    /** Supported tessellation modes. `covering` (default) keeps every cell whose polygon overlaps the
-      * raster bbox (chips may share pixels). `centroid` single-assigns each valid pixel to the one cell
-      * whose polygon contains its centroid (chips partition the valid pixels). */
-    val Modes: Set[String] = Set("covering", "centroid")
+    /** Supported assignment strategies.
+      * `covering` keeps every cell whose polygon overlaps the raster bbox (chips may share pixels).
+      * `centroid` single-assigns each valid pixel to the one cell whose polygon contains its centroid
+      * (chips partition the valid pixels). */
+    val Assignments: Set[String] = Set("covering", "centroid")
+
+    /** Supported coverage strategies.
+      * `complete` (default) emits a chip for every cell that passes the assignment keep-test, including
+      * all-NoData chips (covering) or synthetic all-NoData chips for covered cells that caught no pixels
+      * (centroid). `sparse` drops chips whose clipped result is entirely NoData (covering) or emits only
+      * cells that received ≥1 pixel centroid (centroid). */
+    val Coverages: Set[String] = Set("sparse", "complete")
 
     /**
       * Covering keep-test shared by all three grids (H3, quadbin, BNG): a cell is emitted iff its geometry
@@ -97,6 +105,26 @@ object RasterTessellate {
         if (grid.crsSrid == 27700) BNG.isValid(cellId) else true
 
     /**
+      * Returns true iff every band of `chip` is entirely NoData (mask is all-zero). Used by
+      * `covering+sparse` to drop chips that have no valid pixels after clipping.
+      * GDAL resources: reads only (does not create or release any dataset).
+      */
+    private def isAllNoData(chip: Dataset): Boolean = {
+        val xSize = chip.getRasterXSize
+        val ySize = chip.getRasterYSize
+        val nPix  = xSize * ySize
+        val maskBuf = new Array[Byte](nPix)
+        var b = 1
+        while (b <= chip.getRasterCount) {
+            chip.GetRasterBand(b).GetMaskBand().ReadRaster(0, 0, xSize, ySize, maskBuf)
+            var i = 0
+            while (i < nPix) { if (maskBuf(i) != 0) return false; i += 1 }
+            b += 1
+        }
+        true
+    }
+
+    /**
       * Generic tessellation of a raster over any [[GridSystem]]. The per-grid enumeration differences
       * are captured in [[GridSystem.coveringCandidateCells]] (buffered polyfill for H3/BNG; raw bbox
       * lookup for quadbin), so the shared clip+keep-test logic here is grid-agnostic.
@@ -108,20 +136,32 @@ object RasterTessellate {
       *
       * Caller must release each emitted Dataset. The iterator is AutoCloseable and releases the working
       * dataset when exhausted or explicitly closed.
+      *
+      * @param assignment `"covering"` — one chip per cell whose polygon overlaps the raster bbox;
+      *                   `"centroid"` — pixel-centroid single-assignment. Default: `"centroid"`.
+      * @param coverage   `"complete"` — always emit a chip for every candidate cell, including
+      *                   all-NoData chips (covering) and synthetic all-NoData chips for uncaptured cells
+      *                   (centroid); `"sparse"` — drop all-NoData chips (covering) / emit only cells
+      *                   with ≥1 captured pixel (centroid). Default: `"complete"`.
       */
     def tessellate(
         grid: GridSystem,
         ds: Dataset,
         options: Map[String, String],
         resolution: Int,
-        mode: String = "covering"
+        assignment: String = "centroid",
+        coverage: String = "complete"
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         require(
-          Modes.contains(mode),
-          s"gbx_rst_${grid.name.toLowerCase}_tessellate mode must be one of ${Modes.mkString(", ")}; got '$mode'"
+          Assignments.contains(assignment),
+          s"gbx_rst_${grid.name.toLowerCase}_tessellate assignment must be one of ${Assignments.mkString(", ")}; got '$assignment'"
         )
-        if (mode == "centroid") tessellateGenericCentroidIter(grid, ds, options, resolution)
-        else tessellateGenericCoveringIter(grid, ds, options, resolution)
+        require(
+          Coverages.contains(coverage),
+          s"gbx_rst_${grid.name.toLowerCase}_tessellate coverage must be one of ${Coverages.mkString(", ")}; got '$coverage'"
+        )
+        if (assignment == "centroid") tessellateGenericCentroidIter(grid, ds, options, resolution, coverage)
+        else tessellateGenericCoveringIter(grid, ds, options, resolution, coverage)
     }
 
     /**
@@ -129,12 +169,16 @@ object RasterTessellate {
       * which encodes each grid's buffering strategy (H3/BNG buffer; quadbin does not). The shared
       * positive-area keep-test, validity guard, and [[ClipToGeom.clip]] are applied identically for
       * every grid.
+      *
+      * When `coverage == "sparse"`, chips whose clipped result is entirely NoData are released and
+      * skipped. When `coverage == "complete"` (default), all-NoData chips are emitted as-is.
       */
     private def tessellateGenericCoveringIter(
         grid: GridSystem,
         ds: Dataset,
         options: Map[String, String],
-        resolution: Int
+        resolution: Int,
+        coverage: String
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         val gridSR = srForGrid(grid)
         // BNG requires a pre-warp to EPSG:27700; 4326-native grids (H3/quadbin) use ds as-is.
@@ -163,10 +207,15 @@ object RasterTessellate {
                         if (hasPositiveAreaOverlap(cellGeom, bbox)) {
                             val (resDs, resMtd) = ClipToGeom.clip(_ds, options, cellGeom, gridSR)
                             if (resDs != null) {
-                                val rendered = grid.renderCellId(cellId)
-                                resDs.SetMetadataItem("RASTERX_CELL_ID", rendered.toString)
-                                resDs.FlushCache()
-                                nextTile = (rendered, resDs, resMtd)
+                                // covering+sparse: drop chips whose clip is entirely NoData.
+                                if (coverage == "sparse" && isAllNoData(resDs)) {
+                                    RasterDriver.releaseDataset(resDs)
+                                } else {
+                                    val rendered = grid.renderCellId(cellId)
+                                    resDs.SetMetadataItem("RASTERX_CELL_ID", rendered.toString)
+                                    resDs.FlushCache()
+                                    nextTile = (rendered, resDs, resMtd)
+                                }
                             }
                         }
                     }
@@ -202,12 +251,19 @@ object RasterTessellate {
       * reading so that pixel coordinates are already in the grid's native CRS. 4326-native grids
       * (H3/quadbin) optionally reproject pixel centroids per-pixel when the raster CRS differs
       * from 4326.
+      *
+      * When `coverage == "complete"`, also emits a synthetic all-NoData chip for each covered cell
+      * (positive-area overlap, valid grid cell) that caught no pixel centroid. The chip has the same
+      * dimensions and geotransform as the source raster, with every pixel set to the source NoData.
+      * When `coverage == "sparse"` (default-equivalent to old centroid), only cells with ≥1 assigned
+      * pixel are emitted.
       */
     private def tessellateGenericCentroidIter(
         grid: GridSystem,
         ds: Dataset,
         options: Map[String, String],
-        resolution: Int
+        resolution: Int,
+        coverage: String
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         // BNG requires a pre-warp so pixel coordinates are in EPSG:27700 (the grid's native CRS).
         val (workDs, reprojected) = if (grid.crsSrid == 27700) warpToBng(ds) else (ds, false)
@@ -224,6 +280,14 @@ object RasterTessellate {
         val sourcePath = Option(workDs.GetFileList())
             .flatMap(_.asScala.headOption.map(_.toString))
             .getOrElse("unknown source path")
+
+        // For centroid+complete: capture the covering cells BEFORE releasing workDs.
+        val gridSR = srForGrid(grid)
+        val (completeBbox, completeCoveredCells): (Geometry, Array[Long]) =
+            if (coverage == "complete") {
+                val b = BoundingBox.bbox(workDs, gridSR)
+                (b, grid.coveringCandidateCells(b, resolution).toArray)
+            } else (null, Array.empty[Long])
 
         // For 4326-native grids: set up per-pixel reprojection if the raster CRS is not already 4326.
         // For 27700-native grids (BNG): no per-pixel reprojection — the warp already puts coords in 27700.
@@ -281,24 +345,45 @@ object RasterTessellate {
             y += 1
         }
 
+        // For complete coverage: compute synthetic cells (covered but no centroid pixel assigned).
+        val syntheticCells: Array[Long] = if (coverage == "complete") {
+            completeCoveredCells.filter(cellId =>
+                isCellValid(grid, cellId) &&
+                hasPositiveAreaOverlap(grid.cellIdToGeometry(cellId), completeBbox) &&
+                !cellPixels.contains(cellId)
+            )
+        } else Array.empty[Long]
+
         // For BNG the working dataset is a temporary warp; release it once all pixels are read.
         if (reprojected) RasterDriver.releaseDataset(workDs)
 
         val gridName = grid.name.toLowerCase
         val cellIter = cellPixels.iterator
+        var synIdx   = 0
 
         new Iterator[(Any, Dataset, Map[String, String])] with AutoCloseable {
             private var closed = false
 
-            override def hasNext: Boolean = !closed && cellIter.hasNext
+            override def hasNext: Boolean = !closed && (cellIter.hasNext || synIdx < syntheticCells.length)
 
             override def next(): (Any, Dataset, Map[String, String]) = {
-                val (cellId, pixIdx) = cellIter.next()
-                val tile = buildGenericCentroidChip(
-                  grid, gridName, projWkt, sourcePath, options, cellId, pixIdx,
-                  xSize, ySize, bandCount, dtype, gt, bandVals, bandNoData
-                )
-                if (!cellIter.hasNext) close()
+                val tile = if (cellIter.hasNext) {
+                    val (cellId, pixIdx) = cellIter.next()
+                    buildGenericCentroidChip(
+                      grid, gridName, projWkt, sourcePath, options, cellId, pixIdx,
+                      xSize, ySize, bandCount, dtype, gt, bandVals, bandNoData
+                    )
+                } else {
+                    // Synthetic all-NoData chip for a covered cell with no centroid pixel.
+                    val cellId    = syntheticCells(synIdx)
+                    synIdx += 1
+                    val emptyIdx = new mutable.ArrayBuffer[Int]()
+                    buildGenericCentroidChip(
+                      grid, gridName, projWkt, sourcePath, options, cellId, emptyIdx,
+                      xSize, ySize, bandCount, dtype, gt, bandVals, bandNoData
+                    )
+                }
+                if (!hasNext) close()
                 tile
             }
 
@@ -308,7 +393,9 @@ object RasterTessellate {
 
     /** Builds one full-extent chip for centroid tessellation: every pixel starts as nodata, then the
       * `pixIdx` pixels are restored to their source values.  Works for H3, quadbin, and BNG because the
-      * grid-specific rendering ([[GridSystem.renderCellId]]) and name are supplied as parameters. */
+      * grid-specific rendering ([[GridSystem.renderCellId]]) and name are supplied as parameters.
+      * When `pixIdx` is empty the result is a full-extent all-NoData chip (used by `centroid+complete`
+      * to synthesise placeholder chips for covered cells that caught no pixel centroid). */
     private def buildGenericCentroidChip(
         grid: GridSystem,
         gridName: String,
@@ -377,16 +464,19 @@ object RasterTessellate {
       * Iterator of (cellId Long, Dataset, metadata) per emitted H3 cell at resolution. Caller must release each
       * Dataset; iterator is AutoCloseable.
       *
-      *  - `covering` (default): one chip per cell whose hexagon overlaps the raster bbox.
-      *  - `centroid`: pixel-centroid single-assignment — each valid source pixel lands in exactly one chip.
+      *  - `assignment="centroid"` (default): pixel-centroid single-assignment.
+      *  - `assignment="covering"`: one chip per cell whose hexagon overlaps the raster bbox.
+      *  - `coverage="complete"` (default): always emit a chip for every candidate cell.
+      *  - `coverage="sparse"`: drop chips with no valid pixels (covering) or uncaptured cells (centroid).
       */
     def tessellateH3Iter(
         ds: Dataset,
         options: Map[String, String],
         resolution: Int,
-        mode: String = "covering"
+        assignment: String = "centroid",
+        coverage: String = "complete"
     ): Iterator[(Long, Dataset, Map[String, String])] =
-        tessellate(H3, ds, options, resolution, mode)
+        tessellate(H3, ds, options, resolution, assignment, coverage)
             .asInstanceOf[Iterator[(Long, Dataset, Map[String, String])]]
 
     /**
@@ -397,9 +487,10 @@ object RasterTessellate {
         ds: Dataset,
         options: Map[String, String],
         resolution: Int,
-        mode: String = "covering"
+        assignment: String = "centroid",
+        coverage: String = "complete"
     ): Iterator[(Long, Dataset, Map[String, String])] =
-        tessellate(Quadbin, ds, options, resolution, mode)
+        tessellate(Quadbin, ds, options, resolution, assignment, coverage)
             .asInstanceOf[Iterator[(Long, Dataset, Map[String, String])]]
 
     /**
@@ -414,9 +505,10 @@ object RasterTessellate {
         ds: Dataset,
         options: Map[String, String],
         resolution: Int,
-        mode: String = "covering"
+        assignment: String = "centroid",
+        coverage: String = "complete"
     ): Iterator[(String, Dataset, Map[String, String])] =
-        tessellate(BNG, ds, options, resolution, mode)
+        tessellate(BNG, ds, options, resolution, assignment, coverage)
             .asInstanceOf[Iterator[(String, Dataset, Map[String, String])]]
 
     // ------------------------------------------------------------------------------------------------

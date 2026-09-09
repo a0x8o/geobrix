@@ -18,7 +18,8 @@ import org.apache.spark.unsafe.types.UTF8String
 case class RST_H3_Tessellate(
     tile: Expression,
     resolutionExpr: Expression,
-    modeExpr: Expression,
+    assignmentExpr: Expression,
+    coverageExpr: Expression,
     exprConfExpr: Expression = ExpressionConfigExpr()
 ) extends CollectionGenerator
       with Serializable
@@ -30,9 +31,9 @@ case class RST_H3_Tessellate(
     override def position: Boolean = false
     override def inline: Boolean = false
     override def elementSchema: StructType = StructType(Array(StructField("tile", dataType)))
-    override def children: Seq[Expression] = Seq(tile, resolutionExpr, modeExpr, exprConfExpr)
+    override def children: Seq[Expression] = Seq(tile, resolutionExpr, assignmentExpr, coverageExpr, exprConfExpr)
     override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
-        copy(nc(0), nc(1), nc(2), nc(3))
+        copy(nc(0), nc(1), nc(2), nc(3), nc(4))
 
     override def eval(input: InternalRow): IterableOnce[InternalRow] =
         RST_ErrorHandler.safeEval(
@@ -42,13 +43,18 @@ case class RST_H3_Tessellate(
               RST_ExpressionUtil.init(exprConf)
               val rawTile = tile.eval(input).asInstanceOf[InternalRow]
               val resolution = resolutionExpr.eval(input).asInstanceOf[Int]
-              val mode = modeExpr.eval(input).asInstanceOf[UTF8String].toString
+              val assignment = assignmentExpr.eval(input).asInstanceOf[UTF8String].toString
+              val coverage   = coverageExpr.eval(input).asInstanceOf[UTF8String].toString
               require(
-                RasterTessellate.Modes.contains(mode),
-                s"gbx_rst_h3_tessellate mode must be one of ${RasterTessellate.Modes.mkString(", ")}; got '$mode'"
+                RasterTessellate.Assignments.contains(assignment),
+                s"gbx_rst_h3_tessellate assignment must be one of ${RasterTessellate.Assignments.mkString(", ")}; got '$assignment'"
+              )
+              require(
+                RasterTessellate.Coverages.contains(coverage),
+                s"gbx_rst_h3_tessellate coverage must be one of ${RasterTessellate.Coverages.mkString(", ")}; got '$coverage'"
               )
               val (_, ds, mtd) = RasterSerializationUtil.rowToTile(rawTile, rasterType)
-              val iter = RasterTessellate.tessellateH3Iter(ds, mtd, resolution, mode)
+              val iter = RasterTessellate.tessellateH3Iter(ds, mtd, resolution, assignment, coverage)
               RST_ExpressionUtil.addCleanupListener(iter)
               iter
                   .map { case (newCell, resDs, resMtd) =>
@@ -72,11 +78,12 @@ object RST_H3_Tessellate extends WithExpressionInfo {
 
     override def builder(): FunctionBuilder = (c: Seq[Expression]) =>
         c.length match {
-            case 2 => RST_H3_Tessellate(c(0), c(1), Literal("covering"))
-            case 3 => RST_H3_Tessellate(c(0), c(1), c(2))
+            case 2 => RST_H3_Tessellate(c(0), c(1), Literal("centroid"), Literal("complete"))
+            case 3 => RST_H3_Tessellate(c(0), c(1), c(2), Literal("complete"))
+            case 4 => RST_H3_Tessellate(c(0), c(1), c(2), c(3))
             case n =>
                 throw new IllegalArgumentException(
-                  s"gbx_rst_h3_tessellate takes 2 or 3 arguments (tile, resolution, [mode]); got $n"
+                  s"gbx_rst_h3_tessellate takes 2 to 4 arguments (tile, resolution, [assignment], [coverage]); got $n"
                 )
         }
 

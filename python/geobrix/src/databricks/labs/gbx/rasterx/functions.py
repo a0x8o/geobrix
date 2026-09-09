@@ -715,25 +715,40 @@ def rst_frombands(bands: ColLike) -> Column:
 
 
 def rst_h3_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into H3 cells at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
-        mode: ``"covering"`` (default) keeps every cell whose hexagon overlaps
-            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
-            each valid pixel to the one cell whose hexagon contains its centroid
-            (chips partition the valid pixels). String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell whose hexagon contains its centroid (chips partition the
+            valid pixels); ``"covering"`` keeps every cell whose hexagon overlaps
+            the raster bbox (chips may share pixels). String literals are
+            auto-wrapped in ``f.lit``; pass a ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell,
+            including synthetic all-NoData chips for covered cells with no
+            assigned pixels (centroid) or all-NoData clipped chips (covering);
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (H3 index, tile) or similar.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_h3_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_h3_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 
@@ -1547,30 +1562,46 @@ def rst_bng_rastertogridstddev(
 
 
 def rst_quadbin_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into CARTO quadbin v0 cells at the given zoom level.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
-        mode: ``"covering"`` (default) keeps every cell whose tile overlaps
-            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
-            each valid pixel to the one cell containing its centroid (chips
-            partition the valid pixels). String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell containing its centroid (chips partition the valid
+            pixels); ``"covering"`` keeps every cell whose tile overlaps the
+            raster bbox. String literals are auto-wrapped in ``f.lit``; pass a
+            ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell;
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (quadbin cell id BIGINT, tile) pairs.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_quadbin_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_quadbin_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 
 def rst_bng_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into BNG grid cells at the given resolution.
 
@@ -1579,17 +1610,27 @@ def rst_bng_tessellate(
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
-        mode: ``"covering"`` (default) keeps every cell whose grid square overlaps
-            the raster bbox; ``"centroid"`` single-assigns each valid pixel to
-            the one cell containing its centroid. String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell containing its centroid; ``"covering"`` keeps every cell
+            whose grid square overlaps the raster bbox. String literals are
+            auto-wrapped in ``f.lit``; pass a ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell;
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (BNG cell id STRING, tile) pairs.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_bng_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_bng_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 
