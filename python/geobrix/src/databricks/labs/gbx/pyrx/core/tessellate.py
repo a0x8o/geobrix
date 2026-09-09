@@ -32,6 +32,7 @@ QUADBIN_MAX_RES = _quadbin._MAX_POLYFILL_RES
 _WGS84 = "EPSG:4326"
 _BNG_EPSG = 27700
 _VALID_MODES = {"covering", "centroid"}
+_VALID_COVERAGES = {"sparse", "complete"}
 _VALID_GRIDS = frozenset({"h3", "quadbin", "bng"})
 
 
@@ -192,6 +193,45 @@ def _encode_cellid(cell, grid: str):
         return _bng.format(cell)
 
 
+def _chip_is_all_nodata(raster_bytes: bytes) -> bool:
+    """Return True when the GTiff bytes represent an all-NoData chip.
+
+    Used by covering+sparse to drop chips whose pixels are entirely masked.
+    If no nodata is declared, the chip is considered valid (never all-NoData).
+    """
+    with MemoryFile(raster_bytes) as mf:
+        with mf.open() as chip_ds:
+            nodata = chip_ds.nodata
+            if nodata is None:
+                return False
+            data = chip_ds.read()
+            return bool(np.all(data == nodata))
+
+
+def _build_empty_chip(work_ds) -> bytes:
+    """Build a 1×1 all-NoData GTiff chip from *work_ds* profile.
+
+    Used by centroid+complete to emit a synthetic covered-but-empty tile.
+    The chip has the same band count, dtype, CRS, and nodata as the source;
+    the transform is set to a 1×1 extent matching the source's top-left.
+    """
+    nd = work_ds.nodata if work_ds.nodata is not None else _DEFAULT_NODATA
+    profile = work_ds.profile.copy()
+    profile.update(driver="GTiff", width=1, height=1, nodata=nd)
+    from rasterio.transform import from_origin
+
+    left = work_ds.transform.c  # west edge
+    top = work_ds.transform.f  # north edge
+    px = abs(work_ds.transform.a)
+    py = abs(work_ds.transform.e)
+    profile["transform"] = from_origin(left, top, px, py)
+    chip = np.full((work_ds.count, 1, 1), nd, dtype=work_ds.dtypes[0])
+    with MemoryFile() as mf:
+        with mf.open(**profile) as dst:
+            dst.write(chip)
+        return mf.read()
+
+
 # ---------------------------------------------------------------------------
 # Consolidated centroid implementation
 # ---------------------------------------------------------------------------
@@ -285,12 +325,45 @@ def _centroid_chips_generic(ds, resolution, grid: str):
         yield from _centroid_chips_inner(ds, resolution, grid)
 
 
+def _centroid_complete(ds, resolution, grid: str):
+    """centroid + complete coverage: yield centroid chips, then synthetic empty
+    chips for covered cells that received no centroid pixels.
+
+    Extracted from :func:`iter_tessellate` to stay within C901 complexity limit.
+    """
+    centroid_ids = set()
+    for cellid, raster_bytes in _centroid_chips_generic(ds, resolution, grid):
+        centroid_ids.add(cellid)
+        yield (cellid, raster_bytes)
+    # Compute covering set to find covered-but-empty cells.
+    _ctx = _as_bng_dataset(ds) if grid == "bng" else nullcontext(ds)
+    with _ctx as work_ds:
+        if grid == "bng":
+            west, south, east, north = work_ds.bounds
+        else:
+            west, south, east, north = transform_bounds(ds.crs, _WGS84, *ds.bounds)
+        bbox_poly = box(west, south, east, north)
+        covered = _polyfill_cells(bbox_poly, resolution, grid)
+        empty_chip = _build_empty_chip(work_ds)
+        for cell in covered:
+            if not _cell_is_valid(cell, grid):
+                continue
+            cell_poly = _cell_geom(cell, grid)
+            if not _has_positive_area_overlap(cell_poly, bbox_poly):
+                continue
+            encoded = _encode_cellid(cell, grid)
+            if encoded not in centroid_ids:
+                yield (encoded, empty_chip)
+
+
 # ---------------------------------------------------------------------------
 # Generic tessellate (the consolidated public entry point)
 # ---------------------------------------------------------------------------
 
 
-def iter_tessellate(ds, resolution, grid: str, mode: str = "covering"):
+def iter_tessellate(
+    ds, resolution, grid: str, mode: str = "covering", coverage: str = None
+):
     """Generic streaming tessellate: yield ``(cellid, gtiff_bytes)`` per overlapping cell.
 
     Dispatches on *grid* for the ~40% divergent cell math (CRS setup, polyfill,
@@ -313,6 +386,13 @@ def iter_tessellate(ds, resolution, grid: str, mode: str = "covering"):
         mode:       ``"covering"`` (default) — clip each overlapping cell
                     boundary; ``"centroid"`` — strict pixel partition: each
                     valid pixel assigned to exactly one cell by its centroid.
+        coverage:   Controls whether covered-but-empty (all-NoData) cells are
+                    emitted.  ``None`` (default) uses the mode-appropriate
+                    legacy default: ``"complete"`` for covering (preserves the
+                    pre-Task-8 behaviour of emitting all-NoData chips) and
+                    ``"sparse"`` for centroid (preserves the pre-Task-8
+                    behaviour of emitting only cells with valid pixels).
+                    Pass explicitly to override.
 
     Yields:
         ``(cellid, raster_bytes)`` tuples, one per overlapping cell.
@@ -329,11 +409,23 @@ def iter_tessellate(ds, resolution, grid: str, mode: str = "covering"):
             f"rst_{grid}_tessellate: mode must be one of covering, centroid; "
             f"got '{mode}'"
         )
+    # Apply mode-appropriate legacy default when coverage is not specified.
+    if coverage is None:
+        coverage = "complete" if mode == "covering" else "sparse"
+    if coverage not in _VALID_COVERAGES:
+        raise ValueError(
+            f"rst_{grid}_tessellate: coverage must be one of sparse, complete; "
+            f"got '{coverage}'"
+        )
 
     resolution = _resolve_resolution(resolution, grid)
 
     if mode == "centroid":
-        yield from _centroid_chips_generic(ds, resolution, grid)
+        if coverage == "sparse":
+            # Default centroid behaviour: only cells with valid pixels are emitted.
+            yield from _centroid_chips_generic(ds, resolution, grid)
+        else:
+            yield from _centroid_complete(ds, resolution, grid)
         return
 
     # ---- covering mode -------------------------------------------------------
@@ -376,8 +468,11 @@ def iter_tessellate(ds, resolution, grid: str, mode: str = "covering"):
                 continue
             # clip_to_geom returns None only on true geometric non-overlap (the
             # rasterio "Input shapes do not overlap raster" case).  A cell that
-            # overlaps the bbox but clips to entirely NoData is still emitted.
+            # overlaps the bbox but clips to entirely NoData is still emitted in
+            # complete mode; sparse mode drops it.
             if clipped is None:
+                continue
+            if coverage == "sparse" and _chip_is_all_nodata(clipped):
                 continue
             yield (_encode_cellid(cell, grid), clipped)
 
