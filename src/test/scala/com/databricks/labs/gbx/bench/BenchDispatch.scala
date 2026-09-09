@@ -665,7 +665,7 @@ object BenchDispatch {
     // fingerprint the id-only dggs_grid (count + hash, empty agg) -- mirroring the
     // light tessellate path that emits agg == {}.
     case "rst_h3_tessellate" =>
-      val iter = RasterTessellate.tessellateH3Iter(cloneDs(ds), Map.empty, argI(a, "resolution", 7))
+      val iter = RasterTessellate.tessellateH3Iter(cloneDs(ds), Map.empty, argI(a, "resolution", 7), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
@@ -675,7 +675,7 @@ object BenchDispatch {
     // quadbin tessellate: LONG cell ids, 4326-native. Same drain-release-fingerprint
     // shape as H3 tessellate (id-only dggs_grid, empty agg).
     case "rst_quadbin_tessellate" =>
-      val iter = RasterTessellate.tessellateQuadbinIter(cloneDs(ds), Map.empty, argI(a, "resolution", 15))
+      val iter = RasterTessellate.tessellateQuadbinIter(cloneDs(ds), Map.empty, argI(a, "resolution", 15), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
@@ -687,7 +687,7 @@ object BenchDispatch {
     // STRING dggs_grid (empty agg), the string analogue of the H3/quadbin path.
     // resolution default 3 == "1km" (BNG.resolutionMap); NEVER metres-as-Int.
     case "rst_bng_tessellate" =>
-      val iter = RasterTessellate.tessellateBngIter(cloneDs(ds), Map.empty, argI(a, "resolution", 3))
+      val iter = RasterTessellate.tessellateBngIter(cloneDs(ds), Map.empty, argI(a, "resolution", 3), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[String]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
