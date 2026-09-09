@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.rasterx.expressions
 
 import com.databricks.labs.gbx.gridx.grid.{BNG, H3, Quadbin}
 import com.databricks.labs.gbx.rasterx.expressions.grid.{
+    GridReprojection,
     RasterToGridGeneric,
     RST_BNG_RasterToGrid,
     RST_H3_RasterToGridAvg, RST_H3_RasterToGridCount, RST_H3_RasterToGridMax,
@@ -10,7 +11,7 @@ import com.databricks.labs.gbx.rasterx.expressions.grid.{
     RST_Quadbin_RasterToGrid
 }
 import com.databricks.labs.gbx.rasterx.parity.GridRasterParityBaseline
-import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+import com.databricks.labs.gbx.rasterx.gdal.{GDALManager, RasterDriver}
 import org.gdal.gdal.{Dataset, gdal}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
@@ -25,6 +26,10 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
     // Task-1 stub: covering path (fAggW) throws in Task 1; provide a typed stub so Scala 2
     // can resolve the overloaded `execute` without a "missing parameter type" error on `_ => 0.0`.
     private val fAggWStub: mutable.ArrayBuffer[(Double, Double)] => Double = _ => 0.0
+
+    // Task-2 covering stubs: fAgg is not used in the covering path but must be typed for overload
+    // resolution under Scala 2.
+    private val fAggStub: mutable.ArrayBuffer[Double] => Double = _ => 0.0
 
     override def beforeAll(): Unit = {
         GDALManager.loadSharedObjects(Iterable.empty[String])
@@ -172,6 +177,61 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         }
         // No NaN leaks from the two-pass math.
         varByCell.values.foreach { v => v.isNaN shouldBe false }
+    }
+
+    // ── Task-2 tests: covering assignment ─────────────────────────────────────
+
+    test("covering assignment conserves mass for sum") {
+        // Typed vals required: Scala 2 can't infer lambda types for overloaded execute.
+        // fAggStub is unused by the covering path but is required to resolve the overload.
+        val fAggWSum: mutable.ArrayBuffer[(Double, Double)] => Double =
+            pairs => pairs.map { case (v, w) => v * w }.sum
+        val out = RasterToGridGeneric.execute[Double](H3, ds, 6, "sparse", "covering",
+            fAgg = fAggStub, fAggW = fAggWSum, emptyValue = None)
+        val cellSum     = out.head.collect { case (_, Some(v)) => v }.sum
+        val rasterTotal = band1ValidSum(ds, H3.crsSrid)
+        cellSum shouldBe (rasterTotal +- 1e-6)
+    }
+
+    test("covering+complete: extra cells are None only when all-NoData") {
+        // Typed vals required: Scala 2 can't infer lambda types for overloaded execute.
+        val fAggWAvg: mutable.ArrayBuffer[(Double, Double)] => Double = pairs => {
+            val sw = pairs.map(_._2).sum
+            pairs.map { case (v, w) => v * w }.sum / sw
+        }
+        val out = RasterToGridGeneric.execute[Double](H3, ds, 6, "complete", "covering",
+            fAgg = fAggStub, fAggW = fAggWAvg, emptyValue = None)
+        // Every Some(v) must be a valid (non-NaN) double; None is permitted for all-NoData cells
+        out.head.foreach {
+            case (_, Some(v)) => v.isNaN shouldBe false
+            case (_, None)    => ()
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Sum of valid (non-masked) pixel values in band 1 of the reprojected dataset.
+      * Reprojects `rawDs` to `gridSrid` using the same path as `execute`, so the total
+      * matches what `executeOnCovering` accumulates before the area-weight product.
+      */
+    private def band1ValidSum(rawDs: Dataset, gridSrid: Int): Double = {
+        val (workDs, reprojected) = GridReprojection.toGridCrs(rawDs, gridSrid)
+        try {
+            val xSize = workDs.getRasterXSize
+            val ySize = workDs.getRasterYSize
+            val nPix  = xSize * ySize
+            val buf   = new Array[Double](nPix)
+            val mask  = new Array[Byte](nPix)
+            val b     = workDs.GetRasterBand(1)
+            b.ReadRaster(0, 0, xSize, ySize, buf)
+            b.GetMaskBand().ReadRaster(0, 0, xSize, ySize, mask)
+            var sum = 0.0
+            var i   = 0
+            while (i < nPix) { if (mask(i) != 0) sum += buf(i); i += 1 }
+            sum
+        } finally {
+            if (reprojected) RasterDriver.releaseDataset(workDs)
+        }
     }
 
 }

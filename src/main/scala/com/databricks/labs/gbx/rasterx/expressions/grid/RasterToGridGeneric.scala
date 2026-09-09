@@ -3,8 +3,10 @@ package com.databricks.labs.gbx.rasterx.expressions.grid
 import com.databricks.labs.gbx.gridx.grid.GridSystem
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import com.databricks.labs.gbx.rasterx.operations.{BoundingBox, GridOverlap}
+import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.Dataset
 import org.gdal.osr.{SpatialReference, osrConstants}
+import org.locationtech.jts.geom.Geometry
 
 import scala.collection.mutable
 
@@ -73,14 +75,15 @@ object RasterToGridGeneric {
       *                    `"complete"` — additionally emit cells that overlap the raster bbox
       *                    but have no pixel centroids, using `emptyValue` as their measure
       * @param assignment  `"centroid"` — bin each valid pixel to the cell containing its centroid
-      *                    (existing path). `"covering"` — not yet implemented (throws).
+      *                    (existing path). `"covering"` — distribute each pixel's value across all
+      *                    cells it overlaps, weighted by intersection-area fraction.
       * @param fAgg        reduces per-cell pixel values to `T` (centroid path)
-      * @param fAggW       reduces per-cell `(value, areaWeight)` pairs to `T` (covering path —
-      *                    accepted here but only used in Task 2; currently unused)
+      * @param fAggW       reduces per-cell `(value, areaWeight)` pairs to `T` (covering path)
       * @param emptyValue  measure for cells added by `complete` coverage that have no pixels
       * @param isCellValid per-cell validity predicate; default accepts all cells (use `BNG.isValid` for BNG)
       * @return per-band array of `(cellKey, Option[T])` pairs:
-      *         `Some(fAgg(buf))` for data cells; `emptyValue` for covered-but-empty cells
+      *         `Some(fAgg(buf))` / `Some(fAggW(buf))` for data cells;
+      *         `emptyValue` for covered-but-empty cells (only with `coverage == "complete"`)
       */
     def execute[T](
         grid: GridSystem,
@@ -95,57 +98,30 @@ object RasterToGridGeneric {
     ): Array[Array[(Any, Option[T])]] = {
         require(Set("sparse", "complete").contains(coverage),
             s"coverage must be 'sparse' or 'complete'; got '$coverage'")
-        if (assignment == "covering")
-            throw new IllegalArgumentException("covering assignment implemented in Task 2")
-        require(assignment == "centroid",
+        require(Set("centroid", "covering").contains(assignment),
             s"assignment must be 'centroid' or 'covering'; got '$assignment'")
 
         val (workDs, reprojected) = GridReprojection.toGridCrs(ds, grid.crsSrid)
         try {
-            // Run the existing centroid accumulation — numerics unchanged from Stage 1.
-            val sparseOut = executeOn(grid, workDs, resolution, fAgg, isCellValid)
+            assignment match {
+                case "centroid" =>
+                    val sparseOut = executeOn(grid, workDs, resolution, fAgg, isCellValid)
+                    // Wrap T in Some to get the Option-valued shape shared with covering.
+                    val sparseOptBands: Array[Array[(Any, Option[T])]] =
+                        sparseOut.map(_.map { case (c, v) => (c, Option(v)): (Any, Option[T]) })
+                    if (coverage == "sparse") sparseOptBands
+                    else {
+                        val (bboxGeom, candidates) = buildBboxAndCandidates(workDs, grid, resolution)
+                        applyCompleteCoverage(sparseOptBands, bboxGeom, candidates, grid, isCellValid, emptyValue)
+                    }
 
-            if (coverage == "sparse") {
-                // Wrap T in Some. For sparse output every cell has a pixel value, so
-                // emptyValue is never needed and the flattened result is byte-identical
-                // to Stage 1 after Option unwrapping.
-                sparseOut.map(_.map { case (c, v) => (c, Option(v)) })
-            } else {
-                // coverage == "complete": find cells that overlap the raster bbox but
-                // received no pixel centroids, and emit them with emptyValue.
-                // Release the native SpatialReference after use to prevent native-heap leaks
-                // on executors running many complete-mode aggregations.
-                val gridSr = buildGridSR(grid.crsSrid)
-                val (bboxGeom, candidates) = try {
-                    val bbox = BoundingBox.bbox(workDs, gridSr)
-                    (bbox, grid.coveringCandidateCells(bbox, resolution))
-                } finally {
-                    gridSr.delete()
-                }
-
-                sparseOut.map { band =>
-                    // Keys of cells already populated by the centroid loop.
-                    val sparseRendered: Set[Any] = band.map(_._1).toSet
-
-                    // Cells that overlap the bbox but have no pixels: keep only those that
-                    // (a) pass the validity guard, (b) have positive-area overlap with the
-                    // bbox (same keep-test used by RasterTessellate's covering path), and
-                    // (c) are not already keyed in the sparse output.
-                    // renderCellId is called exactly once per candidate (hoisted via flatMap).
-                    val extraCells: Array[(Any, Option[T])] = candidates
-                        .flatMap { c =>
-                            val key = grid.renderCellId(c)
-                            if (!sparseRendered.contains(key) &&
-                                isCellValid(c) &&
-                                GridOverlap.hasPositiveAreaOverlap(grid.cellIdToGeometry(c), bboxGeom))
-                                Some((key: Any, emptyValue))
-                            else
-                                None
-                        }
-                        .toArray
-
-                    band.map { case (c, v) => (c, Option(v)): (Any, Option[T]) } ++ extraCells
-                }
+                case "covering" =>
+                    val sparseOptBands = executeOnCovering(grid, workDs, resolution, fAggW, isCellValid)
+                    if (coverage == "sparse") sparseOptBands
+                    else {
+                        val (bboxGeom, candidates) = buildBboxAndCandidates(workDs, grid, resolution)
+                        applyCompleteCoverage(sparseOptBands, bboxGeom, candidates, grid, isCellValid, emptyValue)
+                    }
             }
         } finally {
             if (reprojected) RasterDriver.releaseDataset(workDs)
@@ -161,6 +137,58 @@ object RasterToGridGeneric {
         sr.ImportFromEPSG(crsSrid)
         sr.SetAxisMappingStrategy(osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
         sr
+    }
+
+    /** Builds the raster bounding-box geometry (in grid CRS) and the covering candidate cells
+      * for `complete`-coverage post-pass. The native SpatialReference is released in `finally`
+      * to prevent native-heap leaks on executors running many aggregations.
+      */
+    private def buildBboxAndCandidates(
+        workDs: Dataset,
+        grid: GridSystem,
+        resolution: Int
+    ): (Geometry, Seq[Long]) = {
+        val gridSr = buildGridSR(grid.crsSrid)
+        try {
+            val bbox = BoundingBox.bbox(workDs, gridSr)
+            (bbox, grid.coveringCandidateCells(bbox, resolution))
+        } finally {
+            gridSr.delete()
+        }
+    }
+
+    /** Adds covered-but-empty cells (as `emptyValue`) to `sparseOptBands`.
+      *
+      * For each candidate cell from the raster bbox that
+      * (a) is not already keyed in the sparse output,
+      * (b) passes the validity guard, and
+      * (c) has positive-area overlap with the bbox,
+      * emits `(key, emptyValue)`.  Shared between the centroid and covering paths so the
+      * enumeration/keep-test logic is not duplicated.
+      */
+    private def applyCompleteCoverage[T](
+        sparseOptBands: Array[Array[(Any, Option[T])]],
+        bboxGeom: Geometry,
+        candidates: Seq[Long],
+        grid: GridSystem,
+        isCellValid: Long => Boolean,
+        emptyValue: Option[T]
+    ): Array[Array[(Any, Option[T])]] = {
+        sparseOptBands.map { band =>
+            val sparseRendered: Set[Any] = band.map(_._1).toSet
+            val extraCells: Array[(Any, Option[T])] = candidates
+                .flatMap { c =>
+                    val key = grid.renderCellId(c)
+                    if (!sparseRendered.contains(key) &&
+                        isCellValid(c) &&
+                        GridOverlap.hasPositiveAreaOverlap(grid.cellIdToGeometry(c), bboxGeom))
+                        Some((key: Any, emptyValue))
+                    else
+                        None
+                }
+                .toArray
+            band ++ extraCells
+        }
     }
 
     private def executeOn[T](
@@ -216,6 +244,89 @@ object RasterToGridGeneric {
             val out = new Array[(Any, T)](acc.size)
             var j = 0
             acc.foreach { case (cell, buf) => out(j) = (grid.renderCellId(cell), fAgg(buf)); j += 1 }
+            out
+        }.toArray
+    }
+
+    /** Area-weighted pixel aggregation: each valid pixel distributes its value across all cells
+      * whose footprint overlaps the pixel's rectangle, weighted by intersection-area fraction.
+      *
+      * For each valid pixel at raster offset (x, y):
+      *  1. Build the pixel rectangle from the four affine-geotransform corners.
+      *  2. Enumerate candidate cells via [[GridSystem.coveringCandidateCells]] (a small set
+      *     for a single pixel).
+      *  3. For each candidate passing `isCellValid`: compute the JTS intersection; if the
+      *     intersection area is positive, accumulate `(pixelValue, interArea/pixelArea)`.
+      *  4. Emit `Some(fAggW(buf))` per cell.
+      *
+      * Mass is conserved: if the candidate cells tile the pixel completely, the sum of
+      * weighted contributions equals the pixel value (all area-fraction weights sum to 1).
+      */
+    private def executeOnCovering[T](
+        grid: GridSystem,
+        ds: Dataset,
+        resolution: Int,
+        fAggW: mutable.ArrayBuffer[(Double, Double)] => T,
+        isCellValid: Long => Boolean
+    ): Array[Array[(Any, Option[T])]] = {
+
+        val gt     = ds.GetGeoTransform
+        val xSize  = ds.getRasterXSize
+        val ySize  = ds.getRasterYSize
+        val nPix   = xSize * ySize
+        val bands  = ds.getRasterCount
+
+        val bandBuf = new Array[Double](nPix)
+        val maskBuf = new Array[Byte](nPix)
+
+        (1 to bands).iterator.map { bi =>
+            val b = ds.GetRasterBand(bi)
+            val m = b.GetMaskBand()
+            b.ReadRaster(0, 0, xSize, ySize, bandBuf)
+            m.ReadRaster(0, 0, xSize, ySize, maskBuf)
+
+            val accW = new mutable.LongMap[mutable.ArrayBuffer[(Double, Double)]]()
+            var y = 0; var idx = 0
+            while (y < ySize) {
+                var x = 0
+                while (x < xSize) {
+                    if (maskBuf(idx) != 0) {
+                        val value = bandBuf(idx)
+                        // Pixel corners from the affine geotransform (closes at the first corner).
+                        val x0 = gt(0) + x       * gt(1) + y       * gt(2)
+                        val y0 = gt(3) + x       * gt(4) + y       * gt(5)
+                        val x1 = gt(0) + (x + 1) * gt(1) + y       * gt(2)
+                        val y1 = gt(3) + (x + 1) * gt(4) + y       * gt(5)
+                        val x2 = gt(0) + (x + 1) * gt(1) + (y + 1) * gt(2)
+                        val y2 = gt(3) + (x + 1) * gt(4) + (y + 1) * gt(5)
+                        val x3 = gt(0) + x       * gt(1) + (y + 1) * gt(2)
+                        val y3 = gt(3) + x       * gt(4) + (y + 1) * gt(5)
+                        val pixelRect = JTS.polygonFromXYs(
+                            Array((x0, y0), (x1, y1), (x2, y2), (x3, y3), (x0, y0))
+                        )
+                        val pxArea = pixelRect.getArea
+
+                        grid.coveringCandidateCells(pixelRect, resolution).foreach { c =>
+                            if (isCellValid(c)) {
+                                val inter = grid.cellIdToGeometry(c).intersection(pixelRect)
+                                if (inter != null && inter.getArea > 0) {
+                                    accW.getOrElseUpdate(c, new mutable.ArrayBuffer) +=
+                                        ((value, inter.getArea / pxArea))
+                                }
+                            }
+                        }
+                    }
+                    idx += 1; x += 1
+                }
+                y += 1
+            }
+
+            val out = new Array[(Any, Option[T])](accW.size)
+            var j = 0
+            accW.foreach { case (cell, buf) =>
+                out(j) = (grid.renderCellId(cell), Some(fAggW(buf)))
+                j += 1
+            }
             out
         }.toArray
     }
