@@ -851,7 +851,7 @@ def rst_h3_rastertogridcount(
         assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
-        Column of grid values (e.g. struct with H3 index and count).
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
     coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     assignment_col = (
