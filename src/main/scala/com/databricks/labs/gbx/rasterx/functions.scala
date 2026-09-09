@@ -347,52 +347,148 @@ def rst_combineavg_agg(tile: Column): Column = ColumnAdapter(RST_CombineAvgAgg.n
     // Grid
     def rst_h3_rastertogridavg(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridAvg.name, Seq(tile, resolution))
+    def rst_h3_rastertogridavg(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridavg(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridcount(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridCount.name, Seq(tile, resolution))
+    def rst_h3_rastertogridcount(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridCount.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridcount(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridCount.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridmax(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridMax.name, Seq(tile, resolution))
+    def rst_h3_rastertogridmax(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMax.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridmax(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMax.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridmin(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridMin.name, Seq(tile, resolution))
+    def rst_h3_rastertogridmin(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMin.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridmin(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMin.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridmedian(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridMedian.name, Seq(tile, resolution))
+    def rst_h3_rastertogridmedian(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridmedian(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridsum(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridSum.name, Seq(tile, resolution))
+    def rst_h3_rastertogridsum(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridSum.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridsum(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridSum.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridvariance(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridVariance.name, Seq(tile, resolution))
+    def rst_h3_rastertogridvariance(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridvariance(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_h3_rastertogridstddev(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_H3_RasterToGridStddev.name, Seq(tile, resolution))
+    def rst_h3_rastertogridstddev(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage)))
+    def rst_h3_rastertogridstddev(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_H3_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridavg(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridAvg.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridavg(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridavg(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridcount(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridCount.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridcount(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridCount.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridcount(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridCount.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridmax(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridMax.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridmax(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMax.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridmax(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMax.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridmin(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridMin.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridmin(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMin.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridmin(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMin.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridmedian(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridMedian.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridmedian(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridmedian(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridsum(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridSum.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridsum(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridSum.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridsum(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridSum.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridvariance(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridVariance.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridvariance(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridvariance(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_quadbin_rastertogridstddev(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_Quadbin_RasterToGridStddev.name, Seq(tile, resolution))
+    def rst_quadbin_rastertogridstddev(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage)))
+    def rst_quadbin_rastertogridstddev(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_Quadbin_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridavg(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridAvg.name, Seq(tile, resolution))
+    def rst_bng_rastertogridavg(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridavg(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridAvg.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridcount(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridCount.name, Seq(tile, resolution))
+    def rst_bng_rastertogridcount(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridCount.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridcount(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridCount.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridmax(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridMax.name, Seq(tile, resolution))
+    def rst_bng_rastertogridmax(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMax.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridmax(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMax.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridmin(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridMin.name, Seq(tile, resolution))
+    def rst_bng_rastertogridmin(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMin.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridmin(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMin.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridmedian(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridMedian.name, Seq(tile, resolution))
+    def rst_bng_rastertogridmedian(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridmedian(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridMedian.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridsum(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridSum.name, Seq(tile, resolution))
+    def rst_bng_rastertogridsum(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridSum.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridsum(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridSum.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridvariance(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridVariance.name, Seq(tile, resolution))
+    def rst_bng_rastertogridvariance(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridvariance(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridVariance.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
     def rst_bng_rastertogridstddev(tile: Column, resolution: Column): Column =
         ColumnAdapter(RST_BNG_RasterToGridStddev.name, Seq(tile, resolution))
+    def rst_bng_rastertogridstddev(tile: Column, resolution: Column, coverage: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage)))
+    def rst_bng_rastertogridstddev(tile: Column, resolution: Column, coverage: String, assignment: String): Column =
+        ColumnAdapter(RST_BNG_RasterToGridStddev.name, Seq(tile, resolution, lit(coverage), lit(assignment)))
 
     /** Bounding box STRUCT<xmin,ymin,xmax,ymax> of one H3 cell in the output CRS
      *  (`srid`, an EPSG or ESRI code; or an `outCrs` string that wins over it). */
