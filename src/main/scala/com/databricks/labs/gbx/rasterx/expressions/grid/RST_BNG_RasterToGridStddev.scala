@@ -5,7 +5,7 @@ import com.databricks.labs.gbx.gridx.grid.BNG
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -14,44 +14,75 @@ import org.gdal.gdal.Dataset
 import scala.collection.mutable.ArrayBuffer
 
 /** Returns the population standard deviation of raster values within each BNG grid cell. */
-case class RST_BNG_RasterToGridStddev(tile: Expression, resolution: Expression) extends InvokedExpression {
-    override def children: Seq[Expression] = Seq(tile, resolution, ExpressionConfigExpr())
+case class RST_BNG_RasterToGridStddev(
+    tile: Expression,
+    resolution: Expression,
+    coverage: Expression,
+    assignment: Expression
+) extends InvokedExpression {
+    override def children: Seq[Expression] = Seq(tile, resolution, coverage, assignment, ExpressionConfigExpr())
     override def dataType: DataType =
-        ArrayType(ArrayType(StructType(Seq(StructField("cellID", StringType), StructField("measure", DoubleType)))))
+        ArrayType(ArrayType(StructType(Seq(
+            StructField("cellID", StringType),
+            StructField("measure", DoubleType, nullable = true)))))
     override def nullable: Boolean = true
     override def prettyName: String = RST_BNG_RasterToGridStddev.name
     override def replacement: Expression = invoke(RST_BNG_RasterToGridStddev)
-    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression = copy(nc(0), nc(1))
+    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression = copy(nc(0), nc(1), nc(2), nc(3))
 }
 
-/** Companion: SQL name, builder, and entry points for path/binary tile. */
+/** Companion: SQL name, builder, and eval entry points for path/binary tile. */
 object RST_BNG_RasterToGridStddev extends WithExpressionInfo {
 
-    def eval(row: InternalRow, resolution: Int, conf: UTF8String): ArrayData = doInvoke(row, resolution, conf, BinaryType)
+    /** Centroid reducer: population stddev = sqrt(population variance), two-pass (see spec 3.2). */
+    val fAgg: ArrayBuffer[Double] => Double = values => {
+        val n = values.length
+        val m = values.sum / n
+        math.sqrt(values.map(v => { val d = v - m; d * d }).sum / n)
+    }
 
-    // Long overloads -- PySpark sends Python ints as LongType.
-    def eval(row: InternalRow, resolution: Long, conf: UTF8String): ArrayData = eval(row, resolution.toInt, conf)
+    /** Covering reducer: sqrt of the weighted population variance (reuses the variance reducer). */
+    val fAggW: ArrayBuffer[(Double, Double)] => Double = pairs =>
+        math.sqrt(RST_BNG_RasterToGridVariance.fAggW(pairs))
 
-    // BNG string-key resolution ("1km" etc.) -- PySpark may send a UTF8String.
-    def eval(row: InternalRow, resolution: UTF8String, conf: UTF8String): ArrayData = eval(row, BNG.getResolution(resolution), conf)
+    // New Stage-2 eval: resolution Int/Long/UTF8String + coverage + assignment.
+    def eval(row: InternalRow, resolution: Int, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String): ArrayData =
+        eval(row, resolution, coverage, assignment, conf, BinaryType)
 
-    private def doInvoke(row: InternalRow, resolution: Int, conf: UTF8String, rdt: DataType): ArrayData =
-        Option(RST_ErrorHandler.safeEval(() => RST_BNG_RasterToGrid.eval[Double](row, resolution, conf, rdt, this.execute), row, rdt, conf))
+    // Long overload — PySpark sends Python ints as LongType.
+    def eval(row: InternalRow, resolution: Long, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String): ArrayData =
+        eval(row, resolution.toInt, coverage, assignment, conf)
+
+    // BNG string-key resolution ("1km" etc.) — PySpark may send a UTF8String.
+    def eval(row: InternalRow, resolution: UTF8String, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String): ArrayData =
+        eval(row, BNG.getResolution(resolution), coverage, assignment, conf)
+
+    def eval(row: InternalRow, resolution: Int, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String, rdt: DataType): ArrayData =
+        Option(RST_ErrorHandler.safeEval(() =>
+            RST_BNG_RasterToGrid.eval[Double](
+                row, resolution, coverage.toString, assignment.toString, conf, rdt, this.execute),
+            row, rdt, conf))
             .map(_.asInstanceOf[ArrayData])
             .orNull
 
-    def execute(ds: Dataset, resolution: Int): Array[Array[(String, Double)]] = {
-        // population stddev = sqrt(population variance), two-pass (see spec 3.2).
-        val stdF = (values: ArrayBuffer[Double]) => {
-            val n = values.length
-            val m = values.sum / n
-            math.sqrt(values.map(v => { val d = v - m; d * d }).sum / n)
-        }
-        RST_BNG_RasterToGrid.execute(ds, resolution, stdF)
-    }
+    def execute(ds: Dataset, resolution: Int, coverage: String, assignment: String): Array[Array[(String, Option[Double])]] =
+        RST_BNG_RasterToGrid.execute[Double](ds, resolution, coverage, assignment, fAgg, fAggW, emptyValue = None)
+
+    def execute(ds: Dataset, resolution: Int): Array[Array[(String, Double)]] =
+        execute(ds, resolution, "sparse", "centroid").map(_.collect { case (c, Some(v)) => (c, v) })
 
     override def name: String = "gbx_rst_bng_rastertogridstddev"
 
-    override def builder(): FunctionBuilder = (c: Seq[Expression]) => new RST_BNG_RasterToGridStddev(c(0), c(1))
+    override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
+        case 2 => new RST_BNG_RasterToGridStddev(c(0), c(1), Literal("complete"), Literal("centroid"))
+        case 3 => new RST_BNG_RasterToGridStddev(c(0), c(1), c(2), Literal("centroid"))
+        case 4 => new RST_BNG_RasterToGridStddev(c(0), c(1), c(2), c(3))
+        case n => throw new IllegalArgumentException(
+            s"$name expects 2-4 args (tile, resolution, [coverage], [assignment]); got $n")
+    }
 
 }

@@ -5,6 +5,9 @@ import com.databricks.labs.gbx.rasterx.expressions.grid.{
     GridReprojection,
     RasterToGridGeneric,
     RST_BNG_RasterToGrid,
+    RST_BNG_RasterToGridAvg, RST_BNG_RasterToGridCount, RST_BNG_RasterToGridMax,
+    RST_BNG_RasterToGridMedian, RST_BNG_RasterToGridMin, RST_BNG_RasterToGridStddev,
+    RST_BNG_RasterToGridSum, RST_BNG_RasterToGridVariance,
     RST_H3_RasterToGridAvg, RST_H3_RasterToGridCount, RST_H3_RasterToGridMax,
     RST_H3_RasterToGridMedian, RST_H3_RasterToGridMin, RST_H3_RasterToGridStddev,
     RST_H3_RasterToGridSum, RST_H3_RasterToGridVariance,
@@ -35,6 +38,9 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
     // Tiny synthetic raster + coarse resolution for the covering-path tests (see makeCoveringRaster).
     private var covDs: Dataset = _
     private val covRes = 7
+    // Tiny synthetic EPSG:27700 raster for BNG covering-path tests (see makeBngCoveringRaster).
+    private var bngCovDs: Dataset = _
+    private val bngCovRes = 3
 
     // Task-1 stub: covering path (fAggW) throws in Task 1; provide a typed stub so Scala 2
     // can resolve the overloaded `execute` without a "missing parameter type" error on `_ => 0.0`.
@@ -54,11 +60,13 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         val tifPath = this.getClass.getResource("/modis/MCD43A4.A2018185.h10v07.006.2018194033728_B01.TIF").toString.replace("file:/", "/")
         ds = gdal.Open(tifPath)
         covDs = makeCoveringRaster()
+        bngCovDs = makeBngCoveringRaster()
     }
 
     override def afterAll(): Unit = {
         if (ds != null) ds.delete()
         if (covDs != null) covDs.delete()
+        if (bngCovDs != null) bngCovDs.delete()
     }
 
     test("RST_H3_RasterToGridAvg should produce average cells") {
@@ -374,6 +382,150 @@ class RST_GridExecuteTest extends AnyFunSuite with BeforeAndAfterAll {
         mem.SetGeoTransform(Array(-0.5, 0.05, 0.0, 52.0, 0.0, -0.05))
         val sr = new SpatialReference()
         sr.ImportFromEPSG(4326)
+        sr.SetAxisMappingStrategy(osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+        mem.SetProjection(sr.ExportToWkt())
+        sr.delete()
+        val buf = Array.tabulate(w * h) { i =>
+            val x = i % w; val y = i / w
+            if (x >= 14 && x < 26 && y >= 14 && y < 26) nodata // interior all-NoData block
+            else 1.0 + x + y                                    // positive ramp, all distinct-ish
+        }
+        val band = mem.GetRasterBand(1)
+        band.SetNoDataValue(nodata)
+        band.WriteRaster(0, 0, w, h, buf)
+        mem.FlushCache()
+        mem
+    }
+
+    // ── Task-3-BNG tests: coverage / assignment threaded through BNG companions ──
+
+    test("BNG companion 4-arg execute: sparse+centroid all Some; complete+centroid adds None extras") {
+        // Use the synthetic BNG raster (interior NoData block guarantees covered-but-empty cells).
+        val sparse   = RST_BNG_RasterToGridAvg.execute(bngCovDs, bngCovRes, "sparse", "centroid")
+        val complete = RST_BNG_RasterToGridAvg.execute(bngCovDs, bngCovRes, "complete", "centroid")
+        sparse.head.forall { case (_, m) => m.isDefined } shouldBe true
+        complete.head.length should be > sparse.head.length
+        val sparseKeys = sparse.head.map(_._1).toSet
+        val extras = complete.head.filterNot { case (c, _) => sparseKeys.contains(c) }
+        extras should not be empty
+        extras.foreach { case (_, m) => m shouldBe None }
+        complete.head.collect { case (c, Some(_)) => c }.toSet shouldBe sparseKeys
+    }
+
+    test("BNG companion 2-arg execute shim preserves sparse+centroid has-data cells/values") {
+        val shim   = RST_BNG_RasterToGridAvg.execute(ds, 3)  // Array[Array[(String, Double)]]
+        val sparse = RST_BNG_RasterToGridAvg.execute(ds, 3, "sparse", "centroid")
+        shim.head.toMap shouldBe sparse.head.collect { case (c, Some(v)) => (c, v) }.toMap
+    }
+
+    test("BNG Count measure dataType is DoubleType and complete extras emit Some(0.0)") {
+        val expr = RST_BNG_RasterToGridCount(
+            Literal.create(null, BinaryType), Literal(bngCovRes), Literal("complete"), Literal("centroid"))
+        val measureType = expr.dataType
+            .asInstanceOf[ArrayType].elementType
+            .asInstanceOf[ArrayType].elementType
+            .asInstanceOf[StructType]("measure").dataType
+        measureType shouldBe DoubleType
+
+        // Use the synthetic BNG raster (interior NoData block guarantees covered-but-empty cells).
+        val sparse   = RST_BNG_RasterToGridCount.execute(bngCovDs, bngCovRes, "sparse", "centroid")
+        val complete = RST_BNG_RasterToGridCount.execute(bngCovDs, bngCovRes, "complete", "centroid")
+        val sparseKeys = sparse.head.map(_._1).toSet
+        val extras = complete.head.filterNot { case (c, _) => sparseKeys.contains(c) }
+        extras should not be empty
+        extras.foreach { case (_, m) => m shouldBe Some(0.0) }
+        sparse.head.foreach { case (_, m) => m.get should be >= 1.0 }
+    }
+
+    test("BNG builder injects defaults (complete, centroid), passes 4 through, rejects <2/>4") {
+        val tile = Literal.create(null, BinaryType)
+        val b2 = RST_BNG_RasterToGridAvg.builder()(Seq(tile, Literal(3)))
+            .asInstanceOf[RST_BNG_RasterToGridAvg]
+        b2.children.length shouldBe 5
+        b2.coverage.asInstanceOf[Literal].value.toString shouldBe "complete"
+        b2.assignment.asInstanceOf[Literal].value.toString shouldBe "centroid"
+
+        val b3 = RST_BNG_RasterToGridAvg.builder()(Seq(tile, Literal(3), Literal("sparse")))
+            .asInstanceOf[RST_BNG_RasterToGridAvg]
+        b3.coverage.asInstanceOf[Literal].value.toString shouldBe "sparse"
+        b3.assignment.asInstanceOf[Literal].value.toString shouldBe "centroid"
+
+        val b4 = RST_BNG_RasterToGridAvg.builder()(Seq(tile, Literal(3), Literal("sparse"), Literal("covering")))
+            .asInstanceOf[RST_BNG_RasterToGridAvg]
+        b4.assignment.asInstanceOf[Literal].value.toString shouldBe "covering"
+
+        an[IllegalArgumentException] should be thrownBy RST_BNG_RasterToGridAvg.builder()(Seq(tile))
+    }
+
+    test("BNG covering avg via companion execute produces finite values") {
+        val cov = RST_BNG_RasterToGridAvg.execute(bngCovDs, bngCovRes, "sparse", "covering")
+        cov.head.length should be > 0
+        cov.head.foreach { case (_, m) => m.foreach { v => v.isNaN shouldBe false } }
+        cov.head.exists { case (_, m) => m.isDefined } shouldBe true
+    }
+
+    test("BNG covering mass conservation via companion sum") {
+        val out = RST_BNG_RasterToGridSum.execute(bngCovDs, bngCovRes, "sparse", "covering")
+        val cellSum     = out.head.collect { case (_, Some(v)) => v }.sum
+        val rasterTotal = band1ValidSum(bngCovDs, BNG.crsSrid)
+        cellSum shouldBe (rasterTotal +- math.max(1e-6, math.abs(rasterTotal) * 1e-9))
+    }
+
+    test("BNG weighted median (fAggW) matches hand-computed cases") {
+        RST_BNG_RasterToGridMedian.fAggW(mutable.ArrayBuffer((1.0, 1.0), (2.0, 1.0), (3.0, 2.0))) shouldBe (2.5 +- 1e-12)
+        RST_BNG_RasterToGridMedian.fAggW(mutable.ArrayBuffer((10.0, 1.0), (20.0, 3.0))) shouldBe (20.0 +- 1e-12)
+        RST_BNG_RasterToGridMedian.fAggW(mutable.ArrayBuffer((5.0, 1.0), (1.0, 1.0), (3.0, 1.0))) shouldBe (3.0 +- 1e-12)
+        RST_BNG_RasterToGridMedian.fAggW(mutable.ArrayBuffer((4.0, 1.0), (1.0, 1.0), (3.0, 1.0), (2.0, 1.0))) shouldBe (2.5 +- 1e-12)
+    }
+
+    test("BNG weighted population variance and stddev (fAggW) match hand-computed cases") {
+        RST_BNG_RasterToGridVariance.fAggW(mutable.ArrayBuffer((1.0, 1.0), (3.0, 1.0))) shouldBe (1.0 +- 1e-12)
+        RST_BNG_RasterToGridVariance.fAggW(mutable.ArrayBuffer((0.0, 1.0), (10.0, 3.0))) shouldBe (18.75 +- 1e-12)
+        RST_BNG_RasterToGridStddev.fAggW(mutable.ArrayBuffer((0.0, 1.0), (10.0, 3.0))) shouldBe (math.sqrt(18.75) +- 1e-12)
+    }
+
+    test("BNG companion eval threads coverage/assignment to object eval and nulls empty measures") {
+        val row  = RasterSerializationUtil.tileToRow((0L, ds, Map.empty[String, String]), BinaryType, null)
+        val conf = encodedEmpty()
+
+        // complete+centroid: eval returns non-null with at least one data cell (sawVal).
+        // (MODIS+BNG is dense enough that complete==sparse for this tile; null-measure behavior
+        //  is verified at the execute level by the "4-arg execute" test above, which uses the
+        //  synthetic BNG raster with an interior NoData block.)
+        val outC = RST_BNG_RasterToGridAvg.eval(
+            row, 3, UTF8String.fromString("complete"), UTF8String.fromString("centroid"), conf, BinaryType)
+        outC should not be null
+        val bandC = outC.getArray(0)
+        bandC.numElements() should be > 0
+        var sawVal = false; var i = 0
+        while (i < bandC.numElements()) {
+            val s = bandC.getStruct(i, 2)
+            if (!s.isNullAt(1)) { s.getDouble(1); sawVal = true }
+            i += 1
+        }
+        sawVal shouldBe true
+
+        // sparse+centroid: no null measures.
+        val outS = RST_BNG_RasterToGridAvg.eval(
+            row, 3, UTF8String.fromString("sparse"), UTF8String.fromString("centroid"), conf, BinaryType)
+        val bandS = outS.getArray(0)
+        var j = 0
+        while (j < bandS.numElements()) {
+            bandS.getStruct(j, 2).isNullAt(1) shouldBe false
+            j += 1
+        }
+    }
+
+    /** Tiny in-memory EPSG:27700 raster for the BNG covering-path tests. Pixels are 1500m,
+      * BNG res-3 cells are 1km — each pixel straddles multiple cells, producing area-fraction
+      * weights < 1. Interior NoData block guarantees covered-but-empty cells under `complete`. */
+    private def makeBngCoveringRaster(): Dataset = {
+        val w = 40; val h = 40; val nodata = -9999.0
+        val mem = gdal.GetDriverByName("MEM").Create("", w, h, 1, gdalconstConstants.GDT_Float64)
+        // EPSG:27700, origin E 500000 N 260000, 1500m pixels → extent [500000,560000] x [200000,260000]
+        mem.SetGeoTransform(Array(500000.0, 1500.0, 0.0, 260000.0, 0.0, -1500.0))
+        val sr = new SpatialReference()
+        sr.ImportFromEPSG(27700)
         sr.SetAxisMappingStrategy(osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
         mem.SetProjection(sr.ExportToWkt())
         sr.delete()
