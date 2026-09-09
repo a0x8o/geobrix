@@ -1,43 +1,59 @@
-"""Parity test: iter_tessellate generic reproduces per-grid behavior exactly.
+"""Golden regression guard for iter_tessellate (all grids × modes).
 
-Step 2 (RED): ``iter_tessellate`` absent → ImportError on collection.
-Step 4 (GREEN): per-grid delegates resolve to the same code path → identical output.
+Freezes the SHA-256 digest of the sorted cell-id list and the chip count for
+each of the six (grid × mode) combinations, captured from the verified-correct
+post-consolidation output.  Any future change to iter_tessellate's cell-id
+set or count is caught here before it can silently break coverage/assignment
+semantics downstream.
 
-For each grid (h3, quadbin, bng) and each mode (covering, centroid),
-``iter_tessellate(ds, resolution, grid, mode)`` must yield identical cell-id
-lists to the pre-existing ``iter_tessellate_{grid}`` functions.  Both old and
-new calls are driven against the same tile bytes (opened as separate contexts so
-neither generator state affects the other).
+These are NOT live old-vs-new comparisons (the per-grid delegates are now thin
+``yield from iter_tessellate(...)`` wrappers, so comparing them would be
+comparing iter_tessellate to itself).  They are frozen constants, updated only
+when a deliberate behavioral change is made and the new baseline verified
+correct.
+
+Behavioral correctness is covered by the 44 pre-existing tests in:
+  test_core_tessellate.py, test_tessellate_{bng,quadbin}.py,
+  test_core_tessellate_modes.py, test_tessellate_gridsystem.py.
 """
+
+import hashlib
 
 import numpy as np
 import pytest
 import rasterio
 from rasterio.io import MemoryFile
 
-from databricks.labs.gbx.pyrx.core.tessellate import (
-    iter_tessellate,
-    iter_tessellate_bng,
-    iter_tessellate_h3,
-    iter_tessellate_quadbin,
-)
+from databricks.labs.gbx.pyrx.core.tessellate import iter_tessellate
 
-# ---- Resolution used per grid -----------------------------------------------
-_RES = {"h3": 9, "quadbin": 12, "bng": "1km"}
+# ---------------------------------------------------------------------------
+# Frozen golden baselines
+# Captured 2026-09-09 from the verified-correct consolidated implementation.
+# Update only when a deliberate behavioral change is made and re-verified.
+# ---------------------------------------------------------------------------
 
-# ---- Per-grid old (thin-delegate) functions ---------------------------------
-_OLD_FN = {
-    "h3": iter_tessellate_h3,
-    "quadbin": iter_tessellate_quadbin,
-    "bng": iter_tessellate_bng,
+_GOLDEN = {
+    # (grid, mode): {"count": int, "digest": str}
+    # digest = sha256(sorted(str(c) for c in cell_ids).join(","))[:16]
+    ("h3", "covering"):       {"count": 8623, "digest": "ed9af0e9521dba67"},
+    ("h3", "centroid"):       {"count": 1024, "digest": "2029ccd9fdd1a68d"},
+    ("quadbin", "covering"):  {"count": 30,   "digest": "ab5d473d48ab0f7d"},
+    ("quadbin", "centroid"):  {"count": 30,   "digest": "ab5d473d48ab0f7d"},
+    ("bng", "covering"):      {"count": 9,    "digest": "3ad7e348dd33093d"},
+    ("bng", "centroid"):      {"count": 9,    "digest": "3ad7e348dd33093d"},
 }
 
+# Resolution used per grid (same as captured baseline)
+_RES = {"h3": 9, "quadbin": 12, "bng": "1km"}
 
-# ---- Tile helpers -----------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Tile helpers (same fixtures used to capture the baseline)
+# ---------------------------------------------------------------------------
 
 
 def _tile_4326(size: int = 32) -> bytes:
-    """Small EPSG:4326 tile (London-area) for H3 and quadbin parity."""
+    """Small EPSG:4326 tile (London-area, 32×32 px, 0.01 deg) for H3 and quadbin."""
     data = np.arange(size * size, dtype="float32").reshape(size, size)
     prof = dict(
         driver="GTiff",
@@ -56,7 +72,7 @@ def _tile_4326(size: int = 32) -> bytes:
 
 
 def _tile_27700(size: int = 32) -> bytes:
-    """Small EPSG:27700 tile (London-area) for BNG parity."""
+    """Small EPSG:27700 tile (London-area, 32×32 px, 62.5 m) for BNG."""
     minx, miny, maxx, maxy = 529500, 179500, 531500, 181500
     data = np.arange(size * size, dtype="float32").reshape(size, size)
     xres = (maxx - minx) / size
@@ -80,31 +96,44 @@ def _tile_27700(size: int = 32) -> bytes:
 _TILE_FN = {"h3": _tile_4326, "quadbin": _tile_4326, "bng": _tile_27700}
 
 
-# ---- Parity tests -----------------------------------------------------------
+def _digest(cell_ids) -> str:
+    """SHA-256 of comma-joined sorted string cell-ids, truncated to 16 hex chars."""
+    sorted_strs = sorted(str(c) for c in cell_ids)
+    return hashlib.sha256(",".join(sorted_strs).encode()).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Golden regression tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("grid", ["h3", "quadbin", "bng"])
 @pytest.mark.parametrize("mode", ["covering", "centroid"])
-def test_iter_tessellate_matches_per_grid(grid, mode):
-    """Generic iter_tessellate yields identical cell-id list and chip count as
-    the old per-grid delegate function."""
+def test_iter_tessellate_golden(grid, mode):
+    """iter_tessellate must reproduce the frozen (count, cell-id digest) baseline.
+
+    Catches any change to which cells are selected or their encoding.
+    """
     tile = _TILE_FN[grid]()
     resolution = _RES[grid]
-    old_fn = _OLD_FN[grid]
+    golden = _GOLDEN[(grid, mode)]
 
-    with MemoryFile(bytes(tile)) as mf1:
-        with mf1.open() as ds:
-            new_ids = [c for c, _ in iter_tessellate(ds, resolution, grid, mode)]
+    with MemoryFile(bytes(tile)) as mf:
+        with mf.open() as ds:
+            ids = [c for c, _ in iter_tessellate(ds, resolution, grid, mode)]
 
-    with MemoryFile(bytes(tile)) as mf2:
-        with mf2.open() as ds:
-            old_ids = [c for c, _ in old_fn(ds, resolution, mode)]
-
-    assert len(new_ids) > 0, f"{grid}/{mode}: no chips yielded"
-    assert new_ids == old_ids, (
-        f"{grid}/{mode}: new yielded {len(new_ids)} cell-ids, "
-        f"old yielded {len(old_ids)}"
+    assert len(ids) == golden["count"], (
+        f"{grid}/{mode}: expected {golden['count']} chips, got {len(ids)}"
     )
+    assert _digest(ids) == golden["digest"], (
+        f"{grid}/{mode}: cell-id set changed (count {len(ids)} matches but "
+        f"digest {_digest(ids)!r} != frozen {golden['digest']!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Error-path guards (behaviour, not golden)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("grid", ["h3", "quadbin", "bng"])
