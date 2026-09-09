@@ -4,7 +4,7 @@ import com.databricks.labs.gbx.expressions.{ExpressionConfigExpr, InvokedExpress
 import com.databricks.labs.gbx.rasterx.util.{RST_ErrorHandler, RST_ExpressionUtil}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -12,41 +12,74 @@ import org.gdal.gdal.Dataset
 
 import scala.collection.mutable.ArrayBuffer
 
-/** Returns the number of valid pixels in each quadbin grid cell. */
+/** Returns the number of pixels aggregated into the quadbin grid cell.
+  *
+  * The measure is a Double (not Int): centroid count is `n.toDouble`; covering count is the sum of
+  * area-fraction weights (`Σw`), a mass-conserving fractional count. Covered-but-empty cells added
+  * by `complete` coverage report `0.0`.
+  */
 case class RST_Quadbin_RasterToGridCount(
     tile: Expression,
-    resolution: Expression
+    resolution: Expression,
+    coverage: Expression,
+    assignment: Expression
 ) extends InvokedExpression {
 
-    override def children: Seq[Expression] = Seq(tile, resolution, ExpressionConfigExpr())
+    override def children: Seq[Expression] = Seq(tile, resolution, coverage, assignment, ExpressionConfigExpr())
     override def dataType: DataType =
-        ArrayType(ArrayType(StructType(Seq(StructField("cellID", LongType), StructField("measure", LongType)))))
+        ArrayType(ArrayType(StructType(Seq(
+            StructField("cellID", LongType),
+            StructField("measure", DoubleType, nullable = true)))))
     override def nullable: Boolean = true
     override def prettyName: String = RST_Quadbin_RasterToGridCount.name
     override def replacement: Expression = invoke(RST_Quadbin_RasterToGridCount)
-    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression = copy(nc(0), nc(1))
+    override protected def withNewChildrenInternal(nc: IndexedSeq[Expression]): Expression =
+        copy(nc(0), nc(1), nc(2), nc(3))
 
 }
 
-/** Companion: SQL name, builder, and entry points for path/binary tile. */
+/** Companion: SQL name, builder, and eval entry points for path/binary tile. */
 object RST_Quadbin_RasterToGridCount extends WithExpressionInfo {
 
-    def eval(row: InternalRow, resolution: Int, conf: UTF8String): ArrayData = doInvoke(row, resolution, conf, BinaryType)
+    /** Centroid reducer: pixel count as a Double. */
+    val fAgg: ArrayBuffer[Double] => Double = values => values.length.toDouble
+    /** Covering reducer: sum of area-fraction weights (fractional, mass-conserving count). */
+    val fAggW: ArrayBuffer[(Double, Double)] => Double = pairs => pairs.map(_._2).sum
 
-    def eval(row: InternalRow, resolution: Long, conf: UTF8String): ArrayData = eval(row, resolution.toInt, conf)
+    def eval(row: InternalRow, resolution: Int, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String): ArrayData =
+        eval(row, resolution, coverage, assignment, conf, BinaryType)
 
-    private def doInvoke(row: InternalRow, resolution: Int, conf: UTF8String, rdt: DataType): ArrayData =
-        Option(RST_ErrorHandler.safeEval(() => RST_Quadbin_RasterToGrid.eval[Long](row, resolution, conf, rdt, this.execute), row, rdt, conf))
+    def eval(row: InternalRow, resolution: Int, coverage: UTF8String, assignment: UTF8String,
+             conf: UTF8String, rdt: DataType): ArrayData =
+        Option(RST_ErrorHandler.safeEval(() =>
+            RST_Quadbin_RasterToGrid.eval[Double](
+                row, resolution, coverage.toString, assignment.toString, conf, rdt, this.execute),
+            row, rdt, conf))
             .map(_.asInstanceOf[ArrayData])
             .orNull
 
-    def execute(ds: Dataset, resolution: Int): Array[Array[(Long, Long)]] = {
-        val countF = (values: ArrayBuffer[Double]) => values.length.toLong
-        RST_Quadbin_RasterToGrid.execute[Long](ds, resolution, countF)
-    }
+    /** Canonical Stage-2 path: Double measure, `Some(0.0)` for covered-but-empty cells. */
+    def execute(ds: Dataset, resolution: Int, coverage: String, assignment: String): Array[Array[(Long, Option[Double])]] =
+        RST_Quadbin_RasterToGrid.execute[Double](ds, resolution, coverage, assignment, fAgg, fAggW, emptyValue = Some(0.0))
+
+    /** Legacy sparse+centroid shim returning an Int count (pre-Stage-2 return type) for existing
+      * direct-execute callers (integration/bench tests). Emits only has-data cells. */
+    def execute(ds: Dataset, resolution: Int): Array[Array[(Long, Int)]] =
+        RST_Quadbin_RasterToGrid.execute[Int](ds, resolution, "sparse", "centroid",
+            (values: ArrayBuffer[Double]) => values.length,
+            (_: ArrayBuffer[(Double, Double)]) => 0,
+            emptyValue = None)
+            .map(_.collect { case (c, Some(v)) => (c, v) })
 
     override def name: String = "gbx_rst_quadbin_rastertogridcount"
 
-    override def builder(): FunctionBuilder = (c: Seq[Expression]) => new RST_Quadbin_RasterToGridCount(c(0), c(1))
+    override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
+        case 2 => new RST_Quadbin_RasterToGridCount(c(0), c(1), Literal("complete"), Literal("centroid"))
+        case 3 => new RST_Quadbin_RasterToGridCount(c(0), c(1), c(2), Literal("centroid"))
+        case 4 => new RST_Quadbin_RasterToGridCount(c(0), c(1), c(2), c(3))
+        case n => throw new IllegalArgumentException(
+            s"$name expects 2-4 args (tile, resolution, [coverage], [assignment]); got $n")
+    }
 
 }
