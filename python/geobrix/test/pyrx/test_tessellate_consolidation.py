@@ -35,12 +35,12 @@ from databricks.labs.gbx.pyrx.core.tessellate import iter_tessellate
 _GOLDEN = {
     # (grid, mode): {"count": int, "digest": str}
     # digest = sha256(sorted(str(c) for c in cell_ids).join(","))[:16]
-    ("h3", "covering"):       {"count": 8623, "digest": "ed9af0e9521dba67"},
-    ("h3", "centroid"):       {"count": 1024, "digest": "2029ccd9fdd1a68d"},
-    ("quadbin", "covering"):  {"count": 30,   "digest": "ab5d473d48ab0f7d"},
-    ("quadbin", "centroid"):  {"count": 30,   "digest": "ab5d473d48ab0f7d"},
-    ("bng", "covering"):      {"count": 9,    "digest": "3ad7e348dd33093d"},
-    ("bng", "centroid"):      {"count": 9,    "digest": "3ad7e348dd33093d"},
+    ("h3", "covering"): {"count": 8623, "digest": "ed9af0e9521dba67"},
+    ("h3", "centroid"): {"count": 1024, "digest": "2029ccd9fdd1a68d"},
+    ("quadbin", "covering"): {"count": 30, "digest": "ab5d473d48ab0f7d"},
+    ("quadbin", "centroid"): {"count": 30, "digest": "ab5d473d48ab0f7d"},
+    ("bng", "covering"): {"count": 9, "digest": "3ad7e348dd33093d"},
+    ("bng", "centroid"): {"count": 9, "digest": "3ad7e348dd33093d"},
 }
 
 # Resolution used per grid (same as captured baseline)
@@ -122,9 +122,9 @@ def test_iter_tessellate_golden(grid, mode):
         with mf.open() as ds:
             ids = [c for c, _ in iter_tessellate(ds, resolution, grid, mode)]
 
-    assert len(ids) == golden["count"], (
-        f"{grid}/{mode}: expected {golden['count']} chips, got {len(ids)}"
-    )
+    assert (
+        len(ids) == golden["count"]
+    ), f"{grid}/{mode}: expected {golden['count']} chips, got {len(ids)}"
     assert _digest(ids) == golden["digest"], (
         f"{grid}/{mode}: cell-id set changed (count {len(ids)} matches but "
         f"digest {_digest(ids)!r} != frozen {golden['digest']!r})"

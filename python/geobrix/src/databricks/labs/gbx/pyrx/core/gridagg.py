@@ -13,14 +13,32 @@ Mirrors the heavyweight ``RST_{H3,Quadbin,BNG}_RasterToGrid`` families exactly:
   H3/quadbin ids are ``int`` (Long) but BNG ids are rendered to ``str`` via
   ``pygx._bng.format`` at the output boundary.
 
+Two new parameters (Stage 2, Task 7):
+
+* ``coverage``: ``"sparse"`` (emit only cells with at least one valid pixel) or
+  ``"complete"`` (default, matches heavy) -- also emit covering-but-empty cells
+  carrying ``None`` (or ``0.0`` for ``count``).
+* ``assignment``: ``"centroid"`` (default) -- bin each valid pixel to the cell
+  containing its centroid (pre-Stage-2 behaviour); ``"covering"`` -- distribute
+  each pixel's value across every cell that overlaps its rectangular footprint,
+  weighted by the intersection-area fraction. Weighted reducers mirror the heavy
+  tier exactly (see ``_weighted_reduce``).
+
+count is now Double/float in all modes (centroid count = n as float; covering
+count = Sigma-w; covered-but-empty count = 0.0).
+
 Backed by the best-in-class libs ``h3`` (v4) and ``quadbin`` (CARTO v0).
 
-Hot path is vectorized: valid pixels are gathered once, mapped to cell ids,
-and grouped/reduced with numpy. The quadbin encoder ``_quadbin_cells`` is a
-numpy reimplementation of ``quadbin.point_to_cell`` that is BIT-EXACT with the
-upstream lib (the lib's per-call Python is otherwise ~20x slower than H3's
-C-backed encoder); the H3 encoder stays a scalar comprehension over valid
-pixels because ``h3.latlng_to_cell`` is C-backed and exposes no array API.
+Hot path (centroid) is vectorized: valid pixels are gathered once, mapped to
+cell ids, and grouped/reduced with numpy. The quadbin encoder ``_quadbin_cells``
+is a numpy reimplementation of ``quadbin.point_to_cell`` that is BIT-EXACT with
+the upstream lib (the lib's per-call Python is otherwise ~20x slower than H3's
+C-backed encoder); the H3 encoder stays a scalar comprehension over valid pixels
+because ``h3.latlng_to_cell`` is C-backed and exposes no array API.
+
+The covering path is intentionally NOT vectorized (it iterates per-pixel,
+matching the heavy tier's O(pixels) design).  Use small/coarse rasters; this
+path is not intended for large tiles.
 """
 
 import h3
@@ -32,6 +50,8 @@ H3_MAX_RES = 15
 QUADBIN_MAX_RES = 20
 
 _AGGS = ("avg", "count", "min", "max", "median", "sum", "variance", "stddev")
+_COVERAGES = ("sparse", "complete")
+_ASSIGNMENTS = ("centroid", "covering")
 
 # quadbin 64-bit cell layout constants (see quadbin.main / quadbin.utils).
 _QB_HEADER = np.uint64(0x4000000000000000)
@@ -146,15 +166,16 @@ def _grouped_measures(cids: np.ndarray, vals: np.ndarray, agg: str):
     """Group ``vals`` by ``cids`` and reduce -> (unique_cids, measures).
 
     Loops at most over CELLS (median only), never over pixels. ``count`` yields
-    Python ints; every other agg yields Python floats -- matching the original
-    per-cell ``_reduce`` types and values exactly.
+    Python floats (changed from int for heavy-tier parity: centroid count = n as
+    float; covering count = Sigma-w); every other agg yields Python floats --
+    matching the original per-cell ``_reduce`` types and values exactly.
     """
     uniq, inv = np.unique(cids, return_inverse=True)
     inv = inv.astype(np.intp)
     counts = np.bincount(inv, minlength=uniq.size)
 
     if agg == "count":
-        measures = [int(c) for c in counts]
+        measures = [float(c) for c in counts]  # float for heavy-tier parity
         return uniq, measures
 
     vals = np.asarray(vals, dtype="float64")
@@ -191,6 +212,187 @@ def _grouped_measures(cids: np.ndarray, vals: np.ndarray, agg: str):
         raise ValueError(f"unknown agg {agg!r}; expected one of {_AGGS}")
 
     return uniq, [float(m) for m in out]
+
+
+def _weighted_reduce(pairs: list, agg: str) -> float:
+    """Covering weighted reducer: mirrors the heavy tier's ``fAggW`` exactly.
+
+    ``pairs`` is a list of ``(value, weight)`` tuples where ``weight`` is the
+    intersection-area fraction of the pixel that falls in the cell
+    (``inter.area / pixel.area``).  All reducers assume ``len(pairs) >= 1``
+    (a cell with no pixels is never passed here -- it is materialised as
+    ``emptyValue`` upstream).
+
+    Heavy-tier equivalents (confirmed from Scala sources):
+      sum:      Sigma(v*w)
+      count:    Sigma(w)   -- fractional, mass-conserving
+      avg:      Sigma(v*w) / Sigma(w)
+      min/max:  min/max(v)  -- weight-agnostic
+      variance: Sigma(w*(v-mean)^2)/Sigma(w)  mean=Sigma(v*w)/Sigma(w)
+      stddev:   sqrt(variance)
+      median:   cumulative-weight interpolated weighted median
+    """
+    sw = sum(p[1] for p in pairs)
+    if agg == "count":
+        return float(sw)
+    if agg == "sum":
+        return float(sum(v * w for v, w in pairs))
+    if agg == "avg":
+        return float(sum(v * w for v, w in pairs) / sw)
+    if agg == "min":
+        return float(min(p[0] for p in pairs))
+    if agg == "max":
+        return float(max(p[0] for p in pairs))
+    if agg == "variance":
+        mean = sum(v * w for v, w in pairs) / sw
+        return float(sum(w * (v - mean) ** 2 for v, w in pairs) / sw)
+    if agg == "stddev":
+        mean = sum(v * w for v, w in pairs) / sw
+        var = sum(w * (v - mean) ** 2 for v, w in pairs) / sw
+        return float(var**0.5)
+    if agg == "median":
+        # Sort by value; accumulate weight until Sigma_w / 2 is reached.
+        # Mirrors heavy RST_H3_RasterToGridMedian.fAggW exactly.
+        sorted_pairs = sorted(pairs, key=lambda p: p[0])
+        half = sw / 2.0
+        cum = 0.0
+        idx = 0
+        while idx < len(sorted_pairs) and cum + sorted_pairs[idx][1] < half:
+            cum += sorted_pairs[idx][1]
+            idx += 1
+        # Boundary interpolation: if cumulative weight lands exactly on a value
+        # boundary, average the two straddling values.
+        if idx < len(sorted_pairs) - 1 and (cum + sorted_pairs[idx][1] == half):
+            return float((sorted_pairs[idx][0] + sorted_pairs[idx + 1][0]) / 2.0)
+        return float(sorted_pairs[idx][0])
+    raise ValueError(f"unknown agg {agg!r}; expected one of {_AGGS}")
+
+
+def _covering_band(
+    work_ds,
+    bi: int,
+    band: np.ndarray,
+    mask: np.ndarray,
+    resolution,
+    grid: str,
+    agg: str,
+    gt: tuple,
+) -> list:
+    """Per-band area-weighted aggregation: distribute each valid pixel's value
+    across every overlapping cell, weighted by (pixel_inter_cell / pixel).
+
+    Reuses the tessellate oracles (``_polyfill_cells``, ``_cell_geom``,
+    ``_cell_is_valid``, ``_encode_cellid``) so coverage enumeration is identical
+    to the tessellate covering path.  Intentionally NOT vectorized -- this
+    matches the heavy tier's O(pixels) loop and is suitable for small/coarse
+    tiles only.
+
+    ``work_ds`` MUST already be in the grid's native CRS:
+      * WGS84 (EPSG:4326) for h3 / quadbin
+      * EPSG:27700         for bng
+    """
+    # Lazy imports: tessellate oracles + shapely (avoid heavy deps at import time)
+    from shapely.geometry import Polygon as _Polygon
+
+    from databricks.labs.gbx.pyrx.core.tessellate import (
+        _cell_geom,
+        _cell_is_valid,
+        _encode_cellid,
+        _polyfill_cells,
+    )
+
+    ys, xs = np.nonzero(mask)
+    if ys.size == 0:
+        return []
+
+    acc: dict = {}  # raw_cell_id -> [(value, weight)]
+
+    for y_i, x_i in zip(ys, xs):  # vectorscan: ok (covering intentionally per-pixel)
+        y, x = int(y_i), int(x_i)
+        val = float(band[y, x])
+
+        # Pixel rectangle corners from the affine geotransform.
+        # (Mirrors heavy RasterToGridGeneric.executeOnCovering verbatim.)
+        x0 = gt[0] + x * gt[1] + y * gt[2]
+        y0 = gt[3] + x * gt[4] + y * gt[5]
+        x1 = gt[0] + (x + 1) * gt[1] + y * gt[2]
+        y1 = gt[3] + (x + 1) * gt[4] + y * gt[5]
+        x2 = gt[0] + (x + 1) * gt[1] + (y + 1) * gt[2]
+        y2 = gt[3] + (x + 1) * gt[4] + (y + 1) * gt[5]
+        x3 = gt[0] + x * gt[1] + (y + 1) * gt[2]
+        y3 = gt[3] + x * gt[4] + (y + 1) * gt[5]
+        pixel_poly = _Polygon([(x0, y0), (x1, y1), (x2, y2), (x3, y3)])
+        px_area = pixel_poly.area
+        if px_area == 0.0:
+            continue
+
+        for cell in _polyfill_cells(pixel_poly, resolution, grid):
+            if not _cell_is_valid(cell, grid):
+                continue
+            cell_poly = _cell_geom(cell, grid)
+            inter = cell_poly.intersection(pixel_poly)
+            if inter is not None and inter.area > 0:
+                w = inter.area / px_area
+                if cell not in acc:
+                    acc[cell] = []
+                acc[cell].append((val, w))
+
+    if not acc:
+        return []
+
+    return [
+        {"cellID": _encode_cellid(cell, grid), "measure": _weighted_reduce(pairs, agg)}
+        for cell, pairs in acc.items()  # vectorscan: ok (per-cell)
+    ]
+
+
+def _complete_coverage_pass(
+    band_result: list, work_ds, resolution, grid: str, agg: str
+) -> list:
+    """Add covered-but-empty cells to ``band_result`` (complete coverage mode).
+
+    For each covering candidate cell that
+      (a) is not already in the sparse result,
+      (b) passes the cell validity guard, and
+      (c) has positive-area overlap with the raster bbox,
+    emits ``{cellID, measure: emptyValue}`` where ``emptyValue`` is:
+      * ``0.0``  for ``count``  (mass-conserving)
+      * ``None`` for all other aggregates
+
+    Mirrors ``RasterToGridGeneric.applyCompleteCoverage`` exactly.
+
+    ``work_ds`` MUST be in the grid's native CRS (same requirement as
+    ``_covering_band``).
+    """
+    from shapely.geometry import box as _box
+
+    from databricks.labs.gbx.pyrx.core.tessellate import (
+        _cell_geom,
+        _cell_is_valid,
+        _encode_cellid,
+        _has_positive_area_overlap,
+        _polyfill_cells,
+    )
+
+    # Raster bbox in the work CRS (already native for BNG; WGS84 for h3/quadbin).
+    west, south, east, north = work_ds.bounds
+    bbox_poly = _box(west, south, east, north)
+
+    empty_value = 0.0 if agg == "count" else None
+    existing_ids = {r["cellID"] for r in band_result}
+
+    extra = []
+    for cell in _polyfill_cells(bbox_poly, resolution, grid):
+        if not _cell_is_valid(cell, grid):
+            continue
+        encoded = _encode_cellid(cell, grid)
+        if encoded in existing_ids:
+            continue
+        cell_poly = _cell_geom(cell, grid)
+        if _has_positive_area_overlap(cell_poly, bbox_poly):
+            extra.append({"cellID": encoded, "measure": empty_value})
+
+    return band_result + extra
 
 
 def _stamp_crs_bytes(ds, target_crs) -> bytes:
@@ -236,7 +438,15 @@ def _warp_to_4326_if_needed(ds, crs):
         return warp.reproject_to_crs(stamped_ds, "EPSG:4326", resampling="nearest")
 
 
-def raster_to_grid(ds, resolution: int, grid: str, agg: str, crs=None) -> list:
+def raster_to_grid(
+    ds,
+    resolution: int,
+    grid: str,
+    agg: str,
+    coverage: str = "complete",
+    assignment: str = "centroid",
+    crs=None,
+) -> list:
     """Aggregate raster pixel values into discrete-global-grid cells, per band.
 
     H3 and quadbin operate in EPSG:4326 lon/lat. The raster is auto-reprojected
@@ -255,21 +465,43 @@ def raster_to_grid(ds, resolution: int, grid: str, agg: str, crs=None) -> list:
         grid:       ``"h3"``, ``"quadbin"`` or ``"bng"``.
         agg:        One of ``"avg"``, ``"count"``, ``"min"``, ``"max"``,
                     ``"median"``, ``"sum"``, ``"variance"``, ``"stddev"``.
+        coverage:   ``"complete"`` (default) -- also emit covered-but-empty
+                    cells (measure=None, or 0.0 for count); ``"sparse"`` -- emit
+                    only cells with at least one valid pixel (pre-Stage-2
+                    behaviour).
+        assignment: ``"centroid"`` (default) -- bin each valid pixel to the cell
+                    containing its centroid; ``"covering"`` -- distribute each
+                    pixel's value across all overlapping cells, weighted by
+                    intersection-area fraction.
         crs:        Optional source-CRS override (int SRID or CRS string) for a
                     CRS-less-but-known raster. Ignored when the raster already
                     carries a CRS. When neither is set, grid-native is assumed.
 
     Returns:
         One list per band; each is a list of ``{"cellID": id, "measure":
-        float|int}`` (``int`` for ``count``). ``cellID`` is an ``int`` (Long)
-        for H3/quadbin and a formatted BNG ``str`` (e.g. ``"TQ3080"``) for BNG.
+        float|None}`` (``None`` only for covered-but-empty cells in ``complete``
+        mode for non-count aggregates). ``cellID`` is an ``int`` (Long) for
+        H3/quadbin and a formatted BNG ``str`` (e.g. ``"TQ3080"``) for BNG.
     """
     _validate_resolution(resolution, grid)
     if agg not in _AGGS:
         raise ValueError(f"unknown agg {agg!r}; expected one of {_AGGS}")
+    if coverage not in _COVERAGES:
+        raise ValueError(f"coverage must be one of {_COVERAGES}; got {coverage!r}")
+    if assignment not in _ASSIGNMENTS:
+        raise ValueError(
+            f"assignment must be one of {_ASSIGNMENTS}; got {assignment!r}"
+        )
 
     if grid == "bng":
-        return _raster_to_bng(ds, _bng.get_resolution(resolution), agg, crs=crs)
+        return _raster_to_bng(
+            ds,
+            _bng.get_resolution(resolution),
+            agg,
+            coverage=coverage,
+            assignment=assignment,
+            crs=crs,
+        )
 
     resolution = int(resolution)
     encode = _h3_cells if grid == "h3" else _quadbin_cells
@@ -281,26 +513,35 @@ def raster_to_grid(ds, resolution: int, grid: str, agg: str, crs=None) -> list:
             band = work_ds.read(bi).astype("float64")
             mask = work_ds.read_masks(bi)  # 0 = invalid (nodata-derived)
 
-            ys, xs = np.nonzero(mask)  # valid pixels only (matches mask==0 skip)
-            if ys.size == 0:
-                out.append([])
-                continue
+            if assignment == "centroid":
+                ys, xs = np.nonzero(mask)  # valid pixels only (matches mask==0 skip)
+                if ys.size == 0:
+                    band_result = []
+                else:
+                    x_off = xs + 0.5
+                    y_off = ys + 0.5
+                    lon = gt[0] + x_off * gt[1] + y_off * gt[2]
+                    lat = gt[3] + x_off * gt[4] + y_off * gt[5]
+                    vals = band[ys, xs]
 
-            x_off = xs + 0.5
-            y_off = ys + 0.5
-            lon = gt[0] + x_off * gt[1] + y_off * gt[2]
-            lat = gt[3] + x_off * gt[4] + y_off * gt[5]
-            vals = band[ys, xs]
+                    cids = encode(lon, lat, resolution)
+                    uniq, measures = _grouped_measures(cids, vals, agg)
+                    band_result = [
+                        # vectorscan: ok (per-cell)
+                        {"cellID": int(cid), "measure": m}
+                        for cid, m in zip(uniq.tolist(), measures)
+                    ]
+            else:  # covering
+                band_result = _covering_band(
+                    work_ds, bi, band, mask, resolution, grid, agg, gt
+                )
 
-            cids = encode(lon, lat, resolution)
-            uniq, measures = _grouped_measures(cids, vals, agg)
-            out.append(
-                [
-                    # vectorscan: ok (per-cell)
-                    {"cellID": int(cid), "measure": m}
-                    for cid, m in zip(uniq.tolist(), measures)
-                ]
-            )
+            if coverage == "complete":
+                band_result = _complete_coverage_pass(
+                    band_result, work_ds, resolution, grid, agg
+                )
+
+            out.append(band_result)
         return out
 
     # Auto-reproject to 4326 when a source CRS is known and differs. The embedded
@@ -315,7 +556,14 @@ def raster_to_grid(ds, resolution: int, grid: str, agg: str, crs=None) -> list:
         return _run(work_ds)
 
 
-def _raster_to_bng(ds, resolution: int, agg: str, crs=None) -> list:
+def _raster_to_bng(
+    ds,
+    resolution: int,
+    agg: str,
+    coverage: str = "complete",
+    assignment: str = "centroid",
+    crs=None,
+) -> list:
     """BNG raster->grid: warp to EPSG:27700, bin per pixel, render String ids.
 
     Mirrors heavy ``RST_BNG_RasterToGrid``: BNG has no lon/lat input path, so the
@@ -325,6 +573,10 @@ def _raster_to_bng(ds, resolution: int, agg: str, crs=None) -> list:
     pixels whose cell falls outside GB are dropped via ``pygx._bng.is_valid``;
     ids are rendered to the user-facing BNG ``str`` via ``pygx._bng.format`` at
     the output boundary. Grouping stays Long-keyed (reuses ``_grouped_measures``).
+
+    ``coverage``/``assignment`` behave identically to the h3/quadbin paths:
+      * ``complete`` adds covered-but-empty cells (None / 0.0 for count)
+      * ``covering`` distributes pixel values by area fraction
 
     ``crs`` is a source-CRS override for a CRS-less-but-known raster (stamped
     before the warp so a georeferenced-but-unlabeled raster reprojects correctly);
@@ -341,7 +593,14 @@ def _raster_to_bng(ds, resolution: int, agg: str, crs=None) -> list:
 
         stamped = _stamp_crs_bytes(ds, resolve_crs(crs))
         with MemoryFile(stamped) as _mf, _mf.open() as _stamped_ds:
-            return _raster_to_bng(_stamped_ds, resolution, agg, crs=None)
+            return _raster_to_bng(
+                _stamped_ds,
+                resolution,
+                agg,
+                coverage=coverage,
+                assignment=assignment,
+                crs=None,
+            )
 
     # Reproject to EPSG:27700 (nearest) unless already there. epsg may be None
     # for an undefined CRS -> warp (rasterio treats an unset src crs as an error
@@ -355,37 +614,44 @@ def _raster_to_bng(ds, resolution: int, agg: str, crs=None) -> list:
             band = work_ds.read(bi).astype("float64")
             mask = work_ds.read_masks(bi)  # 0 = invalid (nodata-derived)
 
-            ys, xs = np.nonzero(mask)  # valid pixels only
-            if ys.size == 0:
-                out.append([])
-                continue
+            if assignment == "centroid":
+                ys, xs = np.nonzero(mask)  # valid pixels only
+                if ys.size == 0:
+                    band_result = []
+                else:
+                    x_off = xs + 0.5
+                    y_off = ys + 0.5
+                    e = gt[0] + x_off * gt[1] + y_off * gt[2]
+                    n = gt[3] + x_off * gt[4] + y_off * gt[5]
+                    vals = band[ys, xs]
 
-            x_off = xs + 0.5
-            y_off = ys + 0.5
-            e = gt[0] + x_off * gt[1] + y_off * gt[2]
-            n = gt[3] + x_off * gt[4] + y_off * gt[5]
-            vals = band[ys, xs]
+                    cids = _bng_cells(e, n, resolution)
+                    # Drop out-of-GB pixels (is_valid) BEFORE grouping so a cell is
+                    # only emitted for >=1 valid, in-GB pixel (sec 2.6). Vectorized.
+                    keep = _bng.is_valid_vec(cids, resolution)
+                    cids = cids[keep]
+                    vals = vals[keep]
+                    if cids.size == 0:
+                        band_result = []
+                    else:
+                        uniq, measures = _grouped_measures(cids, vals, agg)
+                        band_result = [
+                            {"cellID": _bng.format(int(cid)), "measure": m}
+                            for cid, m in zip(
+                                uniq.tolist(), measures
+                            )  # vectorscan: ok (per-cell)
+                        ]
+            else:  # covering
+                band_result = _covering_band(
+                    work_ds, bi, band, mask, resolution, "bng", agg, gt
+                )
 
-            cids = _bng_cells(e, n, resolution)
-            # Drop out-of-GB pixels (is_valid) BEFORE grouping so a cell is only
-            # emitted for >=1 valid, in-GB pixel (sec 2.6). Vectorized over the
-            # single-resolution batch.
-            keep = _bng.is_valid_vec(cids, resolution)
-            cids = cids[keep]
-            vals = vals[keep]
-            if cids.size == 0:
-                out.append([])
-                continue
+            if coverage == "complete":
+                band_result = _complete_coverage_pass(
+                    band_result, work_ds, resolution, "bng", agg
+                )
 
-            uniq, measures = _grouped_measures(cids, vals, agg)
-            out.append(
-                [
-                    {"cellID": _bng.format(int(cid)), "measure": m}
-                    for cid, m in zip(
-                        uniq.tolist(), measures
-                    )  # vectorscan: ok (per-cell)
-                ]
-            )
+            out.append(band_result)
         return out
 
     if already_bng:

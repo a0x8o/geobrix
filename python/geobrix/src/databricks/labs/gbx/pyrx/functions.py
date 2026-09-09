@@ -6445,6 +6445,16 @@ _GRID_FLAT_STRING_INT_SCHEMA = _grid_flat_schema(IntegerType(), StringType())
 
 
 def _make_rastertogrid_udtf(grid, agg, flat_schema, cellid_is_str=False):
+    # Pre-compute whether the measure column's declared type is an integer type
+    # (IntegerType for H3 count, LongType for quadbin count). The gridagg core
+    # now returns float for count (for heavy-tier parity); Python UDTFs do not
+    # auto-cast float -> int, so we coerce explicitly here to match the existing
+    # declared schema. Task 8 will change the schema to DoubleType and remove
+    # this coercion.
+    _coerce_measure_to_int = isinstance(
+        flat_schema.fields[2].dataType, (IntegerType, LongType)
+    )
+
     @udtf(returnType=flat_schema)
     class _RasterToGridUDTF:
         def eval(self, tile, resolution):
@@ -6461,7 +6471,10 @@ def _make_rastertogrid_udtf(grid, agg, flat_schema, cellid_is_str=False):
             for band_idx, cells in enumerate(bands_data, start=1):
                 for cell in cells:
                     cid = cell["cellID"] if cellid_is_str else int(cell["cellID"])
-                    yield (band_idx, cid, cell["measure"])
+                    m = cell["measure"]
+                    if _coerce_measure_to_int and m is not None:
+                        m = int(m)
+                    yield (band_idx, cid, m)
 
     return _RasterToGridUDTF
 

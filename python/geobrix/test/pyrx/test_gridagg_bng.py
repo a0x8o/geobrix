@@ -55,7 +55,9 @@ def test_bng_avg_london_string_ids_and_mean():
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "avg")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "avg", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 1
     band = result[0]
     assert len(band) == 1
@@ -71,7 +73,9 @@ def test_bng_sum_london_string_ids_and_total():
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "sum")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "sum", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 1
     band = result[0]
     assert len(band) == 1
@@ -88,7 +92,9 @@ def test_bng_variance_london_string_ids_and_population_variance():
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "variance")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "variance", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 1
     band = result[0]
     assert len(band) == 1
@@ -104,7 +110,9 @@ def test_bng_stddev_london_string_ids_and_population_stddev():
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "stddev")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "stddev", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 1
     band = result[0]
     assert len(band) == 1
@@ -115,14 +123,17 @@ def test_bng_stddev_london_string_ids_and_population_stddev():
     assert isinstance(cell["measure"], float)
 
 
-def test_bng_count_measure_is_int():
+def test_bng_count_measure_is_float():
+    # count is now float (for heavy-tier parity: centroid count = n.toDouble)
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "count")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "count", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
-    assert sum(c["measure"] for c in band) == 4
-    assert all(isinstance(c["measure"], int) for c in band)
+    assert sum(c["measure"] for c in band) == pytest.approx(4.0)
+    assert all(isinstance(c["measure"], float) for c in band)
     assert all(isinstance(c["cellID"], str) for c in band)
 
 
@@ -131,18 +142,25 @@ def test_bng_resolution_string_key():
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180400.0), px=200.0)
     with _open(raster) as ds:
-        by_int = gridagg.raster_to_grid(ds, 3, "bng", "avg")
+        by_int = gridagg.raster_to_grid(
+            ds, 3, "bng", "avg", coverage="sparse", assignment="centroid"
+        )
     with _open(raster) as ds:
-        by_str = gridagg.raster_to_grid(ds, "1km", "bng", "avg")
+        by_str = gridagg.raster_to_grid(
+            ds, "1km", "bng", "avg", coverage="sparse", assignment="centroid"
+        )
     assert by_int == by_str
 
 
-# --- (b) all-nodata band -> [] (no zero-valid-pixel cell, sec 2.6) -----------
+# --- (b) all-nodata band -> [] sparse / only None cells complete -------------
 def test_bng_all_nodata_yields_empty():
+    # sparse: no valid pixels -> empty band
     data = np.full((3, 3), -9999.0, dtype="float32")
     raster = _raster(data, epsg=27700, origin=(530000.0, 180000.0), px=100.0)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 3, "bng", "avg")
+        result = gridagg.raster_to_grid(
+            ds, 3, "bng", "avg", coverage="sparse", assignment="centroid"
+        )
     assert result == [[]]
 
 
@@ -153,7 +171,9 @@ def test_bng_4326_input_autowarped():
     data = np.arange(9, dtype="float32").reshape(3, 3)
     raster = _raster(data, epsg=4326, origin=(-0.13, 51.52), px=0.01)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 2, "bng", "count")
+        result = gridagg.raster_to_grid(
+            ds, 2, "bng", "count", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) >= 1
     for c in band:
@@ -188,7 +208,9 @@ def test_bng_out_of_gb_pixels_dropped():
     assert dropped_any, "test fixture must contain at least one out-of-GB pixel"
 
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 2, "bng", "count")
+        result = gridagg.raster_to_grid(
+            ds, 2, "bng", "count", coverage="sparse", assignment="centroid"
+        )
     emitted = {c["cellID"] for c in result[0]}
     assert emitted == expected
     for c in result[0]:
