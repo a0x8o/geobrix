@@ -213,40 +213,9 @@ case class RST_Quadbin_RasterizeAgg(
                     buffer.cells.iterator.map(_._1), srid, pixelOpt, mode, kringPad, resolution)
             }
 
-        // Source/dest spatial references for per-pixel reprojection (srid -> WGS84).
-        val srcSR = new SpatialReference(); srcSR.ImportFromEPSG(srid)
-        val dstSR = new SpatialReference(); dstSR.ImportFromEPSG(RST_Quadbin_RasterizeAgg.CRS_ID)
-
         val rasterDs = VectorRasterBridge.buildEmptyRaster(xmin, ymin, xmax, ymax, width, height, srid)
         try {
-            val gt = rasterDs.GetGeoTransform
-            val band = rasterDs.GetRasterBand(1)
-            val rowBuf = new Array[Double](width)
-            var py = 0
-            while (py < height) {
-                var px = 0
-                while (px < width) {
-                    // Pixel-centroid geographic coordinate in `srid` (RST_Quadbin_RasterToGrid affine).
-                    val xOffset = 0.5 + px
-                    val yOffset = 0.5 + py
-                    val xGeo = gt(0) + xOffset * gt(1) + yOffset * gt(2)
-                    val yGeo = gt(3) + xOffset * gt(4) + yOffset * gt(5)
-                    // Reproject the pixel center to WGS84 lon/lat, then index to quadbin.
-                    val (lon, lat) =
-                        if (srid == RST_Quadbin_RasterizeAgg.CRS_ID) (xGeo, yGeo)
-                        else {
-                            val pt = JTS.point(new org.locationtech.jts.geom.Coordinate(xGeo, yGeo))
-                            val tp = OSRTransformGeometry.transform(pt, srcSR, dstSR)
-                            val c = tp.getCoordinate
-                            (c.x, c.y)
-                        }
-                    val cellId = Quadbin.pointToCell(lon, lat, resolution)
-                    rowBuf(px) = lut.getOrElse(cellId, NoData)
-                    px += 1
-                }
-                band.WriteRaster(0, py, width, 1, rowBuf)
-                py += 1
-            }
+            RasterizeBurn.burn(Quadbin, lut, srid, resolution, rasterDs, width, height)
             rasterDs.FlushCache()
             val bytes = VectorRasterBridge.toGTiffBytes(rasterDs)
             val mtd = Map(
@@ -260,8 +229,6 @@ case class RST_Quadbin_RasterizeAgg(
             V2Tile.row(cellid = 0L, raster = bytes, metadata = mapData)
         } finally {
             rasterDs.delete()
-            srcSR.delete()
-            dstSR.delete()
         }
     }
 
