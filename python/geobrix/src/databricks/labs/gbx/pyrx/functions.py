@@ -4556,8 +4556,8 @@ class _RstH3TessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid, raster in tessellate_core.iter_tessellate_h3(
-                    ds, int(resolution), mode=effective_mode
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds, int(resolution), "h3", mode=effective_mode
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
@@ -4684,8 +4684,8 @@ class _RstQuadbinTessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid, raster in tessellate_core.iter_tessellate_quadbin(
-                    ds, int(resolution), mode=effective_mode
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds, int(resolution), "quadbin", mode=effective_mode
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
@@ -4728,8 +4728,8 @@ class _RstBngTessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid_str, raster in tessellate_core.iter_tessellate_bng(
-                    ds, resolution, mode=effective_mode
+                for cellid_str, raster in tessellate_core.iter_tessellate(
+                    ds, resolution, "bng", mode=effective_mode
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
