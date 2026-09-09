@@ -163,6 +163,30 @@ def _quadbin_raster_4326():
     return _gtiff_bytes(data, epsg=4326, origin=(-0.13, 51.55), px=0.01)
 
 
+def _small_covering_raster_4326():
+    """4x4 EPSG:4326 raster (16 pixels, 0.1 deg each) at the equator.
+
+    Performance guard for ``covering`` assignment tests: covering is O(pixels ×
+    candidate-cells-per-pixel) in both tiers. 16 pixels at coarse resolution keeps
+    the geometry-intersection count tiny (<100 JTS/shapely ops) so the suite does not
+    time out.  Use with H3 res=4 or quadbin res=5 so the raster fits in a handful of
+    cells.
+    """
+    data = np.arange(1, 17, dtype="float32").reshape(4, 4)
+    return _gtiff_bytes(data, epsg=4326, origin=(0.0, 0.4), px=0.1)
+
+
+def _small_covering_bng_raster():
+    """4x4 EPSG:27700 raster (16 pixels, 1000 m each) over central London.
+
+    Performance guard for BNG covering tests.  At BNG res=1 (100 km cells) the
+    entire 4 km × 4 km footprint fits in a single cell, giving very few geometry
+    intersections.
+    """
+    data = np.arange(1, 17, dtype="float32").reshape(4, 4)
+    return _gtiff_bytes(data, epsg=27700, origin=(530000.0, 182000.0), px=1000.0)
+
+
 # ---------------------------------------------------------------------------
 # Reducer parity (5 BNG functions) — exact cell-set + measure within 1e-9
 # ---------------------------------------------------------------------------
@@ -170,8 +194,14 @@ def _quadbin_raster_4326():
 _REDUCERS = ["avg", "count", "max", "min", "median", "sum", "variance", "stddev"]
 
 
-def _heavy_reducer_rows(spark, raster, resolution, agg):
-    """Heavy tier: ARRAY<ARRAY<struct(cellID,measure)>> -> flat {(band,cellID): measure}."""
+def _heavy_reducer_rows(spark, raster, resolution, agg, *, coverage="complete", assignment="centroid"):
+    """Heavy tier: ARRAY<ARRAY<struct(cellID,measure)>> -> flat {(band,cellID): measure}.
+
+    ``coverage`` and ``assignment`` are forwarded to the SQL expression.
+    Defaults mirror the expression's built-in defaults (complete, centroid) so
+    existing 4-positional-arg callers that omit these keyword params continue to
+    produce identical results to the previous 2-arg SQL form.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.rasterx import functions as hx
@@ -182,7 +212,7 @@ def _heavy_reducer_rows(spark, raster, resolution, agg):
         hx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
     rows = (
-        df.select(fn(f.col("tile"), f.lit(resolution)).alias("bands"))
+        df.select(fn(f.col("tile"), f.lit(resolution), coverage, assignment).alias("bands"))
         # posexplode outer array -> 0-based band index + inner cell array
         .select(f.posexplode("bands").alias("band0", "cells"))
         .select((f.col("band0") + 1).alias("band"), f.explode("cells").alias("c"))
@@ -196,8 +226,11 @@ def _heavy_reducer_rows(spark, raster, resolution, agg):
     return {(r["band"], r["cellID"]): r["measure"] for r in rows}
 
 
-def _light_reducer_rows(spark, raster, resolution, agg):
-    """Light tier: SQL LATERAL over the registered pyrx UDTF -> {(band,cellID): measure}."""
+def _light_reducer_rows(spark, raster, resolution, agg, *, coverage="complete", assignment="centroid"):
+    """Light tier: SQL LATERAL over the registered pyrx UDTF -> {(band,cellID): measure}.
+
+    ``coverage`` and ``assignment`` are forwarded to the SQL LATERAL call.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.pyrx import functions as prx
@@ -210,7 +243,7 @@ def _light_reducer_rows(spark, raster, resolution, agg):
     rows = spark.sql(
         f"SELECT t.band AS band, t.cellID AS cellID, t.measure AS measure "
         f"FROM _ras_light_bng, "
-        f"LATERAL gbx_rst_bng_rastertogrid{agg}(tile, {resolution}) t"
+        f"LATERAL gbx_rst_bng_rastertogrid{agg}(tile, {resolution}, '{coverage}', '{assignment}') t"
     ).collect()
     return {(r["band"], r["cellID"]): r["measure"] for r in rows}
 
@@ -300,8 +333,11 @@ def test_bng_rastertogrid_avg_parity_4326_warp_path(spark_with_jar):
 # real multi-value tile (ramp values, several cells with >1 pixel each).
 
 
-def _heavy_grid_rows(spark, raster, resolution, grid, agg):
-    """Heavy tier (Long cell id grids): -> {(band,cellID): measure}."""
+def _heavy_grid_rows(spark, raster, resolution, grid, agg, *, coverage="complete", assignment="centroid"):
+    """Heavy tier (Long cell id grids): -> {(band,cellID): measure}.
+
+    ``coverage`` and ``assignment`` are forwarded to the SQL expression.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.rasterx import functions as hx
@@ -312,7 +348,7 @@ def _heavy_grid_rows(spark, raster, resolution, grid, agg):
         hx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
     rows = (
-        df.select(fn(f.col("tile"), f.lit(resolution)).alias("bands"))
+        df.select(fn(f.col("tile"), f.lit(resolution), coverage, assignment).alias("bands"))
         .select(f.posexplode("bands").alias("band0", "cells"))
         .select((f.col("band0") + 1).alias("band"), f.explode("cells").alias("c"))
         .select(
@@ -325,8 +361,11 @@ def _heavy_grid_rows(spark, raster, resolution, grid, agg):
     return {(r["band"], r["cellID"]): r["measure"] for r in rows}
 
 
-def _light_grid_rows(spark, raster, resolution, grid, agg):
-    """Light tier (Long cell id grids): SQL LATERAL over the pyrx UDTF."""
+def _light_grid_rows(spark, raster, resolution, grid, agg, *, coverage="complete", assignment="centroid"):
+    """Light tier (Long cell id grids): SQL LATERAL over the pyrx UDTF.
+
+    ``coverage`` and ``assignment`` are forwarded to the SQL LATERAL call.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.pyrx import functions as prx
@@ -339,7 +378,7 @@ def _light_grid_rows(spark, raster, resolution, grid, agg):
     rows = spark.sql(
         f"SELECT t.band AS band, t.cellID AS cellID, t.measure AS measure "
         f"FROM _ras_light_grid, "
-        f"LATERAL gbx_rst_{grid}_rastertogrid{agg}(tile, {resolution}) t"
+        f"LATERAL gbx_rst_{grid}_rastertogrid{agg}(tile, {resolution}, '{coverage}', '{assignment}') t"
     ).collect()
     return {(r["band"], r["cellID"]): r["measure"] for r in rows}
 
@@ -355,12 +394,16 @@ def test_grid_rastertogrid_reducer_parity(spark_with_jar, grid, resolution, agg)
     population formula on both tiers, so they share sum/avg's within_tol class;
     a formula mismatch would surface here as a divergence (do NOT loosen tol —
     fix the formula).
+
+    Note: ``coverage="sparse"`` is explicit here (only cells that have pixels).
+    The Stage-2 ``complete`` behaviour (empty-cell parity) is exercised by
+    ``test_rastertogrid_coverage_assignment_parity``.
     """
     spark = spark_with_jar
     raster = _quadbin_raster_4326()  # 16x16 4326 ramp — valid for both h3 & quadbin
 
-    light = _light_grid_rows(spark, raster, resolution, grid, agg)
-    heavy = _heavy_grid_rows(spark, raster, resolution, grid, agg)
+    light = _light_grid_rows(spark, raster, resolution, grid, agg, coverage="sparse")
+    heavy = _heavy_grid_rows(spark, raster, resolution, grid, agg, coverage="sparse")
 
     assert light, f"light emitted no cells for {grid} {agg}"
     assert heavy, f"heavy emitted no cells for {grid} {agg}"
@@ -411,8 +454,13 @@ def _tess_id(cid, *, bng):
     return _bng.format(cid)
 
 
-def _light_tessellate_ids(spark, raster, sql_name, resolution, mode, *, bng):
-    """Light tier: SQL LATERAL tessellate -> (canonical id_set, chip_count)."""
+def _light_tessellate_ids(spark, raster, sql_name, resolution, mode, *, bng, coverage="complete"):
+    """Light tier: SQL LATERAL tessellate -> (canonical id_set, chip_count).
+
+    ``mode`` is the assignment parameter (``centroid`` / ``covering``).
+    ``coverage`` (``complete`` / ``sparse``) is the 4th SQL argument; defaults to
+    ``complete`` to match the pre-Stage-2 3-arg call behaviour.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.pyrx import functions as prx
@@ -424,14 +472,19 @@ def _light_tessellate_ids(spark, raster, sql_name, resolution, mode, *, bng):
     df.createOrReplaceTempView("_ras_light_tess")
     rows = spark.sql(
         f"SELECT t.cellid AS cid FROM _ras_light_tess, "
-        f"LATERAL {sql_name}(tile, {resolution}, '{mode}') t"
+        f"LATERAL {sql_name}(tile, {resolution}, '{mode}', '{coverage}') t"
     ).collect()
     ids = [_tess_id(r["cid"], bng=bng) for r in rows]
     return set(ids), len(ids)
 
 
-def _heavy_tessellate_ids(spark, raster, fn_name, resolution, mode, *, bng):
-    """Heavy tier: DataFrame generator -> (canonical id_set, chip_count)."""
+def _heavy_tessellate_ids(spark, raster, fn_name, resolution, mode, *, bng, coverage="complete"):
+    """Heavy tier: DataFrame generator -> (canonical id_set, chip_count).
+
+    ``mode`` is the assignment parameter (``centroid`` / ``covering``).
+    ``coverage`` (``complete`` / ``sparse``) is forwarded to the Python wrapper;
+    defaults to ``complete`` to match the pre-Stage-2 3-arg call behaviour.
+    """
     from pyspark.sql import functions as f
 
     from databricks.labs.gbx.rasterx import functions as hx
@@ -442,7 +495,7 @@ def _heavy_tessellate_ids(spark, raster, fn_name, resolution, mode, *, bng):
         hx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
     )
     rows = (
-        df.select(fn(f.col("tile"), f.lit(resolution), mode).alias("tt"))
+        df.select(fn(f.col("tile"), f.lit(resolution), mode, coverage).alias("tt"))
         .select(f.col("tt.cellid").alias("cid"))
         .collect()
     )
@@ -573,7 +626,7 @@ def _compare_rasterize(spark, cells, *, grid, srid, resolution, heavy_cellid_col
             light_fn(
                 heavy_cellid_col,
                 value=None,
-                srid=f.lit(out_srid),
+                out_srid=f.lit(out_srid),
                 pixel_size=f.lit(pixel_size),
                 xmin=f.lit(xmin),
                 ymin=f.lit(ymin),
@@ -673,4 +726,291 @@ def test_bng_rasterize_agg_mask_parity(spark_with_jar):
         srid=27700,
         resolution=3,
         heavy_cellid_col="cellid",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage-2 gate: coverage × assignment parity for rastertogrid (all 3 grids)
+# ---------------------------------------------------------------------------
+#
+# Grid configurations for the new parametrized parity tests.
+#
+# CENTROID resolution: same as the existing single-function tests so these
+# share the well-understood fixture regime.
+# COVERING resolution: coarser so the raster fits in very few cells (covering
+# is O(pixels × candidate-cells-per-pixel); coarse resolution → 1-4 cells →
+# fast geometry intersection).
+_RTG_CENTROID_RES = {"h3": 7, "bng": 3, "quadbin": 12}
+_RTG_COVERING_RES = {"h3": 4, "bng": 1, "quadbin": 8}
+
+# Tessellate configs indexed by grid name.
+_TESS_CONFIG = {
+    "h3":      ("gbx_rst_h3_tessellate",      "rst_h3_tessellate",      False),
+    "bng":     ("gbx_rst_bng_tessellate",     "rst_bng_tessellate",     True),
+    "quadbin": ("gbx_rst_quadbin_tessellate", "rst_quadbin_tessellate", False),
+}
+_TESS_CENTROID_RES = {"h3": 5, "bng": 3, "quadbin": 12}
+_TESS_COVERING_RES = {"h3": 4, "bng": 1, "quadbin": 8}
+
+
+def _parity_cmp(light, heavy, *, label, tol=1e-9):
+    """Assert cross-tier parity for a {(band, cellID): measure} dict pair.
+
+    Rules:
+    - Cell-set equality: every key present in both tiers.
+    - Both None → empty-cell parity (skip value comparison).
+    - One None, one not → FAIL (one-sided None is a real divergence).
+    - Both float → ``abs(lv - hv) <= tol * max(1.0, abs(hv))`` (relative tol).
+
+    ``tol`` defaults to 1e-9.  Use a wider value (e.g. 1e-6) for covering aggs
+    where JTS (heavy) and shapely (light) area fractions may differ slightly.
+    """
+    light_keys = set(light.keys())
+    heavy_keys = set(heavy.keys())
+    if light_keys != heavy_keys:
+        pytest.fail(
+            f"{label} cell-set MISMATCH: "
+            f"|light|={len(light_keys)} |heavy|={len(heavy_keys)} "
+            f"light_only={sorted(light_keys - heavy_keys)[:8]} "
+            f"heavy_only={sorted(heavy_keys - light_keys)[:8]}"
+        )
+    for key in light_keys:
+        lv, hv = light[key], heavy[key]
+        if lv is None and hv is None:
+            continue  # covered-but-empty cell: both tiers agree → parity
+        if lv is None or hv is None:
+            pytest.fail(
+                f"{label} one-sided None at {key}: light={lv} heavy={hv} — "
+                "real cross-tier divergence (one tier emits an empty cell, the other does not)"
+            )
+        lv_f, hv_f = float(lv), float(hv)
+        threshold = tol * max(1.0, abs(hv_f))
+        assert abs(lv_f - hv_f) <= threshold, (
+            f"{label} cell {key} measure diverged: "
+            f"light={lv_f} heavy={hv_f} (diff={abs(lv_f - hv_f):.3e} > tol={threshold:.3e})"
+        )
+
+
+@pytest.mark.parametrize("agg", ["avg", "count"])
+@pytest.mark.parametrize("assignment", ["centroid", "covering"])
+@pytest.mark.parametrize("coverage", ["sparse", "complete"])
+@pytest.mark.parametrize("grid", ["h3", "bng", "quadbin"])
+def test_rastertogrid_coverage_assignment_parity(spark_with_jar, grid, coverage, assignment, agg):
+    """Cross-tier rastertogrid parity for all coverage × assignment combinations.
+
+    Exercises the Stage-2 coverage/assignment extension for all three grid families
+    (h3, bng, quadbin) with two representative aggregations:
+
+    * ``avg`` — the core averaging path (both centroid and covering).
+    * ``count`` — exercises the count→Double change: both tiers now emit Double
+      (not int) for pixel count; covering count is the area-fraction sum (may be
+      fractional).  Compare as float with relative 1e-9 tolerance.
+
+    Assertions:
+    * Exact cell-set equality (both tiers emit the same cell keys).
+    * Per-cell measure within relative tolerance 1e-9 (default for centroid,
+      1e-6 for covering where JTS vs shapely geometry areas may differ slightly).
+    * Both None ⇒ empty-cell parity; one None one not ⇒ FAIL.
+    * ``complete`` cell set ⊇ corresponding ``sparse`` cell set (for both tiers).
+
+    PERFORMANCE: covering mode uses a small 4×4 raster at a coarser resolution so
+    the O(pixels × intersection-ops) geometry work completes quickly.
+    """
+    spark = spark_with_jar
+    is_bng = grid == "bng"
+
+    # Select raster and resolution based on assignment mode.
+    if assignment == "covering":
+        raster = _small_covering_bng_raster() if is_bng else _small_covering_raster_4326()
+        resolution = _RTG_COVERING_RES[grid]
+        # JTS (heavy) and shapely (light) intersection areas may differ at ~1e-10;
+        # widen tolerance slightly for covering aggs.
+        tol = 1e-6
+    else:
+        raster = _bng_raster_27700() if is_bng else _quadbin_raster_4326()
+        resolution = _RTG_CENTROID_RES[grid]
+        tol = 1e-9
+
+    label = f"{grid} {coverage}/{assignment} {agg}"
+
+    # Collect LIGHT first (both tiers share the gbx_rst_* SQL names; light must
+    # be materialised before heavy re-registers).
+    if is_bng:
+        light = _light_reducer_rows(spark, raster, resolution, agg, coverage=coverage, assignment=assignment)
+        heavy = _heavy_reducer_rows(spark, raster, resolution, agg, coverage=coverage, assignment=assignment)
+    else:
+        light = _light_grid_rows(spark, raster, resolution, grid, agg, coverage=coverage, assignment=assignment)
+        heavy = _heavy_grid_rows(spark, raster, resolution, grid, agg, coverage=coverage, assignment=assignment)
+
+    assert light, f"{label}: light emitted no cells"
+    assert heavy, f"{label}: heavy emitted no cells"
+
+    _parity_cmp(light, heavy, label=label, tol=tol)
+
+    # complete ⊇ sparse: verify the superset relationship using a second sparse call.
+    if coverage == "complete":
+        if is_bng:
+            light_sparse = _light_reducer_rows(spark, raster, resolution, agg, coverage="sparse", assignment=assignment)
+            heavy_sparse = _heavy_reducer_rows(spark, raster, resolution, agg, coverage="sparse", assignment=assignment)
+        else:
+            light_sparse = _light_grid_rows(spark, raster, resolution, grid, agg, coverage="sparse", assignment=assignment)
+            heavy_sparse = _heavy_grid_rows(spark, raster, resolution, grid, agg, coverage="sparse", assignment=assignment)
+
+        sparse_keys = set(light_sparse.keys())
+        assert sparse_keys <= set(light.keys()), (
+            f"{label}: sparse cell set is NOT a subset of complete (light tier)"
+        )
+        assert sparse_keys <= set(heavy.keys()), (
+            f"{label}: sparse cell set is NOT a subset of complete (heavy tier)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stage-2 gate: coverage × assignment parity for tessellate (all 3 grids)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("assignment", ["centroid", "covering"])
+@pytest.mark.parametrize("coverage", ["sparse", "complete"])
+@pytest.mark.parametrize("grid", ["h3", "bng", "quadbin"])
+def test_tessellate_coverage_assignment_parity(spark_with_jar, grid, coverage, assignment):
+    """Cross-tier tessellate parity for all coverage × assignment combinations.
+
+    For each combination the test asserts:
+    * Exact cell-id-set equality (same canonical ids in both tiers).
+    * Identical chip count (same number of emitted rows).
+
+    ACCEPTED DIVERGENCE (do NOT add a pixel-dimension assertion):
+        In ``centroid + complete`` mode, heavy synthesises full-source-extent
+        all-NoData chips for covered-but-empty cells; light synthesises 1×1
+        all-NoData chips.  Both chips correctly encode "covered but no data";
+        the measure-level parity tested by rastertogrid is unaffected.  We
+        deliberately skip chip pixel-dimension equality here.
+
+    PERFORMANCE: covering mode uses a coarser resolution so the raster's bbox
+    fits in very few cells, keeping the clip-to-cell-geometry work fast.
+    """
+    spark = spark_with_jar
+    sql_name, fn_name, is_bng = _TESS_CONFIG[grid]
+
+    if assignment == "covering":
+        raster = _bng_raster_27700() if is_bng else _quadbin_raster_4326()
+        resolution = _TESS_COVERING_RES[grid]
+    else:
+        raster = _bng_raster_27700() if is_bng else _quadbin_raster_4326()
+        resolution = _TESS_CENTROID_RES[grid]
+
+    label = f"{grid} tessellate {coverage}/{assignment}"
+
+    # Collect LIGHT first, then register heavy (both share the gbx_rst_* SQL name).
+    light_ids, light_n = _light_tessellate_ids(
+        spark, raster, sql_name, resolution, assignment, bng=is_bng, coverage=coverage
+    )
+    heavy_ids, heavy_n = _heavy_tessellate_ids(
+        spark, raster, fn_name, resolution, assignment, bng=is_bng, coverage=coverage
+    )
+
+    assert light_ids, f"{label}: light emitted no chips"
+    assert heavy_ids, f"{label}: heavy emitted no chips"
+
+    if light_ids != heavy_ids:
+        pytest.fail(
+            f"{label} cell-set MISMATCH: "
+            f"|light|={len(light_ids)} |heavy|={len(heavy_ids)} "
+            f"light_only={sorted(light_ids - heavy_ids)[:8]} "
+            f"heavy_only={sorted(heavy_ids - light_ids)[:8]}"
+        )
+
+    assert light_n == heavy_n, (
+        f"{label} chip-count mismatch: light={light_n} heavy={heavy_n}"
+    )
+
+    # complete ⊇ sparse: verify superset (at cell-id level) when coverage=complete.
+    if coverage == "complete":
+        light_sparse_ids, _ = _light_tessellate_ids(
+            spark, raster, sql_name, resolution, assignment, bng=is_bng, coverage="sparse"
+        )
+        heavy_sparse_ids, _ = _heavy_tessellate_ids(
+            spark, raster, fn_name, resolution, assignment, bng=is_bng, coverage="sparse"
+        )
+        assert light_sparse_ids <= light_ids, (
+            f"{label}: sparse cell set not subset of complete (light)"
+        )
+        assert heavy_sparse_ids <= heavy_ids, (
+            f"{label}: sparse cell set not subset of complete (heavy)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression: 2-arg default for rst_h3_tessellate == centroid + complete
+# ---------------------------------------------------------------------------
+
+
+def test_default_h3_tessellate_2arg_parity(spark_with_jar):
+    """2-arg gbx_rst_h3_tessellate(tile, res) is centroid+complete in BOTH tiers.
+
+    Task 8 aligned the light tier's default to match heavy: both now default to
+    ``assignment="centroid"`` and ``coverage="complete"``.  This test is the
+    regression gate for that alignment: if either tier's default diverges, the
+    cell sets produced by the 2-arg call will differ.
+    """
+    spark = spark_with_jar
+    raster = _quadbin_raster_4326()  # 16×16 4326 raster, valid for H3
+    resolution = 5  # matches test_parity_h3_tessellate.py fixture
+
+    # Light: 2-arg SQL (no explicit assignment/coverage) — collect FIRST.
+    from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.pyrx import functions as prx
+
+    prx.register(spark)
+    df2 = spark.createDataFrame([(bytearray(raster),)], ["raster"]).select(
+        prx.rst_fromcontent("raster", f.lit("GTiff")).alias("tile")
+    )
+    df2.createOrReplaceTempView("_ras_default_h3")
+    light_2arg_rows = spark.sql(
+        f"SELECT t.cellid AS cid FROM _ras_default_h3, "
+        f"LATERAL gbx_rst_h3_tessellate(tile, {resolution}) t"
+    ).collect()
+    light_2arg_ids = {r["cid"] for r in light_2arg_rows}
+    light_2arg_n = len(light_2arg_rows)
+
+    # Heavy: 2-arg Python wrapper (no explicit assignment/coverage) — register AFTER light.
+    from databricks.labs.gbx.rasterx import functions as hx
+
+    hx.register(spark)
+    heavy_2arg_rows = (
+        df2.select(
+            hx.rst_h3_tessellate(f.col("tile"), f.lit(resolution)).alias("tt")
+        )
+        .select(f.col("tt.cellid").alias("cid"))
+        .collect()
+    )
+    heavy_2arg_ids = {r["cid"] for r in heavy_2arg_rows}
+    heavy_2arg_n = len(heavy_2arg_rows)
+
+    assert light_2arg_ids, "light 2-arg emitted no cells"
+    assert heavy_2arg_ids, "heavy 2-arg emitted no cells"
+
+    if light_2arg_ids != heavy_2arg_ids:
+        pytest.fail(
+            f"2-arg default parity FAILED: "
+            f"|light|={len(light_2arg_ids)} |heavy|={len(heavy_2arg_ids)} "
+            f"light_only={sorted(light_2arg_ids - heavy_2arg_ids)[:8]} "
+            f"heavy_only={sorted(heavy_2arg_ids - light_2arg_ids)[:8]}"
+        )
+    assert light_2arg_n == heavy_2arg_n, (
+        f"2-arg default chip-count mismatch: light={light_2arg_n} heavy={heavy_2arg_n}"
+    )
+
+    # Cross-check: the 2-arg defaults equal the explicit centroid+complete call (light).
+    # This proves the light tier's default is centroid+complete and not some other combo.
+    light_explicit_ids, light_explicit_n = _light_tessellate_ids(
+        spark, raster, "gbx_rst_h3_tessellate", resolution, "centroid", bng=False, coverage="complete"
+    )
+    assert light_2arg_ids == light_explicit_ids, (
+        "light 2-arg default != explicit centroid+complete — Task-8 alignment broken"
+    )
+    assert light_2arg_n == light_explicit_n, (
+        "light 2-arg chip count != explicit centroid+complete — Task-8 alignment broken"
     )
