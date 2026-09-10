@@ -160,6 +160,7 @@ gbx_quadbin_cellunion
 gbx_quadbin_centroid
 gbx_quadbin_distance
 gbx_quadbin_kring
+gbx_quadbin_kloop
 gbx_quadbin_pointascell
 gbx_quadbin_polyfill
 gbx_quadbin_resolution
@@ -171,6 +172,8 @@ gbx_custom_cellaswkt
 gbx_custom_centroid
 gbx_custom_polyfill
 gbx_custom_kring
+gbx_custom_kloop
+gbx_custom_distance
 gbx_st_asmvt
 gbx_st_asmvt_pyramid
 gbx_st_legacyaswkb

@@ -1552,6 +1552,13 @@
         "scala"
       ]
     },
+    "gbx_custom_distance": {
+      "examples": "Examples:\n      > SELECT gbx_custom_distance( gbx_custom_pointascell('POINT(530000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0), gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), gbx_custom_pointascell('POINT(531000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0) ) AS dist;",
+      "usage_args": "cell_expr1, grid, cell_expr2",
+      "bindings": [
+        "sql"
+      ]
+    },
     "gbx_custom_grid": {
       "examples": "Examples:\n      > SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;",
       "usage_args": "bound_x_min, bound_x_max, bound_y_min, bound_y_max, cell_splits, root_cell_size_x, root_cell_size_y, srid",
@@ -1560,6 +1567,13 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_custom_kloop": {
+      "examples": "Examples:\n      > SELECT gbx_custom_kloop(360287970373976640, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS kloop;",
+      "usage_args": "cell, grid, k",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_custom_kring": {
@@ -1822,6 +1836,13 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_quadbin_kloop": {
+      "examples": "Examples:\n      > SELECT gbx_quadbin_kloop(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS kloop;",
+      "usage_args": "cell, k",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_quadbin_kring": {

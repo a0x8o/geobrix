@@ -585,6 +585,18 @@ SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS 
 """
 
 
+def quadbin_kloop_sql_example():
+    """Return the hollow ring of quadbin cells at EXACTLY Chebyshev distance k.
+
+    Uses the canonical SF z10 fixture cell (lon=-122.4194, lat=37.7749, zoom=10
+    → cell 5233961839712272383) — same input as the Python and Scala tabs.
+    At k=1, returns the 8-cell ring (center excluded); at k=0, returns [seed].
+    """
+    return """
+SELECT gbx_quadbin_kloop(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS kloop;
+"""
+
+
 def quadbin_tessellate_sql_example():
     """Tessellate a geometry into quadbin cells; returns array of struct(cell, geom).
 
@@ -707,6 +719,15 @@ quadbin_kring_sql_example_output = """
 ... (9 cells: SF z10 center plus 8 surrounding cells at k=1)
 """
 
+quadbin_kloop_sql_example_output = """
++-------------------------------------+
+|kloop                                |
++-------------------------------------+
+|[..., (8 cells)]                     |
++-------------------------------------+
+... (8 cells: hollow ring at k=1, SF z10 center excluded)
+"""
+
 quadbin_polyfill_sql_example_output = """
 +--------------------------+
 |cells                     |
@@ -789,6 +810,34 @@ SELECT gbx_custom_kring(360287970373976640, gbx_custom_grid(0, 1000000, 0, 10000
 """
 
 
+def custom_kloop_sql_example():
+    """Return the hollow ring of custom grid cells at EXACTLY k steps from the center cell.
+
+    Uses the canonical res-5 cell 360287970373976640 and the same 1 km grid from the
+    other custom-grid examples.  At k=1, returns the 8-cell ring (center excluded);
+    k=0 returns [center].
+    """
+    return """
+SELECT gbx_custom_kloop(360287970373976640, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS kloop;
+"""
+
+
+def custom_distance_sql_example():
+    """Chebyshev distance (in grid steps) between two custom grid cells.
+
+    Uses gbx_custom_pointascell to obtain two adjacent cells at resolution 0
+    (cell_size=1000, so a 1000-unit step in X separates them by exactly 1 grid step).
+    The first gbx_custom_distance token is the example captured by DESCRIBE FUNCTION.
+    """
+    return """
+SELECT gbx_custom_distance(
+    gbx_custom_pointascell('POINT(530000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0),
+    gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+    gbx_custom_pointascell('POINT(531000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0)
+) AS dist;
+"""
+
+
 custom_grid_sql_example_output = """
 +----------------------------------------------+
 |grid                                          |
@@ -847,4 +896,22 @@ custom_kring_sql_example_output = """
 |[360287970373976640, ..., (9 cells at k=1)]|
 +-------------------------------------------+
 ... (9 BIGINT cell IDs — the 3×3 neighbourhood including center cell at resolution 5)
+"""
+
+custom_kloop_sql_example_output = """
++-------------------------------+
+|kloop                          |
++-------------------------------+
+|[..., (8 cells at k=1)]        |
++-------------------------------+
+... (8 BIGINT cell IDs — hollow ring at k=1, center cell excluded)
+"""
+
+custom_distance_sql_example_output = """
++----+
+|dist|
++----+
+|1   |
++----+
+... (Chebyshev grid distance between two cells 1 step apart in X at resolution 0)
 """
