@@ -3066,6 +3066,208 @@ REGISTRY: Dict[str, FnSpec] = {
         ),
         core=False,
     ),
+    # --- Custom-grid raster functions (Task 8, Stage 3) ---
+    # The 10 custom-grid raster functions: 8 rastertogrid aggs, tessellate, and
+    # rasterize_agg.  These require a custom-grid struct argument (from
+    # gbx_custom_grid(...)) that the bench runner's udtf-LATERAL SQL renderer
+    # cannot yet represent as a scalar literal — the ``_udtf_lateral_sql`` helper
+    # renders args from fs.args.values() via ``_sql_literal``, which only handles
+    # simple scalars (int/float/str/bool).  The FnSpecs are registered here with
+    # their correct ``sources`` tuples (for change-aware benchmarking) and
+    # ``fingerprint=False`` (timing-only; no cross-engine comparison) until the
+    # bench framework is extended to support struct-literal grid arguments (Task 18).
+    # The ``col_fn`` uses prx.rst_custom_rastertogrid* which raises NotImplementedError
+    # (correct: these are UDTF-only); the ``core_fn`` placeholder is never invoked
+    # because core=False.
+    "rst_custom_rastertogridavg": FnSpec(
+        "rst_custom_rastertogridavg",
+        "gbx_rst_custom_rastertogridavg",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},  # resolution only; grid struct not yet bench-renderable
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridavg(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,  # grid struct arg not yet supported in _udtf_lateral_sql
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridcount": FnSpec(
+        "rst_custom_rastertogridcount",
+        "gbx_rst_custom_rastertogridcount",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridcount(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridmax": FnSpec(
+        "rst_custom_rastertogridmax",
+        "gbx_rst_custom_rastertogridmax",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridmax(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridmin": FnSpec(
+        "rst_custom_rastertogridmin",
+        "gbx_rst_custom_rastertogridmin",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridmin(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridmedian": FnSpec(
+        "rst_custom_rastertogridmedian",
+        "gbx_rst_custom_rastertogridmedian",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridmedian(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridsum": FnSpec(
+        "rst_custom_rastertogridsum",
+        "gbx_rst_custom_rastertogridsum",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridsum(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridvariance": FnSpec(
+        "rst_custom_rastertogridvariance",
+        "gbx_rst_custom_rastertogridvariance",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridvariance(
+            t, None, a["resolution"]
+        ),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_rastertogridstddev": FnSpec(
+        "rst_custom_rastertogridstddev",
+        "gbx_rst_custom_rastertogridstddev",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_rastertogridstddev(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_GRIDAGG_LIGHT
+        + (
+            _HEAVY + "grid/RST_Custom_RasterToGrid.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    "rst_custom_tessellate": FnSpec(
+        "rst_custom_tessellate",
+        "gbx_rst_custom_tessellate",
+        "dggs",
+        ("spark-path",),
+        {"resolution": 1},
+        core_fn=lambda ds, a: None,
+        col_fn=lambda t, a: prx.rst_custom_tessellate(t, None, a["resolution"]),
+        fingerprint_kind="dggs_grid",
+        udtf=True,
+        fingerprint=False,
+        sources=_TESSELLATE_LIGHT
+        + (
+            _HEAVY + "generators/RST_Custom_Tessellate.scala",
+            _OPS + "RasterTessellate.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
+    # rst_custom_rasterize_agg: like rst_bng_rasterize_agg/rst_quadbin_rasterize_agg,
+    # a GRID aggregator that needs a custom-grid struct.  The col_fn uses the Python
+    # API (prx.rst_custom_rasterize_agg) which requires both cellid and grid struct
+    # columns; the bench harness's grid_aggregate input_kind only streams cellid rows.
+    # Registered with fingerprint=False (timing-only) until the bench input harness
+    # is extended to carry the grid struct column (Task 18).
+    "rst_custom_rasterize_agg": FnSpec(
+        "rst_custom_rasterize_agg",
+        "gbx_rst_custom_rasterize_agg",
+        "dggs",
+        ("spark-path",),
+        {},
+        col_fn=lambda cid, v, a: prx.rst_custom_rasterize_agg(cid, None, value=v),
+        core_fn=lambda t, a: t,
+        input_kind="grid_aggregate",
+        fingerprint=False,
+        sources=_CELLRASTER_LIGHT
+        + (
+            _PYRX_SERDE,
+            _HEAVY + "agg/RST_Custom_RasterizeAgg.scala",
+            _PYGX + "_custom.py",
+        ),
+        core=False,
+    ),
     # --- VectorX (pyvx/vectorx) functions ---
     # Already-benched ST functions (MVT, TIN families).
     # st_asmvt is a grouped-aggregate MVT encoder, so it is benched via the

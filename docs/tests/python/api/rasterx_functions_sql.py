@@ -3190,3 +3190,287 @@ h3_cell_bbox_sql_example_output = """
 +------------------+------------------------------+
 (STRUCT<xmin, ymin, xmax, ymax> per H3 cell, in EPSG:4326)
 """
+
+
+# ---------------------------------------------------------------------------
+# Custom-grid raster → grid (8 aggregations) + tessellate + rasterize_agg
+# ---------------------------------------------------------------------------
+# Each example uses a grid built by gbx_custom_grid(...) and a sample raster
+# from /Volumes/main/geobrix_samples/geobrix-examples/london/.
+# The grid here: EPSG:27700, bounds (529000, 179000)-(533000, 183000), cell_splits=2,
+# root_cell_size=4000 — resolution 1 yields 4 cells of 2000×2000 m.
+# ---------------------------------------------------------------------------
+
+_CUSTOM_GRID_LITERAL = (
+    "gbx_custom_grid(529000, 533000, 179000, 183000, 2, 4000, 4000, 27700)"
+)
+_CUSTOM_RASTER_PATH = (
+    "/Volumes/main/geobrix_samples/geobrix-examples/london/"
+    "sentinel2/london_sentinel2_red.tif"
+)
+
+
+def rst_custom_rastertogridavg_sql_example():
+    """Aggregate raster values to custom-grid cells using average (custom grid)"""
+    return f"""
+-- Build the custom grid struct once; pass to the LATERAL call.
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridavg(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+
+-- Explicit coverage='complete', assignment='covering'.
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridavg(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1, 'complete', 'covering'
+) t;
+"""
+
+
+rst_custom_rastertogridavg_sql_example_output = """
++----+-------------------+------------------+
+|band|cellID             |measure           |
++----+-------------------+------------------+
+|1   |<Long cell id>     |<avg pixel value> |
++----+-------------------+------------------+
+(one row per band × custom-grid cell; cellID is a BIGINT)
+"""
+
+
+def rst_custom_rastertogridcount_sql_example():
+    """Count raster pixels per custom-grid cell (measure is DOUBLE)"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridcount(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridcount_sql_example_output = """
++----+-------------------+-------+
+|band|cellID             |measure|
++----+-------------------+-------+
+|1   |<Long cell id>     |<count>|
++----+-------------------+-------+
+(pixel count per band × custom-grid cell; measure is DOUBLE)
+"""
+
+
+def rst_custom_rastertogridmax_sql_example():
+    """Get maximum raster value per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridmax(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridmax_sql_example_output = """
++----+-------------------+-------+
+|band|cellID             |measure|
++----+-------------------+-------+
+|1   |<Long cell id>     |<max>  |
++----+-------------------+-------+
+(max pixel value per band × custom-grid cell)
+"""
+
+
+def rst_custom_rastertogridmin_sql_example():
+    """Get minimum raster value per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridmin(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridmin_sql_example_output = """
++----+-------------------+-------+
+|band|cellID             |measure|
++----+-------------------+-------+
+|1   |<Long cell id>     |<min>  |
++----+-------------------+-------+
+(min pixel value per band × custom-grid cell)
+"""
+
+
+def rst_custom_rastertogridmedian_sql_example():
+    """Get median raster value per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridmedian(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridmedian_sql_example_output = """
++----+-------------------+--------+
+|band|cellID             |measure |
++----+-------------------+--------+
+|1   |<Long cell id>     |<median>|
++----+-------------------+--------+
+(median pixel value per band × custom-grid cell)
+"""
+
+
+def rst_custom_rastertogridsum_sql_example():
+    """Sum raster values per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridsum(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridsum_sql_example_output = """
++----+-------------------+-------+
+|band|cellID             |measure|
++----+-------------------+-------+
+|1   |<Long cell id>     |<sum>  |
++----+-------------------+-------+
+(sum of pixel values per band × custom-grid cell)
+"""
+
+
+def rst_custom_rastertogridvariance_sql_example():
+    """Population variance of raster values per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridvariance(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridvariance_sql_example_output = """
++----+-------------------+----------+
+|band|cellID             |measure   |
++----+-------------------+----------+
+|1   |<Long cell id>     |<variance>|
++----+-------------------+----------+
+(population variance of pixel values per band × custom-grid cell)
+"""
+
+
+def rst_custom_rastertogridstddev_sql_example():
+    """Population standard deviation of raster values per custom-grid cell"""
+    return f"""
+SELECT t.band, t.cellID, t.measure
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_rastertogridstddev(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+"""
+
+
+rst_custom_rastertogridstddev_sql_example_output = """
++----+-------------------+--------+
+|band|cellID             |measure |
++----+-------------------+--------+
+|1   |<Long cell id>     |<stddev>|
++----+-------------------+--------+
+(population standard deviation of pixel values per band × custom-grid cell)
+"""
+
+
+def rst_custom_tessellate_sql_example():
+    """Tessellate a raster into custom-grid chips (one chip per overlapping cell)"""
+    return f"""
+-- Default: centroid assignment, complete coverage (one chip per cell).
+SELECT t.*
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_tessellate(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1
+) t;
+
+-- Explicit covering assignment (each pixel contributes to all overlapping cells).
+SELECT t.*
+FROM (SELECT gbx_rst_fromfile('{_CUSTOM_RASTER_PATH}') AS tile) AS r,
+LATERAL gbx_rst_custom_tessellate(
+    tile,
+    {_CUSTOM_GRID_LITERAL},
+    1, 'covering', 'sparse'
+) t;
+"""
+
+
+rst_custom_tessellate_sql_example_output = """
++-------------------+-----------------------------------------------------------+
+|cellid             |raster                                                     |
++-------------------+-----------------------------------------------------------+
+|<Long cell id>     |{<Long>, <chip raster bytes>, null, {driver -> GTiff, ...}}|
++-------------------+-----------------------------------------------------------+
+(one v2 tile struct per cell; cellid is BIGINT encoding the custom cell)
+"""
+
+
+def rst_custom_rasterize_agg_sql_example():
+    """Aggregator: rasterize a group of custom-grid cells into one tile (pixel-centroid burn)"""
+    return f"""
+-- Rasterize custom-grid cells into one raster tile per region. cellid is BIGINT.
+-- Pass the custom grid struct as the third argument; the extent auto-derives from
+-- the cell set (null canvas args).
+SELECT region_id,
+    gbx_rst_custom_rasterize_agg(
+        cellid, burn_value,
+        {_CUSTOM_GRID_LITERAL},
+        27700, cast(null as double),
+        cast(null as double), cast(null as double),
+        cast(null as double), cast(null as double),
+        cast(null as int), cast(null as int),
+        'centroids', cast(1 as int)
+    ) AS tile
+FROM custom_cell_values
+GROUP BY region_id;
+"""
+
+
+rst_custom_rasterize_agg_sql_example_output = """
+# Heavyweight SQL — one v2 tile struct per group:
++---------+-----------------------------------------------------------+
+|region_id|tile                                                       |
++---------+-----------------------------------------------------------+
+|...      |{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++---------+-----------------------------------------------------------+
+
+# Lightweight SQL — raster bytes as BINARY; wrap with
+# gbx_rst_fromcontent(tile, 'GTiff') to rebuild a tile struct:
++---------+---------------+
+|region_id|tile           |
++---------+---------------+
+|...      |[B@... (BINARY)|
++---------+---------------+
+"""

@@ -41,6 +41,14 @@ _GOLDEN = {
     ("quadbin", "centroid"): {"count": 30, "digest": "ab5d473d48ab0f7d"},
     ("bng", "covering"): {"count": 9, "digest": "3ad7e348dd33093d"},
     ("bng", "centroid"): {"count": 9, "digest": "3ad7e348dd33093d"},
+    # Custom entries: captured 2026-09-10 from the verified-correct Task 8 implementation.
+    # Grid: no-CRS raster (32×32 px, origin (0,200), px=6.25) over bounds (0,0,200,200),
+    # cell_splits=2, root_cell_size=200, srid=-1, resolution=1 → 4 cells of 100×100.
+    # Sanity: 6.25m pixels are well within 100m cells; no boundary overlap.
+    # Both modes emit 4 chips (one per cell). Cell IDs: 72057594037927936..39.
+    # Digest = sha256("72057594037927936,72057594037927937,72057594037927938,72057594037927939")[:16]
+    ("custom", "covering"): {"count": 4, "digest": "37d58d73c341e04b"},
+    ("custom", "centroid"): {"count": 4, "digest": "37d58d73c341e04b"},
 }
 
 # Resolution used per grid (same as captured baseline)
@@ -94,6 +102,44 @@ def _tile_27700(size: int = 32) -> bytes:
 
 
 _TILE_FN = {"h3": _tile_4326, "quadbin": _tile_4326, "bng": _tile_27700}
+
+# NOTE: "custom" is not in _RES/_TILE_FN; it's handled by test_iter_tessellate_custom_golden.
+
+
+def _tile_custom(size: int = 32) -> bytes:
+    """CRS-less tile matching the custom consolidation grid (bounds 0,0,200,200).
+
+    Origin (0, 200), px=6.25 → 32×32 px covers (0,0)-(200,200) exactly.
+    At resolution 1 (4 cells of 100×100): 6.25 m pixels are well within cell
+    boundaries — no pixel straddles the x=100 or y=100 boundary.
+    """
+    data = np.arange(size * size, dtype="float32").reshape(size, size)
+    prof = dict(
+        driver="GTiff",
+        height=size,
+        width=size,
+        count=1,
+        dtype="float32",
+        crs=None,  # CRS-less; custom grid uses srid=-1
+        transform=rasterio.transform.from_origin(0.0, 200.0, 6.25, 6.25),
+        nodata=-9999.0,
+    )
+    with MemoryFile() as mf:
+        with mf.open(**prof) as dst:
+            dst.write(data, 1)
+        return mf.read()
+
+
+_CUSTOM_CONF_FOR_CONSOLIDATION = {
+    "bound_x_min": 0,
+    "bound_x_max": 200,
+    "bound_y_min": 0,
+    "bound_y_max": 200,
+    "cell_splits": 2,
+    "root_cell_size_x": 200,
+    "root_cell_size_y": 200,
+    "srid": -1,
+}
 
 
 def _digest(cell_ids) -> str:
@@ -153,3 +199,49 @@ def test_iter_tessellate_invalid_grid_raises():
         with mf.open() as ds:
             with pytest.raises(ValueError, match="grid must be one of"):
                 list(iter_tessellate(ds, 9, "xyz"))
+
+
+# ---------------------------------------------------------------------------
+# Custom-grid golden regression tests (Task 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["covering", "centroid"])
+def test_iter_tessellate_custom_golden(mode):
+    """iter_tessellate for custom grid must reproduce the frozen (count, digest) baseline.
+
+    Custom grid requires an explicit ``conf`` parameter (CustomGridConf), so it
+    is tested in a separate parametrize rather than the h3/quadbin/bng loop.
+    Fixture: no-CRS 32×32 tile at origin (0, 200) px=6.25 → full coverage of
+    bounds (0, 200) at res=1 gives 4 chips, one per cell.
+    """
+    from databricks.labs.gbx.pygx._custom import CustomGridConf
+
+    tile = _tile_custom()
+    resolution = 1
+    golden = _GOLDEN[("custom", mode)]
+
+    conf = CustomGridConf(
+        bound_x_min=_CUSTOM_CONF_FOR_CONSOLIDATION["bound_x_min"],
+        bound_x_max=_CUSTOM_CONF_FOR_CONSOLIDATION["bound_x_max"],
+        bound_y_min=_CUSTOM_CONF_FOR_CONSOLIDATION["bound_y_min"],
+        bound_y_max=_CUSTOM_CONF_FOR_CONSOLIDATION["bound_y_max"],
+        cell_splits=_CUSTOM_CONF_FOR_CONSOLIDATION["cell_splits"],
+        root_cell_size_x=_CUSTOM_CONF_FOR_CONSOLIDATION["root_cell_size_x"],
+        root_cell_size_y=_CUSTOM_CONF_FOR_CONSOLIDATION["root_cell_size_y"],
+        srid=_CUSTOM_CONF_FOR_CONSOLIDATION["srid"],
+    )
+
+    with MemoryFile(bytes(tile)) as mf:
+        with mf.open() as ds:
+            ids = [
+                c for c, _ in iter_tessellate(ds, resolution, "custom", mode, conf=conf)
+            ]
+
+    assert (
+        len(ids) == golden["count"]
+    ), f"custom/{mode}: expected {golden['count']} chips, got {len(ids)}"
+    assert _digest(ids) == golden["digest"], (
+        f"custom/{mode}: cell-id set changed (count {len(ids)} matches but "
+        f"digest {_digest(ids)!r} != frozen {golden['digest']!r})"
+    )

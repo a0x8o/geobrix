@@ -30,6 +30,7 @@ PARITY_FILES=(
     "python/geobrix/test/pygx/test_parity_bng.py"
     "python/geobrix/test/pygx/test_parity_quadbin.py"
     "python/geobrix/test/pygx/test_parity_custom.py"
+    "python/geobrix/test/pyrx/test_parity_custom_raster.py"
 )
 
 show_help() {
