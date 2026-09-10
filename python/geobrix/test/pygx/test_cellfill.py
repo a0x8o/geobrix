@@ -161,6 +161,33 @@ def test_fill_valid_cells_pass_through_unchanged():
             ), f"{label} {method}: center changed"
 
 
+def test_fill_k0_is_noop():
+    """k=0 performs no fill; all cells — including NULL ones — pass through unchanged."""
+    for label, center, k_loop in _grids():
+        ring1 = k_loop(center, 1)
+        cells = {center: None}
+        cells.update({nb: 5.0 for nb in ring1})
+        out = dict(
+            _cellfill.fill(cells, k=0, method="mean", power=2.0, k_loop_fn=k_loop)
+        )
+        assert out[center] is None, f"{label}: k=0 should not fill center"
+        for nb in ring1:
+            assert out[nb] == pytest.approx(5.0), f"{label}: k=0 changed neighbour"
+
+
+def test_fill_duplicate_cellid_last_wins():
+    """Duplicate cell-ID tie-break: last row's value wins (matches heavy toMap)."""
+    for label, center, k_loop in _grids():
+        # Build cells dict manually with last-wins semantics (matching UDF behaviour).
+        cells = {}
+        for val in (99.0, 7.0):  # first 99.0, then overwritten by 7.0
+            cells[center] = val
+        out = dict(
+            _cellfill.fill(cells, k=1, method="mean", power=2.0, k_loop_fn=k_loop)
+        )
+        assert out[center] == pytest.approx(7.0), f"{label}: expected last value 7.0"
+
+
 # ---------------------------------------------------------------------------
 # encode/decode roundtrip
 # ---------------------------------------------------------------------------
@@ -331,6 +358,27 @@ def test_custom_cellfill_sql_idw_k2(spark):
     result = spark.sql(
         f"SELECT gbx_custom_cellfill(cellid, value, {grid_sql}, 2, 'idw', 2.0) AS v "
         "FROM cust_idw_test GROUP BY grp"
+    ).collect()
+    decoded = _decode_result(result[0])
+    assert decoded[center] == pytest.approx(12.0)
+
+
+def test_h3_cellfill_sql_idw_k2(spark):
+    """gbx_h3_cellfill SQL: idw k=2 power=2 gives exact 12.0 for the center cell."""
+    gx.register(spark)
+    center_str = h3.latlng_to_cell(51.5, -0.1, 8)
+    center = int(center_str, 16)
+    ring1 = [int(c, 16) for c in h3.grid_ring(center_str, 1)]
+    ring2 = [int(c, 16) for c in h3.grid_ring(center_str, 2)]
+    nb1, nb2 = ring1[0], ring2[0]
+
+    rows = [(1, center, None), (1, nb1, 10.0), (1, nb2, 20.0)]
+    df = spark.createDataFrame(rows, "grp int, cellid long, value double")
+    df.createOrReplaceTempView("h3_idw_test")
+
+    result = spark.sql(
+        "SELECT gbx_h3_cellfill(cellid, value, 2, 'idw', 2.0) AS v "
+        "FROM h3_idw_test GROUP BY grp"
     ).collect()
     decoded = _decode_result(result[0])
     assert decoded[center] == pytest.approx(12.0)

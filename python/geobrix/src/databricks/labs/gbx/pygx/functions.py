@@ -741,18 +741,20 @@ def _custom_distance_udf(
 
 
 def _parse_k(s: "pd.Series") -> int:  # type: ignore[name-defined]
+    # SQL NULL arrives as pd.NA (nullable Int64) or np.nan (float64), not Python None.
+    # Extract the scalar first, then test for NA — pd.isna on a scalar is always safe.
     v = s.iloc[0]
-    return 1 if v is None else int(v)
+    return 1 if v is None or pd.isna(v) else int(v)
 
 
 def _parse_method(s: "pd.Series") -> str:  # type: ignore[name-defined]
     v = s.iloc[0]
-    return "mean" if v is None else str(v)
+    return "mean" if v is None or pd.isna(v) else str(v)
 
 
 def _parse_power(s: "pd.Series") -> float:  # type: ignore[name-defined]
     v = s.iloc[0]
-    return 2.0 if v is None else float(v)
+    return 2.0 if v is None or pd.isna(v) else float(v)
 
 
 def _h3_k_loop(cell_id: int, d: int) -> list:
@@ -777,6 +779,10 @@ def _h3_cellfill_agg_udf(
         cells[int(c)] = None if pd.isna(v) else float(v)
     if not cells:
         return None
+    if len(cells) > 50_000_000:
+        raise RuntimeError(
+            "gbx_h3_cellfill buffer exceeded 50M rows; reduce group size or tile the workload."
+        )
     filled = _cellfill.fill(
         cells, _parse_k(k), _parse_method(method), _parse_power(power), _h3_k_loop
     )
@@ -798,6 +804,10 @@ def _quadbin_cellfill_agg_udf(
         cells[int(c)] = None if pd.isna(v) else float(v)
     if not cells:
         return None
+    if len(cells) > 50_000_000:
+        raise RuntimeError(
+            "gbx_quadbin_cellfill buffer exceeded 50M rows; reduce group size or tile the workload."
+        )
     filled = _cellfill.fill(
         cells, _parse_k(k), _parse_method(method), _parse_power(power), _quadbin.k_loop
     )
@@ -823,6 +833,10 @@ def _bng_cellfill_agg_udf(
         cells[cid_int] = None if pd.isna(v) else float(v)
     if not cells:
         return None
+    if len(cells) > 50_000_000:
+        raise RuntimeError(
+            "gbx_bng_cellfill buffer exceeded 50M rows; reduce group size or tile the workload."
+        )
     filled = _cellfill.fill(
         cells, _parse_k(k), _parse_method(method), _parse_power(power), _bng.k_loop
     )
@@ -853,6 +867,10 @@ def _custom_cellfill_agg_udf(
         cells[int(c)] = None if pd.isna(v) else float(v)
     if not cells:
         return None
+    if len(cells) > 50_000_000:
+        raise RuntimeError(
+            "gbx_custom_cellfill buffer exceeded 50M rows; reduce group size or tile the workload."
+        )
 
     def _k_loop_fn(cid: int, d: int) -> list:
         return _custom.k_loop(conf, cid, d)
