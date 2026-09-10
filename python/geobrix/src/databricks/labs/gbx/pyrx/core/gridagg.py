@@ -334,26 +334,29 @@ def _covering_band(
     # Returns the RAW cell id (same type as polyfill candidates) or None when the
     # point is outside the grid bounds.  _fast_cell=None disables the fast-path
     # (h3 and any grid not in _COVERING_FAST_PATH_EXACT use the old path).
-    if grid == "custom":
-        from databricks.labs.gbx.pygx import _custom as _custom_fp
+    # The outer gate reads _COVERING_FAST_PATH_EXACT at call time so tests can
+    # monkeypatch it to frozenset() to force the old path on all grids.
+    if grid in _COVERING_FAST_PATH_EXACT:
+        if grid == "custom":
+            from databricks.labs.gbx.pygx import _custom as _custom_fp
 
-        def _fast_cell(cx, cy):
-            return _custom_fp.point_to_cell_id_or_none(conf, cx, cy, resolution)
+            def _fast_cell(cx, cy):  # noqa: F811
+                return _custom_fp.point_to_cell_id_or_none(conf, cx, cy, resolution)
 
-    elif grid == "quadbin":
-        from databricks.labs.gbx.pygx import _quadbin as _qb_fp
+        elif grid == "quadbin":
+            from databricks.labs.gbx.pygx import _quadbin as _qb_fp
 
-        def _fast_cell(cx, cy):
-            return _qb_fp.point_as_cell(cx, cy, resolution)
+            def _fast_cell(cx, cy):  # noqa: F811
+                return _qb_fp.point_as_cell(cx, cy, resolution)
 
-    elif grid == "bng":
+        else:  # bng
 
-        def _fast_cell(cx, cy):
-            cid = _bng.point_to_cell_id(cx, cy, resolution)
-            return cid if _bng.is_valid(cid) else None
+            def _fast_cell(cx, cy):  # noqa: F811
+                cid = _bng.point_to_cell_id(cx, cy, resolution)
+                return cid if _bng.is_valid(cid) else None
 
     else:
-        _fast_cell = None  # h3 and any unknown grid: use existing path
+        _fast_cell = None  # h3 and any grid not in the exact-geometry set
 
     ys, xs = np.nonzero(mask)
     if ys.size == 0:

@@ -1,16 +1,18 @@
 """Stage 3, Task 16: O(boundary) covering interior fast-path for the light tier.
 
 TDD guards (per brief):
-1. Result-identity: _covering_band output for custom/quadbin/bng is byte-identical
-   (or within 1e-9) before and after the fast-path refactor.
+1. Result-identity (direct old-path vs fast-path comparison): _covering_band output
+   for custom/quadbin/bng is within 1e-9 (per-cell) between old path (fast-path
+   disabled via monkeypatch of _COVERING_FAST_PATH_EXACT) and fast-path enabled.
+   This is the primary result-neutrality proof for all three exact-geometry grids.
 2. H3 unchanged: H3 uses the old path; output is trivially identical.
 3. Polyfill-skip proof: interior pixels of exact-geometry grids (custom, quadbin,
    bng) SKIP _polyfill_cells; only boundary pixels enumerate candidates.
 4. Fast-path NOT taken for H3.
 
-All tests must pass both BEFORE implementation (RED if fast-path is needed for step
-3/4) and AFTER (GREEN).  Steps 1 and 2 are pure result-identity guards: they pass
-before and after the refactor.
+The quadbin fixture uses a NON-DEGENERATE res=5 fixture (2 distinct cells, 1
+boundary pixel straddling tile x=15/16, 1 interior pixel fully inside tile x=15).
+The res=0 world-covering fixture cannot distinguish the fast-path from the old path.
 """
 
 from unittest.mock import patch
@@ -161,10 +163,12 @@ def _make_bng_raster_mixed():
     col=0: e ∈ {530100, 530900}, n ∈ {180100, 180900}
            point_to_cell_id corners: all within TQ30 (e=[530000,531000), n=[180000,181000))
            → all four corners → same BNG cell → INTERIOR
+           Shapely intersection of pixel with TQ30 box = pixel itself (exact integers)
+           → weight = 640000/640000 = 1.0 exactly (same as fast-path direct 1.0)
 
     col=1: e ∈ {530900, 531700}, n ∈ {180100, 180900}
            530900 → TQ30 (e<531000); 531700 → TQ31 (e≥531000)
-           → corners span TQ30 and TQ31 → BOUNDARY pixel
+           → corners span TQ30 and TQ31 → BOUNDARY pixel (fallback used)
 
     Values: [3.0, 7.0]
     """
@@ -186,28 +190,45 @@ def _make_bng_raster_mixed():
 
 
 # ---------------------------------------------------------------------------
-# Quadbin fixtures
+# Quadbin fixtures (NON-DEGENERATE: res=5, 2 cells, 1 boundary + 1 interior)
 # ---------------------------------------------------------------------------
 
 
-def _make_quadbin_raster_interior():
-    """A small raster fully interior to one quadbin cell at res=0.
+def _make_quadbin_raster_nondeg():
+    """2×1 raster at EPSG:4326 — 1 interior pixel + 1 boundary pixel.
 
-    At res=0 there is a single quadbin cell covering the entire world.
-    Any pixel is interior.  Use a 2×2 raster for variety.
+    At quadbin res=5 (z=5, 32×32 tiles), longitude tile boundaries are at
+    lon = k×11.25 - 180 for k=0..32. The boundary between tile x=15 and
+    tile x=16 is at lon=0.
 
-    Values: [[1.0, 2.0], [3.0, 4.0]], origin=(10.0, 50.0), px=0.5.
-    Expected sum: 10.0 (all 4 pixels in the single res-0 cell).
+    Tile y=15 at z=5 spans approximately lat ∈ [0°, ~11.2°] (above equator).
+
+    Raster: west=-6, north=3, xsize=4 (lon), ysize=2 (lat).
+
+    col=0: lon ∈ [-6, -2], lat ∈ [1, 3]
+           All 4 corners → tile (x=15, y=15) (lon<0, lat∈[1,3] is above equator
+           and below ~11.2°) → INTERIOR pixel
+           Shapely intersection = pixel itself → weight=1.0 exactly (same as fast-path)
+
+    col=1: lon ∈ [-2, +2], lat ∈ [1, 3]
+           Left corners at lon=-2 → tile x=15; right at lon=+2 → tile x=16
+           → BOUNDARY pixel; each half-pixel goes to one tile (area fraction=0.5)
+
+    Values: [10.0, 20.0]
+    Expected sum (sparse):
+      tile(15,15): 10.0×1.0 (interior) + 20.0×0.5 (left half of boundary) = 20.0
+      tile(16,15): 20.0×0.5 (right half of boundary) = 10.0
+      total = 30.0 (mass conserved)
     """
-    data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype="float32")
+    data = np.array([[10.0, 20.0]], dtype="float32")
     profile = dict(
         driver="GTiff",
         width=2,
-        height=2,
+        height=1,
         count=1,
         dtype="float32",
         crs="EPSG:4326",
-        transform=from_origin(10.0, 50.0, 0.5, 0.5),
+        transform=from_origin(-6.0, 3.0, 4.0, 2.0),
         nodata=-9999.0,
     )
     with MemoryFile() as mf:
@@ -217,16 +238,126 @@ def _make_quadbin_raster_interior():
 
 
 # ---------------------------------------------------------------------------
-# 1. Result-identity guard: custom (mixed fixture)
+# 1. Old-path vs fast-path neutrality harness: custom, quadbin, bng (≤1e-9)
+# ---------------------------------------------------------------------------
+
+
+def test_custom_fast_path_neutral_vs_old_path():
+    """Direct old-path vs fast-path comparison for custom: per-cell max delta ≤1e-9.
+
+    Forces the old path by patching _COVERING_FAST_PATH_EXACT to frozenset(),
+    then compares per-cell sum measures with the fast-path-enabled default.
+    The fast-path contributes weight=1.0 directly; the old path computes shapely
+    intersection of a pixel fully inside a square cell → area/area = 1.0 exactly.
+    Expected max delta: 0.0 (both paths produce exactly 1.0 for interior pixels).
+    """
+    from databricks.labs.gbx.pyrx.core import gridagg
+
+    conf = _make_custom_conf()
+    b = _make_custom_raster_mixed()
+    kwargs = dict(
+        coverage="sparse",
+        assignment="covering",
+        grid_conf=_conf_row(conf),
+    )
+
+    with patch.object(gridagg, "_COVERING_FAST_PATH_EXACT", frozenset()):
+        with _open(b) as ds:
+            result_old = raster_to_grid(ds, 1, "custom", "sum", **kwargs)
+
+    with _open(b) as ds:
+        result_new = raster_to_grid(ds, 1, "custom", "sum", **kwargs)
+
+    old_map = _to_measure_map(result_old[0])
+    new_map = _to_measure_map(result_new[0])
+    assert set(old_map) == set(
+        new_map
+    ), f"Cell sets differ: old={set(old_map)} new={set(new_map)}"
+    max_diff = max(abs(new_map[cid] - old_map[cid]) for cid in old_map)
+    assert max_diff < 1e-9, (
+        f"Custom fast-path vs old-path max per-cell delta: {max_diff:.3e} "
+        f"(bar 1e-9; expected 0.0 — both paths give weight=1.0 exactly for "
+        f"interior square-cell pixels)"
+    )
+
+
+def test_bng_fast_path_neutral_vs_old_path():
+    """Direct old-path vs fast-path comparison for BNG: per-cell max delta ≤1e-9.
+
+    Interior pixel (col=0) all-integer corners → shapely intersection area is
+    exact (640000/640000 = 1.0); fast-path gives 1.0 directly.
+    Boundary pixel (col=1) uses the old path in both runs (corners differ).
+    Expected max delta: 0.0.
+    """
+    from databricks.labs.gbx.pyrx.core import gridagg
+
+    b = _make_bng_raster_mixed()
+    kwargs = dict(coverage="sparse", assignment="covering")
+
+    with patch.object(gridagg, "_COVERING_FAST_PATH_EXACT", frozenset()):
+        with _open(b) as ds:
+            result_old = raster_to_grid(ds, 3, "bng", "sum", **kwargs)
+
+    with _open(b) as ds:
+        result_new = raster_to_grid(ds, 3, "bng", "sum", **kwargs)
+
+    old_map = _to_measure_map(result_old[0])
+    new_map = _to_measure_map(result_new[0])
+    assert set(old_map) == set(
+        new_map
+    ), f"Cell sets differ: old={set(old_map)} new={set(new_map)}"
+    max_diff = max(abs(new_map[cid] - old_map[cid]) for cid in old_map)
+    assert max_diff < 1e-9, (
+        f"BNG fast-path vs old-path max per-cell delta: {max_diff:.3e} "
+        f"(bar 1e-9; expected 0.0 — interior pixel uses exact-integer coords)"
+    )
+
+
+def test_quadbin_fast_path_neutral_vs_old_path():
+    """Direct old-path vs fast-path comparison for quadbin: per-cell max delta ≤1e-9.
+
+    Non-degenerate res=5 fixture: col=0 is interior (all 4 corners tile x=15),
+    col=1 is boundary (straddles tile x=15/x=16 boundary at lon=0).
+    Interior pixel: fast-path weight=1.0; old-path shapely intersection = pixel
+    itself (fully inside cell bbox) → area/area = 1.0 exactly.
+    Boundary pixel: both runs use old path (corners differ); same result.
+    Expected max delta: 0.0.
+    """
+    from databricks.labs.gbx.pyrx.core import gridagg
+
+    b = _make_quadbin_raster_nondeg()
+    kwargs = dict(coverage="sparse", assignment="covering")
+
+    with patch.object(gridagg, "_COVERING_FAST_PATH_EXACT", frozenset()):
+        with _open(b) as ds:
+            result_old = raster_to_grid(ds, 5, "quadbin", "sum", **kwargs)
+
+    with _open(b) as ds:
+        result_new = raster_to_grid(ds, 5, "quadbin", "sum", **kwargs)
+
+    old_map = _to_measure_map(result_old[0])
+    new_map = _to_measure_map(result_new[0])
+    assert set(old_map) == set(
+        new_map
+    ), f"Cell sets differ: old={set(old_map)} new={set(new_map)}"
+    max_diff = max(abs(new_map[cid] - old_map[cid]) for cid in old_map)
+    assert max_diff < 1e-9, (
+        f"Quadbin fast-path vs old-path max per-cell delta: {max_diff:.3e} "
+        f"(bar 1e-9; expected 0.0 — interior pixel fully inside square tile)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2. Analytic result-identity guards: custom, BNG, quadbin
 # ---------------------------------------------------------------------------
 
 
 def test_custom_covering_sum_matches_expected_analytics():
-    """Custom covering sum matches analytic expectation (result-identity guard).
+    """Custom covering sum matches analytic expectation.
 
-    Pixel 0 (BOUNDARY via corner check) still yields correct intersection result.
-    Pixels 1 and 2 (INTERIOR) yield weight=1.0 directly (fast-path or fallback:
-    either way the output is identical).
+    The boundary pixel (col=0, fast-path skipped) still yields correct
+    intersection result via shapely.  Interior pixels 1 and 2 yield weight=1.0
+    (fast-path or fallback: identical).
     """
     conf = _make_custom_conf()
     b = _make_custom_raster_mixed()
@@ -245,15 +376,13 @@ def test_custom_covering_sum_matches_expected_analytics():
     band = result[0]
     m = _to_measure_map(band)
     assert len(band) == 2, f"expected 2 cells, got {len(band)}: {band}"
-    # cell(0,0): pixel-0 fully inside (area fraction=1.0 from shapely intersection)
-    # cell(1,0): pixels 1+2 (interior, weight=1.0 each)
     cell_sum = sorted(m.values())
     assert cell_sum[0] == pytest.approx(10.0, abs=1e-6)
     assert cell_sum[1] == pytest.approx(50.0, abs=1e-6)
 
 
 def test_custom_covering_avg_matches_expected_analytics():
-    """Custom covering avg = weighted avg (result-identity guard, all aggs)."""
+    """Custom covering avg = weighted avg (all-interior fixture, weights=1.0)."""
     conf = _make_custom_conf()
     b = _make_custom_raster_interior_only()
 
@@ -296,13 +425,13 @@ def test_custom_covering_count_matches_expected():
     assert isinstance(band[0]["measure"], float)
 
 
-# ---------------------------------------------------------------------------
-# 2. Result-identity guard: BNG
-# ---------------------------------------------------------------------------
+def test_bng_covering_sum_mass_conserved():
+    """BNG covering sum: Σ(cell sums) == Σ(pixel values) to within 1e-6.
 
-
-def test_bng_covering_sum_matches_expected_analytics():
-    """BNG covering sum result-identity guard: interior + boundary pixels."""
+    The interior pixel (col=0) contributes its full value to one cell.
+    The boundary pixel (col=1) is split between TQ30 and TQ31 by shapely.
+    Total mass must equal 3.0 + 7.0 = 10.0.
+    """
     b = _make_bng_raster_mixed()
 
     with _open(b) as ds:
@@ -318,24 +447,24 @@ def test_bng_covering_sum_matches_expected_analytics():
     band = result[0]
     m = _to_measure_map(band)
     total = sum(m.values())
-    # Mass conservation: total sum ≈ pixel_0_value + pixel_1_value = 3.0 + 7.0 = 10.0
-    # (pixel_0 is fully inside TQ30; pixel_1 is split between TQ30 and TQ31)
-    assert total == pytest.approx(10.0, abs=1e-4)
+    assert total == pytest.approx(10.0, abs=1e-6)
 
 
-# ---------------------------------------------------------------------------
-# 3. Result-identity guard: quadbin (all-interior fixture)
-# ---------------------------------------------------------------------------
+def test_quadbin_covering_sum_nondeg_matches_analytics():
+    """Quadbin covering sum: non-degenerate res=5 fixture matches analytic values.
 
+    Interior pixel (col=0, tile x=15): contributes value=10.0 with weight=1.0.
+    Boundary pixel (col=1, straddles lon=0): split evenly between tile x=15 and
+    tile x=16 (each half is 2° wide out of 4° total → fraction=0.5).
 
-def test_quadbin_covering_sum_matches_expected_analytics():
-    """Quadbin covering sum result-identity guard (all pixels interior at res=0)."""
-    b = _make_quadbin_raster_interior()
+    Expected: tile(15,15)=20.0, tile(16,15)=10.0, total=30.0.
+    """
+    b = _make_quadbin_raster_nondeg()
 
     with _open(b) as ds:
         result = raster_to_grid(
             ds,
-            0,
+            5,
             "quadbin",
             "sum",
             coverage="sparse",
@@ -343,12 +472,17 @@ def test_quadbin_covering_sum_matches_expected_analytics():
         )
 
     band = result[0]
-    assert len(band) == 1, f"expected 1 cell at res=0, got {len(band)}"
-    assert band[0]["measure"] == pytest.approx(10.0, abs=1e-6)
+    m = _to_measure_map(band)
+    assert len(band) == 2, f"expected 2 cells, got {len(band)}: {band}"
+    total = sum(m.values())
+    assert total == pytest.approx(30.0, abs=1e-6), f"mass not conserved: {total}"
+    cell_sums = sorted(m.values())
+    assert cell_sums[0] == pytest.approx(10.0, abs=1e-6)
+    assert cell_sums[1] == pytest.approx(20.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
-# 4. H3 output unchanged (old path used)
+# 3. H3 output unchanged (old path used)
 # ---------------------------------------------------------------------------
 
 
@@ -431,7 +565,7 @@ def test_h3_covering_polyfill_still_called():
 
 
 # ---------------------------------------------------------------------------
-# 5. Polyfill-skip proof: interior pixels skip _polyfill_cells
+# 4. Polyfill-skip proof: interior pixels skip _polyfill_cells
 # ---------------------------------------------------------------------------
 
 
@@ -504,9 +638,13 @@ def test_custom_all_interior_skips_polyfill_entirely():
     )
 
 
-def test_quadbin_interior_skips_polyfill():
-    """All-interior quadbin fixture (res=0): _polyfill_cells must not be called."""
-    b = _make_quadbin_raster_interior()
+def test_quadbin_nondeg_interior_skips_polyfill():
+    """Non-degenerate quadbin (res=5): interior pixel skips polyfill, boundary uses it.
+
+    Fixture: 2×1 raster — col=0 interior (tile x=15), col=1 boundary (straddles x=15/16).
+    Expected: exactly 1 _polyfill_cells call (boundary pixel col=1 only).
+    """
+    b = _make_quadbin_raster_nondeg()
 
     from databricks.labs.gbx.pyrx.core import tessellate as _tess
 
@@ -521,15 +659,15 @@ def test_quadbin_interior_skips_polyfill():
         with _open(b) as ds:
             raster_to_grid(
                 ds,
-                0,
+                5,
                 "quadbin",
                 "sum",
                 coverage="sparse",
                 assignment="covering",
             )
 
-    assert len(call_count) == 0, (
-        f"All-interior quadbin fixture: expected 0 _polyfill_cells calls; "
+    assert len(call_count) == 1, (
+        f"Non-degenerate quadbin: expected 1 _polyfill_cells call (boundary pixel); "
         f"got {len(call_count)}."
     )
 
