@@ -349,7 +349,7 @@ def _parity_compare(light_bytes: bytes, heavy_bytes: bytes, label: str, tol=1e-9
         threshold = tol * max(1.0, abs(hv))
         assert abs(lv - hv) <= threshold, (
             f"{label} pixel[{idx}] diverged: "
-            f"light={lv:.15g} heavy={hv:.15g} (|diff|={abs(lv-hv):.3e} > tol={threshold:.3e})"
+            f"light={lv:.15g} heavy={hv:.15g} (|diff|={abs(lv - hv):.3e} > tol={threshold:.3e})"
         )
 
 
