@@ -60,40 +60,40 @@ gbx_rst_frombands_agg	tile, band_index
 gbx_rst_frombands	bands
 gbx_rst_fromcontent	content, driver
 gbx_rst_fromfile	path, [driver]
-gbx_rst_h3_tessellate	tile, resolution, [mode]
+gbx_rst_h3_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_maketiles	tile, size_in_mb
 gbx_rst_retile	tile, tile_width, tile_height
 gbx_rst_separatebands	tile
 gbx_rst_tooverlappingtiles	tile, tile_width, tile_height, overlap
 gbx_rst_h3_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_h3_rastertogridavg	tile, resolution
-gbx_rst_h3_rastertogridcount	tile, resolution
-gbx_rst_h3_rastertogridmax	tile, resolution
-gbx_rst_h3_rastertogridmin	tile, resolution
-gbx_rst_h3_rastertogridmedian	tile, resolution
-gbx_rst_h3_rastertogridsum	tile, resolution
-gbx_rst_h3_rastertogridvariance	tile, resolution
-gbx_rst_h3_rastertogridstddev	tile, resolution
-gbx_rst_quadbin_rastertogridavg	tile, resolution
-gbx_rst_quadbin_rastertogridcount	tile, resolution
-gbx_rst_quadbin_rastertogridmax	tile, resolution
-gbx_rst_quadbin_rastertogridmin	tile, resolution
-gbx_rst_quadbin_rastertogridmedian	tile, resolution
-gbx_rst_quadbin_rastertogridsum	tile, resolution
-gbx_rst_quadbin_rastertogridvariance	tile, resolution
-gbx_rst_quadbin_rastertogridstddev	tile, resolution
-gbx_rst_bng_rastertogridavg	tile, resolution
-gbx_rst_bng_rastertogridcount	tile, resolution
-gbx_rst_bng_rastertogridmax	tile, resolution
-gbx_rst_bng_rastertogridmedian	tile, resolution
-gbx_rst_bng_rastertogridmin	tile, resolution
-gbx_rst_bng_rastertogridsum	tile, resolution
-gbx_rst_bng_rastertogridvariance	tile, resolution
-gbx_rst_bng_rastertogridstddev	tile, resolution
+gbx_rst_h3_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridstddev	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridstddev	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridstddev	tile, resolution, [coverage], [assignment]
 gbx_rst_bng_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_bng_tessellate	tile, resolution, [mode]
+gbx_rst_bng_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_quadbin_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_quadbin_tessellate	tile, resolution, [mode]
+gbx_rst_quadbin_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_asformat	tile, new_format
 gbx_rst_clip	tile, geom, cutline_all_touched, [clip_crs]
 gbx_rst_combineavg	tiles

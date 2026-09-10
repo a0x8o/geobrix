@@ -13,6 +13,34 @@ This page tracks **API and naming changes** across GeoBrix releases — the sing
 
 ---
 
+## What's new in v0.5.1
+
+Extends the raster-grid family with coverage and assignment controls, on top of v0.5.0.
+
+### Raster-to-grid — coverage and assignment (breaking changes)
+
+- **`gbx_rst_{h3,quadbin,bng}_rastertogrid*` now default to `coverage=complete` (breaking behavior change).** Previously, only cells that contained at least one valid pixel were returned. With `coverage=complete`, every cell whose area overlaps the raster extent is returned — cells with valid pixels carry a numeric measure, and cells covered by the extent but containing only NoData are returned with a `NULL` measure (or `0.0` for count). Queries that assumed the result set was restricted to cells with data will now receive extra rows. Add `coverage='sparse'` to any call that should preserve the old drop-empty behavior: `gbx_rst_h3_rastertogridavg(tile, resolution, 'sparse')`.
+
+- **New `assignment` parameter on `gbx_rst_{h3,quadbin,bng}_rastertogrid*`.** Controls how pixels are assigned to cells:
+  - `centroid` (default) — a pixel belongs to the cell that contains its centroid. Each pixel contributes to exactly one cell. This is the behavior prior to this release.
+  - `covering` — a pixel contributes to every cell whose area it overlaps, weighted by the fraction of the pixel's area that falls within each cell. The total contribution across all cells equals the original pixel value, so `sum` and `count` are mass-conserving: summing across all overlapping cells recovers the original pixel total. Use `covering` when accurate spatial aggregation near cell boundaries matters more than sharp per-cell attribution.
+
+  Full signature: `gbx_rst_{grid}_rastertogridavg(tile, resolution, [coverage], [assignment])`.
+
+- **`gbx_rst_{h3,quadbin,bng}_rastertogridcount` now returns `DOUBLE` (was integer).** With area-weighted assignment (`covering`), count is the sum of area fractions, which is fractional for pixels that straddle a cell boundary. The return type is `DOUBLE` on both tiers for both assignment modes. Queries that cast the count column to integer or use `COUNT(*)` aggregation over the result should be updated.
+
+### Raster tessellate — parameter rename and new `coverage` control (breaking changes)
+
+- **`gbx_rst_{h3,quadbin,bng}_tessellate`: the `mode` parameter is renamed to `assignment` (breaking, no alias).** The existing values (`centroid`, `covering`) are unchanged; only the parameter name changes. Code passing a named `mode=` argument must be updated to `assignment=`. Positional calls with two arguments (`tile, resolution`) are unaffected.
+
+- **`gbx_rst_{h3,quadbin,bng}_tessellate`: new optional `coverage` parameter and changed 2-argument default.** A new `coverage` parameter (values `complete` / `sparse`) follows `assignment` in the signature: `(tile, resolution, [assignment], [coverage])`. The 2-argument form (`tile, resolution`) now defaults to `assignment='centroid', coverage='complete'` — previously it behaved like `covering`. To restore the pre-release default, pass `assignment='covering'` explicitly.
+
+### CRS-handling fix for BNG raster-to-grid
+
+- **A CRS-less raster fed to `gbx_rst_bng_rastertogrid*` is no longer automatically warped to EPSG:27700.** Previously, BNG raster-to-grid silently treated a tile with no declared CRS as if it were in EPSG:4326 and reprojected it to EPSG:27700 before aggregating — a different default than the H3 and quadbin variants, which pass a CRS-less tile through as grid-native. BNG now matches: a CRS-less tile is treated as already in the grid's native coordinate system (EPSG:27700 for BNG) and is not warped. This only affects tiles that carry no CRS metadata; tiles with an explicit CRS continue to be reprojected as before.
+
+---
+
 ## What's new in v0.5.0
 
 Introduces **virtual tiles** — a bytes-free way to read and process huge rasters without out-of-memory — unifies both execution tiers on one tile struct, and adds the COG preparation lane (`file_gbx` + `cog_gbx`) with **VRT mosaics** for large-raster workflows, tapping the new Databricks **[FILE type](https://docs.databricks.com/aws/en/sql/language-manual/data-types/file-type)** for governed, memory-safe file access where the runtime provides it, on top of v0.4.3.
