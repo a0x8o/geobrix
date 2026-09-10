@@ -252,12 +252,13 @@ object RasterToGridGeneric {
       * whose footprint overlaps the pixel's rectangle, weighted by intersection-area fraction.
       *
       * For each valid pixel at raster offset (x, y):
-      *  1. Compute the four affine-geotransform corners and bin each to a cell via
-      *     [[GridSystem.pointToCellID]]. If all four corners map to the SAME cell, the pixel's
-      *     rectangle (the convex hull of its corners) lies wholly inside that convex cell:
-      *     accumulate `(pixelValue, 1.0)` to that one cell and SKIP the polyfill/intersection.
-      *     This interior fast-path makes the pass O(boundary) — only pixels whose corners span
-      *     multiple cells pay the JTS area split.
+      *  1. Interior fast-path, taken ONLY when [[GridSystem.coveringFastPathExact]] is true
+      *     (analytic-square grids, where the point-partition equals the cell polygon): compute the
+      *     four affine-geotransform corners and bin each via [[GridSystem.pointToCellID]]. If all
+      *     four map to the SAME cell, the pixel's rectangle (the convex hull of its corners) lies
+      *     wholly inside that convex cell: accumulate `(pixelValue, 1.0)` to that one cell and SKIP
+      *     the polyfill/intersection. This makes the pass O(boundary). For non-exact grids (H3) the
+      *     fast-path is skipped and every pixel takes step 2 — byte-identical to the prior behaviour.
       *  2. Otherwise (boundary pixel): build the pixel rectangle and enumerate candidate cells
       *     via [[GridSystem.coveringCandidateCells]] (a small set for a single pixel).
       *  3. For each candidate passing `isCellValid`: compute the JTS intersection; if the
@@ -308,23 +309,29 @@ object RasterToGridGeneric {
                         val x3 = gt(0) + x       * gt(1) + (y + 1) * gt(2)
                         val y3 = gt(3) + x       * gt(4) + (y + 1) * gt(5)
 
-                        // Interior fast-path (O(boundary)): if all four pixel corners bin to the
-                        // same cell, the pixel's rectangle — the convex hull of its corners — lies
-                        // wholly inside that (convex) cell, so it contributes weight 1 to that one
-                        // cell. Skip the buffered polyfill + per-candidate JTS intersection.
-                        // Boundary pixels (corners spanning >=2 cells) fall through to the exact
-                        // area-split path below, UNCHANGED.
-                        val c0 = grid.pointToCellID(x0, y0, resolution)
-                        val c1 = grid.pointToCellID(x1, y1, resolution)
-                        val c2 = grid.pointToCellID(x2, y2, resolution)
-                        val c3 = grid.pointToCellID(x3, y3, resolution)
-                        if (c0 == c1 && c1 == c2 && c2 == c3) {
-                            // Mirrors the old path's per-cell validity guard: an interior pixel's
-                            // only positive-area overlap is with its containing cell c0.
-                            if (isCellValid(c0)) {
-                                accW.getOrElseUpdate(c0, new mutable.ArrayBuffer) += ((value, 1.0))
+                        // Interior fast-path (O(boundary)): ONLY for grids where pointToCellID's
+                        // partition is exactly cellIdToGeometry's polygon (grid.coveringFastPathExact:
+                        // the analytic-square grids). If all four pixel corners bin to the same cell,
+                        // the pixel's rectangle — the convex hull of its corners — lies wholly inside
+                        // that (convex) cell, so it contributes weight 1 with NO polyfill/intersection.
+                        // For non-exact grids (H3: chord polygon vs geoToH3) the fast-path is NOT taken
+                        // and every pixel uses the exact area split below, byte-identical to before.
+                        var handled = false
+                        if (grid.coveringFastPathExact) {
+                            val c0 = grid.pointToCellID(x0, y0, resolution)
+                            val c1 = grid.pointToCellID(x1, y1, resolution)
+                            val c2 = grid.pointToCellID(x2, y2, resolution)
+                            val c3 = grid.pointToCellID(x3, y3, resolution)
+                            if (c0 == c1 && c1 == c2 && c2 == c3) {
+                                // Mirrors the old path's per-cell validity guard: an interior pixel's
+                                // only positive-area overlap is with its containing cell c0.
+                                if (isCellValid(c0)) {
+                                    accW.getOrElseUpdate(c0, new mutable.ArrayBuffer) += ((value, 1.0))
+                                }
+                                handled = true
                             }
-                        } else {
+                        }
+                        if (!handled) {
                             val pixelRect = JTS.polygonFromXYs(
                                 Array((x0, y0), (x1, y1), (x2, y2), (x3, y3), (x0, y0))
                             )

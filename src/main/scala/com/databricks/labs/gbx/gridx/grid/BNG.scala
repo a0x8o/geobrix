@@ -47,6 +47,10 @@ object BNG extends GridSystem {
 
     val name = "BNG"
 
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same square `cellIdToGeometry`
+      * draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
+
     /**
       * Quadrant encodings. The order is determined in a way that preserves
       * similarity to space filling curves.

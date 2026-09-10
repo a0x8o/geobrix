@@ -45,6 +45,24 @@ trait GridSystem extends Serializable {
    * H3/quadbin emit the Long; BNG emits its formatted string. Default: the Long.
    */
   def renderCellId(cellID: Long): Any = cellID
+
+  /**
+   * True iff this grid's point-partition (`pointToCellID`) coincides EXACTLY with the polygon
+   * `cellIdToGeometry` returns — so a pixel whose four corners all bin to one cell provably lies
+   * wholly inside that (convex) cell polygon. When true, the covering raster→grid path may assign
+   * such an interior pixel weight 1.0 directly (skipping the per-candidate JTS area split) and stay
+   * BIT-IDENTICAL to the intersection result. When false, the interior fast-path is NOT taken and
+   * every pixel uses the exact candidate+intersection split.
+   *
+   * Analytic-square grids (BNG, Quadbin, Custom) satisfy this: `pointToCellID` floor-bins to the
+   * same square `cellIdToGeometry` draws. H3 does NOT: `pointToCellID` is `geoToH3` (the true H3
+   * partition) while `cellIdToGeometry` is the `h3ToGeoBoundary` chord polygon, which under-shoots
+   * the geodesic hex edge — a pixel binning to a hex can leave a sliver in the chord gap, so its
+   * exact intersection weight is slightly < 1.0. H3 therefore keeps the intersection path.
+   *
+   * Defaults to false so a new grid must opt in explicitly after proving exactness.
+   */
+  def coveringFastPathExact: Boolean = false
 }
 
 object GridSystem {

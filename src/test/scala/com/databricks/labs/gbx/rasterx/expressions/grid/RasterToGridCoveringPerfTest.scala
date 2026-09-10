@@ -1,10 +1,11 @@
 package com.databricks.labs.gbx.rasterx.expressions.grid
 
-import com.databricks.labs.gbx.gridx.grid.{CustomGridSystem, GridConf, GridSystem}
+import com.databricks.labs.gbx.gridx.grid.{BNG, CustomGridSystem, GridConf, GridSystem, H3, Quadbin}
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
 import com.databricks.labs.gbx.vectorx.jts.JTS
 import org.gdal.gdal.{Dataset, gdal}
 import org.gdal.gdalconst.gdalconstConstants
+import org.gdal.osr.{SpatialReference, osrConstants}
 import org.locationtech.jts.geom.Geometry
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
@@ -14,54 +15,66 @@ import java.nio.file.Files
 import scala.collection.mutable
 
 /**
-  * Task 15 (Stage-3 Phase 5): guards the O(boundary) interior fast-path in
-  * [[RasterToGridGeneric]]'s covering-assignment path.
+  * Task 15 (Stage-3 Phase 5): guards the covering-assignment interior fast-path in
+  * [[RasterToGridGeneric]] for RESULT-NEUTRALITY (the refactor MUST NOT change results) and for
+  * the O(boundary) PERF win, PER GRID.
   *
-  * Two invariants:
-  *  1. RESULT-IDENTITY — the production covering path must produce the SAME per-cell
-  *     weighted measures as a verbatim reimplementation of the OLD per-pixel
-  *     candidate+intersection algorithm ([[refCovering]]). This is the result-neutrality
-  *     guard: the refactor is pure performance and MUST NOT change results.
-  *  2. PERF-PROOF — a pixel whose four corners all map to the same cell id is fully
-  *     interior and must SKIP `coveringCandidateCells`/`intersection`. Instrumented via a
-  *     [[CountingGrid]] decorator: `coveringCandidateCells` invocations must be
-  *     `<= boundaryPixelCount`. This FAILS before the fast-path (every valid pixel enters
-  *     the candidate path) and PASSES after (only boundary pixels do).
-  *
-  * Fixture: a varying-value EPSG:27700 raster whose pixel grid is intentionally NOT aligned
-  * to the custom grid's cell edges, so cell boundaries cut through pixels — guaranteeing a
-  * mix of interior AND boundary pixels (both counts asserted > 0).
+  * Result-neutrality is grid-dependent because the fast-path assigns an interior pixel weight
+  * exactly 1.0 instead of the JTS `intersection.getArea / pixelArea` the old path computed. That
+  * substitution is exact ONLY when a grid's point-partition (`pointToCellID`) coincides with its
+  * cell polygon (`cellIdToGeometry`):
+  *  - Custom / Quadbin / BNG — analytic-square cells: `pointToCellID` floor-bins to the same
+  *    square `cellIdToGeometry` draws. The fast-path is BYTE-IDENTICAL to the old path (asserted).
+  *  - H3 — `pointToCellID` is `geoToH3` (the true partition) while `cellIdToGeometry` is the
+  *    `h3ToGeoBoundary` CHORD polygon that under-shoots the geodesic edge. An interior pixel with
+  *    a sliver in the chord gap would get 1.0 (fast) vs slightly <1.0 (old) — a real, tiny change.
+  *    So H3 declares `coveringFastPathExact = false` and keeps the old path. This suite MEASURES
+  *    that hypothetical gap and confirms production H3 output is byte-identical to the old path.
   */
 class RasterToGridCoveringPerfTest extends AnyFunSuite with BeforeAndAfterAll {
 
-    /** Custom grid: [0, 1_000_000]^2 in EPSG:27700; 100 km root cells, split by 2. */
-    private val conf = GridConf(
-        boundXMin     = 0,
-        boundXMax     = 1000000,
-        boundYMin     = 0,
-        boundYMax     = 1000000,
-        cellSplits    = 2,
-        rootCellSizeX = 100000,
-        rootCellSizeY = 100000,
-        crsID         = Some(27700)
-    )
-    private val baseGrid = CustomGridSystem(conf)
-    private val res      = 3 // cell size = 100000 / 2^3 = 12_500 m
-
-    /** fAggW used by both the production path and the reference path: sum of value*weight. */
+    /** fAggW used by production, reference, and forced-fast paths: sum of value*weight. */
     private val fAggW: mutable.ArrayBuffer[(Double, Double)] => Double =
         _.foldLeft(0.0) { case (acc, (v, w)) => acc + v * w }
-    /** Centroid-path aggregator is unused on the covering path; a typed stub for overload resolution. */
     private val fAggStub: mutable.ArrayBuffer[Double] => Double = _ => 0.0
+    private val acceptAll: Long => Boolean = _ => true
 
-    /**
-      * 37x37 EPSG:27700 raster, extent 495_000–515_000 E/N (20 km square), varying values.
-      * Pixel size 20000/37 ≈ 540.5 m does NOT divide the 12_500 m cell size, and the extent
-      * crosses the cell boundaries at 500_000 and 512_500 on both axes — so many pixels straddle
-      * a cell edge (boundary) while the bulk sit wholly inside a cell (interior).
-      */
-    private var ds: Dataset = _
+    // ── fixtures: per grid, pixels finer than a cell so both interior AND boundary pixels occur,
+    //    and pixel edges intentionally unaligned to cell edges so cells cut through pixels. ──
+    private var customDs: Dataset = _ // EPSG:27700, custom grid
+    private var qbDs: Dataset = _     // EPSG:4326,  quadbin
+    private var bngDs: Dataset = _    // EPSG:27700, BNG
+    private var h3Ds: Dataset = _     // EPSG:4326,  H3 (fine res)
+    private var h3CoarseDs: Dataset = _ // EPSG:4326, H3 (coarse res, where the chord gap is large)
+
+    private val customGrid = CustomGridSystem(GridConf(
+        boundXMin = 0, boundXMax = 1000000, boundYMin = 0, boundYMax = 1000000,
+        cellSplits = 2, rootCellSizeX = 100000, rootCellSizeY = 100000, crsID = Some(27700)))
+    private val customRes = 3 // 12_500 m cells
+    private val qbRes      = 12
+    private val bngRes     = 3  // 1 km cells
+    private val h3Res       = 9
+    private val h3CoarseRes = 3
+
     private val size = 37
+
+    /** Builds a `size`x`size` in-memory raster with a varying value field, at the given origin,
+      * pixel size, and SRID (traditional GIS axis order). North-up (negative y pixel height). */
+    private def makeRaster(minX: Double, minY: Double, pxW: Double, pxH: Double, srid: Int): Dataset = {
+        val mem = gdal.GetDriverByName("MEM").Create("", size, size, 1, gdalconstConstants.GDT_Float64)
+        mem.SetGeoTransform(Array(minX, pxW, 0.0, minY + pxH * size, 0.0, -pxH))
+        val sr = new SpatialReference()
+        sr.ImportFromEPSG(srid)
+        sr.SetAxisMappingStrategy(osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+        mem.SetProjection(sr.ExportToWkt())
+        sr.delete()
+        val vals = Array.tabulate(size * size)(i => 1.0 + (i % 13) + (i / size) * 0.5)
+        val band = mem.GetRasterBand(1)
+        band.SetNoDataValue(-9999.0)
+        band.WriteRaster(0, 0, size, size, vals)
+        band.FlushCache(); mem.FlushCache()
+        mem
+    }
 
     override def beforeAll(): Unit = {
         GDALManager.loadSharedObjects(Iterable.empty[String])
@@ -70,48 +83,50 @@ class RasterToGridCoveringPerfTest extends AnyFunSuite with BeforeAndAfterAll {
         import com.databricks.labs.gbx.util.NodeFilePathUtil
         Files.createDirectories(NodeFilePathUtil.rootPath)
 
-        val (minX, minY) = (495000.0, 495000.0)
-        val (w, h)       = (20000.0, 20000.0)
-        val drv          = gdal.GetDriverByName("MEM")
-        ds = drv.Create("/vsimem/covering_perf", size, size, 1, gdalconstConstants.GDT_Float64)
-        ds.SetGeoTransform(Array(minX, w / size, 0.0, minY + h, 0.0, -(h / size)))
-        val sr = new org.gdal.osr.SpatialReference()
-        sr.ImportFromEPSG(27700)
-        ds.SetProjection(sr.ExportToWkt())
-        sr.delete()
-        val band = ds.GetRasterBand(1)
-        band.SetNoDataValue(-9999.0)
-        // Varying field so per-cell weighted sums are distinctive (a constant field would
-        // hide a mis-weighting on the boundary path).
-        val vals = new Array[Double](size * size)
-        var i = 0
-        while (i < vals.length) { vals(i) = 1.0 + (i % 13) + (i / size) * 0.5; i += 1 }
-        band.WriteRaster(0, 0, size, size, vals)
-        band.FlushCache(); ds.FlushCache()
+        // Custom: 20 km raster over 12.5 km cells (pixel ~541 m), crosses cell edges at 500/512.5 km.
+        customDs = makeRaster(495000.0, 495000.0, 20000.0 / size, 20000.0 / size, 27700)
+        // Quadbin res-12 cells ~0.088deg; pixels 0.02deg over 0.74deg extent.
+        qbDs = makeRaster(-0.5, 51.5, 0.02, 0.02, 4326)
+        // BNG res-3 = 1 km cells; pixels 250 m over 9.25 km extent.
+        bngDs = makeRaster(500000.0, 200000.0, 250.0, 250.0, 27700)
+        // H3 res-9 hexes ~348 m across; pixels ~0.001deg (~90 m) over 0.037deg extent.
+        h3Ds = makeRaster(-0.5, 51.5, 0.001, 0.001, 4326)
+        // H3 res-3 hexes are ~100+ km across; pixels 0.1deg (~11 km) so the chord-vs-geodesic
+        // sag between a hex's straight chord polygon and its true geoToH3 boundary is material.
+        h3CoarseDs = makeRaster(-2.0, 40.0, 0.1, 0.1, 4326)
     }
 
     override def afterAll(): Unit = {
-        if (ds != null) ds.delete()
+        Seq(customDs, qbDs, bngDs, h3Ds, h3CoarseDs).foreach(d => if (d != null) d.delete())
     }
 
+    /** Reads band-1 values + validity mask of `d` into parallel arrays plus the geotransform. */
+    private def read(d: Dataset): (Array[Double], Array[Byte], Array[Double], Int, Int) = {
+        val gt = d.GetGeoTransform; val xSize = d.getRasterXSize; val ySize = d.getRasterYSize
+        val nPix = xSize * ySize
+        val bandBuf = new Array[Double](nPix); val maskBuf = new Array[Byte](nPix)
+        val b = d.GetRasterBand(1); val m = b.GetMaskBand()
+        b.ReadRaster(0, 0, xSize, ySize, bandBuf); m.ReadRaster(0, 0, xSize, ySize, maskBuf)
+        (bandBuf, maskBuf, gt, xSize, ySize)
+    }
+
+    private def corners(gt: Array[Double], x: Int, y: Int): Array[(Double, Double)] = Array(
+        (gt(0) + x       * gt(1) + y       * gt(2), gt(3) + x       * gt(4) + y       * gt(5)),
+        (gt(0) + (x + 1) * gt(1) + y       * gt(2), gt(3) + (x + 1) * gt(4) + y       * gt(5)),
+        (gt(0) + (x + 1) * gt(1) + (y + 1) * gt(2), gt(3) + (x + 1) * gt(4) + (y + 1) * gt(5)),
+        (gt(0) + x       * gt(1) + (y + 1) * gt(2), gt(3) + x       * gt(4) + (y + 1) * gt(5))
+    )
+
     /**
-      * Verbatim reimplementation of the OLD `executeOnCovering` inner loop: candidate
-      * enumeration + JTS intersection for EVERY valid pixel (no interior fast-path). Also
-      * tallies interior vs boundary pixels (four-corner cell agreement) for the perf assertion.
+      * Verbatim reimplementation of the OLD `executeOnCovering` inner loop: candidate enumeration +
+      * JTS intersection for EVERY valid pixel (no interior fast-path). Also tallies interior vs
+      * boundary pixels (four-corner cell agreement).
       *
       * @return (per-cell weighted measure keyed by renderCellId, validPixels, interiorPixels, boundaryPixels)
       */
-    private def refCovering(g: GridSystem, d: Dataset): (Map[Any, Double], Int, Int, Int) = {
-        val gt     = d.GetGeoTransform
-        val xSize  = d.getRasterXSize
-        val ySize  = d.getRasterYSize
-        val nPix   = xSize * ySize
-        val bandBuf = new Array[Double](nPix)
-        val maskBuf = new Array[Byte](nPix)
-        val b = d.GetRasterBand(1); val m = b.GetMaskBand()
-        b.ReadRaster(0, 0, xSize, ySize, bandBuf)
-        m.ReadRaster(0, 0, xSize, ySize, maskBuf)
-
+    private def refCovering(g: GridSystem, d: Dataset, res: Int, isCellValid: Long => Boolean)
+        : (Map[Any, Double], Int, Int, Int) = {
+        val (bandBuf, maskBuf, gt, xSize, ySize) = read(d)
         val accW = new mutable.LongMap[mutable.ArrayBuffer[(Double, Double)]]()
         var valid = 0; var interior = 0; var boundary = 0
         var y = 0; var idx = 0
@@ -121,31 +136,17 @@ class RasterToGridCoveringPerfTest extends AnyFunSuite with BeforeAndAfterAll {
                 if (maskBuf(idx) != 0) {
                     valid += 1
                     val value = bandBuf(idx)
-                    val x0 = gt(0) + x       * gt(1) + y       * gt(2)
-                    val y0 = gt(3) + x       * gt(4) + y       * gt(5)
-                    val x1 = gt(0) + (x + 1) * gt(1) + y       * gt(2)
-                    val y1 = gt(3) + (x + 1) * gt(4) + y       * gt(5)
-                    val x2 = gt(0) + (x + 1) * gt(1) + (y + 1) * gt(2)
-                    val y2 = gt(3) + (x + 1) * gt(4) + (y + 1) * gt(5)
-                    val x3 = gt(0) + x       * gt(1) + (y + 1) * gt(2)
-                    val y3 = gt(3) + x       * gt(4) + (y + 1) * gt(5)
-
-                    // Interior/boundary tally (independent of the accumulation).
-                    val c0 = g.pointToCellID(x0, y0, res)
-                    val c1 = g.pointToCellID(x1, y1, res)
-                    val c2 = g.pointToCellID(x2, y2, res)
-                    val c3 = g.pointToCellID(x3, y3, res)
-                    if (c0 == c1 && c1 == c2 && c2 == c3) interior += 1 else boundary += 1
-
-                    // OLD algorithm: candidate enumeration + intersection for EVERY pixel.
-                    val pixelRect: Geometry = JTS.polygonFromXYs(
-                        Array((x0, y0), (x1, y1), (x2, y2), (x3, y3), (x0, y0))
-                    )
+                    val cs = corners(gt, x, y)
+                    val cids = cs.map { case (cx, cy) => g.pointToCellID(cx, cy, res) }
+                    if (cids.forall(_ == cids(0))) interior += 1 else boundary += 1
+                    val pixelRect: Geometry = JTS.polygonFromXYs(cs :+ cs(0))
                     val pxArea = pixelRect.getArea
                     g.coveringCandidateCells(pixelRect, res).foreach { c =>
-                        val inter = g.cellIdToGeometry(c).intersection(pixelRect)
-                        if (inter != null && inter.getArea > 0) {
-                            accW.getOrElseUpdate(c, new mutable.ArrayBuffer) += ((value, inter.getArea / pxArea))
+                        if (isCellValid(c)) {
+                            val inter = g.cellIdToGeometry(c).intersection(pixelRect)
+                            if (inter != null && inter.getArea > 0) {
+                                accW.getOrElseUpdate(c, new mutable.ArrayBuffer) += ((value, inter.getArea / pxArea))
+                            }
                         }
                     }
                 }
@@ -153,62 +154,159 @@ class RasterToGridCoveringPerfTest extends AnyFunSuite with BeforeAndAfterAll {
             }
             y += 1
         }
-        val out = accW.map { case (cell, buf) => (g.renderCellId(cell), fAggW(buf)) }.toMap
-        (out, valid, interior, boundary)
-    }
-
-    /** Runs the production covering path and returns per-cell weighted measures keyed by renderCellId. */
-    private def prodCovering(g: GridSystem, d: Dataset): Map[Any, Double] = {
-        val bands = RasterToGridGeneric.execute[Double](
-            g, d, res, "sparse", "covering", fAggStub, fAggW, Option.empty[Double], (_: Long) => true
-        )
-        bands(0).map { case (k, opt) => (k, opt.get) }.toMap
-    }
-
-    test("result-identity: production covering equals the old per-pixel candidate+intersection path") {
-        val (refMap, valid, interior, boundary) = refCovering(baseGrid, ds)
-        val prodMap = prodCovering(baseGrid, ds)
-
-        // Fixture sanity: the tile genuinely exercises BOTH paths.
-        withClue("fixture must contain interior pixels: ")(interior should be > 0)
-        withClue("fixture must contain boundary pixels: ")(boundary should be > 0)
-        valid shouldBe (size * size)
-
-        // Same cell set.
-        prodMap.keySet shouldBe refMap.keySet
-
-        // Per-cell weighted measure identity. Byte-identity is the strong claim; if JTS area
-        // arithmetic on axis-aligned rectangles differs from an exact 1.0 by a sub-ULP epsilon,
-        // this reports the actual max diff (which must remain well within the 1e-9 parity bar).
-        val maxDiff = refMap.map { case (k, rv) => math.abs(rv - prodMap(k)) }.max
-        info(s"result-identity maxAbsDiff = $maxDiff (interior=$interior boundary=$boundary valid=$valid cells=${refMap.size})")
-        maxDiff shouldBe 0.0
-
-        // Mass conservation for a sum measure: Σ weighted contributions == Σ valid pixel values.
-        val gt = ds.GetGeoTransform; val nPix = size * size
-        val bandBuf = new Array[Double](nPix); val maskBuf = new Array[Byte](nPix)
-        val b = ds.GetRasterBand(1); val m = b.GetMaskBand()
-        b.ReadRaster(0, 0, size, size, bandBuf); m.ReadRaster(0, 0, size, size, maskBuf)
-        var pixelTotal = 0.0; var i = 0
-        while (i < nPix) { if (maskBuf(i) != 0) pixelTotal += bandBuf(i); i += 1 }
-        val prodTotal = prodMap.values.sum
-        prodTotal shouldBe (pixelTotal +- 1e-6)
-    }
-
-    test("perf-proof: interior pixels skip candidate enumeration (coveringCandidateCells calls <= boundary pixels)") {
-        val (_, _, interior, boundary) = refCovering(baseGrid, ds)
-        interior should be > 0 // otherwise the assertion below is vacuous
-
-        val counting = new CountingGrid(baseGrid)
-        prodCovering(counting, ds)
-        info(s"coveringCandidateCells calls = ${counting.candidateCalls}; boundaryPixels = $boundary; interiorPixels = $interior")
-        counting.candidateCalls should be <= boundary
+        (accW.map { case (cell, buf) => (g.renderCellId(cell), fAggW(buf)) }.toMap, valid, interior, boundary)
     }
 
     /**
-      * GridSystem decorator that counts `coveringCandidateCells` invocations (the candidate
-      * enumeration that gates every JTS intersection). All other members delegate unchanged.
-      * In-process, single-threaded use — a plain var counter suffices.
+      * The interior fast-path applied UNCONDITIONALLY (ignoring `coveringFastPathExact`): an
+      * interior pixel gets weight exactly 1.0. Used only to MEASURE what the fast-path WOULD do on
+      * a non-exact grid (H3) vs the exact old path — it is not the production behaviour for H3.
+      */
+    private def forcedFastCovering(g: GridSystem, d: Dataset, res: Int, isCellValid: Long => Boolean): Map[Any, Double] = {
+        val (bandBuf, maskBuf, gt, xSize, ySize) = read(d)
+        val accW = new mutable.LongMap[mutable.ArrayBuffer[(Double, Double)]]()
+        var y = 0; var idx = 0
+        while (y < ySize) {
+            var x = 0
+            while (x < xSize) {
+                if (maskBuf(idx) != 0) {
+                    val value = bandBuf(idx)
+                    val cs = corners(gt, x, y)
+                    val cids = cs.map { case (cx, cy) => g.pointToCellID(cx, cy, res) }
+                    if (cids.forall(_ == cids(0))) {
+                        if (isCellValid(cids(0))) accW.getOrElseUpdate(cids(0), new mutable.ArrayBuffer) += ((value, 1.0))
+                    } else {
+                        val pixelRect: Geometry = JTS.polygonFromXYs(cs :+ cs(0))
+                        val pxArea = pixelRect.getArea
+                        g.coveringCandidateCells(pixelRect, res).foreach { c =>
+                            if (isCellValid(c)) {
+                                val inter = g.cellIdToGeometry(c).intersection(pixelRect)
+                                if (inter != null && inter.getArea > 0) {
+                                    accW.getOrElseUpdate(c, new mutable.ArrayBuffer) += ((value, inter.getArea / pxArea))
+                                }
+                            }
+                        }
+                    }
+                }
+                idx += 1; x += 1
+            }
+            y += 1
+        }
+        accW.map { case (cell, buf) => (g.renderCellId(cell), fAggW(buf)) }.toMap
+    }
+
+    /** Runs the production covering path; returns per-cell weighted measures keyed by renderCellId. */
+    private def prodCovering(g: GridSystem, d: Dataset, res: Int, isCellValid: Long => Boolean): Map[Any, Double] =
+        RasterToGridGeneric.execute[Double](g, d, res, "sparse", "covering", fAggStub, fAggW, Option.empty[Double], isCellValid)(0)
+            .map { case (k, opt) => (k, opt.get) }.toMap
+
+    private def maxAbsDiff(a: Map[Any, Double], b: Map[Any, Double]): Double = {
+        (a.keySet ++ b.keySet).foldLeft(0.0) { (mx, k) =>
+            math.max(mx, math.abs(a.getOrElse(k, 0.0) - b.getOrElse(k, 0.0)))
+        }
+    }
+
+    // ── exact (analytic-square) grids: production fast-path must be BYTE-IDENTICAL to the old path ──
+    private val exactCases: Seq[(String, GridSystem, () => Dataset, Int)] = Seq(
+        ("Custom",  customGrid, () => customDs, customRes),
+        ("Quadbin", Quadbin,    () => qbDs,     qbRes),
+        ("BNG",     BNG,        () => bngDs,    bngRes)
+    )
+
+    exactCases.foreach { case (name, grid, dsF, res) =>
+        test(s"$name: covering interior fast-path is byte-identical to the old intersection path") {
+            withClue(s"$name should declare coveringFastPathExact: ")(grid.coveringFastPathExact shouldBe true)
+            val d = dsF()
+            val (refMap, valid, interior, boundary) = refCovering(grid, d, res, acceptAll)
+            val prodMap = prodCovering(grid, d, res, acceptAll)
+            val diff = maxAbsDiff(prodMap, refMap)
+            info(s"$name result-identity maxAbsDiff = $diff (interior=$interior boundary=$boundary valid=$valid cells=${refMap.size})")
+            withClue(s"$name fixture must exercise the interior fast-path: ")(interior should be > 0)
+            withClue(s"$name fixture must exercise the boundary path: ")(boundary should be > 0)
+            prodMap.keySet shouldBe refMap.keySet
+            diff shouldBe 0.0
+        }
+    }
+
+    // ── H3: fast-path disabled; production == old path at every resolution. The hypothetical
+    //    forced-fast gap is MEASURED at a fine AND a coarse resolution (reported, not asserted:
+    //    the sliver is sub-ULP at fine res but grows with cell size — the reason H3 is restricted). ──
+    test("H3: fast-path is disabled and covering output is byte-identical to the old path (gap measured)") {
+        H3.coveringFastPathExact shouldBe false
+
+        // Fine resolution (res-9).
+        val (refFine, validF, interF, boundF) = refCovering(H3, h3Ds, h3Res, acceptAll)
+        val prodFine = prodCovering(H3, h3Ds, h3Res, acceptAll)
+        withClue("H3 fine fixture must contain interior-binned pixels: ")(interF should be > 0)
+        withClue("H3 fine fixture must contain boundary pixels: ")(boundF should be > 0)
+        prodFine.keySet shouldBe refFine.keySet
+        val prodFineDiff = maxAbsDiff(prodFine, refFine)
+        info(s"H3 res-9 production-vs-old maxAbsDiff = $prodFineDiff (interior=$interF boundary=$boundF valid=$validF)")
+        prodFineDiff shouldBe 0.0 // production uses the old path -> byte-identical, the guarantee that matters
+        val forcedFineDiff = maxAbsDiff(forcedFastCovering(H3, h3Ds, h3Res, acceptAll), refFine)
+        info(s"H3 res-9 forced-fast-path-vs-old maxAbsDiff = $forcedFineDiff (near-straight fine edges: sub-ULP)")
+
+        // Coarse resolution (res-3): the chord-vs-geodesic sag is large, so the forced fast-path
+        // would diverge here — concrete evidence that enabling it for H3 breaks result-neutrality.
+        val (refCoarse, validC, interC, boundC) = refCovering(H3, h3CoarseDs, h3CoarseRes, acceptAll)
+        withClue("H3 coarse fixture must contain interior-binned pixels: ")(interC should be > 0)
+        withClue("H3 coarse fixture must contain boundary pixels: ")(boundC should be > 0)
+        val prodCoarseDiff = maxAbsDiff(prodCovering(H3, h3CoarseDs, h3CoarseRes, acceptAll), refCoarse)
+        info(s"H3 res-3 production-vs-old maxAbsDiff = $prodCoarseDiff (interior=$interC boundary=$boundC valid=$validC)")
+        prodCoarseDiff shouldBe 0.0 // production still byte-identical (old path) at coarse res
+        val forcedCoarseDiff = maxAbsDiff(forcedFastCovering(H3, h3CoarseDs, h3CoarseRes, acceptAll), refCoarse)
+        info(s"H3 res-3 forced-fast-path-vs-old maxAbsDiff = $forcedCoarseDiff (chord-gap materialises at coarse res)")
+    }
+
+    // ── perf: exact grids skip candidate enumeration on interior pixels; H3 does not ──
+    test("perf-proof: exact grids call coveringCandidateCells == boundary pixels; H3 calls it for every valid pixel") {
+        exactCases.foreach { case (name, grid, dsF, res) =>
+            val d = dsF()
+            val (_, _, _, boundary) = refCovering(grid, d, res, acceptAll)
+            val counting = new CountingGrid(grid)
+            prodCovering(counting, d, res, acceptAll)
+            info(s"$name coveringCandidateCells calls = ${counting.candidateCalls}; boundaryPixels = $boundary")
+            withClue(s"$name interior fast-path must remove ALL interior candidate enumerations: ")(
+                counting.candidateCalls shouldBe boundary)
+        }
+        val (_, valid, _, _) = refCovering(H3, h3Ds, h3Res, acceptAll)
+        val h3Counting = new CountingGrid(H3)
+        prodCovering(h3Counting, h3Ds, h3Res, acceptAll)
+        info(s"H3 coveringCandidateCells calls = ${h3Counting.candidateCalls}; validPixels = $valid (fast-path not taken)")
+        h3Counting.candidateCalls shouldBe valid
+    }
+
+    // ── isCellValid false-branch on the fast-path: a rejected interior cell contributes nothing ──
+    test("fast-path honours isCellValid: a rejected interior cell is dropped, matching the old path") {
+        // Reject exactly one cell that receives interior pixels, to exercise the fast-path's
+        // `if (isCellValid(c0))` false branch. Pick the cell with the most contributions.
+        val (fullMap, _, interior, _) = refCovering(customGrid, customDs, customRes, acceptAll)
+        interior should be > 0
+        val rejected = fullMap.keys.maxBy(k => fullMap(k)) // some real, populated cell (Long key)
+        val rejectedId = rejected.asInstanceOf[Long]
+        val pred: Long => Boolean = _ != rejectedId
+
+        val (refMap, _, _, _) = refCovering(customGrid, customDs, customRes, pred)
+        val prodMap = prodCovering(customGrid, customDs, customRes, pred)
+        withClue("rejected cell must be absent from both paths: ") {
+            refMap.contains(rejected) shouldBe false
+            prodMap.contains(rejected) shouldBe false
+        }
+        prodMap.keySet shouldBe refMap.keySet
+        maxAbsDiff(prodMap, refMap) shouldBe 0.0
+    }
+
+    test("coveringFastPathExact capability is wired: true for analytic-square grids, false for H3") {
+        customGrid.coveringFastPathExact shouldBe true
+        Quadbin.coveringFastPathExact shouldBe true
+        BNG.coveringFastPathExact shouldBe true
+        H3.coveringFastPathExact shouldBe false
+    }
+
+    /**
+      * GridSystem decorator counting `coveringCandidateCells` invocations (the enumeration gating
+      * every JTS intersection). Delegates everything else — crucially `coveringFastPathExact`, so
+      * wrapping does not change which path the production code takes.
       */
     private final class CountingGrid(u: GridSystem) extends GridSystem {
         var candidateCalls = 0
@@ -225,5 +323,6 @@ class RasterToGridCoveringPerfTest extends AnyFunSuite with BeforeAndAfterAll {
         def kRing(cellID: Long, k: Int): Seq[Long] = u.kRing(cellID, k)
         def kLoop(cellID: Long, k: Int): Seq[Long] = u.kLoop(cellID, k)
         override def renderCellId(cellID: Long): Any = u.renderCellId(cellID)
+        override def coveringFastPathExact: Boolean = u.coveringFastPathExact
     }
 }

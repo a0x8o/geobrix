@@ -29,6 +29,10 @@ object H3 extends GridSystem {
 
     val name = "H3"
 
+    /** H3's `geoToH3` partition differs from its `h3ToGeoBoundary` chord polygon, so the covering
+      * interior fast-path would shift edge-sliver weights; keep the exact intersection path. */
+    override def coveringFastPathExact: Boolean = false
+
     val extent: Polygon =
         JTS.polygonFromXYs(
           Array(

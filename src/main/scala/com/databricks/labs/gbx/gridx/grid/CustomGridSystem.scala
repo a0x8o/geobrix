@@ -20,6 +20,10 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
 
     def crsSrid: Int = crsID
 
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same square `cellIdToGeometry`
+      * draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
+
     def getResolutionStr(resolution: Int): String = resolution.toString
 
     def format(id: Long): String = id.toString

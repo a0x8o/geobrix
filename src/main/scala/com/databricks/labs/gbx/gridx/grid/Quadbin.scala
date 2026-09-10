@@ -148,6 +148,10 @@ object Quadbin extends GridSystem {
     /** Stable grid name. */
     def name: String = "QUADBIN"
 
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same lon/lat rectangle
+      * `cellIdToGeometry` draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
+
     /** SRID for quadbin cell geometries (WGS84 lon/lat). */
     def crsSrid: Int = 4326
 
