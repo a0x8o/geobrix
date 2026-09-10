@@ -80,6 +80,15 @@ def _registrar_groups() -> List[_register.Group]:
         ("gbx_rst_bng_rastertogridsum", _RstBngRasterToGridSumUDTF),
         ("gbx_rst_bng_rastertogridvariance", _RstBngRasterToGridVarianceUDTF),
         ("gbx_rst_bng_rastertogridstddev", _RstBngRasterToGridStddevUDTF),
+        ("gbx_rst_custom_rastertogridavg", _RstCustomRasterToGridAvgUDTF),
+        ("gbx_rst_custom_rastertogridcount", _RstCustomRasterToGridCountUDTF),
+        ("gbx_rst_custom_rastertogridmax", _RstCustomRasterToGridMaxUDTF),
+        ("gbx_rst_custom_rastertogridmin", _RstCustomRasterToGridMinUDTF),
+        ("gbx_rst_custom_rastertogridmedian", _RstCustomRasterToGridMedianUDTF),
+        ("gbx_rst_custom_rastertogridsum", _RstCustomRasterToGridSumUDTF),
+        ("gbx_rst_custom_rastertogridvariance", _RstCustomRasterToGridVarianceUDTF),
+        ("gbx_rst_custom_rastertogridstddev", _RstCustomRasterToGridStddevUDTF),
+        ("gbx_rst_custom_tessellate", _RstCustomTessellateUDTF),
         ("gbx_rst_separatebands", _RstSeparateBandsUDTF),
         ("gbx_rst_retile", _RstRetileUDTF),
         ("gbx_rst_tooverlappingtiles", _RstToOverlappingTilesUDTF),
@@ -4830,6 +4839,99 @@ def rst_bng_tessellate(
     )
 
 
+# --- Custom-grid tessellate UDTF -------------------------------------------
+# SQL arg order: (tile, grid, resolution, [assignment], [coverage])
+# grid is the custom-grid struct (produced by gbx_custom_grid(...)).
+# cellID is LONG (custom cell IDs are signed int64 by construction).
+
+
+@udtf(returnType=V2_TILE_SCHEMA)
+class _RstCustomTessellateUDTF:
+    """Streaming UDTF: yield one clipped tile struct per overlapping custom-grid cell."""
+
+    def eval(
+        self,
+        tile,
+        grid_struct,
+        resolution,
+        assignment=None,
+        coverage=None,
+        file_ref=None,
+    ):
+        if _tile_is_empty(tile) or resolution is None or grid_struct is None:
+            yield _serde.build_error_tile(
+                "RST_Custom_Tessellate: empty tile or missing grid/resolution"
+            )
+            return
+        effective_mode = assignment if assignment is not None else "centroid"
+        if effective_mode not in {"covering", "centroid"}:
+            raise ValueError(
+                f"rst_custom_tessellate: assignment must be one of covering, centroid; "
+                f"got '{effective_mode}'"
+            )
+        effective_coverage = coverage if coverage is not None else "complete"
+        if effective_coverage not in {"sparse", "complete"}:
+            raise ValueError(
+                f"rst_custom_tessellate: coverage must be one of sparse, complete; "
+                f"got '{effective_coverage}'"
+            )
+        from databricks.labs.gbx.pygx import _custom as _custom_mod
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        try:
+            conf = _custom_mod.conf_from_row(grid_struct)
+            with ot._open(tile, file_ref=file_ref) as ds:
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds,
+                    int(resolution),
+                    "custom",
+                    mode=effective_mode,
+                    coverage=effective_coverage,
+                    conf=conf,
+                ):
+                    if raster is None:
+                        continue
+                    yield _serde.build_tile(
+                        raster, "GTiff", cellid, grid_system="custom"
+                    )
+        except Exception as e:  # noqa: BLE001
+            yield _serde.build_error_tile(f"RST_Custom_Tessellate: {e}")
+            return
+
+
+def rst_custom_tessellate(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
+):
+    """Tessellate a raster into custom-grid cells (mirrors ``gbx_rst_custom_tessellate``).
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>,
+        LATERAL gbx_rst_custom_tessellate(tile, grid, resolution) t
+        SELECT t.* FROM <df>,
+        LATERAL gbx_rst_custom_tessellate(tile, grid, resolution, 'centroid') t
+
+    SQL arg order: ``(tile, grid, resolution, [assignment], [coverage])``.
+
+    Args:
+        tile:       Tile struct column.
+        grid:       Custom-grid spec struct (from ``gbx_custom_grid(...)``).
+        resolution: Custom-grid resolution int ``[0, conf.max_resolution]``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
+        coverage:   ``"complete"`` (default) or ``"sparse"``.
+    """
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_tessellate(tile, grid, resolution"
+        " [, assignment [, coverage]]) t"
+    )
+
+
 def rst_quadbin_tessellate(
     tile: ColLike,
     resolution: ColLike,
@@ -6503,6 +6605,43 @@ _GRID_FLAT_STRING_SCHEMA = _grid_flat_schema(DoubleType(), StringType())
 
 
 def _make_rastertogrid_udtf(grid, agg, flat_schema, cellid_is_str=False):
+    """Factory for raster->grid aggregation UDTFs.
+
+    For ``grid="custom"`` the UDTF eval signature includes a ``grid`` struct arg
+    immediately after ``tile`` (SQL arg order: tile, grid, resolution, [coverage],
+    [assignment]) — matching the pinned heavy arg order.  All other grids have
+    the standard signature (tile, resolution, [coverage], [assignment]).
+    """
+    if grid == "custom":
+
+        @udtf(returnType=flat_schema)
+        class _CustomRasterToGridUDTF:
+            def eval(
+                self, tile, grid_struct, resolution, coverage=None, assignment=None
+            ):
+                if _tile_is_empty(tile):
+                    return
+                from databricks.labs.gbx.pyrx import _env
+
+                _env.configure_gdal_env()
+                with ot._open(tile) as ds:
+                    bands_data = gridagg.raster_to_grid(
+                        ds,
+                        resolution,
+                        "custom",
+                        agg,
+                        coverage=coverage or "complete",
+                        assignment=assignment or "centroid",
+                        grid_conf=grid_struct,
+                    )
+                for band_idx, cells in enumerate(bands_data, start=1):
+                    for cell in cells:
+                        cid = int(cell["cellID"])  # custom ids are Long ints
+                        m = cell["measure"]
+                        yield (band_idx, cid, m)
+
+        return _CustomRasterToGridUDTF
+
     @udtf(returnType=flat_schema)
     class _RasterToGridUDTF:
         def eval(self, tile, resolution, coverage=None, assignment=None):
@@ -6603,6 +6742,35 @@ _RstBngRasterToGridVarianceUDTF = _make_rastertogrid_udtf(
 )
 _RstBngRasterToGridStddevUDTF = _make_rastertogrid_udtf(
     "bng", "stddev", _GRID_FLAT_STRING_SCHEMA, cellid_is_str=True
+)
+
+# --- Tier 1i: custom-grid rastertogrid UDTFs --------------------------------
+# SQL arg order: (tile, grid, resolution, [coverage], [assignment])
+# grid is a custom-grid struct (produced by gbx_custom_grid(...)).
+# cellID is LONG (custom cell ids are always signed int64).
+_RstCustomRasterToGridAvgUDTF = _make_rastertogrid_udtf(
+    "custom", "avg", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridCountUDTF = _make_rastertogrid_udtf(
+    "custom", "count", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMaxUDTF = _make_rastertogrid_udtf(
+    "custom", "max", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMinUDTF = _make_rastertogrid_udtf(
+    "custom", "min", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMedianUDTF = _make_rastertogrid_udtf(
+    "custom", "median", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridSumUDTF = _make_rastertogrid_udtf(
+    "custom", "sum", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridVarianceUDTF = _make_rastertogrid_udtf(
+    "custom", "variance", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridStddevUDTF = _make_rastertogrid_udtf(
+    "custom", "stddev", _GRID_FLAT_DOUBLE_SCHEMA
 )
 
 _RASTERTOGRID_DOC = """{summary}
@@ -6936,6 +7104,124 @@ def rst_bng_rastertogridstddev(
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
         "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridstddev(tile, resolution [, coverage [, assignment]]) t"
+    )
+
+
+# --- Custom-grid rastertogrid Python API stubs ------------------------------
+# SQL arg order: (tile, grid, resolution, [coverage], [assignment])
+# These stubs document the LATERAL table function interface; the actual work
+# is done by the registered UDTFs (_RstCustomRasterToGrid*UDTF).
+
+
+def rst_custom_rastertogridavg(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by mean, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridavg(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridcount(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Count raster pixels falling in each custom-grid cell, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridcount(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmax(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by maximum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmax(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmin(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by minimum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmin(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmedian(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by median, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmedian(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridsum(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by sum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridsum(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridvariance(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by population variance, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridvariance(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridstddev(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by population stddev, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridstddev(tile, grid, resolution [, coverage [, assignment]]) t"
     )
 
 

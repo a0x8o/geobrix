@@ -78,8 +78,14 @@ def _validate_resolution(resolution: int, grid: str) -> None:
         # (or resolutionMap string keys, normalized upstream) are valid; raises
         # on metres-as-Int and out-of-range indices.
         _bng.get_resolution(resolution)
+    elif grid == "custom":
+        # Resolution validated against conf.max_resolution in _raster_to_custom
+        # after the conf is decoded from the grid struct.
+        pass
     else:
-        raise ValueError(f"unknown grid {grid!r}; expected 'h3', 'quadbin' or 'bng'")
+        raise ValueError(
+            f"unknown grid {grid!r}; expected 'h3', 'quadbin', 'bng' or 'custom'"
+        )
 
 
 def _h3_cells(lon: np.ndarray, lat: np.ndarray, resolution: int) -> np.ndarray:
@@ -277,6 +283,7 @@ def _covering_band(
     grid: str,
     agg: str,
     gt: tuple,
+    conf=None,
 ) -> list:
     """Per-band area-weighted aggregation: distribute each valid pixel's value
     across every overlapping cell, weighted by (pixel_inter_cell / pixel).
@@ -290,6 +297,9 @@ def _covering_band(
     ``work_ds`` MUST already be in the grid's native CRS:
       * WGS84 (EPSG:4326) for h3 / quadbin
       * EPSG:27700         for bng
+      * grid-native        for custom
+
+    ``conf`` is a ``CustomGridConf`` instance when ``grid="custom"``.
     """
     # Lazy imports: tessellate oracles + shapely (avoid heavy deps at import time)
     from shapely.geometry import Polygon as _Polygon
@@ -326,10 +336,10 @@ def _covering_band(
         if px_area == 0.0:
             continue
 
-        for cell in _polyfill_cells(pixel_poly, resolution, grid):
-            if not _cell_is_valid(cell, grid):
+        for cell in _polyfill_cells(pixel_poly, resolution, grid, conf=conf):
+            if not _cell_is_valid(cell, grid, conf=conf):
                 continue
-            cell_poly = _cell_geom(cell, grid)
+            cell_poly = _cell_geom(cell, grid, conf=conf)
             inter = cell_poly.intersection(pixel_poly)
             if inter is not None and inter.area > 0:
                 w = inter.area / px_area
@@ -341,13 +351,16 @@ def _covering_band(
         return []
 
     return [
-        {"cellID": _encode_cellid(cell, grid), "measure": _weighted_reduce(pairs, agg)}
+        {
+            "cellID": _encode_cellid(cell, grid, conf=conf),
+            "measure": _weighted_reduce(pairs, agg),
+        }
         for cell, pairs in acc.items()  # vectorscan: ok (per-cell)
     ]
 
 
 def _complete_coverage_pass(
-    band_result: list, work_ds, resolution, grid: str, agg: str
+    band_result: list, work_ds, resolution, grid: str, agg: str, conf=None
 ) -> list:
     """Add covered-but-empty cells to ``band_result`` (complete coverage mode).
 
@@ -362,7 +375,8 @@ def _complete_coverage_pass(
     Mirrors ``RasterToGridGeneric.applyCompleteCoverage`` exactly.
 
     ``work_ds`` MUST be in the grid's native CRS (same requirement as
-    ``_covering_band``).
+    ``_covering_band``).  ``conf`` is a ``CustomGridConf`` instance when
+    ``grid="custom"``.
     """
     from shapely.geometry import box as _box
 
@@ -374,7 +388,7 @@ def _complete_coverage_pass(
         _polyfill_cells,
     )
 
-    # Raster bbox in the work CRS (already native for BNG; WGS84 for h3/quadbin).
+    # Raster bbox in the work CRS (already native for BNG/custom; WGS84 for h3/quadbin).
     west, south, east, north = work_ds.bounds
     bbox_poly = _box(west, south, east, north)
 
@@ -382,13 +396,13 @@ def _complete_coverage_pass(
     existing_ids = {r["cellID"] for r in band_result}
 
     extra = []
-    for cell in _polyfill_cells(bbox_poly, resolution, grid):
-        if not _cell_is_valid(cell, grid):
+    for cell in _polyfill_cells(bbox_poly, resolution, grid, conf=conf):
+        if not _cell_is_valid(cell, grid, conf=conf):
             continue
-        encoded = _encode_cellid(cell, grid)
+        encoded = _encode_cellid(cell, grid, conf=conf)
         if encoded in existing_ids:
             continue
-        cell_poly = _cell_geom(cell, grid)
+        cell_poly = _cell_geom(cell, grid, conf=conf)
         if _has_positive_area_overlap(cell_poly, bbox_poly):
             extra.append({"cellID": encoded, "measure": empty_value})
 
@@ -446,6 +460,7 @@ def raster_to_grid(
     coverage: str = "complete",
     assignment: str = "centroid",
     crs=None,
+    grid_conf=None,
 ) -> list:
     """Aggregate raster pixel values into discrete-global-grid cells, per band.
 
@@ -461,8 +476,9 @@ def raster_to_grid(
     Args:
         ds:         An open rasterio ``DatasetReader``.
         resolution: Grid resolution (H3 0..15; quadbin 0..20; BNG index
-                    +/-1..+/-6 or a resolutionMap string key e.g. ``"1km"``).
-        grid:       ``"h3"``, ``"quadbin"`` or ``"bng"``.
+                    +/-1..+/-6 or a resolutionMap string key e.g. ``"1km"``;
+                    custom int in ``[0, conf.max_resolution]``).
+        grid:       ``"h3"``, ``"quadbin"``, ``"bng"`` or ``"custom"``.
         agg:        One of ``"avg"``, ``"count"``, ``"min"``, ``"max"``,
                     ``"median"``, ``"sum"``, ``"variance"``, ``"stddev"``.
         coverage:   ``"complete"`` (default) -- also emit covered-but-empty
@@ -476,12 +492,16 @@ def raster_to_grid(
         crs:        Optional source-CRS override (int SRID or CRS string) for a
                     CRS-less-but-known raster. Ignored when the raster already
                     carries a CRS. When neither is set, grid-native is assumed.
+                    Not used for ``grid="custom"`` (always grid-native).
+        grid_conf:  Grid spec struct (dict or Row) for ``grid="custom"``.
+                    Required when ``grid="custom"``; ignored otherwise.
 
     Returns:
         One list per band; each is a list of ``{"cellID": id, "measure":
         float|None}`` (``None`` only for covered-but-empty cells in ``complete``
         mode for non-count aggregates). ``cellID`` is an ``int`` (Long) for
-        H3/quadbin and a formatted BNG ``str`` (e.g. ``"TQ3080"``) for BNG.
+        H3/quadbin/custom and a formatted BNG ``str`` (e.g. ``"TQ3080"``) for
+        BNG.
     """
     _validate_resolution(resolution, grid)
     if agg not in _AGGS:
@@ -491,6 +511,16 @@ def raster_to_grid(
     if assignment not in _ASSIGNMENTS:
         raise ValueError(
             f"assignment must be one of {_ASSIGNMENTS}; got {assignment!r}"
+        )
+
+    if grid == "custom":
+        return _raster_to_custom(
+            ds,
+            int(resolution),
+            agg,
+            coverage=coverage,
+            assignment=assignment,
+            grid_conf=grid_conf,
         )
 
     if grid == "bng":
@@ -659,3 +689,94 @@ def _raster_to_bng(
     warped_bytes = warp.reproject_to_srid(ds, 27700, resampling="nearest")
     with MemoryFile(warped_bytes) as mf, mf.open() as work_ds:
         return _run(work_ds)
+
+
+def _raster_to_custom(
+    ds,
+    resolution: int,
+    agg: str,
+    coverage: str = "complete",
+    assignment: str = "centroid",
+    grid_conf=None,
+) -> list:
+    """Custom-grid raster->grid: operate in grid-native coords, emit Long cell ids.
+
+    Custom grids have user-defined extents and cell sizes (via ``CustomGridConf``).
+    The raster is assumed to already be in the grid's native CRS — no reprojection
+    is performed (mirrors how heavy ``RST_Custom_RasterToGrid`` operates when the
+    raster CRS matches the grid SRID, which is the common parity-test scenario).
+
+    Custom cell IDs are BIGINT (positive signed int64 by construction:
+    ``cell_pos | (resolution << 56)``; max is well below 2^63).
+
+    ``coverage``/``assignment`` behave identically to the h3/quadbin/bng paths.
+    """
+    from databricks.labs.gbx.pygx import _custom
+
+    conf = _custom.conf_from_row(grid_conf)
+
+    # Validate resolution against the conf-derived maximum.
+    if resolution > conf.max_resolution:
+        raise ValueError(
+            f"raster->custom: resolution ({resolution}) exceeds max "
+            f"{conf.max_resolution} for this grid conf"
+        )
+
+    def _run(work_ds):
+        gt = work_ds.transform.to_gdal()  # (c, a, b, f, d, e) GDAL geotransform
+        out = []
+        for bi in range(1, work_ds.count + 1):
+            band = work_ds.read(bi).astype("float64")
+            mask = work_ds.read_masks(bi)  # 0 = invalid (nodata-derived)
+
+            if assignment == "centroid":
+                ys, xs = np.nonzero(mask)
+                if ys.size == 0:
+                    band_result = []
+                else:
+                    x_off = xs + 0.5
+                    y_off = ys + 0.5
+                    px = gt[0] + x_off * gt[1] + y_off * gt[2]
+                    py = gt[3] + x_off * gt[4] + y_off * gt[5]
+                    vals = band[ys, xs]
+
+                    # Scalar loop (like BNG): map each valid pixel centroid to a
+                    # custom cell id; -1 sentinel for out-of-bounds pixels.
+                    cids_raw = np.array(
+                        [
+                            _custom.point_to_cell_id_or_none(
+                                conf, float(x), float(y), resolution
+                            )
+                            or -1  # vectorscan: ok (no array API for custom)
+                            for x, y in zip(px, py)
+                        ],
+                        dtype="int64",
+                    )
+                    keep = cids_raw != -1
+                    cids = cids_raw[keep]
+                    vals = vals[keep]
+
+                    if cids.size == 0:
+                        band_result = []
+                    else:
+                        uniq, measures = _grouped_measures(cids, vals, agg)
+                        band_result = [
+                            {"cellID": int(cid), "measure": m}
+                            for cid, m in zip(uniq.tolist(), measures)
+                            # vectorscan: ok (per-cell)
+                        ]
+            else:  # covering
+                band_result = _covering_band(
+                    work_ds, bi, band, mask, resolution, "custom", agg, gt, conf=conf
+                )
+
+            if coverage == "complete":
+                band_result = _complete_coverage_pass(
+                    band_result, work_ds, resolution, "custom", agg, conf=conf
+                )
+
+            out.append(band_result)
+        return out
+
+    # No CRS reprojection for custom: the raster is expected in grid-native coords.
+    return _run(ds)

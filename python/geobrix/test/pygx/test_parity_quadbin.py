@@ -379,15 +379,15 @@ def test_quadbin_kloop_parity(spark_with_jar):
 
     def collect_kloop():
         """Collect kloop results at k=0,1,2 via the currently-registered SQL names."""
-        k0 = sorted(spark.sql(
-            f"SELECT gbx_quadbin_kloop({seed}L, 0) AS r"
-        ).collect()[0]["r"])
-        k1 = sorted(spark.sql(
-            f"SELECT gbx_quadbin_kloop({seed}L, 1) AS r"
-        ).collect()[0]["r"])
-        k2 = sorted(spark.sql(
-            f"SELECT gbx_quadbin_kloop({seed}L, 2) AS r"
-        ).collect()[0]["r"])
+        k0 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 0) AS r").collect()[0]["r"]
+        )
+        k1 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 1) AS r").collect()[0]["r"]
+        )
+        k2 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 2) AS r").collect()[0]["r"]
+        )
         return k0, k1, k2
 
     # ---- LIGHT first (heavy register OVERWRITES the gbx_quadbin_* SQL names) ----
@@ -409,17 +409,15 @@ def test_quadbin_kloop_parity(spark_with_jar):
 
     # === semantic invariants (verified against LIGHT; heavy must match above) ===
     # k=0 → exactly [seed]: the FROZEN kLoop(k=0) → [center] contract.
-    assert light[0] == [seed], (
-        f"kloop k=0 must return exactly [seed]; got {light[0]}"
-    )
+    assert light[0] == [seed], f"kloop k=0 must return exactly [seed]; got {light[0]}"
     # At the SF z10 cell (interior position), k=1 ring has exactly 8 cells.
-    assert len(light[1]) == 8, (
-        f"kloop k=1 at an interior quadbin cell must have 8 cells; got {len(light[1])}"
-    )
+    assert (
+        len(light[1]) == 8
+    ), f"kloop k=1 at an interior quadbin cell must have 8 cells; got {len(light[1])}"
     # Rings at different k values are pairwise disjoint (hollow-ring contract).
-    assert not (set(light[0]) & set(light[1])), (
-        f"k=0 and k=1 rings must be disjoint: overlap={set(light[0]) & set(light[1])}"
-    )
-    assert not (set(light[1]) & set(light[2])), (
-        f"k=1 and k=2 rings must be disjoint: overlap={set(light[1]) & set(light[2])}"
-    )
+    assert not (
+        set(light[0]) & set(light[1])
+    ), f"k=0 and k=1 rings must be disjoint: overlap={set(light[0]) & set(light[1])}"
+    assert not (
+        set(light[1]) & set(light[2])
+    ), f"k=1 and k=2 rings must be disjoint: overlap={set(light[1]) & set(light[2])}"

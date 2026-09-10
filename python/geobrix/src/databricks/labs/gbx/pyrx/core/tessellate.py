@@ -33,7 +33,7 @@ _WGS84 = "EPSG:4326"
 _BNG_EPSG = 27700
 _VALID_MODES = {"covering", "centroid"}
 _VALID_COVERAGES = {"sparse", "complete"}
-_VALID_GRIDS = frozenset({"h3", "quadbin", "bng"})
+_VALID_GRIDS = frozenset({"h3", "quadbin", "bng", "custom"})
 
 
 def _has_positive_area_overlap(cell_poly, bbox_poly) -> bool:
@@ -119,7 +119,8 @@ def _resolve_resolution(resolution, grid: str):
     """Validate and normalise resolution for the given grid.
 
     H3 and quadbin accept integer indices; BNG additionally accepts string keys
-    (e.g. ``"1km"``, ``"100m"``).
+    (e.g. ``"1km"``, ``"100m"``); custom accepts integer indices (validated
+    against conf.max_resolution at call time, not here).
     """
     if grid == "h3":
         resolution = int(resolution)
@@ -135,17 +136,20 @@ def _resolve_resolution(resolution, grid: str):
                 f"rst_quadbin_tessellate: resolution must be in [0, {QUADBIN_MAX_RES}]; "
                 f"got {resolution}"
             )
+    elif grid == "custom":
+        resolution = int(resolution)  # conf.max_resolution validated at use time
     else:  # bng
         resolution = _bng.get_resolution(resolution)
     return resolution
 
 
-def _polyfill_cells(bbox_poly, resolution, grid: str):
+def _polyfill_cells(bbox_poly, resolution, grid: str, conf=None):
     """Return the iterable of raw cell ids covering *bbox_poly* for *grid*.
 
     ``bbox_poly`` must be a shapely geometry in the work CRS for the grid:
-    WGS84 for h3/quadbin, EPSG:27700 for bng.  BNG applies the buffer-before-
-    polyfill fix internally.
+    WGS84 for h3/quadbin, EPSG:27700 for bng, grid-native for custom.
+    BNG applies the buffer-before-polyfill fix internally.
+    ``conf`` is required when ``grid="custom"`` (a ``CustomGridConf`` instance).
     """
     if grid == "h3":
         west, south, east, north = bbox_poly.bounds
@@ -155,13 +159,21 @@ def _polyfill_cells(bbox_poly, resolution, grid: str):
         return h3.polygon_to_cells_experimental(h3_bbox, resolution, contain="overlap")
     elif grid == "quadbin":
         return _quadbin.polyfill(bbox_poly, resolution)
+    elif grid == "custom":
+        from databricks.labs.gbx.pygx import _custom as _custom_mod
+
+        return _custom_mod.polyfill(conf, bbox_poly, resolution)
     else:  # bng — buffer so centroid-BFS doesn't miss boundary cells
         buf_radius = _bng.get_buffer_radius(resolution)
         return _bng.polyfill(bbox_poly.buffer(buf_radius), resolution)
 
 
-def _cell_geom(cell, grid: str):
-    """Return the cell polygon in the work CRS (WGS84 for h3/quadbin; 27700 for bng)."""
+def _cell_geom(cell, grid: str, conf=None):
+    """Return the cell polygon in the work CRS (WGS84 for h3/quadbin; 27700 for bng;
+    grid-native for custom).
+
+    ``conf`` is required when ``grid="custom"`` (a ``CustomGridConf`` instance).
+    """
     if grid == "h3":
         return _cell_polygon_lonlat(cell)
     elif grid == "quadbin":
@@ -169,26 +181,37 @@ def _cell_geom(cell, grid: str):
         # transparently (reads the geometry; SRID is not used here because
         # reprojection is handled separately by the need_reproject branch).
         return shapely.wkb.loads(_quadbin.as_wkb(cell))
+    elif grid == "custom":
+        from databricks.labs.gbx.pygx import _custom as _custom_mod
+
+        return _custom_mod.cell_id_to_polygon(conf, cell)
     else:  # bng
         return _bng.cell_id_to_geometry(cell)  # already EPSG:27700
 
 
-def _cell_is_valid(cell, grid: str) -> bool:
-    """Return ``True`` unless the cell is structurally invalid (BNG only)."""
+def _cell_is_valid(cell, grid: str, conf=None) -> bool:
+    """Return ``True`` unless the cell is structurally invalid (BNG only).
+
+    ``conf`` is unused but accepted for API uniformity with the other oracles.
+    """
     if grid == "bng":
         return bool(_bng.is_valid(cell))
-    return True
+    return True  # h3, quadbin, custom: always structurally valid
 
 
-def _encode_cellid(cell, grid: str):
+def _encode_cellid(cell, grid: str, conf=None):
     """Encode the raw cell id to the Python type yielded to callers.
 
-    H3 and quadbin yield signed int64; BNG yields a String id (e.g. ``"TQ38"``).
+    H3 and quadbin yield signed int64; BNG yields a String id (e.g. ``"TQ38"``);
+    custom yields a plain int (cell IDs fit in signed int64 by construction).
+    ``conf`` is accepted for API uniformity but unused.
     """
     if grid == "h3":
         return _h3_str_to_signed_int64(cell)
     elif grid == "quadbin":
         return _quadbin_uint64_to_signed_int64(cell)
+    elif grid == "custom":
+        return int(cell)  # already int64; positive and fits in signed int64
     else:  # bng
         return _bng.format(cell)
 
@@ -237,12 +260,15 @@ def _build_empty_chip(work_ds) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _centroid_chips_inner(work_ds, resolution, grid: str):
+def _centroid_chips_inner(work_ds, resolution, grid: str, conf=None):
     """Inner centroid-partition loop for an already-prepared dataset.
 
     For h3/quadbin ``work_ds`` is the original dataset (pixel coords are
-    reprojected to WGS84 if needed).  For BNG ``work_ds`` is already in
-    EPSG:27700 and pixel coords are used directly as eastings/northings.
+    reprojected to WGS84 if needed; CRS-less -> use coords directly).
+    For BNG ``work_ds`` is already in EPSG:27700 and pixel coords are used
+    directly as eastings/northings.  For custom the coords are grid-native.
+
+    ``conf`` is a ``CustomGridConf`` instance when ``grid="custom"``.
 
     Yields ``(cellid, gtiff_bytes)`` pairs.
     """
@@ -253,7 +279,8 @@ def _centroid_chips_inner(work_ds, resolution, grid: str):
 
     if grid in ("h3", "quadbin"):
         dst_epsg = work_ds.crs.to_epsg() if work_ds.crs else None
-        if dst_epsg != 4326:
+        # CF3: guard CRS-None -- when crs is None treat as grid-native (no reprojection).
+        if dst_epsg is not None and dst_epsg != 4326:
             from rasterio.warp import transform as warp_transform
 
             coord_x, coord_y = warp_transform(
@@ -262,9 +289,14 @@ def _centroid_chips_inner(work_ds, resolution, grid: str):
             coord_x = np.asarray(coord_x, dtype="float64")
             coord_y = np.asarray(coord_y, dtype="float64")
         else:
-            coord_x, coord_y = xs, ys  # already WGS84; x=lon, y=lat
-    else:  # bng: work_ds already EPSG:27700; xs=eastings, ys=northings
+            coord_x, coord_y = xs, ys  # already WGS84 or CRS-less (grid-native)
+    else:  # bng or custom: use native coords directly
         coord_x, coord_y = xs, ys
+
+    # Pre-import custom module once outside the pixel loop.
+    _custom_mod = None
+    if grid == "custom":
+        from databricks.labs.gbx.pygx import _custom as _custom_mod  # noqa: F841
 
     data = work_ds.read()  # shape (bands, height, width)
     nodata = work_ds.nodata
@@ -282,6 +314,10 @@ def _centroid_chips_inner(work_ds, resolution, grid: str):
             cell = h3.latlng_to_cell(cy, cx, resolution)  # latlng_to_cell(lat, lon)
         elif grid == "quadbin":
             cell = _quadbin.point_as_cell(cx, cy, resolution)  # (lon, lat)
+        elif grid == "custom":
+            cell = _custom_mod.point_to_cell_id_or_none(conf, cx, cy, resolution)
+            if cell is None:
+                continue  # pixel outside grid bounds — skip
         else:  # bng
             cell = _bng.point_to_cell_id(cx, cy, resolution)  # (easting, northing)
             if not _bng.is_valid(cell):
@@ -306,15 +342,18 @@ def _centroid_chips_inner(work_ds, resolution, grid: str):
                 dst.write(chip)
             raster_bytes = mf.read()
 
-        yield (_encode_cellid(cell, grid), raster_bytes)
+        yield (_encode_cellid(cell, grid, conf=conf), raster_bytes)
 
 
-def _centroid_chips_generic(ds, resolution, grid: str):
+def _centroid_chips_generic(ds, resolution, grid: str, conf=None):
     """Consolidated centroid-partition dispatcher for all grids.
 
     BNG warps the dataset to EPSG:27700 first (via :func:`_as_bng_dataset`).
     H3 and quadbin use the original dataset, reprojecting pixel coords to WGS84
-    inside :func:`_centroid_chips_inner` if needed.
+    inside :func:`_centroid_chips_inner` if needed (CRS-less -> grid-native).
+    Custom uses the original dataset directly (grid-native coordinates).
+
+    ``conf`` is a ``CustomGridConf`` instance when ``grid="custom"``.
 
     Yields ``(cellid, gtiff_bytes)`` pairs.
     """
@@ -322,36 +361,48 @@ def _centroid_chips_generic(ds, resolution, grid: str):
         with _as_bng_dataset(ds) as work_ds:
             yield from _centroid_chips_inner(work_ds, resolution, grid)
     else:
-        yield from _centroid_chips_inner(ds, resolution, grid)
+        yield from _centroid_chips_inner(ds, resolution, grid, conf=conf)
 
 
-def _centroid_complete(ds, resolution, grid: str):
+def _centroid_complete(ds, resolution, grid: str, conf=None):
     """centroid + complete coverage: yield centroid chips, then synthetic empty
     chips for covered cells that received no centroid pixels.
 
     Extracted from :func:`iter_tessellate` to stay within C901 complexity limit.
+
+    ``conf`` is a ``CustomGridConf`` instance when ``grid="custom"``.
+
+    CF3 guard: when ``ds.crs is None`` (CRS-less raster), ``ds.bounds`` are used
+    directly as grid-native bounds instead of calling ``transform_bounds`` (which
+    raises on a None CRS).
     """
     centroid_ids = set()
-    for cellid, raster_bytes in _centroid_chips_generic(ds, resolution, grid):
+    for cellid, raster_bytes in _centroid_chips_generic(
+        ds, resolution, grid, conf=conf
+    ):
         centroid_ids.add(cellid)
         yield (cellid, raster_bytes)
     # Compute covering set to find covered-but-empty cells.
     _ctx = _as_bng_dataset(ds) if grid == "bng" else nullcontext(ds)
     with _ctx as work_ds:
-        if grid == "bng":
+        if grid in ("bng", "custom"):
+            # BNG: work_ds already EPSG:27700; custom: grid-native coords.
             west, south, east, north = work_ds.bounds
+        elif ds.crs is None:
+            # CF3 guard (~L344): CRS-less raster — use bounds directly (grid-native).
+            west, south, east, north = ds.bounds
         else:
             west, south, east, north = transform_bounds(ds.crs, _WGS84, *ds.bounds)
         bbox_poly = box(west, south, east, north)
-        covered = _polyfill_cells(bbox_poly, resolution, grid)
+        covered = _polyfill_cells(bbox_poly, resolution, grid, conf=conf)
         empty_chip = _build_empty_chip(work_ds)
         for cell in covered:
-            if not _cell_is_valid(cell, grid):
+            if not _cell_is_valid(cell, grid, conf=conf):
                 continue
-            cell_poly = _cell_geom(cell, grid)
+            cell_poly = _cell_geom(cell, grid, conf=conf)
             if not _has_positive_area_overlap(cell_poly, bbox_poly):
                 continue
-            encoded = _encode_cellid(cell, grid)
+            encoded = _encode_cellid(cell, grid, conf=conf)
             if encoded not in centroid_ids:
                 yield (encoded, empty_chip)
 
@@ -362,7 +413,12 @@ def _centroid_complete(ds, resolution, grid: str):
 
 
 def iter_tessellate(
-    ds, resolution, grid: str, mode: str = "covering", coverage: str = None
+    ds,
+    resolution,
+    grid: str,
+    mode: str = "covering",
+    coverage: str = None,
+    conf=None,
 ):
     """Generic streaming tessellate: yield ``(cellid, gtiff_bytes)`` per overlapping cell.
 
@@ -381,8 +437,9 @@ def iter_tessellate(
                     - BNG: int index ``±1..±6`` or string key (e.g.
                       ``"1km"``, ``"100m"``); resolved via
                       ``pygx._bng.get_resolution``
+                    - Custom: int in ``[0, conf.max_resolution]``
 
-        grid:       One of ``"h3"``, ``"quadbin"``, ``"bng"``.
+        grid:       One of ``"h3"``, ``"quadbin"``, ``"bng"``, ``"custom"``.
         mode:       ``"covering"`` (default) — clip each overlapping cell
                     boundary; ``"centroid"`` — strict pixel partition: each
                     valid pixel assigned to exactly one cell by its centroid.
@@ -393,11 +450,17 @@ def iter_tessellate(
                     ``"sparse"`` for centroid (preserves the pre-Task-8
                     behaviour of emitting only cells with valid pixels).
                     Pass explicitly to override.
+        conf:       ``CustomGridConf`` instance.  Required when
+                    ``grid="custom"``; ignored for all other grids.
 
     Yields:
         ``(cellid, raster_bytes)`` tuples, one per overlapping cell.
-        ``cellid`` is a signed int64 for h3 and quadbin, a BNG String id
-        (e.g. ``"TQ38"``) for bng.
+        ``cellid`` is a signed int64 for h3, quadbin, and custom; a BNG String
+        id (e.g. ``"TQ38"``) for bng.
+
+    CF3 guard: when ``ds.crs is None``, the raster bounds are used directly as
+    grid-native bounds for the covering/centroid-complete polyfill instead of
+    calling ``transform_bounds`` (which raises on a None CRS).
     """
     if grid not in _VALID_GRIDS:
         raise ValueError(
@@ -423,33 +486,42 @@ def iter_tessellate(
     if mode == "centroid":
         if coverage == "sparse":
             # Default centroid behaviour: only cells with valid pixels are emitted.
-            yield from _centroid_chips_generic(ds, resolution, grid)
+            yield from _centroid_chips_generic(ds, resolution, grid, conf=conf)
         else:
-            yield from _centroid_complete(ds, resolution, grid)
+            yield from _centroid_complete(ds, resolution, grid, conf=conf)
         return
 
     # ---- covering mode -------------------------------------------------------
     # BNG: warp the dataset to EPSG:27700 and operate in that CRS throughout.
     # H3 / quadbin: use the original dataset; bbox/polyfill/keep-test live in
     # WGS84; cell polys are reprojected to ds.crs only for the rasterio clip.
+    # Custom: use the original dataset in its grid-native CRS.
     _ctx = _as_bng_dataset(ds) if grid == "bng" else nullcontext(ds)
 
     with _ctx as work_ds:
-        if grid == "bng":
+        if grid in ("bng", "custom"):
+            # BNG: work_ds already EPSG:27700; custom: grid-native coords.
             west, south, east, north = work_ds.bounds
+        elif ds.crs is None:
+            # CF3 guard (~L441): CRS-less raster — use bounds directly (grid-native).
+            west, south, east, north = ds.bounds
         else:
             west, south, east, north = transform_bounds(ds.crs, _WGS84, *ds.bounds)
         bbox_poly = box(west, south, east, north)
 
-        covered = _polyfill_cells(bbox_poly, resolution, grid)
+        covered = _polyfill_cells(bbox_poly, resolution, grid, conf=conf)
 
         dst_epsg = work_ds.crs.to_epsg() if work_ds.crs else None
-        need_reproject = grid != "bng" and dst_epsg != 4326
+        # Custom and BNG never need cell-polygon reprojection (both are grid-native).
+        # For h3/quadbin, reproject only when the work_ds CRS is known and non-4326.
+        need_reproject = (
+            grid not in ("bng", "custom") and dst_epsg is not None and dst_epsg != 4326
+        )
 
         for cell in covered:
-            if not _cell_is_valid(cell, grid):
+            if not _cell_is_valid(cell, grid, conf=conf):
                 continue
-            cell_poly = _cell_geom(cell, grid)
+            cell_poly = _cell_geom(cell, grid, conf=conf)
             # Positive-area covering keep-test: drop edge-only-touching cells
             # (zero pixel overlap on grid-aligned tiles); keep real areal overlap
             # including all-NoData-but-overlapping cells.  The clip below remains
@@ -474,7 +546,7 @@ def iter_tessellate(
                 continue
             if coverage == "sparse" and _chip_is_all_nodata(clipped):
                 continue
-            yield (_encode_cellid(cell, grid), clipped)
+            yield (_encode_cellid(cell, grid, conf=conf), clipped)
 
 
 # ---------------------------------------------------------------------------

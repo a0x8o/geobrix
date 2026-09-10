@@ -465,19 +465,27 @@ def test_custom_kloop_distance_parity(spark_with_jar):
         ).collect()[0]["c"]
 
         # kloop at interior cell: k=0,1,2
-        kl0 = sorted(spark.sql(
-            f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 0) AS r"
-        ).collect()[0]["r"])
-        kl1 = sorted(spark.sql(
-            f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 1) AS r"
-        ).collect()[0]["r"])
-        kl2 = sorted(spark.sql(
-            f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 2) AS r"
-        ).collect()[0]["r"])
+        kl0 = sorted(
+            spark.sql(
+                f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 0) AS r"
+            ).collect()[0]["r"]
+        )
+        kl1 = sorted(
+            spark.sql(
+                f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 1) AS r"
+            ).collect()[0]["r"]
+        )
+        kl2 = sorted(
+            spark.sql(
+                f"SELECT gbx_custom_kloop({center}L, {_GRID_27700}, 2) AS r"
+            ).collect()[0]["r"]
+        )
         # kloop at max-corner (boundary clamping — some cells in the ring are clipped).
-        kl_corner1 = sorted(spark.sql(
-            f"SELECT gbx_custom_kloop({maxcorner}L, {_GRID_27700}, 1) AS r"
-        ).collect()[0]["r"])
+        kl_corner1 = sorted(
+            spark.sql(
+                f"SELECT gbx_custom_kloop({maxcorner}L, {_GRID_27700}, 1) AS r"
+            ).collect()[0]["r"]
+        )
 
         # distance: cell→itself=0, center→neighbor=1
         dist_self = spark.sql(
@@ -487,7 +495,11 @@ def test_custom_kloop_distance_parity(spark_with_jar):
             f"SELECT gbx_custom_distance({center}L, {_GRID_27700}, {neighbor}L) AS d"
         ).collect()[0]["d"]
 
-        return (center, neighbor, maxcorner), (kl0, kl1, kl2, kl_corner1), (dist_self, dist_adj)
+        return (
+            (center, neighbor, maxcorner),
+            (kl0, kl1, kl2, kl_corner1),
+            (dist_self, dist_adj),
+        )
 
     # ---- LIGHT first (heavy register OVERWRITES the gbx_custom_* SQL names) ----
     gx.register(spark)
@@ -517,30 +529,28 @@ def test_custom_kloop_distance_parity(spark_with_jar):
         )
 
     # === distance parity (EXACT integer) ===
-    assert light_dist[0] == heavy_dist[0], (
-        f"distance(cell, cell) mismatch: light={light_dist[0]} heavy={heavy_dist[0]}"
-    )
-    assert light_dist[1] == heavy_dist[1], (
-        f"distance(center, neighbor) mismatch: light={light_dist[1]} heavy={heavy_dist[1]}"
-    )
+    assert (
+        light_dist[0] == heavy_dist[0]
+    ), f"distance(cell, cell) mismatch: light={light_dist[0]} heavy={heavy_dist[0]}"
+    assert (
+        light_dist[1] == heavy_dist[1]
+    ), f"distance(center, neighbor) mismatch: light={light_dist[1]} heavy={heavy_dist[1]}"
 
     # === semantic invariants (checked on LIGHT; heavy must match via the parity asserts above) ===
     # k=0 → exactly [center]: the FROZEN kLoop(k=0) → [center] contract.
-    assert light_kl[0] == [center], (
-        f"kloop k=0 must return exactly [center]: got {light_kl[0]}"
-    )
+    assert light_kl[0] == [
+        center
+    ], f"kloop k=0 must return exactly [center]: got {light_kl[0]}"
     # Disjointness: adjacent rings must not overlap.
-    assert not (set(light_kl[0]) & set(light_kl[1])), (
-        f"k=0 and k=1 rings must be disjoint: overlap={set(light_kl[0]) & set(light_kl[1])}"
-    )
-    assert not (set(light_kl[1]) & set(light_kl[2])), (
-        f"k=1 and k=2 rings must be disjoint: overlap={set(light_kl[1]) & set(light_kl[2])}"
-    )
+    assert not (
+        set(light_kl[0]) & set(light_kl[1])
+    ), f"k=0 and k=1 rings must be disjoint: overlap={set(light_kl[0]) & set(light_kl[1])}"
+    assert not (
+        set(light_kl[1]) & set(light_kl[2])
+    ), f"k=1 and k=2 rings must be disjoint: overlap={set(light_kl[1]) & set(light_kl[2])}"
     # distance(cell, cell) == 0 (reflexivity).
-    assert light_dist[0] == 0, (
-        f"distance(cell, cell) must be 0: got {light_dist[0]}"
-    )
+    assert light_dist[0] == 0, f"distance(cell, cell) must be 0: got {light_dist[0]}"
     # distance between cells that are exactly 1 grid step apart == 1.
-    assert light_dist[1] == 1, (
-        f"distance between adjacent cells (1 step apart) must be 1: got {light_dist[1]}"
-    )
+    assert (
+        light_dist[1] == 1
+    ), f"distance between adjacent cells (1 step apart) must be 1: got {light_dist[1]}"
