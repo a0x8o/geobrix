@@ -38,7 +38,7 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
       */
 
     override def kRing(cellID: Long, k: Int): Seq[Long] = {
-        assert(k >= 0, "k must be at least 0")
+        if (k < 0) throw new IllegalArgumentException(s"k must be >= 0; got $k")
 
         val res = getCellResolution(cellID)
 
@@ -72,7 +72,8 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
       *   A collection of cell IDs forming a k loop.
       */
     override def kLoop(cellID: Long, k: Int): Seq[Long] = {
-        assert(k >= 1, "k must be at least 1")
+        if (k == 0) return Seq(cellID)
+        if (k < 0) throw new IllegalArgumentException(s"k must be >= 0; got $k")
         val ring = kRing(cellID, k)
         val innerRing = kRing(cellID, k - 1)
         ring.diff(innerRing)
@@ -309,6 +310,9 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
         conf.rootCellCountY * Math.pow(conf.cellSplits, resolution).toLong
     }
 
+    /** Chebyshev grid distance between two cells: min k such that b ∈ kRing(a, k), i.e.
+      * max(|dx|, |dy|) in cell-position units. Consistent with the kRing/kLoop ring definition.
+      */
     def distance(cellId: Long, cellId2: Long): Long = {
         val resolution1 = getCellResolution(cellId)
         val resolution2 = getCellResolution(cellId2)
@@ -318,9 +322,10 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
         val x2 = getCellCenterX(getCellPositionX(cellId2, resolution2), resolution2)
         val y1 = getCellCenterY(getCellPositionY(cellId, resolution1), resolution1)
         val y2 = getCellCenterY(getCellPositionY(cellId2, resolution2), resolution2)
-        // Manhattan distance with edge size precision
-        val distance = math.abs((x1 - x2) / edgeSizeX) + math.abs((y1 - y2) / edgeSizeY)
-        distance.toLong
+        // Chebyshev (grid-ring) distance: max of absolute axis deltas in cell-position units
+        val dx = math.abs((x1 - x2) / edgeSizeX)
+        val dy = math.abs((y1 - y2) / edgeSizeY)
+        math.max(dx, dy).toLong
     }
 
     private def getCellCenterX(cellPositionX: Long, resolution: Int) = {

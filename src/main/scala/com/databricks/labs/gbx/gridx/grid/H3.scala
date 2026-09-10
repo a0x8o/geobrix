@@ -225,6 +225,7 @@ object H3 extends GridSystem {
 
     /** Cell IDs at exactly distance n from cellID (hexRing); falls back to kRing+filter for pentagons. */
     override def kLoop(cellID: Long, n: Int): Seq[Long] = {
+        if (n == 0) return Seq(cellID)
         // HexRing crashes in case of pentagons.
         // Ensure a KRing fallback in said case.
         require(cellID >= 0L)

@@ -304,6 +304,7 @@ object BNG extends GridSystem {
       *   A collection of cell IDs forming a k ring.
       */
     override def kRing(cellID: Long, n: Int): Seq[Long] = {
+        if (n == 0) return Seq(cellID)
         if (n == 1) (Iterator.single(cellID) ++ kLoop(cellID, 1)).toSeq
         else (Iterator.single(cellID) ++ (1 to n).iterator.flatMap(k => kLoop(cellID, k))).toSeq
     }
@@ -319,6 +320,7 @@ object BNG extends GridSystem {
       *   A collection of cell IDs forming a k disk.
       */
     override def kLoop(cellID: Long, k: Int): Seq[Long] = {
+        if (k == 0) return Seq(cellID)
         val digits = cellDigits(cellID)
         val resolution = getResolution(digits)
         val edgeSize = getEdgeSize(resolution)

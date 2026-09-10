@@ -30,9 +30,15 @@ trait GridSystem extends Serializable {
    * applies one shared keep-test to whatever this method returns.
    */
   def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long]
-  /** All cells within Chebyshev/grid distance ≤ k of cellID (inclusive of center). k=0 → Seq(cellID). */
+  /** All cells within Chebyshev grid-ring distance ≤ k of cellID (inclusive of center).
+    * Distance is defined as the minimum k such that b ∈ kRing(a, k) — equivalently,
+    * max(|dx|, |dy|) in cell-position units for rectangular grids, or the H3 hex distance.
+    * k=0 → Seq(cellID). All four grid implementations MUST honour this contract.
+    */
   def kRing(cellID: Long, k: Int): Seq[Long]
-  /** Cells at EXACTLY grid distance k from cellID (hollow ring). k=0 → Seq(cellID). */
+  /** Cells at EXACTLY Chebyshev grid-ring distance k from cellID (hollow ring).
+    * k=0 → Seq(cellID) for all grid implementations.
+    */
   def kLoop(cellID: Long, k: Int): Seq[Long]
   /**
    * How this grid renders a cell id in raster->grid OUTPUT.

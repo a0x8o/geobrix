@@ -39,4 +39,40 @@ class GridSystemKLoopTest extends AnyFunSuite {
         r1.intersect(r2) shouldBe empty
     }
 
+    // M1: cross-grid k=0 contract via GridSystem trait
+    test("BNG kLoop(cell, 0) returns Seq(cellID) via GridSystem trait") {
+        // TQ388792 is a valid interior BNG cell
+        val cell: Long = BNG.parse("TQ388792")
+        val g: GridSystem = BNG
+        val loop0 = g.kLoop(cell, 0)
+        loop0 shouldBe Seq(cell)
+    }
+
+    test("CustomGridSystem kLoop(cell, 0) returns Seq(cellID) via GridSystem trait") {
+        val conf = GridConf(
+            boundXMin     = 0L,
+            boundXMax     = 100L,
+            boundYMin     = 0L,
+            boundYMax     = 100L,
+            cellSplits    = 2,
+            rootCellSizeX = 10,
+            rootCellSizeY = 10,
+            crsID         = Some(32633)
+        )
+        val cell: Long = CustomGridSystem(conf).pointToCellID(15.0, 15.0, 0)
+        val g: GridSystem = CustomGridSystem(conf)
+        val loop0 = g.kLoop(cell, 0)
+        loop0 shouldBe Seq(cell)
+    }
+
+    test("BNG kRing(cell, 0) returns Seq(cellID)") {
+        val cell: Long = BNG.parse("TQ388792")
+        BNG.kRing(cell, 0) shouldBe Seq(cell)
+    }
+
+    test("H3 kLoop(cell, 0) returns Seq(cellID)") {
+        val cell = H3.pointToCellID(-0.1, 51.5, 8)
+        H3.kLoop(cell, 0) shouldBe Seq(cell)
+    }
+
 }

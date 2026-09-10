@@ -8,14 +8,15 @@ import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.types.{DataType, LongType}
 
-/** Catalyst expression: returns the grid distance between two custom-grid cells.
+/** Catalyst expression: returns the Chebyshev grid-ring distance between two custom-grid cells.
   *
-  * Distance is computed as the Manhattan distance in grid steps between the cell centers
+  * Distance is defined as max(|dx|, |dy|) in cell-position units — the minimum k such that
+  * the second cell appears in kRing(firstCell, k). Consistent with the kRing/kLoop ring semantics.
   * (from [[com.databricks.labs.gbx.gridx.grid.CustomGridSystem#distance]]).
   *
   * Arguments: cellExpr1 (BIGINT cell ID), gridExpr (grid-spec STRUCT), cellExpr2 (BIGINT cell ID).
   *
-  * Returns: BIGINT grid distance.
+  * Returns: BIGINT Chebyshev grid distance.
   */
 case class Custom_Distance(
     cellExpr1: Expression,
