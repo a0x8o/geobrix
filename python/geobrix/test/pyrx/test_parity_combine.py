@@ -321,6 +321,10 @@ def _parity_compare(light_bytes: bytes, heavy_bytes: bytes, label: str, tol=1e-9
     sentinel = light_nd if light_nd is not None else (heavy_nd if heavy_nd is not None else None)
     if sentinel is not None:
         light_nodata_mask = light_arr == sentinel
+        # Deliberately reuse the same sentinel for both masks: the guard above
+        # verified light_nd ≈ heavy_nd within tol, so they are the same value
+        # and building both masks from the shared sentinel is equivalent to
+        # computing them independently.
         heavy_nodata_mask = heavy_arr == sentinel
         if not np.array_equal(light_nodata_mask, heavy_nodata_mask):
             mismatch_idx = np.where(light_nodata_mask != heavy_nodata_mask)[0].tolist()[:8]
@@ -414,7 +418,7 @@ def test_rst_align_to_parity(spark_with_jar):
       2. Both outputs have the same CRS as the reference.
       3. Pixel arrays match within 1e-9.
 
-    The reference tile is a uniform 8×8 EPSG:27700 grid in the London area;
+    The reference tile is a uniform 10×10 EPSG:27700 grid in the London area;
     the source is a 10×10 EPSG:4326 tile covering a similar footprint.  After
     nearest-neighbour warp both tiers must produce the same pixel array.
     """
@@ -440,11 +444,12 @@ def test_rst_align_to_parity(spark_with_jar):
     # Phase 2: heavy (overwrites SQL name).
     heavy_bytes = _collect_align_heavy(spark)
 
-    # Grid parity: both must match the reference dimensions and CRS.
+    # Grid parity: both must match the reference dimensions, geotransform, and CRS.
     from databricks.labs.gbx.pyrx import _serde
 
     with _serde.open_tile(ref_bytes) as ref_ds:
         ref_w, ref_h = ref_ds.width, ref_ds.height
+        ref_transform = ref_ds.transform
         ref_crs_str = str(ref_ds.crs)
 
     for label, out_bytes in [("light", light_bytes), ("heavy", heavy_bytes)]:
@@ -454,6 +459,10 @@ def test_rst_align_to_parity(spark_with_jar):
             )
             assert ds.height == ref_h, (
                 f"rst_align_to {label}: height {ds.height} != ref {ref_h}"
+            )
+            assert ds.transform == ref_transform, (
+                f"rst_align_to {label}: geotransform {ds.transform} != ref {ref_transform}; "
+                "output does not carry the reference grid's extent/resolution"
             )
             out_crs_str = str(ds.crs)
         # CRS must match (try pyproj equivalence, fall back to string).

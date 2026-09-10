@@ -72,6 +72,7 @@ gbx_rst_bng_rasterize_agg
 gbx_rst_bng_tessellate
 gbx_rst_quadbin_rasterize_agg
 gbx_rst_quadbin_tessellate
+gbx_rst_align_to
 gbx_rst_asformat
 gbx_rst_clip
 gbx_rst_combineavg
@@ -81,7 +82,6 @@ gbx_rst_combinemedian
 gbx_rst_combinesum
 gbx_rst_combinestddev
 gbx_rst_combinecount
-gbx_rst_align_to
 gbx_rst_convolve
 gbx_rst_derivedband
 gbx_rst_filter
