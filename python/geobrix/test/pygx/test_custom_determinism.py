@@ -10,11 +10,23 @@ R2 — Incomparable structs
     cell id from grid A must NOT appear in the output of grid B (different struct
     → different, incomparable ids).
 
-R3 — Bounds-contain-extent guard (heavy tier, integration)
-    When the raster's extent is NOT fully contained within the custom grid's
-    declared bounds, the heavy Scala expression raises an IllegalArgumentException
-    naming the offending bound.  The light tier has no equivalent guard and is
-    deliberately NOT tested here for this property.
+R3 — Out-of-bounds behaviour (heavy tier, integration)
+    Out-of-bounds behaviour is NOT uniform across the custom raster surface, and
+    the honest statement of it is:
+
+      * ``gbx_rst_custom_rastertogrid*`` and ``gbx_rst_custom_tessellate`` wrap
+        their eval in ``RST_ErrorHandler.safeEval`` (RST_Custom_RasterToGrid.scala,
+        RST_Custom_Tessellate.scala:45), so an out-of-bounds grid DEGRADES to a
+        null tile + WARN — the repo's standard rst_* error-degradation policy.
+        They do NOT raise on the LATERAL/SQL path.  This is accepted behaviour.
+      * ``gbx_rst_custom_rasterize_agg`` (RST_Custom_RasterizeAgg) has NO safeEval
+        wrapper: ``RasterizeBurn.burn`` calls ``CustomGridSystem.pointToCellID``
+        per canvas pixel, whose ``require`` guard throws an
+        ``IllegalStateException`` naming the offending coordinate/bound when the
+        (kring-expanded) canvas extends past the grid.  R3 asserts on THAT path.
+
+    The light tier deliberately has no equivalent hard guard and is not tested
+    here for this property.
 
 R1/R2 use the light tier (pyrx) only — no JAR required.
 R3 is an integration test requiring the geobrix JAR.
@@ -301,21 +313,23 @@ def spark_with_jar():
 
 @pytest.mark.integration
 def test_r3_oob_raster_heavy_raises_clear_error(spark_with_jar):
-    """R3: heavy custom rasterize_agg raises a clear error for out-of-bounds cells.
+    """R3: heavy custom rasterize_agg raises a bounds error for an out-of-bounds canvas.
 
-    The heavy UDAF (RST_Custom_RasterizeAgg) has NO safeEval wrapper, so
-    an out-of-bounds cell centroid during RasterizeBurn.burn propagates as a real
-    Spark job failure.
+    Only ``gbx_rst_custom_rasterize_agg`` raises on out-of-bounds.  The
+    ``rastertogrid``/``tessellate`` expressions wrap their eval in
+    ``RST_ErrorHandler.safeEval`` and DEGRADE an out-of-bounds grid to a null tile
+    + WARN (the standard rst_* policy) — they do NOT raise on the LATERAL/SQL path,
+    so R3 cannot be asserted through them.  The UDAF has no safeEval wrapper:
+    ``RasterizeBurn.burn`` maps every canvas pixel centroid through
+    ``CustomGridSystem.pointToCellID``, whose ``require`` guard throws an
+    ``IllegalStateException`` naming the offending coordinate/bound
+    ("... out of bounds <min>-<max>") when the canvas extends past the grid.
 
-    The rastertogrid LATERAL expressions use safeEval (which silences errors and
-    returns null rows), so R3 is tested via the UDAF path instead.
-
-    Grid A bounds: x=[529000,533000], y=[179000,183000].
-    OOB cell: a cell from _GRID_B (entirely outside _GRID_A's bounds) is burned
-    into _GRID_A → the cell centroid is outside the grid → pointToCellID raises.
-
-    Alternative: use a cell from inside _GRID_A but with a tiny out-of-bounds
-    pixel_size so the canvas extends past the grid boundary.
+    Here a valid in-grid cell is burned with a large ``pixel_size`` and
+    ``kring_pad=5`` so the derived canvas expands well beyond _GRID_A's bounds
+    (x=[529000,533000], y=[179000,183000]), forcing the guard to fire in the
+    executor.  The assertion checks that the failure is that bounds guard, not the
+    tautology that "some exception was raised".
     """
     from pyspark.sql import functions as f
 
@@ -371,9 +385,20 @@ def test_r3_oob_raster_heavy_raises_clear_error(spark_with_jar):
             ).alias("tile")
         ).collect()
 
-    # Any Spark exception is acceptable — the test verifies the path raises, not
-    # the exact message, since the error is inside the executor JVM and may be
-    # wrapped differently across Spark versions.
-    assert (
-        exc_info.value is not None
-    ), "R3: heavy rasterize_agg did not raise for out-of-bounds kring expansion"
+    # Meaningful assertion: the failure must be the out-of-bounds guard in
+    # CustomGridSystem.pointToCellID (fired per canvas pixel inside
+    # RasterizeBurn.burn), not just "some exception". The Java message
+    # ("X/Y coordinate (...) out of bounds <min>-<max>") surfaces through the
+    # Spark/Py4J wrapper; walk the exception chain so a wrapper cannot hide it.
+    parts = []
+    err = exc_info.value
+    seen = set()
+    while err is not None and id(err) not in seen:
+        seen.add(id(err))
+        parts.append(str(err))
+        err = getattr(err, "__cause__", None) or getattr(err, "__context__", None)
+    combined = " | ".join(parts).lower()
+    assert "out of bounds" in combined, (
+        "R3: expected the CustomGridSystem.pointToCellID out-of-bounds guard to "
+        f"fire for the kring-expanded canvas; got exception chain: {combined[:600]}"
+    )

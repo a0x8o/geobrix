@@ -209,6 +209,27 @@ def _covering_raster():
     return _gtiff_bytes(data, epsg=27700, origin=(521000.0, 204000.0), px=18000.0)
 
 
+def _small_pixel_covering_raster():
+    """9x9 EPSG:27700 raster, 2000 m pixels (SUB-CELL: the grid's cells are 10000 m).
+
+    Origin (521000, 204000) → extent [521000, 186000, 539000, 204000], the SAME
+    footprint as ``_covering_raster`` but paved with 81 sub-cell 2000 m pixels
+    instead of one 18000 m pixel.  It spans the 4 inner cells (cols 1-2, rows 2-3).
+
+    THIS is the regime the pre-fix light tier got wrong: each 2000 m pixel is far
+    smaller than a 10000 m cell, so per-pixel centroid polyfill finds NO cell centre
+    inside most pixels → the un-buffered light covering path returned zero cells for
+    them and dropped their mass (missing cells, lost weight), while heavy's buffered
+    ``coveringCandidateCells`` found the containing cell and kept it.  With the buffer
+    fix the two tiers must agree exactly.
+
+    Footprint is strictly interior (10000 m buffer stays within the grid bounds), so
+    heavy's buffered enumeration does not hit the out-of-bounds guard.
+    """
+    data = np.arange(1, 82, dtype="float32").reshape(9, 9)
+    return _gtiff_bytes(data, epsg=27700, origin=(521000.0, 204000.0), px=2000.0)
+
+
 # ---------------------------------------------------------------------------
 # Helper: add grid struct column to a DataFrame
 # ---------------------------------------------------------------------------
@@ -375,14 +396,11 @@ def test_custom_rastertogrid_centroid_complete_parity(spark_with_jar, agg):
 def test_custom_rastertogrid_covering_sparse_parity(spark_with_jar, agg):
     """Custom rastertogrid covering+sparse: exact cell-set + measure within 1e-6.
 
-    Uses a single large pixel (20000 m) whose bbox contains all 4 inner cell
-    centroids.  This guarantees both tiers agree: the light per-pixel polyfill
-    finds the same 4 cells as the heavy per-raster-bbox polyfill.
-
-    NOTE: the light-tier covering algorithm (per-pixel centroid polyfill) diverges
-    from heavy (per-raster-bbox polyfill) when pixels are smaller than the inter-
-    centroid spacing (~10km here).  That regime is not tested here; see the task-8
-    report for details on the covering divergence.
+    Uses a single large pixel (18000 m) whose footprint overlaps all 4 inner cells.
+    Companion to the sub-cell case below: this locks the pixel>=cell regime while
+    ``test_custom_rastertogrid_covering_smallpixel_parity`` exercises the sub-cell
+    regime that used to diverge. Both tiers must produce the same 4-cell set with
+    fractional (0.25) count weights.
 
     Tolerance 1e-6 because JTS vs shapely area fractions can differ at ~1e-10.
     """
@@ -413,6 +431,47 @@ def test_custom_rastertogrid_covering_sparse_parity(spark_with_jar, agg):
             "Expected fractional counts from area-fraction weighting (0.25 per cell). "
             "Check that the 20000m pixel and 10000m cells produce fractional overlap."
         )
+
+
+@pytest.mark.parametrize("agg", ["avg", "count", "sum"])
+def test_custom_rastertogrid_covering_smallpixel_parity(spark_with_jar, agg):
+    """Custom rastertogrid covering+sparse in the SUB-CELL regime: exact parity.
+
+    Regression gate for the load-bearing bug: 2000 m pixels over a 10000 m custom
+    grid.  Pre-fix, the light per-pixel centroid polyfill found no cell centre in a
+    sub-cell pixel and returned zero cells for it → those pixels were dropped (fewer
+    cells and/or smaller measures than heavy).  With the covering-candidate buffer
+    fix (mirroring heavy ``CustomGridSystem.coveringCandidateCells``) light finds the
+    containing cell for every sub-cell pixel, so the cell SETS are equal and every
+    per-cell measure matches heavy within tolerance.
+
+    Asserting full cell-set equality here is the honest gate: if light silently
+    dropped any sub-cell pixel's cell, ``_parity_cmp`` fails on the set mismatch.
+
+    Tolerance 1e-6 because JTS vs shapely area fractions can differ at ~1e-10.
+    """
+    spark = spark_with_jar
+    raster = _small_pixel_covering_raster()
+
+    # Collect LIGHT first (both tiers share the gbx_rst_custom_* SQL names).
+    light = _light_reducer_rows(
+        spark, raster, agg, coverage="sparse", assignment="covering"
+    )
+    heavy = _heavy_reducer_rows(
+        spark, raster, agg, coverage="sparse", assignment="covering"
+    )
+
+    assert light, f"custom {agg} covering/sparse (small pixel): light emitted no cells"
+    assert heavy, f"custom {agg} covering/sparse (small pixel): heavy emitted no cells"
+    # The footprint spans the 4 inner cells; both tiers must cover all of them.
+    assert len(light) == 4, (
+        f"small-pixel covering must cover the 4 inner cells; light has {len(light)} "
+        f"— a smaller count means sub-cell pixels were dropped (the fixed bug)"
+    )
+
+    _parity_cmp(
+        light, heavy, label=f"custom {agg} covering/sparse (small pixel)", tol=1e-6
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -605,9 +664,6 @@ def test_custom_rasterize_agg_mask_parity(spark_with_jar):
         heavy_arr = hds.read(1)
         assert hds.nodata == _NODATA, f"heavy band NoData must be {_NODATA}"
 
-    # Both rasters may have different pixel dimensions (accepted: the light tier
-    # auto-derives its canvas from cell centroids, heavy from cell geometries).
-    # Assert both have at least one covered pixel per cell.
     light_mask = light_arr != _NODATA
     heavy_mask = heavy_arr != _NODATA
     assert int(light_mask.sum()) >= len(
@@ -617,19 +673,27 @@ def test_custom_rasterize_agg_mask_parity(spark_with_jar):
         cells
     ), f"heavy covered pixels ({heavy_mask.sum()}) < cell count ({len(cells)})"
 
-    # If both produce the SAME grid dimensions, assert mask identity.
-    if light_arr.shape == heavy_arr.shape:
-        diverging = np.where(light_mask != heavy_mask)
-        n_div = len(diverging[0])
-        if n_div > 0:
-            rows = diverging[0][:5].tolist()
-            cols_list = diverging[1][:5].tolist()
-            pytest.fail(
-                f"custom rasterize_agg mask parity FAILED: {n_div} pixel(s) differ "
-                f"({light_arr.shape[1]}x{light_arr.shape[0]}, {len(cells)} cells). "
-                f"First diverging (row,col): {list(zip(rows, cols_list))}. "
-                f"light_covered={int(light_mask.sum())} heavy_covered={int(heavy_mask.sum())}."
-            )
-
-        assert np.all(light_arr[light_mask] == 1.0), "light burn != 1.0 (presence mask)"
-        assert np.all(heavy_arr[heavy_mask] == 1.0), "heavy burn != 1.0 (presence mask)"
+    # UNCONDITIONAL canvas + mask parity: both tiers auto-derive the same snapped,
+    # lattice-aligned canvas from the same 4-cell set (pixel_size=5000, kring_pad=0),
+    # so the shapes MUST be equal and the NoData masks bit-identical.  (Do not gate
+    # this on "if shapes match" — that would let a real canvas divergence pass green.)
+    assert light_arr.shape == heavy_arr.shape, (
+        f"custom rasterize_agg canvas shape mismatch: "
+        f"light={light_arr.shape} heavy={heavy_arr.shape} ({len(cells)} cells)"
+    )
+    diverging = np.where(light_mask != heavy_mask)
+    n_div = len(diverging[0])
+    if n_div > 0:
+        rows = diverging[0][:5].tolist()
+        cols_list = diverging[1][:5].tolist()
+        pytest.fail(
+            f"custom rasterize_agg mask parity FAILED: {n_div} pixel(s) differ "
+            f"({light_arr.shape[1]}x{light_arr.shape[0]}, {len(cells)} cells). "
+            f"First diverging (row,col): {list(zip(rows, cols_list))}. "
+            f"light_covered={int(light_mask.sum())} heavy_covered={int(heavy_mask.sum())}."
+        )
+    assert np.array_equal(
+        light_mask, heavy_mask
+    ), "custom rasterize_agg NoData mask mismatch (shapes equal but masks differ)"
+    assert np.all(light_arr[light_mask] == 1.0), "light burn != 1.0 (presence mask)"
+    assert np.all(heavy_arr[heavy_mask] == 1.0), "heavy burn != 1.0 (presence mask)"

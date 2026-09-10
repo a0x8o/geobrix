@@ -148,7 +148,10 @@ def _polyfill_cells(bbox_poly, resolution, grid: str, conf=None):
 
     ``bbox_poly`` must be a shapely geometry in the work CRS for the grid:
     WGS84 for h3/quadbin, EPSG:27700 for bng, grid-native for custom.
-    BNG applies the buffer-before-polyfill fix internally.
+    BNG and custom both apply the buffer-before-polyfill fix internally (custom
+    via ``_custom.covering_candidate_cells``, mirroring heavy
+    ``CustomGridSystem.coveringCandidateCells``) so a sub-cell pixel/bbox still
+    enumerates its containing cell; h3 uses ``contain="overlap"``.
     ``conf`` is required when ``grid="custom"`` (a ``CustomGridConf`` instance).
     """
     if grid == "h3":
@@ -162,7 +165,13 @@ def _polyfill_cells(bbox_poly, resolution, grid: str, conf=None):
     elif grid == "custom":
         from databricks.labs.gbx.pygx import _custom as _custom_mod
 
-        return _custom_mod.polyfill(conf, bbox_poly, resolution)
+        # Covering enumeration must mirror heavy CustomGridSystem.coveringCandidateCells:
+        # buffer by one cell dimension so a sub-cell pixel/bbox (which contains no cell
+        # centre under centroid-containment polyfill) still enumerates its containing
+        # cell. Un-buffered polyfill here dropped sub-cell pixels (lost mass). The
+        # downstream inter.area>0 / positive-area keep-test removes the extra buffered
+        # candidates. (bng buffers here too; h3 uses contain="overlap".)
+        return _custom_mod.covering_candidate_cells(conf, bbox_poly, resolution)
     else:  # bng — buffer so centroid-BFS doesn't miss boundary cells
         buf_radius = _bng.get_buffer_radius(resolution)
         return _bng.polyfill(bbox_poly.buffer(buf_radius), resolution)

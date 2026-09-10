@@ -319,6 +319,43 @@ def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
     return out
 
 
+def covering_candidate_cells(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
+    """Candidate cell IDs for COVERING tessellation of a raster bbox / pixel rect.
+
+    Port of ``CustomGridSystem.coveringCandidateCells`` (CustomGridSystem.scala:197-200).
+    Custom ``polyfill`` is CENTROID-containment, so a geometry SMALLER than a cell
+    — the normal raster→grid regime (a sub-cell pixel, or a small raster bbox) —
+    contains NO cell centre and ``polyfill`` alone returns ZERO cells, silently
+    dropping that pixel's mass.  Buffering the geometry by one cell dimension
+    (``max(cell_width, cell_height)``) before the centroid-containment scan
+    guarantees the containing cell — whose centre is within half a cell of any
+    interior point — is enumerated.  The caller's positive-area / intersection-area
+    keep-test discards the extra ring the buffer adds, so over-scanning is safe;
+    UNDER-scanning was the bug (light custom covering dropped sub-cell pixels,
+    unlike heavy, which buffers here).
+
+    The buffer ring legitimately reaches past the grid extent for a geometry near
+    the grid edge, so the buffered geometry is CLIPPED to the grid extent before
+    ``polyfill`` — no candidate centre then falls outside the grid bounds (which
+    would make ``polyfill``'s ``point_to_cell_id`` raise, exactly as heavy
+    ``pointToCellID`` does on an out-of-bounds centre).  This is the exact analog
+    of the BNG covering path (buffer, then drop out-of-GB cells): the clip removes
+    only candidates the covering keep-test would drop anyway, so the covered cell
+    set is unchanged for the interior rasters both tiers actually process, while a
+    raster reaching the grid edge degrades gracefully instead of raising.
+    """
+    if geometry is None or geometry.is_empty:
+        return []
+    buf = max(cell_width(conf, resolution), cell_height(conf, resolution))
+    grid_extent = _box(
+        conf.bound_x_min, conf.bound_y_min, conf.bound_x_max, conf.bound_y_max
+    )
+    clipped = geometry.buffer(buf).intersection(grid_extent)
+    if clipped.is_empty:
+        return []
+    return polyfill(conf, clipped, resolution)
+
+
 # --- k_ring (CustomGridSystem.kRing) ------------------------------------------
 
 
