@@ -138,6 +138,13 @@ object functions extends Serializable {
         rd.register(RST_AsFormat)
         rd.register(RST_Clip)
         rd.register(RST_CombineAvg)
+        rd.register(RST_CombineMin)
+        rd.register(RST_CombineMax)
+        rd.register(RST_CombineMedian)
+        rd.register(RST_CombineSum)
+        rd.register(RST_CombineStddev)
+        rd.register(RST_CombineCount)
+        rd.register(RST_AlignTo)
         rd.register(RST_Convolve)
         rd.register(RST_DerivedBand)
         rd.register(RST_DTMFromGeoms)
@@ -525,6 +532,14 @@ def rst_combineavg_agg(tile: Column): Column = ColumnAdapter(RST_CombineAvgAgg.n
     def rst_clip(tile: Column, clip: Column, cutlineAllTouched: Column): Column =
         ColumnAdapter(RST_Clip.name, Seq(tile, clip, cutlineAllTouched))
     def rst_combineavg(tiles: Column): Column = ColumnAdapter(RST_CombineAvg.name, Seq(tiles))
+    def rst_combinemin(tiles: Column): Column = ColumnAdapter(RST_CombineMin.name, Seq(tiles))
+    def rst_combinemax(tiles: Column): Column = ColumnAdapter(RST_CombineMax.name, Seq(tiles))
+    def rst_combinemedian(tiles: Column): Column = ColumnAdapter(RST_CombineMedian.name, Seq(tiles))
+    def rst_combinesum(tiles: Column): Column = ColumnAdapter(RST_CombineSum.name, Seq(tiles))
+    def rst_combinestddev(tiles: Column): Column = ColumnAdapter(RST_CombineStddev.name, Seq(tiles))
+    def rst_combinecount(tiles: Column): Column = ColumnAdapter(RST_CombineCount.name, Seq(tiles))
+    def rst_align_to(tile: Column, referenceTile: Column): Column =
+        ColumnAdapter(RST_AlignTo.name, Seq(tile, referenceTile))
     def rst_convolve(tile: Column, kernel: Column): Column = ColumnAdapter(RST_Convolve.name, Seq(tile, kernel))
     def rst_derivedband(tile: Column, pyfunc: String, funcName: String): Column =
         ColumnAdapter(RST_DerivedBand.name, Seq(tile, lit(pyfunc), lit(funcName)))
