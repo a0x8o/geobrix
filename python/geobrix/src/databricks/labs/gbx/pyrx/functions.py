@@ -7812,6 +7812,79 @@ def _dtmfromgeoms_agg_udf(
     )
 
 
+def _rasterize_agg_body(
+    cell_values,
+    cells,
+    _ad,
+    grid_name,
+    _srid,
+    pixel_size_s,
+    xmin_s,
+    ymin_s,
+    xmax_s,
+    ymax_s,
+    width_s,
+    height_s,
+    mode_s,
+    kring_pad_s,
+):
+    """Shared gridspec + burn body for per-grid rasterize_agg UDFs.
+
+    ``cell_values``: {raw_id: float} — raw ids as the UDF received them.
+    ``cells``:       [raw_id, ...] — same raw ids (for resolution + gridspec).
+    ``_ad``:         per-grid adapter (``_CustomAdapter`` or a singleton from
+                     ``cellraster._ADAPTERS``).
+    ``grid_name``:   "h3" | "quadbin" | "bng" | "custom" — forwarded to
+                     ``compute_gridspec`` and ``cells_to_raster`` as context.
+    ``_srid``:       already-resolved output CRS (int SRID or CRS string).
+    *_s params:      pandas Series from the UDF (may be None -> use default).
+
+    Returns raw GTiff bytes or None.
+    """
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    _mode = (
+        mode_s.iloc[0]
+        if mode_s is not None and mode_s.iloc[0] is not None
+        else "centroids"
+    )
+    _kp = (
+        int(kring_pad_s.iloc[0])
+        if kring_pad_s is not None and kring_pad_s.iloc[0] is not None
+        else 1
+    )
+
+    def _has(s):
+        return s is not None and s.iloc[0] is not None
+
+    if _has(xmin_s) and _has(width_s):
+        _gs = (
+            float(xmin_s.iloc[0]),
+            float(ymin_s.iloc[0]),
+            float(xmax_s.iloc[0]),
+            float(ymax_s.iloc[0]),
+            (float(xmax_s.iloc[0]) - float(xmin_s.iloc[0])) / int(width_s.iloc[0]),
+            int(width_s.iloc[0]),
+            int(height_s.iloc[0]),
+            _srid,
+        )
+    else:
+        _ps = float(pixel_size_s.iloc[0]) if _has(pixel_size_s) else None
+        _gs = cr.compute_gridspec(
+            cells,
+            srid=_srid,
+            pixel_size=_ps,
+            mode=_mode,
+            kring_pad=_kp,
+            grid=grid_name,
+            _ad=_ad,
+        )
+    return cr.cells_to_raster(
+        cell_values, *_gs, resolution=res, grid=grid_name, _ad=_ad
+    )
+
+
 @pandas_udf(BinaryType())
 def _rst_h3_rasterize_agg_udf(
     cellid: pd.Series,
@@ -7860,11 +7933,7 @@ def _rst_h3_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    res = cr._resolution([cr._h3_str(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # Output CRS spec: out_crs (string) wins over the int srid; else grid-native
     # 4326. cellraster accepts an int SRID or a CRS string interchangeably.
     if out_crs is not None and out_crs.iloc[0] is not None:
@@ -7873,35 +7942,22 @@ def _rst_h3_rasterize_agg_udf(
         _srid = int(srid.iloc[0])
     else:
         _srid = 4326
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("h3"),
+        "h3",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
-    )
-
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
-
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
-        )
-    else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp
-        )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res)
 
 
 @pandas_udf(BinaryType())
@@ -7952,12 +8008,7 @@ def _rst_quadbin_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    _ad = cr._adapter("quadbin")
-    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # Output CRS spec: out_crs (string) wins over the int srid; else grid-native
     # 4326. cellraster accepts an int SRID or a CRS string interchangeably.
     if out_crs is not None and out_crs.iloc[0] is not None:
@@ -7966,35 +8017,22 @@ def _rst_quadbin_rasterize_agg_udf(
         _srid = int(srid.iloc[0])
     else:
         _srid = 4326
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("quadbin"),
+        "quadbin",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
-    )
-
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
-
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
-        )
-    else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp, grid="quadbin"
-        )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res, grid="quadbin")
 
 
 @pandas_udf(BinaryType())
@@ -8030,44 +8068,123 @@ def _rst_bng_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    _ad = cr._adapter("bng")
-    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # BNG is EPSG:27700-native; the srid arg is a no-op (forced 27700). The sample
     # points and output raster are both 27700 -- NO WGS84 hop.
-    _srid = 27700
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
-    )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("bng"),
+        "bng",
+        27700,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
 
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
 
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
+# --- custom rasterize_agg (13-arg: cellid, value, grid struct, then options) ---
+
+
+@pandas_udf(BinaryType())
+def _rst_custom_rasterize_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    grid: pd.Series,
+    out_srid: pd.Series,
+    pixel_size: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width: pd.Series,
+    height: pd.Series,
+    mode: pd.Series,
+    kring_pad: pd.Series,
+) -> bytes:
+    """Rasterize custom-grid cells onto a regular pixel grid (centroid burn).
+
+    Arg order (pinned, must match heavy RST_Custom_RasterizeAgg):
+        cellid, value, grid, out_srid, pixel_size,
+        xmin, ymin, xmax, ymax, width, height, mode, kring_pad  -- 13 args.
+
+    ``grid`` is a CUSTOM_GRID_SCHEMA struct column (produced by
+    ``gbx_custom_grid(...)``).  All rows in a group carry the same grid conf;
+    only the first row is read.  ``out_srid`` defaults to the grid's ``srid``
+    when null; if both are absent (grid.srid==-1 and out_srid is null),
+    raises ValueError.
+    """
+    from databricks.labs.gbx.pygx._custom import conf_from_row
+    from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    _env.configure_gdal_env()
+    # Zip cellid and value TOGETHER first so each value stays paired with its own
+    # cellid, then drop pairs whose cellid is null.
+    # pd.notna guards both Python None and float NaN (PySpark delivers a null Long
+    # as float('nan') inside the pandas Series, so `c is not None` is insufficient).
+    pairs = [(c, v) for c, v in zip(cellid, value) if pd.notna(c)]
+    if not pairs:
+        return None
+    # Guard: if cellid arrived as float64 (a null-containing BIGINT column causes
+    # PySpark/Arrow to upcast the Series), any custom id > 2**53 has already been
+    # silently rounded.  The Python wrapper (rst_custom_rasterize_agg) casts to
+    # STRING before calling this UDF, so it never triggers.  SQL callers that pass
+    # a BIGINT column with nulls should use CAST(cellid AS STRING).
+    if pd.api.types.is_float_dtype(cellid) and any(
+        abs(float(c)) > 2**53 for c, _ in pairs
+    ):
+        raise ValueError(
+            "rst_custom_rasterize_agg: cellid column contains large custom ids "
+            "(> 2**53) but arrived as float64 — a null in a BIGINT cellid column "
+            "caused PySpark/Arrow to upcast the Series, silently rounding cell ids.  "
+            "Pass CAST(cellid AS STRING) to the SQL UDF, or use the Python "
+            "rst_custom_rasterize_agg() wrapper which applies this cast automatically."
         )
+    cells = [int(c) for c, _ in pairs]
+    # Null value -> presence mask (1.0). A null in a typed (Double) value column
+    # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
+    vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
+
+    # Extract the grid conf from the first row (per-group constant).
+    conf = conf_from_row(grid.iloc[0])
+
+    # Resolve output CRS: out_srid arg wins; else grid's srid; else error.
+    if out_srid is not None and out_srid.iloc[0] is not None:
+        _srid = int(out_srid.iloc[0])
+    elif conf.srid != -1:
+        _srid = conf.srid
     else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp, grid="bng"
+        raise ValueError(
+            "rst_custom_rasterize_agg: grid has no CRS (srid=-1); "
+            "supply out_srid explicitly."
         )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res, grid="bng")
+    # Build a per-call custom adapter; fallback_srid makes _reproject a no-op
+    # when the grid has srid==-1 and out_srid was supplied.
+    _ad = cr._CustomAdapter(conf, fallback_srid=_srid)
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        _ad,
+        "custom",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
+    )
 
 
 # --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
@@ -8446,6 +8563,61 @@ def rst_bng_rasterize_agg(
     )
 
 
+def rst_custom_rasterize_agg(
+    cellid: ColLike,
+    grid: ColLike,
+    value: ColLike = None,
+    out_srid: ColLike = None,
+    pixel_size: ColLike = None,
+    xmin: ColLike = None,
+    ymin: ColLike = None,
+    xmax: ColLike = None,
+    ymax: ColLike = None,
+    width: ColLike = None,
+    height: ColLike = None,
+    mode: ColLike = None,
+    kring_pad: ColLike = None,
+) -> Column:
+    """Rasterize a group's custom-grid cells into one tile (pixel-centroid burn).
+
+    ``grid`` is a CUSTOM_GRID_SCHEMA struct column (produced by
+    ``gbx_custom_grid(...)``).  ``value`` omitted -> presence mask
+    (1.0/NoData).  Supply an explicit extent (``xmin`` .. ``height``) for
+    aligned band stacking; else the grid is auto-derived per
+    ``mode``/``kring_pad``.  Output CRS: ``out_srid`` wins; falls back to the
+    grid's own ``srid`` when not supplied.  Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_custom_rasterize_agg("cellid", "grid").alias("tile"))
+
+    SQL returns BINARY (the raw grouped-agg UDF); Python returns a tile struct
+    (wrapped by ``_as_tile_udf``).
+    """
+
+    def _c(x, default):
+        return _col(x) if x is not None else f.lit(default)
+
+    _cellid_col = _col(cellid)
+    if isinstance(_cellid_col, str):
+        _cellid_col = f.col(_cellid_col)
+    return _as_tile_udf(
+        _rst_custom_rasterize_agg_udf(
+            _cellid_col.cast("string"),
+            _c(value, None),
+            _col(grid),
+            _c(out_srid, None),
+            _c(pixel_size, None),
+            _c(xmin, None),
+            _c(ymin, None),
+            _c(xmax, None),
+            _c(ymax, None),
+            _c(width, None),
+            _c(height, None),
+            _c(mode, "centroids"),
+            _c(kring_pad, 1),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # H3 cell bbox + gridspec helpers
 # ---------------------------------------------------------------------------
@@ -8783,6 +8955,7 @@ _sql_aggregators = {
     "gbx_rst_h3_rasterize_agg": _rst_h3_rasterize_agg_udf,
     "gbx_rst_quadbin_rasterize_agg": _rst_quadbin_rasterize_agg_udf,
     "gbx_rst_bng_rasterize_agg": _rst_bng_rasterize_agg_udf,
+    "gbx_rst_custom_rasterize_agg": _rst_custom_rasterize_agg_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}
