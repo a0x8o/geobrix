@@ -294,9 +294,10 @@ def _centroid_chips_inner(work_ds, resolution, grid: str, conf=None):
         coord_x, coord_y = xs, ys
 
     # Pre-import custom module once outside the pixel loop.
+    # _custom_mod is used in the `elif grid == "custom"` branch below.
     _custom_mod = None
     if grid == "custom":
-        from databricks.labs.gbx.pygx import _custom as _custom_mod  # noqa: F841
+        from databricks.labs.gbx.pygx import _custom as _custom_mod
 
     data = work_ds.read()  # shape (bands, height, width)
     nodata = work_ds.nodata

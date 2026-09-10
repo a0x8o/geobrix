@@ -309,3 +309,51 @@ def test_custom_tessellate_centroid_complete_includes_empty_chip():
         )
     # 3 valid pixel chips + 1 empty chip for NoData cell
     assert len(results) == 4
+
+
+# ---------------------------------------------------------------------------
+# Resolution-0 regression: cell id 0 must NOT be filtered by `or -1` sentinel
+# ---------------------------------------------------------------------------
+
+
+def test_custom_rastertogridavg_centroid_res0_cellid_zero_present():
+    """REGRESSION: cell id 0 at resolution 0 must survive the out-of-bounds filter.
+
+    At resolution 0 all pixels map to the single cell with id 0 (``get_cell_id(0, 0)``).
+    An ``or -1`` sentinel incorrectly treats 0 as falsy and maps it to -1, then
+    ``keep = cids_raw != -1`` drops every pixel, producing an empty result.
+    The ``is not None`` fix preserves id 0.
+    """
+    # Resolution 0: one cell covering the whole extent, cell_id = 0
+    b = _make_full_raster()
+    with _open(b) as ds:
+        result = raster_to_grid(
+            ds,
+            0,
+            "custom",
+            "avg",
+            coverage="sparse",
+            assignment="centroid",
+            grid_conf=_CONF_ROW,
+        )
+    band = result[0]
+    assert len(band) == 1, f"expected 1 cell at res=0, got {len(band)}"
+    assert band[0]["cellID"] == 0, f"expected cell id 0, got {band[0]['cellID']}"
+    # avg of all 4 pixels: (10 + 20 + 30 + 40) / 4 = 25.0
+    assert band[0]["measure"] == pytest.approx(25.0)
+
+
+def test_custom_tessellate_centroid_res0_agrees_with_rastertogrid():
+    """Centroid tessellate at res=0 also yields cell id 0, matching rastertogrid."""
+    from databricks.labs.gbx.pyrx.core.tessellate import iter_tessellate
+
+    b = _make_full_raster()
+    with _open(b) as ds:
+        results = list(
+            iter_tessellate(
+                ds, 0, "custom", mode="centroid", coverage="sparse", conf=_CONF
+            )
+        )
+    assert len(results) == 1, f"expected 1 chip at res=0, got {len(results)}"
+    cellid, _ = results[0]
+    assert cellid == 0, f"expected cell id 0, got {cellid}"

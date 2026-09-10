@@ -742,12 +742,20 @@ def _raster_to_custom(
 
                     # Scalar loop (like BNG): map each valid pixel centroid to a
                     # custom cell id; -1 sentinel for out-of-bounds pixels.
+                    # MUST use explicit `is None` check — cell id 0 is valid at
+                    # resolution 0 and `0 or -1` would incorrectly map it to -1.
                     cids_raw = np.array(
                         [
-                            _custom.point_to_cell_id_or_none(
-                                conf, float(x), float(y), resolution
+                            (  # vectorscan: ok (no array API for custom)
+                                c
+                                if (
+                                    c := _custom.point_to_cell_id_or_none(
+                                        conf, float(x), float(y), resolution
+                                    )
+                                )
+                                is not None
+                                else -1
                             )
-                            or -1  # vectorscan: ok (no array API for custom)
                             for x, y in zip(px, py)
                         ],
                         dtype="int64",
