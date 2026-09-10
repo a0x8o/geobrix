@@ -16,11 +16,13 @@ These mirror the heavyweight operations:
 from typing import List, Tuple
 
 import numpy as np
+import rasterio
 import shapely.wkb
 from rasterio.features import rasterize as _rasterize
 from rasterio.io import MemoryFile
 from rasterio.merge import merge as _rio_merge
 from rasterio.transform import from_bounds
+from rasterio.warp import Resampling, reproject
 
 from databricks.labs.gbx.pyrx.core import compression as _comp
 from databricks.labs.gbx.pyrx.core import derivedband as _derivedband
@@ -696,9 +698,6 @@ def align_to_tiles(tile_bytes: bytes, ref_bytes: bytes) -> bytes:
 
     Returns ``None`` when either input is missing/empty.
     """
-    import rasterio
-    from rasterio.warp import Resampling, reproject
-
     if not tile_bytes or not ref_bytes:
         return None
 

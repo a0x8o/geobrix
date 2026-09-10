@@ -1416,6 +1416,30 @@ _combinemedian_v2_udf = _make_combine_stat_v2_udf("median")
 _combinestddev_v2_udf = _make_combine_stat_v2_udf("stddev")
 
 
+_COMBINE_STAT_DOC = """\
+NoData-aware per-pixel {doc_stat} across an ARRAY of aligned tiles.
+
+    Mirrors ``gbx_rst_{sql_name}``: ``tiles`` is a single column of
+    ARRAY<tile struct>; each declared NoData is excluded from the statistic,
+    and a pixel that is NoData in ALL inputs produces NoData in the output
+    (never 0 for count). Output ``cellid`` is the shared input cellid when
+    every element matches, else -1.
+
+    PARITY DIVERGENCE: assumes the tiles are ALREADY aligned (same
+    shape/extent/CRS) and raises ``ValueError`` on misaligned inputs rather
+    than resampling. Align first with ``rst_align_to``.
+
+    Args:
+        tiles: Column of ARRAY<tile struct> (same-grid, aligned).
+        virtualize_dir:    Force-output: write result to a durable path.
+        virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
+        materialize:       Force-output: ``True`` ensures raster bytes.
+
+    Returns:
+        Tile struct of per-pixel {doc_stat}, or NULL on an empty array.
+"""
+
+
 def _make_rst_combine_stat(
     stat: str,
     sql_name: str,
@@ -1429,27 +1453,6 @@ def _make_rst_combine_stat(
         virtualize_prefix: Optional[str] = None,
         materialize: Optional[bool] = None,
     ) -> Column:
-        f"""NoData-aware per-pixel {doc_stat} across an ARRAY of aligned tiles.
-
-        Mirrors ``gbx_rst_{sql_name}``: ``tiles`` is a single column of
-        ARRAY<tile struct>; each declared NoData is excluded from the statistic,
-        and a pixel that is NoData in ALL inputs produces NoData in the output
-        (never 0 for count). Output ``cellid`` is the shared input cellid when
-        every element matches, else -1.
-
-        PARITY DIVERGENCE: assumes the tiles are ALREADY aligned (same
-        shape/extent/CRS) and raises ``ValueError`` on misaligned inputs rather
-        than resampling. Align first with ``rst_align_to``.
-
-        Args:
-            tiles: Column of ARRAY<tile struct> (same-grid, aligned).
-            virtualize_dir:    Force-output: write result to a durable path.
-            virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
-            materialize:       Force-output: ``True`` ensures raster bytes.
-
-        Returns:
-            Tile struct of per-pixel {doc_stat}, or NULL on an empty array.
-        """
         _v2 = {
             "min": _combinemin_v2_udf,
             "max": _combinemax_v2_udf,
@@ -1476,6 +1479,11 @@ def _make_rst_combine_stat(
 
     rst_combine_stat.__name__ = f"rst_combine{stat}"
     rst_combine_stat.__qualname__ = f"rst_combine{stat}"
+    # Assign __doc__ explicitly: an f-string expression is discarded by Python
+    # (only a plain string *literal* at the top of a function becomes __doc__).
+    rst_combine_stat.__doc__ = _COMBINE_STAT_DOC.format(
+        doc_stat=doc_stat, sql_name=sql_name
+    )
     return rst_combine_stat
 
 

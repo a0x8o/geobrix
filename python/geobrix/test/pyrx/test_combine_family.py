@@ -90,6 +90,23 @@ def test_combine_min_nodata_stamped_on_output():
     assert _nodata_value(agg.combine_min_tiles(_stack())) == pytest.approx(ND)
 
 
+@pytest.mark.parametrize(
+    "reducer",
+    [
+        agg.combine_min_tiles,
+        agg.combine_max_tiles,
+        agg.combine_sum_tiles,
+        agg.combine_count_tiles,
+        agg.combine_median_tiles,
+        agg.combine_stddev_tiles,
+    ],
+    ids=["min", "max", "sum", "count", "median", "stddev"],
+)
+def test_all_stats_stamp_nodata_on_output(reducer):
+    """Every combine stat must stamp the NoData sentinel on the output band."""
+    assert _nodata_value(reducer(_stack())) == pytest.approx(ND)
+
+
 # ---------------------------------------------------------------------------
 # max
 # ---------------------------------------------------------------------------
@@ -210,13 +227,13 @@ def _diff_crs_tile():
 
 def test_misaligned_dims_raises_error_pointing_at_align_to():
     tiles = [_tile([1.0, 2.0, 3.0, 4.0]), _misaligned_tile()]
-    with pytest.raises((ValueError, Exception), match="(?i)align"):
+    with pytest.raises(ValueError, match="(?i)align"):
         agg.combine_sum_tiles(tiles)
 
 
 def test_misaligned_crs_raises_error_pointing_at_align_to():
     tiles = [_tile([1.0, 2.0, 3.0, 4.0], epsg=4326), _diff_crs_tile()]
-    with pytest.raises((ValueError, Exception), match="(?i)align"):
+    with pytest.raises(ValueError, match="(?i)align"):
         agg.combine_min_tiles(tiles)
 
 
