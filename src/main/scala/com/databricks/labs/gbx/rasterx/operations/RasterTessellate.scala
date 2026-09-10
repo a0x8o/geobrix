@@ -89,20 +89,41 @@ object RasterTessellate {
     // Generic tessellation over GridSystem.
     // ------------------------------------------------------------------------------------------------
 
-    /** Returns the native spatial reference for the grid (the CRS its cell geometries live in). */
-    private def srForGrid(grid: GridSystem): SpatialReference = grid.crsSrid match {
-        case 27700 => BngSR
-        case _     => GDAL.WSG84
-    }
+    // ------------------------------------------------------------------------------------------------
+    // Grid-identity helpers.
+    // ------------------------------------------------------------------------------------------------
+
+    /** True iff `grid` is the BNG singleton — the only grid that needs BNG-specific clipping and warp.
+      * Keyed on grid identity (`grid.name == "BNG"`) rather than CRS (`crsSrid == 27700`) so that a
+      * [[com.databricks.labs.gbx.gridx.grid.CustomGridSystem]] configured at SRID 27700 stays on the
+      * generic path: custom cell IDs use a different bit-encoding from BNG cell IDs, and calling
+      * [[BNG.isValid]] on them throws [[java.util.NoSuchElementException]]. */
+    private def isBng(grid: GridSystem): Boolean = grid.name == "BNG"
+
+    /** Returns the native spatial reference for the grid (the CRS its cell geometries live in).
+      * For BNG the cached [[BngSR]] singleton is returned.  For all other grids a fresh
+      * [[SpatialReference]] is built from `grid.crsSrid` — a legitimate use of `crsSrid` (it
+      * describes the actual CRS, not a BNG-behaviour discriminator). */
+    private def srForGrid(grid: GridSystem): SpatialReference =
+        if (isBng(grid)) BngSR
+        else {
+            val sr = new SpatialReference()
+            sr.ImportFromEPSG(grid.crsSrid)
+            sr.SetAxisMappingStrategy(org.gdal.osr.osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+            sr
+        }
 
     /**
       * Validity guard: BNG rejects out-of-GB cells; all other grids accept every cell returned by
       * pointToCellID. Applied in BOTH covering and centroid paths to prevent invalid (out-of-extent)
       * cells from being emitted — mirrors the `if (!BNG.isValid(cell)) return null` guard that the
       * former per-grid covering helpers enforced via `getBngTile`.
+      *
+      * Routed off grid identity ([[isBng]]) not `crsSrid == 27700` — a custom grid at 27700 must
+      * NOT trigger [[BNG.isValid]] (its cell IDs use a different bit-encoding).
       */
     private def isCellValid(grid: GridSystem, cellId: Long): Boolean =
-        if (grid.crsSrid == 27700) BNG.isValid(cellId) else true
+        if (isBng(grid)) BNG.isValid(cellId) else true
 
     /**
       * Returns true iff every band of `chip` is entirely NoData (mask is all-zero). Used by
@@ -181,8 +202,8 @@ object RasterTessellate {
         coverage: String
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         val gridSR = srForGrid(grid)
-        // BNG requires a pre-warp to EPSG:27700; 4326-native grids (H3/quadbin) use ds as-is.
-        val (workDs, reprojected) = if (grid.crsSrid == 27700) warpToBng(ds) else (ds, false)
+        // BNG requires a pre-warp to EPSG:27700; all other grids (H3/quadbin/custom) use ds as-is.
+        val (workDs, reprojected) = if (isBng(grid)) warpToBng(ds) else (ds, false)
         val bbox = BoundingBox.bbox(workDs, gridSR)
         val cells = grid.coveringCandidateCells(bbox, resolution).toArray
 
@@ -266,7 +287,8 @@ object RasterTessellate {
         coverage: String
     ): Iterator[(Any, Dataset, Map[String, String])] = {
         // BNG requires a pre-warp so pixel coordinates are in EPSG:27700 (the grid's native CRS).
-        val (workDs, reprojected) = if (grid.crsSrid == 27700) warpToBng(ds) else (ds, false)
+        // Other grids, including a custom grid at 27700, use ds as-is.
+        val (workDs, reprojected) = if (isBng(grid)) warpToBng(ds) else (ds, false)
 
         val xSize     = workDs.getRasterXSize
         val ySize     = workDs.getRasterYSize
