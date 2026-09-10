@@ -1363,6 +1363,13 @@
         "scala"
       ]
     },
+    "gbx_h3_cellfill": {
+      "examples": "Examples:\n      > SELECT region, gbx_h3_cellfill(cellid, value, 1, 'mean', 2.0) AS filled FROM ( VALUES (1, 612934495919669247L, CAST(NULL AS DOUBLE)), (1, 612934495863046143L, 5.0), (1, 612934495900794879L, 5.0) ) AS t(region, cellid, value) GROUP BY region;",
+      "usage_args": "cellid, value, [k], [method], [power]",
+      "bindings": [
+        "sql"
+      ]
+    },
     "_package_gridx": "--- gridx ---",
     "gbx_bng_aswkb": {
       "examples": "Examples:\n      > SELECT gbx_bng_aswkb('TQ3080') as wkb_geom;",
@@ -1392,6 +1399,13 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_bng_cellfill": {
+      "examples": "Examples:\n      > SELECT region, gbx_bng_cellfill(cellid, value, 1, 'mean', 2.0) AS filled FROM ( VALUES (1, 'TQ300800', CAST(NULL AS DOUBLE)), (1, 'TQ299800', 5.0), (1, 'TQ301800', 5.0), (1, 'TQ300799', 5.0), (1, 'TQ300801', 5.0) ) AS t(region, cellid, value) GROUP BY region;",
+      "usage_args": "cellid, value, [k], [method], [power]",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_bng_cellintersection": {
@@ -1603,6 +1617,13 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_custom_cellfill": {
+      "examples": "Examples:\n      > SELECT region, gbx_custom_cellfill(cellid, value, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700), 1, 'mean', 2.0) AS filled FROM ( VALUES (1, 216172782113787048L, CAST(NULL AS DOUBLE)), (1, 216172782113786967L, 5.0), (1, 216172782113787127L, 5.0) ) AS t(region, cellid, value) GROUP BY region;",
+      "usage_args": "cellid, value, grid, [k], [method], [power]",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_custom_centroid": {
@@ -1859,6 +1880,13 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_quadbin_cellfill": {
+      "examples": "Examples:\n      > SELECT region, gbx_quadbin_cellfill(cellid, value, 1, 'mean', 2.0) AS filled FROM ( SELECT 1 AS region, gbx_quadbin_pointascell(-0.1, 51.5, 10) AS cellid, CAST(NULL AS DOUBLE) AS value UNION ALL SELECT 1 AS region, cell AS cellid, 5.0 AS value FROM ( SELECT explode(gbx_quadbin_kring(gbx_quadbin_pointascell(-0.1, 51.5, 10), 1)) AS cell ) ) t GROUP BY region;",
+      "usage_args": "cellid, value, [k], [method], [power]",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_quadbin_cellunion": {

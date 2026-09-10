@@ -3192,6 +3192,40 @@ h3_cell_bbox_sql_example_output = """
 """
 
 
+def h3_cellfill_sql_example():
+    """Fill NULL (covered-but-missing) H3 cells from valid neighbours in the same group.
+
+    Inline grid: one group of three cells — London res-8 center cell with value NULL
+    (to be filled), and two ring-1 neighbours with value 5.0.  With k=1 and method='mean'
+    the center is filled from its neighbours' unweighted mean (5.0).
+
+    ``gbx_h3_cellfill`` is a grouped aggregator: the call must appear inside a
+    GROUP BY query.  It returns BINARY on the light tier and
+    ARRAY<STRUCT<cellid BIGINT, value DOUBLE>> on the heavy tier.
+    """
+    return """
+SELECT region,
+       gbx_h3_cellfill(cellid, value, 1, 'mean', 2.0) AS filled
+FROM (
+  VALUES
+    (1, 612934495919669247L, CAST(NULL AS DOUBLE)),
+    (1, 612934495863046143L, 5.0),
+    (1, 612934495900794879L, 5.0)
+) AS t(region, cellid, value)
+GROUP BY region;
+"""
+
+
+h3_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: center cell 612934495919669247 filled to 5.0; neighbour cells unchanged)
+"""
+
+
 # ---------------------------------------------------------------------------
 # Custom-grid raster → grid (8 aggregations) + tessellate + rasterize_agg
 # ---------------------------------------------------------------------------

@@ -915,3 +915,119 @@ custom_distance_sql_example_output = """
 +----+
 ... (Chebyshev grid distance between two cells 1 step apart in X at resolution 0)
 """
+
+
+# ============================================================================
+# Cell-fill grouped aggregators — fill NULL (covered-but-missing) cells from
+# valid neighbours in the same group.  All four grids.
+# ============================================================================
+
+
+def bng_cellfill_sql_example():
+    """Fill NULL BNG cells from valid ring-1 neighbours using mean interpolation.
+
+    Inline grid: London 100 m cell TQ300800 (NULL, to be filled) surrounded by
+    four ring-1 neighbours each with value 5.0.  With k=1 and method='mean' the
+    NULL center is filled with the unweighted mean of its neighbours (5.0).
+
+    ``gbx_bng_cellfill`` is a grouped aggregator: the call must appear inside a
+    GROUP BY query.  BNG cell IDs are STRING.  The function returns BINARY on the
+    light tier and ARRAY<STRUCT<cellid STRING, value DOUBLE>> on the heavy tier.
+    """
+    return """
+SELECT region,
+       gbx_bng_cellfill(cellid, value, 1, 'mean', 2.0) AS filled
+FROM (
+  VALUES
+    (1, 'TQ300800', CAST(NULL AS DOUBLE)),
+    (1, 'TQ299800', 5.0),
+    (1, 'TQ301800', 5.0),
+    (1, 'TQ300799', 5.0),
+    (1, 'TQ300801', 5.0)
+) AS t(region, cellid, value)
+GROUP BY region;
+"""
+
+
+bng_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: TQ300800 filled to 5.0; ring-1 neighbours unchanged)
+"""
+
+
+def quadbin_cellfill_sql_example():
+    """Fill NULL Quadbin cells from valid ring-1 neighbours using mean interpolation.
+
+    The first sub-select contributes the London z=10 center cell with value NULL;
+    the UNION adds its ring-1 neighbours (via ``gbx_quadbin_kring``) with value 5.0.
+    With k=1 and method='mean' the NULL center is filled with 5.0.
+
+    ``gbx_quadbin_cellfill`` is a grouped aggregator: the call must appear inside a
+    GROUP BY query.  Cell IDs are BIGINT.  Returns BINARY (light) or
+    ARRAY<STRUCT<cellid BIGINT, value DOUBLE>> (heavy).
+    """
+    return """
+SELECT region,
+       gbx_quadbin_cellfill(cellid, value, 1, 'mean', 2.0) AS filled
+FROM (
+  SELECT 1 AS region,
+         gbx_quadbin_pointascell(-0.1, 51.5, 10) AS cellid,
+         CAST(NULL AS DOUBLE) AS value
+  UNION ALL
+  SELECT 1 AS region, cell AS cellid, 5.0 AS value
+  FROM (
+    SELECT explode(gbx_quadbin_kring(gbx_quadbin_pointascell(-0.1, 51.5, 10), 1)) AS cell
+  )
+) t
+GROUP BY region;
+"""
+
+
+quadbin_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: London z10 center cell filled to 5.0; ring-1 neighbours unchanged)
+"""
+
+
+def custom_cellfill_sql_example():
+    """Fill NULL custom-grid cells from valid ring-1 neighbours using mean interpolation.
+
+    Inline grid: center cell 216172782113787048 (res=3, 500km×500km block in a
+    0..1e6 × 0..1e6 grid) with value NULL, surrounded by two ring-1 neighbours
+    with value 5.0.  With k=1 and method='mean' the NULL center is filled to 5.0.
+
+    ``gbx_custom_cellfill`` is a grouped aggregator; the grid spec (third arg) must
+    be supplied as a ``gbx_custom_grid(...)`` struct.  Returns BINARY (light) or
+    ARRAY<STRUCT<cellid BIGINT, value DOUBLE>> (heavy).
+    """
+    return """
+SELECT region,
+       gbx_custom_cellfill(cellid, value,
+         gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700),
+         1, 'mean', 2.0) AS filled
+FROM (
+  VALUES
+    (1, 216172782113787048L, CAST(NULL AS DOUBLE)),
+    (1, 216172782113786967L, 5.0),
+    (1, 216172782113787127L, 5.0)
+) AS t(region, cellid, value)
+GROUP BY region;
+"""
+
+
+custom_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: center cell 216172782113787048 filled to 5.0; neighbours unchanged)
+"""
