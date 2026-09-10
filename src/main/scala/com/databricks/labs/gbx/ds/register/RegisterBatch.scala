@@ -21,13 +21,14 @@ class RegisterBatch(schema: StructType, options: Map[String, String]) extends Sc
     /** Overrides Scan.toBatch: returns this batch. */
     override def toBatch: Batch = this
 
-    /** Overrides Batch.planInputPartitions: runs registration (options "functions" = gridx.bng | gridx.quadbin | gridx.custom | vectorx.jts.legacy | rasterx | pmtiles | all); returns empty partitions. */
+    /** Overrides Batch.planInputPartitions: runs registration (options "functions" = gridx.bng | gridx.quadbin | gridx.custom | gridx.h3 | vectorx.jts.legacy | rasterx | pmtiles | all); returns empty partitions. */
     override def planInputPartitions(): Array[InputPartition] = {
         val registerWhat = options.getOrElse("functions", "all")
         registerWhat match {
             case "gridx.bng"      => gridx.bng.functions.register(SparkSession.active)
             case "gridx.quadbin"  => gridx.quadbin.functions.register(SparkSession.active)
             case "gridx.custom"   => gridx.custom.functions.register(SparkSession.active)
+            case "gridx.h3"       => gridx.h3.functions.register(SparkSession.active)
             case "vectorx.jts.legacy" => jts.legacy.functions.register(SparkSession.active)
             case "rasterx"        => functions.register(SparkSession.active)
             case "pmtiles"        => pmtiles.functions.register(SparkSession.active)
@@ -35,6 +36,7 @@ class RegisterBatch(schema: StructType, options: Map[String, String]) extends Sc
                 gridx.bng.functions.register(SparkSession.active)
                 gridx.quadbin.functions.register(SparkSession.active)
                 gridx.custom.functions.register(SparkSession.active)
+                gridx.h3.functions.register(SparkSession.active)
                 jts.legacy.functions.register(SparkSession.active)
                 gbx.rasterx.functions.register(SparkSession.active)
                 pmtiles.functions.register(SparkSession.active)

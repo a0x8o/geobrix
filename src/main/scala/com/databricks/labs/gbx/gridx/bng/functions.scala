@@ -45,6 +45,7 @@ object functions extends Serializable {
         // Aggregators
         rd.register(BNG_CellIntersectionAgg)
         rd.register(BNG_CellUnionAgg)
+        rd.register(BNG_CellFill)
 
         // Generators
         rd.register(BNG_GeometryKLoopExplode)
@@ -77,6 +78,14 @@ object functions extends Serializable {
     // Aggregators
     def bng_cellintersection_agg(c1: Column): Column = ColumnAdapter(BNG_CellIntersectionAgg.name, Seq(c1))
     def bng_cellunion_agg(c1: Column): Column = ColumnAdapter(BNG_CellUnionAgg.name, Seq(c1))
+    def bng_cellfill(cellid: Column, value: Column): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value))
+    def bng_cellfill(cellid: Column, value: Column, k: Int): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k)))
+    def bng_cellfill(cellid: Column, value: Column, k: Int, method: String): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k), lit(method)))
+    def bng_cellfill(cellid: Column, value: Column, k: Int, method: String, power: Double): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k), lit(method), lit(power)))
 
     // Generators
     def bng_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column =

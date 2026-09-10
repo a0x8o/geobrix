@@ -34,6 +34,7 @@ object functions extends Serializable {
         rd.register(Quadbin_Tessellate)
         rd.register(Quadbin_CellUnion)
         rd.register(Quadbin_CellUnionAgg)
+        rd.register(Quadbin_CellFill)
         rd.register(Quadbin_Distance)
 
         sc.getConf.set(flag, "true")
@@ -64,6 +65,15 @@ object functions extends Serializable {
 
     def quadbin_distance(cellA: Column, cellB: Column): Column =
         ColumnAdapter(Quadbin_Distance.name, Seq(cellA, cellB))
+
+    def quadbin_cellfill(cellid: Column, value: Column): Column =
+        ColumnAdapter(Quadbin_CellFill.name, Seq(cellid, value))
+    def quadbin_cellfill(cellid: Column, value: Column, k: Int): Column =
+        ColumnAdapter(Quadbin_CellFill.name, Seq(cellid, value, lit(k)))
+    def quadbin_cellfill(cellid: Column, value: Column, k: Int, method: String): Column =
+        ColumnAdapter(Quadbin_CellFill.name, Seq(cellid, value, lit(k), lit(method)))
+    def quadbin_cellfill(cellid: Column, value: Column, k: Int, method: String, power: Double): Column =
+        ColumnAdapter(Quadbin_CellFill.name, Seq(cellid, value, lit(k), lit(method), lit(power)))
 
     // ---------- Scalar-literal overloads ----------
 

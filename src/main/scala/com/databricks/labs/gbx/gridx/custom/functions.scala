@@ -30,6 +30,7 @@ object functions extends Serializable {
         rd.register(Custom_KRing)
         rd.register(Custom_KLoop)
         rd.register(Custom_Distance)
+        rd.register(Custom_CellFill)
 
         sc.getConf.set(flag, "true")
     }
