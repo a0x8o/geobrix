@@ -39,11 +39,11 @@ object BNG_KRing extends WithExpressionInfo {
             ArrayData.toArrayData(indices)
         }
 
-    def execute(cellid: String, k: Int): Iterator[String] = {
+    def execute(cellid: String, k: Int): Seq[String] = {
         BNG.kRing(BNG.parse(cellid), k).map(BNG.format)
     }
 
-    def execute(cellid: Long, k: Int): Iterator[String] = {
+    def execute(cellid: Long, k: Int): Seq[String] = {
         BNG.kRing(cellid, k).map(BNG.format)
     }
 

@@ -28,6 +28,8 @@ object functions extends Serializable {
         rd.register(Custom_Centroid)
         rd.register(Custom_Polyfill)
         rd.register(Custom_KRing)
+        rd.register(Custom_KLoop)
+        rd.register(Custom_Distance)
 
         sc.getConf.set(flag, "true")
     }

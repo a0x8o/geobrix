@@ -207,7 +207,7 @@ object Quadbin extends GridSystem {
     }
 
     /** k-ring (Chebyshev distance ≤ k, inclusive) around `cell`. World-edge cells clip. */
-    def kRing(cell: Long, k: Int): Array[Long] = {
+    override def kRing(cell: Long, k: Int): Seq[Long] = {
         require(k >= 0, s"k must be >= 0; got $k")
         val z = resolution(cell)
         val n: Long = if (z == 0) 1L else 1L << z
@@ -224,7 +224,15 @@ object Quadbin extends GridSystem {
             }
             dx += 1
         }
-        buf.toArray
+        buf.toSeq
+    }
+
+    /** k-loop (hollow ring at EXACTLY Chebyshev distance k) around `cell`. k=0 → Seq(cell). */
+    override def kLoop(cell: Long, k: Int): Seq[Long] = {
+        require(k >= 0, s"k must be >= 0; got $k")
+        if (k == 0) return Seq(cell)
+        val inner = kRing(cell, k - 1).toSet
+        kRing(cell, k).filterNot(inner.contains)
     }
 
     /** Polyfill an axis-aligned lon/lat bbox with cells at zoom `z` (cell-count guarded). */

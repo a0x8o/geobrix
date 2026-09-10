@@ -30,6 +30,7 @@ object functions extends Serializable {
         rd.register(Quadbin_Resolution)
         rd.register(Quadbin_Polyfill)
         rd.register(Quadbin_KRing)
+        rd.register(Quadbin_KLoop)
         rd.register(Quadbin_Tessellate)
         rd.register(Quadbin_CellUnion)
         rd.register(Quadbin_CellUnionAgg)

@@ -303,9 +303,9 @@ object BNG extends GridSystem {
       * @return
       *   A collection of cell IDs forming a k ring.
       */
-    def kRing(cellID: Long, n: Int): Iterator[Long] = {
-        if (n == 1) Iterator.single(cellID) ++ kLoop(cellID, 1)
-        else Iterator.single(cellID) ++ (1 to n).iterator.flatMap(k => kLoop(cellID, k))
+    override def kRing(cellID: Long, n: Int): Seq[Long] = {
+        if (n == 1) (Iterator.single(cellID) ++ kLoop(cellID, 1)).toSeq
+        else (Iterator.single(cellID) ++ (1 to n).iterator.flatMap(k => kLoop(cellID, k))).toSeq
     }
 
     /**
@@ -318,7 +318,7 @@ object BNG extends GridSystem {
       * @return
       *   A collection of cell IDs forming a k disk.
       */
-    def kLoop(cellID: Long, k: Int): Iterator[Long] = {
+    override def kLoop(cellID: Long, k: Int): Seq[Long] = {
         val digits = cellDigits(cellID)
         val resolution = getResolution(digits)
         val edgeSize = getEdgeSize(resolution)
@@ -336,7 +336,7 @@ object BNG extends GridSystem {
         val right = (ymin + edgeSize until ymax by edgeSize).iterator.map(y => (xmax, y))
         val down = (xmin + edgeSize until xmax by edgeSize).iterator.map(x => (x, ymin))
 
-        (corners ++ left ++ right ++ up ++ down).map { case (x, y) => pointToCellID(x, y, resolution) }
+        (corners ++ left ++ right ++ up ++ down).map { case (x, y) => pointToCellID(x, y, resolution) }.toSeq
     }
 
     /**
@@ -790,7 +790,7 @@ object BNG extends GridSystem {
                     // In theory getting the next from Iterator that is not empty should be safe, but we
                     // will enqueue all the kRing cells anyway.
                     val toQueue = kRing.filterNot(newTraversed.contains)
-                    (toQueue, accumulator._2)
+                    (toQueue.iterator, accumulator._2)
                 } else {
                     accumulator
                 }

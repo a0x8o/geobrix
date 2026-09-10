@@ -37,7 +37,7 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
       *   A collection of cell IDs forming a k ring.
       */
 
-    def kRing(cellID: Long, k: Int): Seq[Long] = {
+    override def kRing(cellID: Long, k: Int): Seq[Long] = {
         assert(k >= 0, "k must be at least 0")
 
         val res = getCellResolution(cellID)
@@ -71,7 +71,7 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
       * @return
       *   A collection of cell IDs forming a k loop.
       */
-    def kLoop(cellID: Long, k: Int): Seq[Long] = {
+    override def kLoop(cellID: Long, k: Int): Seq[Long] = {
         assert(k >= 1, "k must be at least 1")
         val ring = kRing(cellID, k)
         val innerRing = kRing(cellID, k - 1)

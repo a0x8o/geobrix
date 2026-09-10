@@ -219,23 +219,23 @@ object H3 extends GridSystem {
     }
 
     /** All cell IDs within k rings of center cellID (distance <= n). */
-    def kRing(cellID: Long, n: Int): mutable.Seq[Long] = {
-        h3.kRing(cellID, n).asScala.map(_.toLong)
+    override def kRing(cellID: Long, n: Int): Seq[Long] = {
+        h3.kRing(cellID, n).asScala.map(_.toLong).toSeq
     }
 
     /** Cell IDs at exactly distance n from cellID (hexRing); falls back to kRing+filter for pentagons. */
-    def kLoop(cellID: Long, n: Int): mutable.Seq[Long] = {
+    override def kLoop(cellID: Long, n: Int): Seq[Long] = {
         // HexRing crashes in case of pentagons.
         // Ensure a KRing fallback in said case.
         require(cellID >= 0L)
         Try(
-          h3.hexRing(cellID, n).asScala.map(_.toLong)
+          h3.hexRing(cellID, n).asScala.map(_.toLong).toSeq
         ).getOrElse(
           // TODO: this should be improveable
           // 2 runs of kring at n and n-1 seem redundant
           // just kring n and filter via distance should be better
           // h3.kRing(cellID, n).asScala.toSet.diff(h3.kRing(cellID, n - 1).asScala.toSet).map(_.toLong).toSeq
-          h3.kRing(cellID, n).asScala.filter(cell => h3.h3Distance(cellID, cell) == n).map(_.toLong)
+          h3.kRing(cellID, n).asScala.filter(cell => h3.h3Distance(cellID, cell) == n).map(_.toLong).toSeq
         )
     }
 

@@ -30,6 +30,10 @@ trait GridSystem extends Serializable {
    * applies one shared keep-test to whatever this method returns.
    */
   def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long]
+  /** All cells within Chebyshev/grid distance ≤ k of cellID (inclusive of center). k=0 → Seq(cellID). */
+  def kRing(cellID: Long, k: Int): Seq[Long]
+  /** Cells at EXACTLY grid distance k from cellID (hollow ring). k=0 → Seq(cellID). */
+  def kLoop(cellID: Long, k: Int): Seq[Long]
   /**
    * How this grid renders a cell id in raster->grid OUTPUT.
    * H3/quadbin emit the Long; BNG emits its formatted string. Default: the Long.
