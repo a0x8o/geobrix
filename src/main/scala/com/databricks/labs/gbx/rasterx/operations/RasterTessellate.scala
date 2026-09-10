@@ -86,11 +86,7 @@ object RasterTessellate {
     }
 
     // ------------------------------------------------------------------------------------------------
-    // Generic tessellation over GridSystem.
-    // ------------------------------------------------------------------------------------------------
-
-    // ------------------------------------------------------------------------------------------------
-    // Grid-identity helpers.
+    // Grid-identity helpers — placed here, shared by the generic tessellation paths below.
     // ------------------------------------------------------------------------------------------------
 
     /** True iff `grid` is the BNG singleton — the only grid that needs BNG-specific clipping and warp.
@@ -101,17 +97,16 @@ object RasterTessellate {
     private def isBng(grid: GridSystem): Boolean = grid.name == "BNG"
 
     /** Returns the native spatial reference for the grid (the CRS its cell geometries live in).
-      * For BNG the cached [[BngSR]] singleton is returned.  For all other grids a fresh
-      * [[SpatialReference]] is built from `grid.crsSrid` — a legitimate use of `crsSrid` (it
-      * describes the actual CRS, not a BNG-behaviour discriminator). */
+      * BNG → the cached [[BngSR]] singleton.  All other grids (H3/quadbin, SRID 4326) → the
+      * cached [[GDAL.WSG84]] singleton.  Zero native allocation per call; no release needed.
+      * Non-WGS84 custom-grid support (which would need a lifecycle-managed SR) is out of scope
+      * for this discriminator change and deferred to the custom-grid-raster task. */
     private def srForGrid(grid: GridSystem): SpatialReference =
-        if (isBng(grid)) BngSR
-        else {
-            val sr = new SpatialReference()
-            sr.ImportFromEPSG(grid.crsSrid)
-            sr.SetAxisMappingStrategy(org.gdal.osr.osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
-            sr
-        }
+        if (isBng(grid)) BngSR else GDAL.WSG84
+
+    // ------------------------------------------------------------------------------------------------
+    // Generic tessellation over GridSystem.
+    // ------------------------------------------------------------------------------------------------
 
     /**
       * Validity guard: BNG rejects out-of-GB cells; all other grids accept every cell returned by

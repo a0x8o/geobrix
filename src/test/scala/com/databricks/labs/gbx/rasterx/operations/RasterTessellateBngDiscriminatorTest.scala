@@ -13,8 +13,9 @@ import org.scalatest.funsuite.AnyFunSuite
   *
   * A [[CustomGridSystem]] configured at SRID 27700 must NOT inherit BNG validity clipping: custom
   * cell IDs use a different bit-encoding from BNG cell IDs, so calling [[com.databricks.labs.gbx.gridx.grid.BNG.isValid]]
-  * on them returns false (wrong format), silently dropping all emitted cells.  The fix routes the
-  * guard through `grid.name == "BNG"` so custom grids at 27700 follow the generic non-BNG path.
+  * on them throws [[java.util.NoSuchElementException]] (the digit-decoded resolution is absent from
+  * BNG's `sizeMap`), crashing the tessellate call.  The fix routes the guard through
+  * `grid.name == "BNG"` so custom grids at 27700 follow the generic non-BNG path.
   */
 class RasterTessellateBngDiscriminatorTest extends AnyFunSuite with BeforeAndAfterAll {
 
@@ -83,8 +84,8 @@ class RasterTessellateBngDiscriminatorTest extends AnyFunSuite with BeforeAndAft
         cells.foreach { case (_, chip, _) => RasterDriver.releaseDataset(chip) }
         RasterDriver.releaseDataset(ds)
 
-        // Before fix: isCellValid calls BNG.isValid(customCellId), which returns false for all
-        // custom cell IDs (wrong bit layout) -> cells is empty.
+        // Before fix: isCellValid calls BNG.isValid(customCellId), which throws
+        // NoSuchElementException because the digit-decoded resolution is absent from BNG's sizeMap.
         // After fix:  isBng(custom) == false -> isCellValid returns true -> cells is non-empty.
         assert(cells.nonEmpty,
             "Custom grid at 27700 must yield non-empty cells; got empty set " +
