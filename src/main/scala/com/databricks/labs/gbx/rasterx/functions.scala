@@ -2,7 +2,7 @@ package com.databricks.labs.gbx.rasterx
 
 import com.databricks.labs.gbx.expressions.RegistryDelegate
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
-import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_BNG_RasterizeAgg, RST_CombineAvgAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_H3_RasterizeAgg, RST_MergeAgg, RST_Quadbin_RasterizeAgg, RST_RasterizeAgg}
+import com.databricks.labs.gbx.rasterx.expressions.agg.{RST_BNG_RasterizeAgg, RST_CombineAvgAgg, RST_Custom_RasterizeAgg, RST_DerivedBandAgg, RST_FromBandsAgg, RST_H3_RasterizeAgg, RST_MergeAgg, RST_Quadbin_RasterizeAgg, RST_RasterizeAgg}
 import com.databricks.labs.gbx.rasterx.expressions.analysis._
 import com.databricks.labs.gbx.rasterx.expressions.constructor.{RST_FromBands, RST_FromContent}
 import com.databricks.labs.gbx.rasterx.expressions.dem._
@@ -79,6 +79,7 @@ object functions extends Serializable {
         rd.register(RST_H3_RasterizeAgg)
         rd.register(RST_Quadbin_RasterizeAgg)
         rd.register(RST_BNG_RasterizeAgg)
+        rd.register(RST_Custom_RasterizeAgg)
 
         // Constructors
         rd.register(RST_FromBands)
@@ -92,6 +93,7 @@ object functions extends Serializable {
         rd.register(RST_H3_Tessellate)
         rd.register(RST_Quadbin_Tessellate)
         rd.register(RST_BNG_Tessellate)
+        rd.register(RST_Custom_Tessellate)
         rd.register(RST_MakeTiles)
         rd.register(RST_ReTile)
         rd.register(RST_SeparateBands)
@@ -122,6 +124,14 @@ object functions extends Serializable {
         rd.register(RST_BNG_RasterToGridSum)
         rd.register(RST_BNG_RasterToGridVariance)
         rd.register(RST_BNG_RasterToGridStddev)
+        rd.register(RST_Custom_RasterToGridAvg)
+        rd.register(RST_Custom_RasterToGridCount)
+        rd.register(RST_Custom_RasterToGridMax)
+        rd.register(RST_Custom_RasterToGridMin)
+        rd.register(RST_Custom_RasterToGridMedian)
+        rd.register(RST_Custom_RasterToGridSum)
+        rd.register(RST_Custom_RasterToGridVariance)
+        rd.register(RST_Custom_RasterToGridStddev)
         rd.register(RST_H3_CellBBox)
 
         // Operations

@@ -1,6 +1,6 @@
 package com.databricks.labs.gbx.rasterx.operations
 
-import com.databricks.labs.gbx.gridx.grid.{BNG, GridSystem, H3, Quadbin}
+import com.databricks.labs.gbx.gridx.grid.{BNG, CustomGridSystem, GridSystem, H3, Quadbin}
 import com.databricks.labs.gbx.rasterx.gdal.{GDAL, GDALManager, RasterDriver}
 import com.databricks.labs.gbx.rasterx.operator.GDALWarp
 import org.gdal.gdal.Dataset
@@ -96,13 +96,25 @@ object RasterTessellate {
       * [[BNG.isValid]] on them throws [[java.util.NoSuchElementException]]. */
     private def isBng(grid: GridSystem): Boolean = grid.name == "BNG"
 
+    /** True iff `grid` is a [[CustomGridSystem]] — cell geometries live in the grid's own `crsSrid`,
+      * which is arbitrary (not the fixed 4326/27700 of the built-in grids), so [[srForGrid]] must
+      * build a per-call SpatialReference for it and the caller must release it (see [[srForGrid]]). */
+    private def isCustom(grid: GridSystem): Boolean = grid.name == "CUSTOM"
+
     /** Returns the native spatial reference for the grid (the CRS its cell geometries live in).
-      * BNG → the cached [[BngSR]] singleton.  All other grids (H3/quadbin, SRID 4326) → the
-      * cached [[GDAL.WSG84]] singleton.  Zero native allocation per call; no release needed.
-      * Non-WGS84 custom-grid support (which would need a lifecycle-managed SR) is out of scope
-      * for this discriminator change and deferred to the custom-grid-raster task. */
+      * BNG → the cached [[BngSR]] singleton.  H3/quadbin (SRID 4326) → the cached [[GDAL.WSG84]]
+      * singleton.  Both are shared and MUST NOT be released.  A [[CustomGridSystem]] → a FRESH
+      * SpatialReference at the grid's own `crsSrid` (traditional axis order): the caller MUST release
+      * it (`.delete()`) when done — the covering iterator does so in `close()`, the centroid iterator
+      * right after the bbox is built.  Use [[isCustom]] to decide whether a release is owed. */
     private def srForGrid(grid: GridSystem): SpatialReference =
-        if (isBng(grid)) BngSR else GDAL.WSG84
+        if (isBng(grid)) BngSR
+        else if (isCustom(grid)) {
+            val sr = new SpatialReference()
+            sr.ImportFromEPSG(grid.crsSrid)
+            sr.SetAxisMappingStrategy(org.gdal.osr.osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+            sr
+        } else GDAL.WSG84
 
     // ------------------------------------------------------------------------------------------------
     // Generic tessellation over GridSystem.
@@ -255,6 +267,7 @@ object RasterTessellate {
                     closed = true
                     if (reprojected) RasterDriver.releaseDataset(_ds) else RasterAccessors.unlink(_ds)
                     _ds = null
+                    if (isCustom(grid)) gridSR.delete() // fresh per-call SR (see srForGrid); shared SRs are not released
                 }
             }
         }
@@ -305,6 +318,8 @@ object RasterTessellate {
                 val b = BoundingBox.bbox(workDs, gridSR)
                 (b, grid.coveringCandidateCells(b, resolution).toArray)
             } else (null, Array.empty[Long])
+        // gridSR is used only for the bbox above; release the fresh per-call custom SR now (see srForGrid).
+        if (isCustom(grid)) gridSR.delete()
 
         // For 4326-native grids: set up per-pixel reprojection if the raster CRS is not already 4326.
         // For 27700-native grids (BNG): no per-pixel reprojection — the warp already puts coords in 27700.
@@ -527,6 +542,28 @@ object RasterTessellate {
     ): Iterator[(String, Dataset, Map[String, String])] =
         tessellate(BNG, ds, options, resolution, assignment, coverage)
             .asInstanceOf[Iterator[(String, Dataset, Map[String, String])]]
+
+    /**
+      * Iterator of (cellId Long, Dataset, metadata) per emitted custom-grid cell at `resolution`.
+      * Caller must release each Dataset; iterator is AutoCloseable. Parallel to [[tessellateH3Iter]].
+      *
+      * The raster is NOT pre-warped (custom cell geometries live in the grid's own `crsSrid`, and the
+      * generic path clips/bins in that CRS via [[srForGrid]]); the raster is expected to be in the
+      * grid's native CRS. Before enumerating, the R3 guard ([[CustomGridBounds.requireBoundsContainRaster]])
+      * asserts the grid bounds contain the raster extent so no pixel centroid throws mid-aggregation.
+      */
+    def tessellateCustomIter(
+        grid: CustomGridSystem,
+        ds: Dataset,
+        options: Map[String, String],
+        resolution: Int,
+        assignment: String = "centroid",
+        coverage: String = "complete"
+    ): Iterator[(Long, Dataset, Map[String, String])] = {
+        CustomGridBounds.requireBoundsContainRaster(grid, ds)
+        tessellate(grid, ds, options, resolution, assignment, coverage)
+            .asInstanceOf[Iterator[(Long, Dataset, Map[String, String])]]
+    }
 
     // ------------------------------------------------------------------------------------------------
     // Utility.
