@@ -2584,6 +2584,155 @@ rst_combineavg_sql_example_output = """
 """
 
 
+def rst_combinemin_sql_example():
+    """Per-pixel minimum across an ARRAY of aligned tiles (NoData-aware).
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    minimum of the valid (non-NoData) values across the input stack.
+    All-NoData pixels yield NoData in the output.
+    """
+    return """
+SELECT gbx_rst_combinemin(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinemin_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_combinemax_sql_example():
+    """Per-pixel maximum across an ARRAY of aligned tiles (NoData-aware).
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    maximum of the valid (non-NoData) values across the input stack.
+    All-NoData pixels yield NoData in the output.
+    """
+    return """
+SELECT gbx_rst_combinemax(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinemax_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_combinemedian_sql_example():
+    """Per-pixel median across an ARRAY of aligned tiles (NoData-aware).
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    median of the valid (non-NoData) values. Even-count median uses the
+    mean of the two middle values (numpy np.ma.median convention).
+    All-NoData pixels yield NoData in the output.
+    """
+    return """
+SELECT gbx_rst_combinemedian(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinemedian_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_combinesum_sql_example():
+    """Per-pixel sum across an ARRAY of aligned tiles (NoData-aware).
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    sum of the valid (non-NoData) values across the input stack.
+    All-NoData pixels yield NoData in the output.
+    """
+    return """
+SELECT gbx_rst_combinesum(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinesum_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_combinestddev_sql_example():
+    """Per-pixel population standard deviation across an ARRAY of aligned tiles.
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    population standard deviation (ddof=0) of the valid (non-NoData) values.
+    All-NoData pixels yield NoData in the output.
+    """
+    return """
+SELECT gbx_rst_combinestddev(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinestddev_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_combinecount_sql_example():
+    """Per-pixel count of valid inputs across an ARRAY of aligned tiles.
+
+    Input: ARRAY of aligned tiles. Output: tile where each pixel is the
+    count of valid (non-NoData) inputs. All-NoData pixels yield NoData in
+    the output (never 0 for an all-NoData pixel).
+    """
+    return """
+SELECT gbx_rst_combinecount(array(tile)) AS combined FROM multiband_rasters;
+"""
+
+
+rst_combinecount_sql_example_output = """
++-----------------------------------------------------------+
+|combined                                                   |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
+def rst_align_to_sql_example():
+    """Warp a tile to match the grid of a reference tile.
+
+    Output has exactly the same CRS, extent, width, height, and geotransform
+    as the reference tile. Uses nearest-neighbour resampling. Aligning tiles
+    to a common reference before combining them with the combine family
+    (gbx_rst_combine*) satisfies the alignment precondition.
+    """
+    return """
+SELECT gbx_rst_align_to(tile, reference_tile) AS aligned FROM paired_rasters;
+"""
+
+
+rst_align_to_sql_example_output = """
++-----------------------------------------------------------+
+|aligned                                                    |
++-----------------------------------------------------------+
+|{0, <raster bytes>, <virtual path>, {driver -> GTiff, ...}}|
++-----------------------------------------------------------+
+"""
+
+
 def rst_derivedband_sql_example():
     """Apply a user-provided Python pixel-function to the tile's bands.
 

@@ -1,6 +1,13 @@
 {
   "functions": {
     "_package_rasterx": "--- rasterx ---",
+    "gbx_rst_align_to": {
+      "examples": "Examples:\n      > SELECT gbx_rst_align_to(tile, reference_tile) AS aligned FROM paired_rasters;",
+      "usage_args": "tile, reference_tile",
+      "bindings": [
+        "sql"
+      ]
+    },
     "gbx_rst_asformat": {
       "examples": "Examples:\n      > SELECT path, gbx_rst_asformat(tile, 'GTiff') as geotiff_tile FROM netcdf_rasters;",
       "usage_args": "tile, new_format",
@@ -219,6 +226,48 @@
         "python-light",
         "python-heavy",
         "scala"
+      ]
+    },
+    "gbx_rst_combinecount": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinecount(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_rst_combinemax": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinemax(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_rst_combinemedian": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinemedian(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_rst_combinemin": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinemin(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_rst_combinestddev": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinestddev(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_rst_combinesum": {
+      "examples": "Examples:\n      > SELECT gbx_rst_combinesum(array(tile)) AS combined FROM multiband_rasters;",
+      "usage_args": "tiles",
+      "bindings": [
+        "sql"
       ]
     },
     "gbx_rst_contour": {

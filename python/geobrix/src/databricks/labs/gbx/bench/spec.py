@@ -1775,6 +1775,138 @@ REGISTRY: Dict[str, FnSpec] = {
         core=False,
         input_kind="tile_array",
     ),
+    # combine family: 6 stats (min/max/median/sum/stddev/count) — same structure as
+    # rst_combineavg; input_kind="tile_array"; sources point at the per-stat
+    # Scala expression + the shared CombineStats ops object.
+    "rst_combinemin": FnSpec(
+        "rst_combinemin",
+        "gbx_rst_combinemin",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_min_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinemin(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineMin.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combinemax": FnSpec(
+        "rst_combinemax",
+        "gbx_rst_combinemax",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_max_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinemax(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineMax.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combinemedian": FnSpec(
+        "rst_combinemedian",
+        "gbx_rst_combinemedian",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_median_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinemedian(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineMedian.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combinesum": FnSpec(
+        "rst_combinesum",
+        "gbx_rst_combinesum",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_sum_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinesum(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineSum.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combinestddev": FnSpec(
+        "rst_combinestddev",
+        "gbx_rst_combinestddev",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_stddev_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinestddev(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineStddev.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    "rst_combinecount": FnSpec(
+        "rst_combinecount",
+        "gbx_rst_combinecount",
+        "format",
+        _BOTH,
+        {},
+        core_fn=lambda dss, a: agg_core.combine_count_tiles(
+            [_ds_to_gtiff_bytes(ds) for ds in dss]
+        ),
+        col_fn=lambda arr, a: prx.rst_combinecount(arr),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_CombineCount.scala",
+            _OPS + "CombineStats.scala",
+        ),
+        core=False,
+        input_kind="tile_array",
+    ),
+    # rst_align_to: takes two tiles (source + reference) — no standard input_kind
+    # for a two-tile function; fingerprint=False until the runner gains a
+    # two-tile input_kind (Task 18 reconciles).  Sources are declared here.
+    "rst_align_to": FnSpec(
+        "rst_align_to",
+        "gbx_rst_align_to",
+        "format",
+        ("pure-core",),
+        {},
+        core_fn=lambda ds, a: agg_core.align_to_tiles(
+            _ds_to_gtiff_bytes(ds), _ds_to_gtiff_bytes(ds)
+        ),
+        col_fn=lambda t, a: prx.rst_align_to(t, t),
+        sources=_AGG_LIGHT
+        + (
+            _HEAVY + "RST_AlignTo.scala",
+            _OPS + "RasterAlignment.scala",
+        ),
+        core=False,
+        fingerprint=False,
+    ),
     "rst_merge": FnSpec(
         "rst_merge",
         "gbx_rst_merge",
