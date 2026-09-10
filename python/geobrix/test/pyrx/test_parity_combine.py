@@ -307,18 +307,22 @@ def _parity_compare(light_bytes: bytes, heavy_bytes: bytes, label: str, tol=1e-9
     light_arr, light_nd = _decode(light_bytes)
     heavy_arr, heavy_nd = _decode(heavy_bytes)
 
-    assert light_arr.shape == heavy_arr.shape, (
-        f"{label}: shape mismatch light={light_arr.shape} heavy={heavy_arr.shape}"
-    )
+    assert (
+        light_arr.shape == heavy_arr.shape
+    ), f"{label}: shape mismatch light={light_arr.shape} heavy={heavy_arr.shape}"
 
     # NoData sentinel: if both declare one, they must be close.
     if light_nd is not None and heavy_nd is not None:
-        assert abs(light_nd - heavy_nd) <= tol * (1.0 + abs(heavy_nd)), (
-            f"{label}: NoData sentinel mismatch light={light_nd} heavy={heavy_nd}"
-        )
+        assert abs(light_nd - heavy_nd) <= tol * (
+            1.0 + abs(heavy_nd)
+        ), f"{label}: NoData sentinel mismatch light={light_nd} heavy={heavy_nd}"
 
     # Determine NoData mask (per-pixel).
-    sentinel = light_nd if light_nd is not None else (heavy_nd if heavy_nd is not None else None)
+    sentinel = (
+        light_nd
+        if light_nd is not None
+        else (heavy_nd if heavy_nd is not None else None)
+    )
     if sentinel is not None:
         light_nodata_mask = light_arr == sentinel
         # Deliberately reuse the same sentinel for both masks: the guard above
@@ -327,7 +331,9 @@ def _parity_compare(light_bytes: bytes, heavy_bytes: bytes, label: str, tol=1e-9
         # computing them independently.
         heavy_nodata_mask = heavy_arr == sentinel
         if not np.array_equal(light_nodata_mask, heavy_nodata_mask):
-            mismatch_idx = np.where(light_nodata_mask != heavy_nodata_mask)[0].tolist()[:8]
+            mismatch_idx = np.where(light_nodata_mask != heavy_nodata_mask)[0].tolist()[
+                :8
+            ]
             pytest.fail(
                 f"{label}: NoData mask mismatch at pixel indices {mismatch_idx}; "
                 f"light_nodata={light_nodata_mask.tolist()} "
@@ -379,16 +385,16 @@ def test_combine_stat_parity(spark_with_jar, stat):
     heavy_arr, _ = _decode(heavy_bytes)
 
     expected = {
-        "min":    [1.0, 10.0, _ND, 4.0],
-        "max":    [3.0, 20.0, _ND, 4.0],
-        "sum":    [6.0, 30.0, _ND, 12.0],
-        "count":  [3.0,  2.0, _ND,  3.0],
-        "median": [2.0, 15.0, _ND,  4.0],
+        "min": [1.0, 10.0, _ND, 4.0],
+        "max": [3.0, 20.0, _ND, 4.0],
+        "sum": [6.0, 30.0, _ND, 12.0],
+        "count": [3.0, 2.0, _ND, 3.0],
+        "median": [2.0, 15.0, _ND, 4.0],
         "stddev": [
             (2.0 / 3.0) ** 0.5,  # std([1,2,3], ddof=0) = sqrt(2/3)
-            5.0,                   # std([10,20], ddof=0) = 5
+            5.0,  # std([10,20], ddof=0) = 5
             _ND,
-            0.0,                   # std([4,4,4], ddof=0) = 0
+            0.0,  # std([4,4,4], ddof=0) = 0
         ],
     }[stat]
 
@@ -397,12 +403,12 @@ def test_combine_stat_parity(spark_with_jar, stat):
         if exp == nodata_sentinel:
             # All-NoData pixel: already verified by NoData mask check above.
             continue
-        assert abs(float(light_arr[idx]) - exp) <= 1e-9 * max(1.0, abs(exp)), (
-            f"combine_{stat} light pixel[{idx}] expected={exp} got={light_arr[idx]:.15g}"
-        )
-        assert abs(float(heavy_arr[idx]) - exp) <= 1e-9 * max(1.0, abs(exp)), (
-            f"combine_{stat} heavy pixel[{idx}] expected={exp} got={heavy_arr[idx]:.15g}"
-        )
+        assert abs(float(light_arr[idx]) - exp) <= 1e-9 * max(
+            1.0, abs(exp)
+        ), f"combine_{stat} light pixel[{idx}] expected={exp} got={light_arr[idx]:.15g}"
+        assert abs(float(heavy_arr[idx]) - exp) <= 1e-9 * max(
+            1.0, abs(exp)
+        ), f"combine_{stat} heavy pixel[{idx}] expected={exp} got={heavy_arr[idx]:.15g}"
 
 
 # ---------------------------------------------------------------------------
@@ -427,15 +433,25 @@ def test_rst_align_to_parity(spark_with_jar):
     # Source: 10×10 EPSG:4326 ramp tile near London.
     src_values = list(range(100))  # 0..99 uniform ramp
     src_bytes = _make_tile(
-        src_values, crs="EPSG:4326", ulx=-0.5, uly=51.7, px=0.01,
-        dtype="float64", nodata=_ND
+        src_values,
+        crs="EPSG:4326",
+        ulx=-0.5,
+        uly=51.7,
+        px=0.01,
+        dtype="float64",
+        nodata=_ND,
     )
 
     # Reference: 10×10 EPSG:27700 (BNG) uniform-value tile at London BNG coords.
     ref_values = [5.0] * 100
     ref_bytes = _make_tile(
-        ref_values, crs="EPSG:27700", ulx=520000.0, uly=185000.0, px=1000.0,
-        dtype="float64", nodata=_ND
+        ref_values,
+        crs="EPSG:27700",
+        ulx=520000.0,
+        uly=185000.0,
+        px=1000.0,
+        dtype="float64",
+        nodata=_ND,
     )
 
     # Phase 1: light.
@@ -454,12 +470,12 @@ def test_rst_align_to_parity(spark_with_jar):
 
     for label, out_bytes in [("light", light_bytes), ("heavy", heavy_bytes)]:
         with _serde.open_tile(out_bytes) as ds:
-            assert ds.width == ref_w, (
-                f"rst_align_to {label}: width {ds.width} != ref {ref_w}"
-            )
-            assert ds.height == ref_h, (
-                f"rst_align_to {label}: height {ds.height} != ref {ref_h}"
-            )
+            assert (
+                ds.width == ref_w
+            ), f"rst_align_to {label}: width {ds.width} != ref {ref_w}"
+            assert (
+                ds.height == ref_h
+            ), f"rst_align_to {label}: height {ds.height} != ref {ref_h}"
             assert ds.transform == ref_transform, (
                 f"rst_align_to {label}: geotransform {ds.transform} != ref {ref_transform}; "
                 "output does not carry the reference grid's extent/resolution"
@@ -473,9 +489,9 @@ def test_rst_align_to_parity(spark_with_jar):
                 _ProjCRS.from_user_input(ref_crs_str)
             ), f"rst_align_to {label}: CRS mismatch {out_crs_str!r} != {ref_crs_str!r}"
         except Exception:
-            assert out_crs_str == ref_crs_str, (
-                f"rst_align_to {label}: CRS string mismatch"
-            )
+            assert (
+                out_crs_str == ref_crs_str
+            ), f"rst_align_to {label}: CRS string mismatch"
 
     # Pixel parity: both warped outputs must agree within 1e-9.
     _parity_compare(light_bytes, heavy_bytes, label="rst_align_to", tol=1e-9)

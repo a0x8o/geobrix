@@ -49,6 +49,16 @@ from databricks.labs.gbx.pygx import _bng
 H3_MAX_RES = 15
 QUADBIN_MAX_RES = 20
 
+# Grids whose point→cell partition exactly equals the cell geometry (analytic
+# square / rectangular cells).  For these grids, a pixel whose four corners all
+# encode to the SAME cell is unambiguously interior: its area fraction is exactly
+# 1.0 and we can skip shapely polygon construction + polyfill + intersection.
+# H3 is deliberately excluded: its geoToH3 Voronoi partition diverges from its
+# chord-polygon geometry by up to ~1e-4 fractional area (measured at res-3), far
+# above the 1e-9 result-neutrality bar.  Any grid NOT listed here falls back to
+# the existing polyfill+intersection path (safe default for future grids).
+_COVERING_FAST_PATH_EXACT = frozenset({"custom", "quadbin", "bng"})
+
 _AGGS = ("avg", "count", "min", "max", "median", "sum", "variance", "stddev")
 _COVERAGES = ("sparse", "complete")
 _ASSIGNMENTS = ("centroid", "covering")
@@ -294,6 +304,15 @@ def _covering_band(
     matches the heavy tier's O(pixels) loop and is suitable for small/coarse
     tiles only.
 
+    Interior fast-path (O(boundary) optimisation, mirrors heavy Task 15):
+    For exact-geometry grids (``_COVERING_FAST_PATH_EXACT``: custom, quadbin,
+    bng), a pixel whose four corners all encode to the SAME cell is unambiguously
+    interior -- its intersection area equals the pixel area, so the weight is
+    exactly 1.0.  We accumulate ``(value, 1.0)`` directly and skip the shapely
+    polygon, polyfill, and intersection.  Boundary pixels (corners spanning two
+    or more cells) always use the existing path unchanged.  H3 is excluded from
+    the fast-path set (see ``_COVERING_FAST_PATH_EXACT``).
+
     ``work_ds`` MUST already be in the grid's native CRS:
       * WGS84 (EPSG:4326) for h3 / quadbin
       * EPSG:27700         for bng
@@ -310,6 +329,31 @@ def _covering_band(
         _encode_cellid,
         _polyfill_cells,
     )
+
+    # Set up the interior fast-path point→cell encoder for exact-geometry grids.
+    # Returns the RAW cell id (same type as polyfill candidates) or None when the
+    # point is outside the grid bounds.  _fast_cell=None disables the fast-path
+    # (h3 and any grid not in _COVERING_FAST_PATH_EXACT use the old path).
+    if grid == "custom":
+        from databricks.labs.gbx.pygx import _custom as _custom_fp
+
+        def _fast_cell(cx, cy):
+            return _custom_fp.point_to_cell_id_or_none(conf, cx, cy, resolution)
+
+    elif grid == "quadbin":
+        from databricks.labs.gbx.pygx import _quadbin as _qb_fp
+
+        def _fast_cell(cx, cy):
+            return _qb_fp.point_as_cell(cx, cy, resolution)
+
+    elif grid == "bng":
+
+        def _fast_cell(cx, cy):
+            cid = _bng.point_to_cell_id(cx, cy, resolution)
+            return cid if _bng.is_valid(cid) else None
+
+    else:
+        _fast_cell = None  # h3 and any unknown grid: use existing path
 
     ys, xs = np.nonzero(mask)
     if ys.size == 0:
@@ -331,6 +375,21 @@ def _covering_band(
         y2 = gt[3] + (x + 1) * gt[4] + (y + 1) * gt[5]
         x3 = gt[0] + x * gt[1] + (y + 1) * gt[2]
         y3 = gt[3] + x * gt[4] + (y + 1) * gt[5]
+
+        # Interior fast-path: if all 4 corners encode to the SAME cell, the pixel
+        # is fully contained — weight is 1.0, no shapely work needed.
+        if _fast_cell is not None:
+            c0 = _fast_cell(x0, y0)
+            if c0 is not None:
+                c1 = _fast_cell(x1, y1)
+                c2 = _fast_cell(x2, y2)
+                c3 = _fast_cell(x3, y3)
+                if c0 == c1 == c2 == c3:
+                    acc.setdefault(c0, []).append((val, 1.0))
+                    continue  # skip polyfill + intersection
+
+        # Fallback: existing buffered-polyfill + shapely-intersection path.
+        # Used for boundary pixels (corners span multiple cells) and for h3.
         pixel_poly = _Polygon([(x0, y0), (x1, y1), (x2, y2), (x3, y3)])
         px_area = pixel_poly.area
         if px_area == 0.0:
