@@ -288,8 +288,12 @@ def _centroid_chips_inner(work_ds, resolution, grid: str, conf=None):
 
     if grid in ("h3", "quadbin"):
         dst_epsg = work_ds.crs.to_epsg() if work_ds.crs else None
-        # CF3: guard CRS-None -- when crs is None treat as grid-native (no reprojection).
-        if dst_epsg is not None and dst_epsg != 4326:
+        # Reproject when the raster HAS a CRS and it isn't already WGS84.
+        # Gate on CRS PRESENCE (work_ds.crs is not None), not EPSG-authority
+        # presence (dst_epsg is not None): to_epsg() returns None for valid
+        # non-EPSG CRSes (e.g. ESRI:54008, WKT/PROJ4-only) which still need
+        # reprojection. CF3: crs=None (grid-native) → skip correctly.
+        if work_ds.crs is not None and dst_epsg != 4326:
             from rasterio.warp import transform as warp_transform
 
             coord_x, coord_y = warp_transform(
@@ -523,9 +527,14 @@ def iter_tessellate(
 
         dst_epsg = work_ds.crs.to_epsg() if work_ds.crs else None
         # Custom and BNG never need cell-polygon reprojection (both are grid-native).
-        # For h3/quadbin, reproject only when the work_ds CRS is known and non-4326.
+        # For h3/quadbin, reproject when the raster HAS a CRS and it isn't WGS84.
+        # Gate on CRS PRESENCE (work_ds.crs is not None), not EPSG-authority presence:
+        # to_epsg() returns None for valid non-EPSG CRSes (e.g. ESRI:54008) which
+        # still need reprojection. CF3: crs=None → work_ds.crs is None → False → skip.
         need_reproject = (
-            grid not in ("bng", "custom") and dst_epsg is not None and dst_epsg != 4326
+            grid not in ("bng", "custom")
+            and work_ds.crs is not None
+            and dst_epsg != 4326
         )
 
         for cell in covered:
