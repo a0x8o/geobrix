@@ -356,3 +356,42 @@ def k_ring(conf: CustomGridConf, cell_id: int, k: int) -> List[int]:
             pos = get_cell_position_from_positions(conf, x, y, res)
             out.append(get_cell_id(pos, res))
     return out
+
+
+def k_loop(conf: CustomGridConf, cell_id: int, k: int) -> List[int]:
+    """Hollow ring of custom-grid cells at EXACTLY Chebyshev distance k.
+
+    k=0 returns [cell_id] (center only).  k<0 raises ValueError.  For k>=1,
+    computed as sorted(k_ring(k) - k_ring(k-1)), mirroring heavy
+    CustomGridSystem.kLoop semantics exactly (set-difference of clamped rings).
+    """
+    if k < 0:
+        raise ValueError(f"gbx_custom: k_loop k must be >= 0; got {k}")
+    if k == 0:
+        return [int(cell_id)]
+    return sorted(set(k_ring(conf, cell_id, k)) - set(k_ring(conf, cell_id, k - 1)))
+
+
+def distance(conf: CustomGridConf, cell_a: int, cell_b: int) -> int:
+    """Chebyshev grid-ring distance between two custom-grid cells.
+
+    Distance = max(|dx|, |dy|) in cell-position units, consistent with
+    CustomGridSystem.distance (heavy).  This is the minimum k such that
+    cell_b appears in k_ring(cell_a, k).
+
+    Both cells are decoded to their (x, y) grid positions at their
+    respective resolutions; positions are in separate resolution spaces
+    when resolutions differ (caller's responsibility to pass same-resolution
+    cells for meaningful results, matching heavy behavior).
+    """
+    res_a = get_cell_resolution(cell_a)
+    pos_a = get_cell_position(cell_a)
+    ax = get_cell_position_x(conf, pos_a, res_a)
+    ay = get_cell_position_y(conf, pos_a, res_a)
+
+    res_b = get_cell_resolution(cell_b)
+    pos_b = get_cell_position(cell_b)
+    bx = get_cell_position_x(conf, pos_b, res_b)
+    by = get_cell_position_y(conf, pos_b, res_b)
+
+    return max(abs(ax - bx), abs(ay - by))

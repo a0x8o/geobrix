@@ -67,6 +67,21 @@ def k_ring(cell: int, k: int) -> list:
     return list(quadbin.k_ring(int(cell), int(k)))
 
 
+def k_loop(cell: int, k: int) -> list:
+    """Hollow ring of quadbin cells at EXACTLY Chebyshev distance k.
+
+    k=0 returns [cell] (center only).  k<0 raises ValueError.  For k>=1,
+    computed as sorted(k_ring(k) - k_ring(k-1)), mirroring heavy
+    Quadbin.kLoop semantics exactly.
+    """
+    k = int(k)
+    if k < 0:
+        raise ValueError(f"k_loop: k must be >= 0; got {k}")
+    if k == 0:
+        return [int(cell)]
+    return sorted(set(k_ring(cell, k)) - set(k_ring(cell, k - 1)))
+
+
 def distance(cell_a: int, cell_b: int) -> int:
     if resolution(cell_a) != resolution(cell_b):
         raise ValueError("quadbin_distance: cells must be at same resolution")

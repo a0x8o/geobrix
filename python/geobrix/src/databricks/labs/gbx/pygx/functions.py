@@ -697,6 +697,35 @@ def _custom_kring(cell, grid, k):
     return _custom.k_ring(_custom.conf_from_row(grid), int(cell), int(k))
 
 
+def _kloop(cell, k):
+    if cell is None or k is None:
+        return None
+    return _quadbin.k_loop(int(cell), int(k))
+
+
+def _custom_kloop(cell, grid, k):
+    if cell is None or grid is None or k is None:
+        return None
+    return _custom.k_loop(_custom.conf_from_row(grid), int(cell), int(k))
+
+
+@pandas_udf(LongType())
+def _custom_distance_udf(
+    cell1: pd.Series, grid: pd.Series, cell2: pd.Series
+) -> pd.Series:
+    return pd.Series(
+        [
+            (
+                int(_custom.distance(_custom.conf_from_row(s), int(a), int(b)))
+                if (a is not None and s is not None and b is not None)
+                else None
+            )
+            for a, s, b in zip(cell1, _custom_grid_records(grid), cell2)
+        ],
+        dtype="object",
+    ).astype("Int64")
+
+
 def _registrar_groups() -> List[_register.Group]:
     quadbin = {
         "gbx_quadbin_pointascell": lambda s: s.udf.register(
@@ -717,6 +746,9 @@ def _registrar_groups() -> List[_register.Group]:
         ),
         "gbx_quadbin_kring": lambda s: s.udf.register(
             "gbx_quadbin_kring", _kring, ArrayType(LongType())
+        ),
+        "gbx_quadbin_kloop": lambda s: s.udf.register(
+            "gbx_quadbin_kloop", _kloop, ArrayType(LongType())
         ),
         "gbx_quadbin_polyfill": lambda s: s.udf.register(
             "gbx_quadbin_polyfill", _polyfill, ArrayType(LongType())
@@ -816,6 +848,12 @@ def _registrar_groups() -> List[_register.Group]:
         ),
         "gbx_custom_kring": lambda s: s.udf.register(
             "gbx_custom_kring", _custom_kring, ArrayType(LongType())
+        ),
+        "gbx_custom_kloop": lambda s: s.udf.register(
+            "gbx_custom_kloop", _custom_kloop, ArrayType(LongType())
+        ),
+        "gbx_custom_distance": lambda s: s.udf.register(
+            "gbx_custom_distance", _custom_distance_udf
         ),
     }
     return [
@@ -1127,3 +1165,18 @@ def custom_polyfill(geom: ColLike, grid: ColLike, resolution: ColLike) -> Column
 def custom_kring(cell: ColLike, grid: ColLike, k: ColLike) -> Column:
     """ARRAY<BIGINT> of cells within Chebyshev ring distance `k` (includes center)."""
     return f.call_function("gbx_custom_kring", _col(cell), _col(grid), _col(k))
+
+
+def quadbin_kloop(cell: ColLike, k: ColLike) -> Column:
+    """ARRAY<LONG> of cells at EXACTLY Chebyshev distance `k` (hollow ring; k=0=[cell])."""
+    return f.call_function("gbx_quadbin_kloop", _col(cell), _col(k))
+
+
+def custom_kloop(cell: ColLike, grid: ColLike, k: ColLike) -> Column:
+    """ARRAY<BIGINT> of custom-grid cells at EXACTLY Chebyshev distance `k` (hollow ring)."""
+    return f.call_function("gbx_custom_kloop", _col(cell), _col(grid), _col(k))
+
+
+def custom_distance(cell1: ColLike, grid: ColLike, cell2: ColLike) -> Column:
+    """Chebyshev grid-ring distance (BIGINT) between two custom-grid cells: max(|dx|,|dy|)."""
+    return f.call_function("gbx_custom_distance", _col(cell1), _col(grid), _col(cell2))
