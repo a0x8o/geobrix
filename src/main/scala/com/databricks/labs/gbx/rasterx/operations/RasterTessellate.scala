@@ -318,16 +318,18 @@ object RasterTessellate {
                 val b = BoundingBox.bbox(workDs, gridSR)
                 (b, grid.coveringCandidateCells(b, resolution).toArray)
             } else (null, Array.empty[Long])
-        // gridSR is used only for the bbox above; release the fresh per-call custom SR now (see srForGrid).
-        if (isCustom(grid)) gridSR.delete()
-
-        // For 4326-native grids: set up per-pixel reprojection if the raster CRS is not already 4326.
-        // For 27700-native grids (BNG): no per-pixel reprojection — the warp already puts coords in 27700.
-        val tf: CoordinateTransformation = if (grid.crsSrid != 27700) {
+        // Per-pixel reprojection TARGET is the grid's OWN CRS (srForGrid), so pixel centroids are
+        // transformed into the grid CRS before pointToCellID for ANY grid CRS — consistent with the
+        // raster->grid path (which reprojects the raster to the grid CRS). BNG is pre-warped to its
+        // native 27700, so it needs no per-pixel transform (else null). H3/quadbin: srForGrid is the
+        // shared WGS84 SR, so the target stays 4326 and per-pixel results are unchanged (digest-neutral).
+        // Custom: srForGrid is a fresh SR built from grid.crsSrid. gridSR is reused (also the bbox SR
+        // above) as the transform target and released below (only when it is a fresh custom SR).
+        val tf: CoordinateTransformation = if (isBng(grid)) null else {
             val srcSR = workDs.GetSpatialRef
-            val needReproject = srcSR != null && srcSR.IsSame(GDAL.WSG84) != 1
-            if (needReproject) new CoordinateTransformation(srcSR, GDAL.WSG84) else null
-        } else null
+            if (srcSR != null && srcSR.IsSame(gridSR) != 1) new CoordinateTransformation(srcSR, gridSR)
+            else null
+        }
 
         // Read every band's values + mask once; assign each valid pixel (by flat index) to its cell.
         val bandVals   = new Array[Array[Double]](bandCount)
@@ -388,6 +390,11 @@ object RasterTessellate {
 
         // For BNG the working dataset is a temporary warp; release it once all pixels are read.
         if (reprojected) RasterDriver.releaseDataset(workDs)
+        // Release the per-pixel transform and the fresh per-call custom grid SR — both are done being
+        // used (tf in the pixel loop above; gridSR in the bbox and as the tf target). Shared SRs
+        // (GDAL.WSG84 for H3/quadbin, BngSR for BNG) are never released.
+        if (tf != null) tf.delete()
+        if (isCustom(grid)) gridSR.delete()
 
         val gridName = grid.name.toLowerCase
         val cellIter = cellPixels.iterator

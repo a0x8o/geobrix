@@ -238,9 +238,6 @@ object RST_Custom_RasterizeAgg extends WithExpressionInfo {
 
     override def name: String = "gbx_rst_custom_rasterize_agg"
 
-    /** NoData fill value, matching the built-in grid aggregators. */
-    val NoData: Double = -9999.0
-
     override def builder(): FunctionBuilder = (c: Seq[Expression]) => c.length match {
         case 13 => RST_Custom_RasterizeAgg(
             c(0), c(1), c(2), c(3), c(4), c(5), c(6), c(7), c(8), c(9), c(10), c(11), c(12))

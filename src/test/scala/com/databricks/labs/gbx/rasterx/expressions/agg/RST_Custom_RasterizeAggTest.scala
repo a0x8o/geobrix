@@ -139,4 +139,94 @@ class RST_Custom_RasterizeAggTest extends AnyFunSuite with BeforeAndAfterAll {
         val r = readRaster(agg.eval(buf).asInstanceOf[AnyRef])
         r.data.count(_ == -9999.0) should be > 0
     }
+
+    // -------------------------------------------------------------------------------------------
+    // Auto-grid path (extent OMITTED -> computeGridspec): exercises grid-CRS sampling, the
+    // srid == gridCrs short-circuit, and the reproject branch (out_srid != gridCrs).
+    // -------------------------------------------------------------------------------------------
+
+    /** Extent-OMITTED aggregator (xmin..height null) at `outSrid`; pixel_size omitted -> default. */
+    private def makeCustomAutoAgg(outSrid: Int): RST_Custom_RasterizeAgg =
+        RST_Custom_RasterizeAgg(
+            cellidExpr    = Literal.create(null, LongType),
+            valueExpr     = Literal(0.0),
+            gridExpr      = gridExpr,
+            outSridExpr   = Literal(outSrid),
+            pixelSizeExpr = Literal.create(null, DoubleType),
+            xminExpr      = Literal.create(null, DoubleType),
+            yminExpr      = Literal.create(null, DoubleType),
+            xmaxExpr      = Literal.create(null, DoubleType),
+            ymaxExpr      = Literal.create(null, DoubleType),
+            widthExpr     = Literal.create(null, IntegerType),
+            heightExpr    = Literal.create(null, IntegerType),
+            modeExpr      = Literal("centroids"),
+            kringPadExpr  = Literal(1),
+            exprConfExpr  = Literal.create(encodedEmpty(), StringType)
+        )
+
+    test("auto-grid (extent omitted) at out_srid == grid CRS round-trips into the input cell set") {
+        val cellIds = points.map { case (x, y) => grid.pointToCellID(x, y, res) }
+        val cellSet = cellIds.toSet
+
+        val agg = makeCustomAutoAgg(27700)
+        val buf = agg.createAggregationBuffer()
+        cellIds.zipWithIndex.foreach { case (c, i) => agg.update(buf, c, (i + 1).toDouble) }
+
+        val r = readRaster(agg.eval(buf).asInstanceOf[AnyRef])
+        var covered = 0
+        var py = 0
+        while (py < r.height) {
+            var px = 0
+            while (px < r.width) {
+                if (r.data(py * r.width + px) != -9999.0) {
+                    covered += 1
+                    val cx = r.gt(0) + (0.5 + px) * r.gt(1) + (0.5 + py) * r.gt(2)
+                    val cy = r.gt(3) + (0.5 + px) * r.gt(4) + (0.5 + py) * r.gt(5)
+                    cellSet should contain(grid.pointToCellID(cx, cy, res))
+                }
+                px += 1
+            }
+            py += 1
+        }
+        covered should be >= cellSet.size
+    }
+
+    test("auto-grid (extent omitted) with out_srid != grid CRS exercises the reproject branch and round-trips") {
+        val cellIds = points.map { case (x, y) => grid.pointToCellID(x, y, res) }
+        val cellSet = cellIds.toSet
+
+        val agg = makeCustomAutoAgg(3857) // grid CRS is 27700 -> computeGridspec reprojects samples to 3857
+        val buf = agg.createAggregationBuffer()
+        cellIds.zipWithIndex.foreach { case (c, i) => agg.update(buf, c, (i + 1).toDouble) }
+
+        val r = readRaster(agg.eval(buf).asInstanceOf[AnyRef])
+
+        // Raster is now in EPSG:3857; back-transform covered pixel centroids to the grid CRS (27700).
+        val sr3857 = new org.gdal.osr.SpatialReference(); sr3857.ImportFromEPSG(3857)
+        sr3857.SetAxisMappingStrategy(org.gdal.osr.osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+        val sr27700 = new org.gdal.osr.SpatialReference(); sr27700.ImportFromEPSG(27700)
+        sr27700.SetAxisMappingStrategy(org.gdal.osr.osrConstants.OAMS_TRADITIONAL_GIS_ORDER)
+        val back = new org.gdal.osr.CoordinateTransformation(sr3857, sr27700)
+        try {
+            var covered = 0
+            var py = 0
+            while (py < r.height) {
+                var px = 0
+                while (px < r.width) {
+                    if (r.data(py * r.width + px) != -9999.0) {
+                        covered += 1
+                        val x3857 = r.gt(0) + (0.5 + px) * r.gt(1) + (0.5 + py) * r.gt(2)
+                        val y3857 = r.gt(3) + (0.5 + px) * r.gt(4) + (0.5 + py) * r.gt(5)
+                        val p = back.TransformPoint(x3857, y3857)
+                        cellSet should contain(grid.pointToCellID(p(0), p(1), res))
+                    }
+                    px += 1
+                }
+                py += 1
+            }
+            covered should be >= cellSet.size
+        } finally {
+            back.delete(); sr3857.delete(); sr27700.delete()
+        }
+    }
 }

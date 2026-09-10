@@ -1,7 +1,9 @@
 package com.databricks.labs.gbx.rasterx.expressions.grid
 
+import com.databricks.labs.gbx.expressions.WithExpressionInfo
 import com.databricks.labs.gbx.gridx.grid.{CustomGridSystem, GridConf}
 import com.databricks.labs.gbx.rasterx.gdal.GDALManager
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.gdal.gdal.{Dataset, gdal}
 import org.gdal.gdalconst.gdalconstConstants
 import org.scalatest.BeforeAndAfterAll
@@ -115,5 +117,26 @@ class RST_Custom_RasterToGridTest extends AnyFunSuite with BeforeAndAfterAll {
         }
         // Names the offending bound / axis, not a mid-aggregation "X coordinate out of bounds".
         ex.getMessage.toLowerCase should include("bound")
+    }
+
+    test("all 8 stat companions expose distinct canonical names and a 3-to-5-arg builder") {
+        val cases: Seq[(WithExpressionInfo, String)] = Seq(
+            (RST_Custom_RasterToGridAvg,      "gbx_rst_custom_rastertogridavg"),
+            (RST_Custom_RasterToGridCount,    "gbx_rst_custom_rastertogridcount"),
+            (RST_Custom_RasterToGridMax,      "gbx_rst_custom_rastertogridmax"),
+            (RST_Custom_RasterToGridMin,      "gbx_rst_custom_rastertogridmin"),
+            (RST_Custom_RasterToGridMedian,   "gbx_rst_custom_rastertogridmedian"),
+            (RST_Custom_RasterToGridSum,      "gbx_rst_custom_rastertogridsum"),
+            (RST_Custom_RasterToGridVariance, "gbx_rst_custom_rastertogridvariance"),
+            (RST_Custom_RasterToGridStddev,   "gbx_rst_custom_rastertogridstddev")
+        )
+        val a3 = (0 until 3).map(i => Literal(i))
+        cases.foreach { case (companion, expectedName) =>
+            companion.name shouldBe expectedName
+            companion.builder()(a3) should not be null                       // 3 args (grid inserted after tile)
+            an[IllegalArgumentException] should be thrownBy companion.builder()(a3.take(2))
+            an[IllegalArgumentException] should be thrownBy companion.builder()((0 until 6).map(i => Literal(i)))
+        }
+        cases.map(_._2).distinct.size shouldBe 8 // no copy-paste name/prettyName slip
     }
 }
