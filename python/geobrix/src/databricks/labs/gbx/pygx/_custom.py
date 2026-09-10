@@ -319,7 +319,9 @@ def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
     return out
 
 
-def covering_candidate_cells(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
+def covering_candidate_cells(
+    conf: CustomGridConf, geometry, resolution: int
+) -> List[int]:
     """Candidate cell IDs for COVERING tessellation of a raster bbox / pixel rect.
 
     Port of ``CustomGridSystem.coveringCandidateCells`` (CustomGridSystem.scala:197-200).

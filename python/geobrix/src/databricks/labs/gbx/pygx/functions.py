@@ -28,7 +28,7 @@ from pyspark.sql.types import (
 
 from databricks.labs.gbx import _register
 
-from . import _bng, _custom, _env, _quadbin
+from . import _bng, _cellfill, _custom, _env, _quadbin
 from ._geom import parse_geom
 from ._serde import BNG_CHIP_SCHEMA, CUSTOM_GRID_SCHEMA, QUADBIN_CELL_SCHEMA
 
@@ -726,6 +726,143 @@ def _custom_distance_udf(
     ).astype("Int64")
 
 
+# ============================================================================
+# cellfill grouped aggregators — all four grids
+#
+# PySpark grouped-aggregate pandas_udf: (pd.Series, ...) -> scalar.
+# Cannot return StructType/ArrayType, so the result is BINARY-encoded via
+# _cellfill.encode (same format as heavy CellFillAcc.serialize applied to the
+# filled result).  Callers decode with _cellfill.decode.
+#
+# k/method/power are SQL literals carried as constant pd.Series;
+# k  arrives as int32/int64, method as str/object, power as Decimal or float.
+# Cell IDs: LONG -> float64 or int64 (NaN for NULL); BNG STRING -> object (None).
+# ============================================================================
+
+
+def _parse_k(s: "pd.Series") -> int:  # type: ignore[name-defined]
+    v = s.iloc[0]
+    return 1 if v is None else int(v)
+
+
+def _parse_method(s: "pd.Series") -> str:  # type: ignore[name-defined]
+    v = s.iloc[0]
+    return "mean" if v is None else str(v)
+
+
+def _parse_power(s: "pd.Series") -> float:  # type: ignore[name-defined]
+    v = s.iloc[0]
+    return 2.0 if v is None else float(v)
+
+
+def _h3_k_loop(cell_id: int, d: int) -> list:
+    """Hollow H3 ring at exactly ring distance d (int cell-ID ↔ hex-string adapter)."""
+    import h3 as _h3lib
+
+    return [int(c, 16) for c in _h3lib.grid_ring(_h3lib.int_to_str(cell_id), d)]
+
+
+@pandas_udf(BinaryType())
+def _h3_cellfill_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    k: pd.Series,
+    method: pd.Series,
+    power: pd.Series,
+) -> Optional[bytes]:
+    cells = {}
+    for c, v in zip(cellid, value):
+        if pd.isna(c):
+            continue
+        cells[int(c)] = None if pd.isna(v) else float(v)
+    if not cells:
+        return None
+    filled = _cellfill.fill(
+        cells, _parse_k(k), _parse_method(method), _parse_power(power), _h3_k_loop
+    )
+    return _cellfill.encode(filled)
+
+
+@pandas_udf(BinaryType())
+def _quadbin_cellfill_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    k: pd.Series,
+    method: pd.Series,
+    power: pd.Series,
+) -> Optional[bytes]:
+    cells = {}
+    for c, v in zip(cellid, value):
+        if pd.isna(c):
+            continue
+        cells[int(c)] = None if pd.isna(v) else float(v)
+    if not cells:
+        return None
+    filled = _cellfill.fill(
+        cells, _parse_k(k), _parse_method(method), _parse_power(power), _quadbin.k_loop
+    )
+    return _cellfill.encode(filled)
+
+
+@pandas_udf(BinaryType())
+def _bng_cellfill_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    k: pd.Series,
+    method: pd.Series,
+    power: pd.Series,
+) -> Optional[bytes]:
+    # BNG cell IDs arrive as strings (object dtype); None = SQL NULL.
+    cells = {}
+    for c, v in zip(cellid, value):
+        if c is None or pd.isna(c):
+            continue
+        cid_int = _bng.parse_safe(str(c))
+        if cid_int is None:
+            continue
+        cells[cid_int] = None if pd.isna(v) else float(v)
+    if not cells:
+        return None
+    filled = _cellfill.fill(
+        cells, _parse_k(k), _parse_method(method), _parse_power(power), _bng.k_loop
+    )
+    return _cellfill.encode(filled)
+
+
+@pandas_udf(BinaryType())
+def _custom_cellfill_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    grid: pd.Series,  # struct arrives as Series of dicts in grouped-agg context
+    k: pd.Series,
+    method: pd.Series,
+    power: pd.Series,
+) -> Optional[bytes]:
+    # Extract grid conf from first non-null row (all rows share the same grid spec).
+    conf = None
+    for g in grid:
+        if g is not None:
+            conf = _custom.conf_from_row(g)
+            break
+    if conf is None:
+        return None
+    cells = {}
+    for c, v in zip(cellid, value):
+        if pd.isna(c):
+            continue
+        cells[int(c)] = None if pd.isna(v) else float(v)
+    if not cells:
+        return None
+
+    def _k_loop_fn(cid: int, d: int) -> list:
+        return _custom.k_loop(conf, cid, d)
+
+    filled = _cellfill.fill(
+        cells, _parse_k(k), _parse_method(method), _parse_power(power), _k_loop_fn
+    )
+    return _cellfill.encode(filled)
+
+
 def _registrar_groups() -> List[_register.Group]:
     quadbin = {
         "gbx_quadbin_pointascell": lambda s: s.udf.register(
@@ -758,6 +895,9 @@ def _registrar_groups() -> List[_register.Group]:
         ),
         "gbx_quadbin_cellunion_agg": lambda s: s.udf.register(
             "gbx_quadbin_cellunion_agg", _cellunion_agg_udf
+        ),
+        "gbx_quadbin_cellfill": lambda s: s.udf.register(
+            "gbx_quadbin_cellfill", _quadbin_cellfill_agg_udf
         ),
     }
     bng = {
@@ -826,6 +966,9 @@ def _registrar_groups() -> List[_register.Group]:
         "gbx_bng_cellintersection_agg": lambda s: s.udf.register(
             "gbx_bng_cellintersection_agg", _bng_cellintersection_agg_udf
         ),
+        "gbx_bng_cellfill": lambda s: s.udf.register(
+            "gbx_bng_cellfill", _bng_cellfill_agg_udf
+        ),
     }
     custom = {
         "gbx_custom_grid": lambda s: s.udf.register(
@@ -855,8 +998,17 @@ def _registrar_groups() -> List[_register.Group]:
         "gbx_custom_distance": lambda s: s.udf.register(
             "gbx_custom_distance", _custom_distance_udf
         ),
+        "gbx_custom_cellfill": lambda s: s.udf.register(
+            "gbx_custom_cellfill", _custom_cellfill_agg_udf
+        ),
+    }
+    h3 = {
+        "gbx_h3_cellfill": lambda s: s.udf.register(
+            "gbx_h3_cellfill", _h3_cellfill_agg_udf
+        ),
     }
     return [
+        (lambda: _env.assert_h3_available(), h3),
         (lambda: _env.assert_quadbin_available(), quadbin),
         (lambda: _env.assert_bng_available(), bng),
         (lambda: _env.assert_custom_available(), custom),
@@ -1180,3 +1332,81 @@ def custom_kloop(cell: ColLike, grid: ColLike, k: ColLike) -> Column:
 def custom_distance(cell1: ColLike, grid: ColLike, cell2: ColLike) -> Column:
     """Chebyshev grid-ring distance (BIGINT) between two custom-grid cells: max(|dx|,|dy|)."""
     return f.call_function("gbx_custom_distance", _col(cell1), _col(grid), _col(cell2))
+
+
+# --- cellfill Column wrappers ------------------------------------------------
+# All four grids. Returns BINARY-encoded (cellid, value) list; decode with
+# _cellfill.decode.  k default 1, method default 'mean', power default 2.0.
+
+
+def h3_cellfill(
+    cellid: ColLike,
+    value: ColLike,
+    k: ColLike = 1,
+    method: ColLike = "mean",
+    power: ColLike = 2.0,
+) -> Column:
+    """Aggregator: fill NULL H3 cells from valid neighbours; returns BINARY payload.
+
+    Decode the result with ``_cellfill.decode``. k=1, method='mean', power=2.0
+    are defaults (match heavy gbx_h3_cellfill).
+    """
+    return f.call_function(
+        "gbx_h3_cellfill", _col(cellid), _col(value), _col(k), _col(method), _col(power)
+    )
+
+
+def quadbin_cellfill(
+    cellid: ColLike,
+    value: ColLike,
+    k: ColLike = 1,
+    method: ColLike = "mean",
+    power: ColLike = 2.0,
+) -> Column:
+    """Aggregator: fill NULL Quadbin cells from valid neighbours; returns BINARY payload."""
+    return f.call_function(
+        "gbx_quadbin_cellfill",
+        _col(cellid),
+        _col(value),
+        _col(k),
+        _col(method),
+        _col(power),
+    )
+
+
+def bng_cellfill(
+    cellid: ColLike,
+    value: ColLike,
+    k: ColLike = 1,
+    method: ColLike = "mean",
+    power: ColLike = 2.0,
+) -> Column:
+    """Aggregator: fill NULL BNG cells from valid neighbours; returns BINARY payload."""
+    return f.call_function(
+        "gbx_bng_cellfill",
+        _col(cellid),
+        _col(value),
+        _col(k),
+        _col(method),
+        _col(power),
+    )
+
+
+def custom_cellfill(
+    cellid: ColLike,
+    value: ColLike,
+    grid: ColLike,
+    k: ColLike = 1,
+    method: ColLike = "mean",
+    power: ColLike = 2.0,
+) -> Column:
+    """Aggregator: fill NULL custom-grid cells from valid neighbours; returns BINARY payload."""
+    return f.call_function(
+        "gbx_custom_cellfill",
+        _col(cellid),
+        _col(value),
+        _col(grid),
+        _col(k),
+        _col(method),
+        _col(power),
+    )
