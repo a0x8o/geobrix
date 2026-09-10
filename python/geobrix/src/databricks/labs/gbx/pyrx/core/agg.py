@@ -4,11 +4,13 @@ GTiff ``bytes``, ``(band_index, bytes)`` pairs, or ``(wkb, value)`` feature list
 plus extent params) and returns the result raster's GTiff ``bytes``.
 
 These mirror the heavyweight operations:
-  * ``merge_tiles``       -> RST_MergeAgg / MergeRasters (spatial mosaic)
-  * ``combineavg_tiles``  -> RST_CombineAvgAgg / CombineAVG (per-pixel mean, NoData-aware)
-  * ``frombands_tiles``   -> RST_FromBandsAgg (stack bands, ascending band_index)
-  * ``rasterize_features``-> RST_RasterizeAgg (burn all features into one raster)
-  * ``derivedband_tiles`` -> RST_DerivedBandAgg (user pyfunc across N tiles-as-bands)
+  * ``merge_tiles``           -> RST_MergeAgg / MergeRasters (spatial mosaic)
+  * ``combineavg_tiles``      -> RST_CombineAvgAgg / CombineAVG (per-pixel mean, NoData-aware)
+  * ``combine_{stat}_tiles``  -> gbx_rst_combine{min,max,sum,count,median,stddev}
+  * ``frombands_tiles``       -> RST_FromBandsAgg (stack bands, ascending band_index)
+  * ``rasterize_features``    -> RST_RasterizeAgg (burn all features into one raster)
+  * ``derivedband_tiles``     -> RST_DerivedBandAgg (user pyfunc across N tiles-as-bands)
+  * ``align_to_tiles``        -> gbx_rst_align_to (warp tile to reference grid)
 """
 
 from typing import List, Tuple
@@ -434,3 +436,313 @@ def derivedband_tiles(rasters: List[bytes], python_func: str, func_name: str) ->
     with MemoryFile(stacked_bytes) as mf:
         with mf.open() as ds:
             return _derivedband.derivedband(ds, str(python_func), str(func_name))
+
+
+# ---------------------------------------------------------------------------
+# Cross-raster combine family (6 stats)
+# ---------------------------------------------------------------------------
+# Mirrors CombineStats.scala: per-pixel/per-band reduction over VALID (non-NoData)
+# values across a stack of ALIGNED tiles. Alignment is a hard precondition: inputs
+# must share identical CRS, extent, pixel size, and dimensions. A pixel that is
+# NoData in ALL inputs produces NoData in the output.
+#
+# Conventions (mirrors the heavy tier exactly for parity):
+#   median : np.ma.median (mean of two middle values on even count)
+#   stddev : population (ddof=0), masked.std() default
+#   count  : number of valid (non-NoData) inputs; all-NoData pixel -> NoData, NOT 0
+#   dtype  : output dtype preserved from the first input; integer output rounded
+#            via np.rint then cast with numpy's default (unsafe) cast — matches
+#            heavy: `if np.issubdtype(dtype, np.integer): result = np.rint(result);
+#            result.astype(dtype)`.
+# ---------------------------------------------------------------------------
+
+_REL_TOL = 1e-6
+
+
+def _approx_eq(a: float, b: float) -> bool:
+    """Relative tolerance comparison (matches RasterAlignment.approxEq in Scala)."""
+    return abs(a - b) <= _REL_TOL * (1.0 + abs(b))
+
+
+def _crs_equal(a_crs, b_crs) -> bool:
+    """True when two rasterio CRS values represent the same CRS.
+
+    Both-None counts as same (grid-native convention, mirrors sameCrs in Scala).
+    Uses pyproj for semantic equivalence where possible.
+    """
+    a_empty = a_crs is None
+    b_empty = b_crs is None
+    if a_empty and b_empty:
+        return True
+    if a_empty != b_empty:
+        return False
+    try:
+        from pyproj import CRS as _ProjCRS
+
+        return _ProjCRS.from_user_input(a_crs).equals(_ProjCRS.from_user_input(b_crs))
+    except Exception:
+        return str(a_crs) == str(b_crs)
+
+
+def _gt_coeffs(ds):
+    """Return the 6 GDAL geotransform coefficients from a rasterio dataset."""
+    t = ds.transform
+    # GDAL order: [xoff, xscale, xrot, yoff, yrot, yscale]
+    return (t.c, t.a, t.b, t.f, t.d, t.e)
+
+
+def _require_aligned(datasets, func_name: str) -> None:
+    """Raise ValueError if any dataset does not match datasets[0]'s grid.
+
+    Checks: identical (width, height), geotransform within _REL_TOL, same CRS.
+    A stack of 0 or 1 tiles is trivially aligned (mirrors requireAligned in Scala).
+    The error message always contains 'align' and points at gbx_rst_align_to.
+    """
+    if len(datasets) <= 1:
+        return
+    ref = datasets[0]
+    ref_gt = _gt_coeffs(ref)
+    for i, ds in enumerate(datasets[1:], start=1):
+        if ds.width != ref.width or ds.height != ref.height:
+            raise ValueError(
+                f"{func_name} requires all input tiles to share an identical grid "
+                f"(CRS, extent, pixel size, and dimensions), but tile {i} does not "
+                f"match tile 0. "
+                f"tile 0: {ref.width}x{ref.height}px; tile {i}: {ds.width}x{ds.height}px. "
+                f"Cross-raster combine does NOT resample or reproject its inputs — "
+                f"align them first with gbx_rst_align_to(tile, reference_tile)."
+            )
+        ds_gt = _gt_coeffs(ds)
+        if not all(_approx_eq(ds_gt[j], ref_gt[j]) for j in range(6)):
+            raise ValueError(
+                f"{func_name} requires all input tiles to share an identical grid, "
+                f"but tile {i} has a different geotransform. "
+                f"Align them first with gbx_rst_align_to(tile, reference_tile)."
+            )
+        if not _crs_equal(ref.crs, ds.crs):
+            raise ValueError(
+                f"{func_name} requires all input tiles to share an identical grid, "
+                f"but tile {i} has a different CRS from tile 0. "
+                f"Align them first with gbx_rst_align_to(tile, reference_tile)."
+            )
+
+
+def _combine_stat_tiles(rasters: List[bytes], stat: str) -> bytes:
+    """Per-pixel ``stat`` across aligned tiles, excluding NoData (GTiff bytes).
+
+    Mirrors CombineStats.compute (Scala): stacks all N tile arrays then applies
+    the masked reduction per-pixel per-band. Output dtype is preserved from the
+    first input tile; integer output is rounded via np.rint before the cast (same
+    as the heavy VRT pixel function's `np.copyto(out_ar, np.rint(result), casting='unsafe')`).
+
+    All-NoData pixels → the chosen fallback NoData sentinel (first declared NoData
+    or 0.0 if none declared). The fallback is stamped as NoData on every output band
+    when at least one input declared NoData.
+    """
+    if not rasters:
+        return None
+    if len(rasters) == 1:
+        return bytes(rasters[0])
+
+    memfiles, datasets = _open_all(rasters)
+    try:
+        _require_aligned(datasets, f"gbx_rst_combine{stat}")
+
+        ref = datasets[0]
+        out_dtype = ref.dtypes[0]
+        ref_profile = ref.profile.copy()
+
+        # Collect per-tile NoData values and per-band arrays (float64 for accumulation).
+        nodatas = []
+        tile_arrays = []
+        any_nodata = False
+        fallback = None
+
+        for ds in datasets:
+            nd = ds.nodata
+            arr = ds.read().astype("float64")  # (bands, h, w)
+            tile_arrays.append(arr)
+            nodatas.append(nd)
+            if nd is not None:
+                any_nodata = True
+                if fallback is None:
+                    fallback = nd
+
+        if fallback is None:
+            fallback = 0.0
+
+        # Stack: (N, bands, h, w) — mirrors in_ar layout in the VRT pixel function.
+        stacked = np.stack(tile_arrays, axis=0)
+
+        # Build per-tile validity mask: (N, bands, h, w).
+        valid = np.ones(stacked.shape, dtype=bool)
+        for i, nd in enumerate(nodatas):
+            if nd is not None:
+                valid[i] = stacked[i] != nd
+
+        counts = valid.sum(axis=0)  # (bands, h, w)
+        masked = np.ma.masked_array(stacked, mask=~valid)
+
+        if stat == "min":
+            raw_stat = masked.min(axis=0)
+        elif stat == "max":
+            raw_stat = masked.max(axis=0)
+        elif stat == "sum":
+            raw_stat = masked.sum(axis=0)
+        elif stat == "count":
+            # count = number of valid inputs; all-NoData pixel -> NoData (not 0).
+            raw_stat = counts.astype("float64")
+        elif stat == "median":
+            raw_stat = np.ma.median(masked, axis=0)  # mean-of-two on even count
+        elif stat == "stddev":
+            raw_stat = masked.std(axis=0)  # population std, ddof=0
+        else:
+            raise ValueError(
+                f"_combine_stat_tiles: unsupported stat '{stat}'; "
+                "expected one of: min, max, sum, count, median, stddev"
+            )
+
+        # Fill masked/NoData cells with the fallback sentinel.
+        filled = np.ma.filled(np.ma.asarray(raw_stat, dtype="float64"), fallback)
+        # All-NoData pixels (counts==0) → fallback.
+        result = np.where(counts > 0, filled, fallback)
+
+        # Dtype preservation + integer rounding (matches heavy tier exactly).
+        if np.issubdtype(np.dtype(out_dtype), np.integer):
+            result = np.rint(result)
+        out = result.astype(out_dtype)  # numpy default casting='unsafe'
+
+        ref_profile.update(driver="GTiff")
+        if any_nodata:
+            ref_profile.update(nodata=fallback)
+        decoded_bytes = out.nbytes
+        ref_profile.update(
+            _comp.creation_opts(
+                str(out.dtype), decoded_bytes=decoded_bytes, compress="auto"
+            )
+        )
+        with MemoryFile() as out_mf:
+            with out_mf.open(**ref_profile) as dst:
+                dst.write(out)
+            return out_mf.read()
+    finally:
+        _close_all(memfiles, datasets)
+
+
+def combine_min_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel minimum of valid (non-NoData) values across aligned tiles (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinemin``: alignment is a hard precondition (same grid).
+    """
+    return _combine_stat_tiles(rasters, "min")
+
+
+def combine_max_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel maximum of valid (non-NoData) values across aligned tiles (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinemax``.
+    """
+    return _combine_stat_tiles(rasters, "max")
+
+
+def combine_sum_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel sum of valid (non-NoData) values across aligned tiles (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinesum``. Integer stacks may wrap/overflow (matches heavy).
+    """
+    return _combine_stat_tiles(rasters, "sum")
+
+
+def combine_count_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel count of valid (non-NoData) inputs across aligned tiles (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinecount``. All-NoData pixels → NoData, NOT 0.
+    """
+    return _combine_stat_tiles(rasters, "count")
+
+
+def combine_median_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel median of valid (non-NoData) values across aligned tiles (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinemedian``. Even-count median = mean of the two middle
+    values (``np.ma.median`` default).
+    """
+    return _combine_stat_tiles(rasters, "median")
+
+
+def combine_stddev_tiles(rasters: List[bytes]) -> bytes:
+    """Per-pixel population stddev of valid (non-NoData) values (GTiff bytes).
+
+    Mirrors ``gbx_rst_combinestddev``. Population standard deviation (ddof=0),
+    matching the heavy tier's ``masked.std()`` default.
+    """
+    return _combine_stat_tiles(rasters, "stddev")
+
+
+# ---------------------------------------------------------------------------
+# Warp helper: align a tile to a reference grid
+# ---------------------------------------------------------------------------
+
+
+def align_to_tiles(tile_bytes: bytes, ref_bytes: bytes) -> bytes:
+    """Warp ``tile_bytes`` onto ``ref_bytes``'s grid (GTiff bytes).
+
+    Mirrors ``gbx_rst_align_to``: the output has exactly the same CRS, width,
+    height, and geotransform as the reference. Nearest-neighbour resampling is
+    used so pixel values are not interpolated (``-r near`` in gdalwarp).
+
+    This is the explicit fix for the alignment precondition of the combine
+    family: align each tile to a common reference, then combine.
+
+    Returns ``None`` when either input is missing/empty.
+    """
+    import rasterio
+    from rasterio.warp import Resampling, reproject
+
+    if not tile_bytes or not ref_bytes:
+        return None
+
+    with MemoryFile(bytes(tile_bytes)) as src_mf:
+        with src_mf.open() as src:
+            with MemoryFile(bytes(ref_bytes)) as ref_mf:
+                with ref_mf.open() as ref:
+                    dst_crs = ref.crs
+                    dst_transform = ref.transform
+                    dst_width = ref.width
+                    dst_height = ref.height
+
+            src_nodata = src.nodata
+            out_dtype = src.dtypes[0]
+            decoded_bytes = (
+                src.count * dst_width * dst_height * np.dtype(out_dtype).itemsize
+            )
+
+            profile = src.profile.copy()
+            profile.update(
+                driver="GTiff",
+                crs=dst_crs,
+                transform=dst_transform,
+                width=dst_width,
+                height=dst_height,
+            )
+            profile.update(
+                _comp.creation_opts(
+                    out_dtype, decoded_bytes=decoded_bytes, compress="auto"
+                )
+            )
+
+            with MemoryFile() as out_mf:
+                with out_mf.open(**profile) as dst:
+                    for b in range(1, src.count + 1):
+                        reproject(
+                            source=rasterio.band(src, b),
+                            destination=rasterio.band(dst, b),
+                            src_transform=src.transform,
+                            src_crs=src.crs,
+                            dst_transform=dst_transform,
+                            dst_crs=dst_crs,
+                            src_nodata=src_nodata,
+                            dst_nodata=src_nodata,
+                            resampling=Resampling.nearest,
+                        )
+                return out_mf.read()

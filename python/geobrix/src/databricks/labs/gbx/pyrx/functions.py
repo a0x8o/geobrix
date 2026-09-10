@@ -1299,6 +1299,291 @@ def rst_combineavg(
     return _combineavg_udf(tc)
 
 
+# ---------------------------------------------------------------------------
+# rst_combine{min,max,sum,count,median,stddev}: ARRAY<tile struct> -> tile.
+# Mirrors gbx_rst_combine{min,max,median,sum,stddev,count}: per-pixel statistic
+# across a stack of aligned tiles, NoData-aware (reuses agg_core.combine_*_tiles).
+# Structure mirrors rst_combineavg: shared _bytes body + UDF wrappers + public API.
+# ---------------------------------------------------------------------------
+
+
+def _combine_stat_bytes(tiles, stat: str):
+    """Shared body for the combine-family stats (mirrors _combineavg_bytes).
+
+    Collects GTiff bytes from each non-empty, non-corrupt input tile, resolves
+    cellid (shared if all match, else -1), then calls the stat-specific reducer.
+    Returns ``(new_bytes, cellid, dropped)`` or ``None`` when all inputs are
+    empty/corrupt.
+    """
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    elems = [t for t in tiles if t is not None and not _tile_is_empty(t)]
+    if not elems:
+        return None
+    rasters = []
+    good_elems = []
+    dropped = 0
+    for t in elems:
+        try:
+            vt = ot._to_virtual_tile(t)
+            if vt.is_virtual():
+                candidate = ot.materialize_to_bytes(vt).raster
+            else:
+                candidate = bytes(vt.raster)
+            with _serde.open_tile(candidate):
+                pass
+            rasters.append(candidate)
+            good_elems.append(t)
+        except Exception:  # noqa: BLE001
+            dropped += 1
+            continue
+    if not rasters:
+        return None
+    cellids = {_tile_cellid(t) for t in good_elems}
+    cellid = _tile_cellid(good_elems[0]) if len(cellids) == 1 else -1
+    _reducer = {
+        "min": agg_core.combine_min_tiles,
+        "max": agg_core.combine_max_tiles,
+        "sum": agg_core.combine_sum_tiles,
+        "count": agg_core.combine_count_tiles,
+        "median": agg_core.combine_median_tiles,
+        "stddev": agg_core.combine_stddev_tiles,
+    }[stat]
+    new_bytes = _reducer(rasters)
+    return new_bytes, cellid, dropped
+
+
+def _make_combine_stat_udf(stat: str):
+    """Factory that produces a ``@f.udf(V2_TILE_SCHEMA)`` for the given stat."""
+    _stat_cap = stat.capitalize()
+
+    def _udf(tiles):
+        if not tiles:
+            return None
+        result = _combine_stat_bytes(tiles, stat)
+        if result is None:
+            return None
+        new_bytes, cellid, dropped = result
+        tile = _serde.build_tile(new_bytes, "GTiff", cellid)
+        if dropped:
+            tile["metadata"][
+                "last_error"
+            ] = f"RST_Combine{_stat_cap}: skipped {dropped} corrupt input tile(s)"
+        return tile
+
+    _udf.__name__ = f"_combine{stat}_udf"
+    return f.udf(V2_TILE_SCHEMA)(_udf)
+
+
+def _make_combine_stat_v2_udf(stat: str):
+    """Factory for the force-output (v2) variant of a combine-stat UDF."""
+    _stat_cap = stat.capitalize()
+
+    def _v2_udf(tiles, virtualize_dir, virtualize_prefix, materialize):
+        if not tiles:
+            return None
+        result = _combine_stat_bytes(tiles, stat)
+        if result is None:
+            return None
+        new_bytes, cellid, dropped = result
+        row = _shaped_result_row(
+            new_bytes, cellid, virtualize_dir, virtualize_prefix, materialize
+        )
+        if row is not None and dropped:
+            row["metadata"][
+                "last_error"
+            ] = f"RST_Combine{_stat_cap}: skipped {dropped} corrupt input tile(s)"
+        return row
+
+    _v2_udf.__name__ = f"_combine{stat}_v2_udf"
+    return f.udf(V2_TILE_SCHEMA)(_v2_udf)
+
+
+# Module-level UDF objects for each stat (registered in _sql_tile_ops below).
+_combinemin_udf = _make_combine_stat_udf("min")
+_combinemax_udf = _make_combine_stat_udf("max")
+_combinesum_udf = _make_combine_stat_udf("sum")
+_combinecount_udf = _make_combine_stat_udf("count")
+_combinemedian_udf = _make_combine_stat_udf("median")
+_combinestddev_udf = _make_combine_stat_udf("stddev")
+
+_combinemin_v2_udf = _make_combine_stat_v2_udf("min")
+_combinemax_v2_udf = _make_combine_stat_v2_udf("max")
+_combinesum_v2_udf = _make_combine_stat_v2_udf("sum")
+_combinecount_v2_udf = _make_combine_stat_v2_udf("count")
+_combinemedian_v2_udf = _make_combine_stat_v2_udf("median")
+_combinestddev_v2_udf = _make_combine_stat_v2_udf("stddev")
+
+
+def _make_rst_combine_stat(
+    stat: str,
+    sql_name: str,
+    doc_stat: str,
+):
+    """Factory for the public ``rst_combine{stat}`` Column API function."""
+
+    def rst_combine_stat(
+        tiles: ColLike,
+        virtualize_dir: Optional[str] = None,
+        virtualize_prefix: Optional[str] = None,
+        materialize: Optional[bool] = None,
+    ) -> Column:
+        f"""NoData-aware per-pixel {doc_stat} across an ARRAY of aligned tiles.
+
+        Mirrors ``gbx_rst_{sql_name}``: ``tiles`` is a single column of
+        ARRAY<tile struct>; each declared NoData is excluded from the statistic,
+        and a pixel that is NoData in ALL inputs produces NoData in the output
+        (never 0 for count). Output ``cellid`` is the shared input cellid when
+        every element matches, else -1.
+
+        PARITY DIVERGENCE: assumes the tiles are ALREADY aligned (same
+        shape/extent/CRS) and raises ``ValueError`` on misaligned inputs rather
+        than resampling. Align first with ``rst_align_to``.
+
+        Args:
+            tiles: Column of ARRAY<tile struct> (same-grid, aligned).
+            virtualize_dir:    Force-output: write result to a durable path.
+            virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
+            materialize:       Force-output: ``True`` ensures raster bytes.
+
+        Returns:
+            Tile struct of per-pixel {doc_stat}, or NULL on an empty array.
+        """
+        _v2 = {
+            "min": _combinemin_v2_udf,
+            "max": _combinemax_v2_udf,
+            "sum": _combinesum_v2_udf,
+            "count": _combinecount_v2_udf,
+            "median": _combinemedian_v2_udf,
+            "stddev": _combinestddev_v2_udf,
+        }[stat]
+        _plain = {
+            "min": _combinemin_udf,
+            "max": _combinemax_udf,
+            "sum": _combinesum_udf,
+            "count": _combinecount_udf,
+            "median": _combinemedian_udf,
+            "stddev": _combinestddev_udf,
+        }[stat]
+        if _force_output_requested(virtualize_dir, virtualize_prefix, materialize):
+            _validate_force_output(virtualize_dir, materialize)
+            return _v2(
+                _col(tiles),
+                *_force_output_lits(virtualize_dir, virtualize_prefix, materialize),
+            )
+        return _plain(_col(tiles))
+
+    rst_combine_stat.__name__ = f"rst_combine{stat}"
+    rst_combine_stat.__qualname__ = f"rst_combine{stat}"
+    return rst_combine_stat
+
+
+rst_combinemin = _make_rst_combine_stat("min", "combinemin", "minimum")
+rst_combinemax = _make_rst_combine_stat("max", "combinemax", "maximum")
+rst_combinesum = _make_rst_combine_stat("sum", "combinesum", "sum")
+rst_combinecount = _make_rst_combine_stat(
+    "count", "combinecount", "count of valid inputs"
+)
+rst_combinemedian = _make_rst_combine_stat("median", "combinemedian", "median")
+rst_combinestddev = _make_rst_combine_stat(
+    "stddev", "combinestddev", "population standard deviation"
+)
+
+
+# ---------------------------------------------------------------------------
+# rst_align_to: warp a tile to match a reference tile's grid.
+# Mirrors gbx_rst_align_to: nearest-neighbour resampling, output has exactly
+# the same CRS, width, height, and geotransform as the reference tile.
+# ---------------------------------------------------------------------------
+
+
+def _align_to_bytes(tile, reference):
+    """Shared align_to body: open both tiles and warp tile to reference grid.
+
+    Returns new GTiff bytes or None if either input is empty/corrupt.
+    """
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    try:
+        vt = ot._to_virtual_tile(tile)
+        if vt.is_virtual():
+            tile_bytes = ot.materialize_to_bytes(vt).raster
+        else:
+            tile_bytes = bytes(vt.raster)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        rv = ot._to_virtual_tile(reference)
+        if rv.is_virtual():
+            ref_bytes = ot.materialize_to_bytes(rv).raster
+        else:
+            ref_bytes = bytes(rv.raster)
+    except Exception:  # noqa: BLE001
+        return None
+    return agg_core.align_to_tiles(tile_bytes, ref_bytes)
+
+
+@f.udf(V2_TILE_SCHEMA)
+def _align_to_udf(tile, reference):
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    new_bytes = _align_to_bytes(tile, reference)
+    if new_bytes is None:
+        return None
+    return _serde.build_tile(new_bytes, "GTiff", _tile_cellid(tile))
+
+
+@f.udf(V2_TILE_SCHEMA)
+def _align_to_v2_udf(tile, reference, virtualize_dir, virtualize_prefix, materialize):
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    new_bytes = _align_to_bytes(tile, reference)
+    return _shaped_result_row(
+        new_bytes, _tile_cellid(tile), virtualize_dir, virtualize_prefix, materialize
+    )
+
+
+def rst_align_to(
+    tile: ColLike,
+    reference: ColLike,
+    virtualize_dir: Optional[str] = None,
+    virtualize_prefix: Optional[str] = None,
+    materialize: Optional[bool] = None,
+) -> Column:
+    """Warp ``tile`` to match ``reference``'s CRS, extent, and pixel dimensions.
+
+    Mirrors the heavyweight ``gbx_rst_align_to``: nearest-neighbour resampling
+    (``-r near``) so the output pixel values are not interpolated. The output tile
+    has exactly the same width, height, geotransform, and CRS as the reference.
+
+    This is the explicit fix for the alignment precondition of the cross-raster
+    combine family (``rst_combine{min,max,sum,count,median,stddev}``): align each
+    tile to a common reference before combining.
+
+    Args:
+        tile:       The tile to warp.
+        reference:  The reference tile whose grid defines the output grid.
+        virtualize_dir:    Force-output (light-tier, Python API only).
+        virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
+        materialize:       Force-output: ``True`` ensures raster bytes.
+
+    Returns:
+        Tile struct aligned to the reference grid, or NULL if either input is NULL.
+    """
+    if _force_output_requested(virtualize_dir, virtualize_prefix, materialize):
+        _validate_force_output(virtualize_dir, materialize)
+        return _align_to_v2_udf(
+            _col(tile),
+            _col(reference),
+            *_force_output_lits(virtualize_dir, virtualize_prefix, materialize),
+        )
+    return _align_to_udf(_col(tile), _col(reference))
+
+
 # rst_frombands: single ARRAY<single-band tile> arg -> multi-band tile.
 # Mirrors gbx_rst_frombands: array ORDER is band order (element 0 -> band 1).
 # Reuses core.agg.frombands_tiles by pairing each element with its 0-based
@@ -8886,6 +9171,13 @@ _sql_tile_ops = {
     "gbx_rst_fromfile": _fromfile_sql_udf,
     "gbx_rst_merge": _merge_udf,
     "gbx_rst_combineavg": _combineavg_udf,
+    "gbx_rst_combinemin": _combinemin_udf,
+    "gbx_rst_combinemax": _combinemax_udf,
+    "gbx_rst_combinesum": _combinesum_udf,
+    "gbx_rst_combinecount": _combinecount_udf,
+    "gbx_rst_combinemedian": _combinemedian_udf,
+    "gbx_rst_combinestddev": _combinestddev_udf,
+    "gbx_rst_align_to": _align_to_udf,
     "gbx_rst_frombands": _frombands_udf,
     "gbx_rst_transform": _transform_udf,
     "gbx_rst_to_webmercator": _to_webmercator_udf,
