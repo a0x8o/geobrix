@@ -14,29 +14,29 @@ import org.apache.spark.sql.types.{DataType, LongType}
   * the second cell appears in kRing(firstCell, k). Consistent with the kRing/kLoop ring semantics.
   * (from [[com.databricks.labs.gbx.gridx.grid.CustomGridSystem#distance]]).
   *
-  * Arguments: cellExpr1 (BIGINT cell ID), gridExpr (grid-spec STRUCT), cellExpr2 (BIGINT cell ID).
+  * Arguments: cellid1 (BIGINT cell ID), gridExpr (grid-spec STRUCT), cellid2 (BIGINT cell ID).
   *
   * Returns: BIGINT Chebyshev grid distance.
   */
 case class Custom_Distance(
-    cellExpr1: Expression,
-    gridExpr:  Expression,
-    cellExpr2: Expression
+    cellid1:  Expression,
+    gridExpr: Expression,
+    cellid2:  Expression
 ) extends Expression with CodegenFallback {
 
-    override def children: Seq[Expression] = Seq(cellExpr1, gridExpr, cellExpr2)
+    override def children: Seq[Expression] = Seq(cellid1, gridExpr, cellid2)
     override def dataType: DataType        = LongType
     override def nullable: Boolean         = true
     override def foldable: Boolean         = children.forall(_.foldable)
 
     override def eval(input: InternalRow): Any = {
-        val cell1Val = cellExpr1.eval(input)
+        val cell1Val = cellid1.eval(input)
         if (cell1Val == null) return null
 
         val gridVal = gridExpr.eval(input)
         if (gridVal == null) return null
 
-        val cell2Val = cellExpr2.eval(input)
+        val cell2Val = cellid2.eval(input)
         if (cell2Val == null) return null
 
         val sys = Custom_GridSpec.systemFromRow(gridVal.asInstanceOf[InternalRow])  // PARAMETER

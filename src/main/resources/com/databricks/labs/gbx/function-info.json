@@ -1554,7 +1554,7 @@
     },
     "gbx_custom_distance": {
       "examples": "Examples:\n      > SELECT gbx_custom_distance( gbx_custom_pointascell('POINT(530000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0), gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), gbx_custom_pointascell('POINT(531000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0) ) AS dist;",
-      "usage_args": "cell_expr1, grid, cell_expr2",
+      "usage_args": "cellid1, grid, cellid2",
       "bindings": [
         "sql"
       ]
