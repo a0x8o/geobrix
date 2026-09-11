@@ -478,6 +478,9 @@ def _crs_equal(a_crs, b_crs) -> bool:
         return True
     if a_empty != b_empty:
         return False
+    # Fast path: identical string representation → equal, skip pyproj overhead.
+    if str(a_crs) == str(b_crs):
+        return True
     try:
         from pyproj import CRS as _ProjCRS
 
@@ -554,7 +557,12 @@ def _combine_stat_tiles(rasters: List[bytes], stat: str) -> bytes:
         out_dtype = ref.dtypes[0]
         ref_profile = ref.profile.copy()
 
-        # Collect per-tile NoData values and per-band arrays (float64 for accumulation).
+        # Collect per-tile NoData values and per-band arrays.
+        # min/max/count don't accumulate, so float32 decode is safe and faster.
+        # sum/stddev/median need float64 precision to avoid accumulation error.
+        _ACCUM_STATS = {"sum", "stddev", "median"}
+        stack_dtype = "float64" if stat in _ACCUM_STATS else "float32"
+
         nodatas = []
         tile_arrays = []
         any_nodata = False
@@ -562,7 +570,7 @@ def _combine_stat_tiles(rasters: List[bytes], stat: str) -> bytes:
 
         for ds in datasets:
             nd = ds.nodata
-            arr = ds.read().astype("float64")  # (bands, h, w)
+            arr = ds.read().astype(stack_dtype)  # (bands, h, w)
             tile_arrays.append(arr)
             nodatas.append(nd)
             if nd is not None:
