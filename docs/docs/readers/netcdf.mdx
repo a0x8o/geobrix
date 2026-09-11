@@ -81,6 +81,8 @@ readers is not part of this release.
 | `mode` | `"raster"` | `raster` (CF grid → tile) or `vector` (points / per-cell points). |
 | `variable` / `variables` | — (all) | Optional filter. Absent → all readable variables. `variable` takes one; `variables` takes a comma-separated list (vector-mode attribute columns). |
 | `group` | — | HDF5 group path for grouped NetCDF-4 files (e.g. Sentinel-5P `"/PRODUCT"`). |
+| `dimIndex` | — | Raster mode: pin one or more leading (non-spatial) dimensions to a specific integer index. Format: `"dim=index"` or `"dim1=i1,dim2=i2"`. Example: `"time=2,level=1"`. Absent dims fall back to index 0 (with a warning when the dim has more than one slice). An out-of-range index raises `ValueError`. |
+| `fanout` | — | Raster mode: expand one or more leading dimensions across all their indices. Format: `"dim"` or `"dim1,dim2"`. Each index combination becomes a separate `(source, tile)` row. A variable that lacks any of the named dims emits a single row (no expansion). Dims not listed are pinned by `dimIndex` or default to index 0. A dim that appears in both `dimIndex` and `fanout` raises `ValueError`. |
 | `bbox` / `bboxCrs` | — | Area-of-interest filter (`"minx,miny,maxx,maxy"`). |
 | `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches. |
 | `sizeInMB` | `"-1"` | Raster mode: `<= 0` = one whole tile per variable. |
@@ -101,6 +103,55 @@ The output is the standard `(source, tile)` schema — see
 [Tile Structure](../api/tile-structure). Only regular lat/lon or projected
 (CF `grid_mapping`) grids are accepted in raster mode; a curvilinear/swath
 variable raises an error steering you to `mode=vector`.
+
+### Multi-dimensional variables (time / level)
+
+Climate reanalysis, forecast, and model-output files commonly have a
+`(time, level, lat, lon)` shape. By default the reader emits one row per
+variable and takes the first (index 0) slice of every non-spatial leading
+dimension, logging a warning for any dimension with more than one slice.
+
+**`dimIndex`** selects a specific slice without expanding the result set:
+
+```python
+# Read the slice at time index 2 and level index 1 (one row).
+df = (
+    spark.read.format("netcdf_gbx")
+    .option("variable", "temp")
+    .option("dimIndex", "time=2,level=1")
+    .load("/Volumes/main/geobrix_samples/netcdf/era5_sample.nc")
+)
+df.show()
+```
+
+**`fanout`** expands one or more dimensions across all their indices, emitting
+one `(source, tile)` row per combination:
+
+```python
+# Emit one row per (time, level) combination — 3 times × 4 levels = 12 rows.
+df = (
+    spark.read.format("netcdf_gbx")
+    .option("variable", "temp")
+    .option("fanout", "time,level")
+    .load("/Volumes/main/geobrix_samples/netcdf/era5_sample.nc")
+)
+df.show()
+```
+
+Both options can be combined: `fanout` expands the listed dims while `dimIndex`
+pins any remaining leading dims. A dim in both options raises a `ValueError`.
+
+The `source` column for a specific slice includes a bracketed suffix,
+`NETCDF:"path":var[level=1,time=2]`, so each row is uniquely identifiable. The
+tile `metadata` map carries a `sliceDims` key (e.g. `"level=1,time=2"`) and, for
+dims that have coordinate values, a `sliceCoord_<dim>` key with the coordinate
+value as a string.
+
+:::note bandDim (multi-band stacking) is a planned fast-follow
+`dimIndex` and `fanout` each produce single-band tiles. Stacking multiple
+slices of a leading dimension into a multi-band tile (`bandDim`) is planned
+for a future release.
+:::
 
 ### Vector mode — points & swath → per-cell points
 
