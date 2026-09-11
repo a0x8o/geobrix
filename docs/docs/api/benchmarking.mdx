@@ -797,6 +797,29 @@ Pure-core measures the algorithm; **spark-path measures the job**. Each function
 
 The raster→grid family (`rst_{h3,quadbin,bng}_rastertogrid*`, the three tessellation generators, and the three grid rasterize aggregators) is measured in its [own subsection below](#raster-grid-family-at-scale) — it ran on a separate cluster configuration (20 workers, 512² 4-band tiles), and the lightweight tier invokes those functions as **table functions via SQL `LATERAL`**, not scalar columns, so a like-for-like comparison belongs in a dedicated table.
 
+#### Combine family (`rst_combinemin`, `rst_combinemax`, `rst_combinemedian`, `rst_combinesum`, `rst_combinestddev`, `rst_combinecount`)
+
+The six raster-reduction functions that reduce an aligned stack of tiles to a single output tile (min/max/median/sum/stddev/count across the stack) ran in a separate cluster run alongside `rst_align_to`:
+
+> **Environment:** Databricks · DBR 18.x · 20 workers · 1,000 tiles per iteration · lightweight tier with ZSTD-L6 default.
+
+**Consistency:** All compared cells were **exact or within tolerance (0 divergent)**.
+
+The combine family's ~9–12× light gap is dominated by per-tile Python GDAL decode and encode; the ZSTD-L6 default reduced it from the previous ~15–18× by cutting encode time. Setting `GBX_ZSTD_LEVEL=fast` (L1) trades a ~1–2% size increase for additional encode speed.
+
+| Function | Heavy/tile (ms) | Light/tile (ms) | Speedup | Consistency |
+|---|---|---|---|---|
+| `rst_combinemin` | 3.10 | 34.0 | 0.09× | within_tol† |
+| `rst_combinemax` | 3.47 | 30.1 | 0.12× | within_tol† |
+| `rst_combinemedian` | 3.74 | 44.5 | 0.08× | within_tol† |
+| `rst_combinesum` | 3.25 | 28.3 | 0.11× | within_tol† |
+| `rst_combinestddev` | 3.01 | 33.1 | 0.09× | within_tol† |
+| `rst_combinecount` | 2.76 | 24.3 | 0.11× | within_tol† |
+
+<sub>† Aggregate result — 0 divergent across the six functions; per-function exact-vs-within-tolerance breakdown not available for this run.</sub>
+
+`rst_align_to` was benchmarked in the same run (timing-only; no cross-tier output fingerprint — the output geometry varies by reference tile and CRS).
+
 #### Repartition strategy
 
 The spark-path numbers above are wall-clock for a whole distributed job, so they're sensitive to how evenly the 1,000 tiles spread across the cluster's task slots. The benchmark harness tunes the partitioning so the comparison reflects the engines, not a straggler tail:
@@ -1147,6 +1170,25 @@ speedup = heavy ÷ light, ≥1.0 → light faster):
 | `custom_pointascell` | 0.16 | 0.18 | 0.89× |
 | `custom_cellaswkb` | 0.14 | 0.16 | 0.89× |
 | `custom_polyfill` | 0.13 | 0.15 | 0.87× |
+
+### Cellfill (`bng_cellfill`, `quadbin_cellfill`, `h3_cellfill`, `custom_cellfill`)
+
+The cellfill functions are grouped aggregators that fill cells whose value is `NULL` by interpolating from their neighbours in the same group — an unweighted mean or inverse-distance weighting over k-ring neighbours — as a `GROUP BY` aggregate over `(cellid, value)` rows. Because the work is cell-space math — no raster tile bytes cross the JVM↔Python boundary — the lightweight tier runs at or near parity with the heavyweight tier.
+
+> **Environment:** Databricks · DBR 18.x · 20 workers · 1,000 cell groups per iteration. `gbx_custom_cellfill` is **lightweight-only** (the heavyweight tier does not have a streamable grid-struct path for this function, so no cross-tier ratio is available).
+
+**Consistency:** All compared cells were **exact or within tolerance (0 divergent)**.
+
+Speedup = heavy ÷ light, ≥ 1× → light faster:
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `gbx_quadbin_cellfill` | 2.12 | 1.58 | 1.34× |
+| `gbx_bng_cellfill` | 1.70 | 1.65 | 1.03× |
+| `gbx_h3_cellfill` | 2.02 | 3.56 | 0.57× |
+| `gbx_custom_cellfill` | — (heavy N/A) | 1.95 | — |
+
+The quadbin and BNG functions run at or faster than parity: cell-space geometry is cheap and there are no tile bytes to move across the Python boundary. The H3 gap (0.57×) reflects H3's already-fast C-backed encoder, which leaves less room for the Python advantage. All three comparable pairs are within tolerance or exact.
 
 </TabItem>
 
