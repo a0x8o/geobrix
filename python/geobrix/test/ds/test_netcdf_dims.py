@@ -662,3 +662,45 @@ def test_banddim_unset_default_single_band(tmp_path):
     _, (_, raster_bytes, _) = rows[0]
     with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
         assert rds.count == 1
+
+
+def test_banddim_typo_warns_and_single_band_fallthrough(tmp_path):
+    """A typo'd bandDim name (unknown to a var with leading dims) → UserWarning
+    naming the unknown dim + single-band tile (count=1) fall-through."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    # 'tyme' is not a leading dim of 'temp' (which has 'time' and 'level')
+    with pytest.warns(UserWarning, match="tyme"):
+        rows = _read_reader(p, {"bandDim": "tyme"})
+    assert len(rows) == 1
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        assert rds.count == 1  # fell through to single-band (bandDim not applied)
+
+
+def test_banddim_typo_warning_names_actual_leading_dims(tmp_path):
+    """The refined-B UserWarning for a typo'd bandDim names the var's actual dims."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.warns(UserWarning) as warning_list:
+        _read_reader(p, {"bandDim": "tyme"})
+    msgs = [str(w.message) for w in warning_list]
+    assert any(
+        "time" in m and "level" in m for m in msgs
+    ), f"warning should name actual leading dims; got: {msgs}"
+
+
+def test_banddim_typo_pure_2d_still_silent(tmp_path):
+    """A typo'd bandDim on a pure-2-D variable emits NO UserWarning (moot)."""
+    import warnings as _warnings
+
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        rows = _read_reader(p, {"bandDim": "tyme", "variable": "sst"})
+    user_warns = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert (
+        user_warns == []
+    ), f"unexpected UserWarning for pure-2-D + typo'd bandDim: {user_warns}"
+    assert len(rows) == 1
