@@ -162,29 +162,74 @@ def _epsg_int(epsg) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def array_2d(ds, variable: str) -> "object":
-    """The variable's 2-D slice as a north-up numpy array (lat descending)."""
+def leading_dims(ds, variable: str) -> List[Tuple[str, int]]:
+    """Non-spatial leading dimensions of a variable and their sizes.
+
+    Returns each (dim_name, size) in the order the dims appear in the variable,
+    excluding the lat and lon spatial dimensions.  A 2-D (lat, lon) variable
+    returns an empty list.
+    """
+    lat, lon = _find_lat_lon(ds)
+    spatial_dims: set = set()
+    if lat is not None and lat.dims:
+        spatial_dims.add(lat.dims[0])
+    if lon is not None and lon.dims:
+        spatial_dims.add(lon.dims[0])
+    var = ds[variable]
+    return [(dim, int(var.sizes[dim])) for dim in var.dims if dim not in spatial_dims]
+
+
+def array_2d(ds, variable: str, sel: Optional[Dict[str, int]] = None) -> "object":
+    """The variable's 2-D slice as a north-up numpy array (lat descending).
+
+    Args:
+        ds:       Open xarray Dataset.
+        variable: Variable name.
+        sel:      Optional mapping of leading-dim name → integer index.  When a
+                  leading dim appears in *sel*, that index is used and no warning
+                  is emitted.  Dims absent from *sel* fall back to index 0 (with
+                  the existing size>1 warning).  Out-of-range indices raise
+                  ValueError.  Pass None (or omit) for the original single-slice
+                  behavior.
+    """
     import numpy as np
 
+    if sel is None:
+        sel = {}
+
     da = _decoded_or_raw(ds, variable)
-    # Squeeze any leading dims (e.g. time / level): take the first index until 2-D.
-    # A leading dim of size > 1 means only its FIRST slice is read and the rest are
-    # silently dropped — warn so the data loss is visible. Per-slice fan-out (one
-    # tile per time/level, or a multi-band stack) is a planned feature.
+
+    # Early validation: check sel indices are in range for dims present in this var.
+    for s_dim, s_idx in sel.items():
+        if s_dim in da.dims:
+            s_size = int(da.sizes[s_dim])
+            if s_idx < 0 or s_idx >= s_size:
+                raise ValueError(
+                    f"netcdf_gbx: dimIndex {s_dim}={s_idx} is out of range "
+                    f"(size={s_size}) for variable {variable!r}."
+                )
+
+    # Squeeze any leading dims until 2-D.
+    # If the dim is in sel, use that index (no warning).
+    # Otherwise fall back to index 0 with a warning when size > 1.
     while da.ndim > 2:
         drop_dim = da.dims[0]
         drop_size = int(da.sizes[drop_dim])
-        if drop_size > 1:
-            _logger.warning(
-                "netcdf_gbx: variable %r has leading dimension %r of size %d; "
-                "reading only index 0 and dropping the other %d slice(s). "
-                "Per-slice fan-out is not yet supported.",
-                variable,
-                drop_dim,
-                drop_size,
-                drop_size - 1,
-            )
-        da = da.isel({drop_dim: 0})
+        if drop_dim in sel:
+            da = da.isel({drop_dim: sel[drop_dim]})
+        else:
+            if drop_size > 1:
+                _logger.warning(
+                    "netcdf_gbx: variable %r has leading dimension %r of size %d; "
+                    "reading only index 0 and dropping the other %d slice(s). "
+                    "Per-slice fan-out is not yet supported.",
+                    variable,
+                    drop_dim,
+                    drop_size,
+                    drop_size - 1,
+                )
+            da = da.isel({drop_dim: 0})
+
     lat, _ = _find_lat_lon(ds)
     latdim = lat.dims[0]
     # Ensure north-up: descending latitude along the lat dimension.
