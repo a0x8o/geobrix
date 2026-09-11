@@ -2590,8 +2590,6 @@ _Example clip geometry: a WKT polygon in the raster's native CRS (EPSG:32618, no
 
 <Tier both/>
 
-See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
-
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **NumPy**. Takes an `ARRAY<tile>` and returns the NoData-aware per-pixel mean; input tiles must share the same grid (shape/extent/CRS). cellid is preserved when all inputs share one, else −1.
 :::
