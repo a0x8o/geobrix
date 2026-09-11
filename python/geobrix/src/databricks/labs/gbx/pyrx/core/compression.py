@@ -22,8 +22,15 @@ _SMALL_INT = {"uint8", "int8"}
 #     memory, size, or read benefit on GeoBrix tiles.
 #   - Prior ladder (L16/L12/L9) was wrong at both ends; L6 is the correct ceiling.
 #
-# NOTE: the >128 MiB rungs (L3, L1) are extrapolated from the 128 MiB trend and
-# need Serverless confirmation at 256/512/1024 MiB payloads.
+# Serverless confirmation (2026-09-11, env v6, oauth-fe): level selection verified for
+# 256/512/1024 MiB and >1 GiB via auto_level assertions (all PASS). Runtime: 256 MiB ok
+# (L3, 2.33x, lossless); 512 MiB OOMs (~1 GiB task budget) — a decoded tile ≳200 MiB OOMs
+# regardless of ZSTD level (GDAL write buffer + array + output ≈ 1.2 GiB peak).
+# So the >128 MiB rungs (L3/L1) are DEFENSIVE on Serverless: the connect-aware stream cap
+# (64 MiB on Serverless — materialize_decision — kept well below the OOM ceiling to leave
+# room for GDAL buffers) means a stream-read tile never reaches them. They apply only to
+# operation-produced large tiles or classic compute (256 MiB cap), where L3 stays correct
+# (lower working-set than L6). materialize_decision remains the upstream memory guard.
 #
 # (decoded_bytes_ceiling, zstd_level) ascending; last entry ceiling = float('inf').
 _AUTO_LADDER = [
