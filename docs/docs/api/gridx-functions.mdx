@@ -480,7 +480,7 @@ Powered by the **quadbin** package. Chebyshev distance on tile coordinates; mirr
 
 <Tier both/> <Impl groupedAgg/>
 
-See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
 
 Fill NULL quadbin cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 
@@ -1157,7 +1157,7 @@ GROUP BY group_key
 
 <Tier both/> <Impl groupedAgg/>
 
-See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
 
 Fill NULL BNG cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. BNG cell IDs are `STRING`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 
@@ -1621,7 +1621,7 @@ Chebyshev (king-move) distance in grid steps between two custom grid cells. Retu
 
 <Tier both/> <Impl groupedAgg/>
 
-See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
 
 Fill NULL custom grid cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. The grid spec is passed as the third argument (unlike the BNG/quadbin/h3 variants where the grid identity is implicit). With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 

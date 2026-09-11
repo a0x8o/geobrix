@@ -43,11 +43,11 @@ The footprint used for covered-cell enumeration is the raster **bounding box**, 
 The interaction between the two policies:
 
 - `centroid + complete`: covered cells with no assigned centroid appear as `NULL` — aliasing gaps are *visible but not closed*.
-- `covering + complete`: the only `NULL` cells are those where every overlapping pixel was NoData — aliasing gaps are *closed without interpolation*.
+- `covering + complete`: aliasing gaps are *closed without interpolation* — the only `NULL` cells are those where every overlapping pixel was NoData. (Mechanism differs by family: covering-set clip for tessellate, area-weighted for rastertogrid\*; the coverage policy and null semantics are identical.)
 
 **When to use `centroid` (default):** binning a collection of overlapping tiles without double-counting; building a deduplication pipeline; aggregating a time-series composite where each pixel should be counted once.
 
-**When to use `covering`:** building a full-coverage index across tile boundaries; reconstructing a complete raster from chips; matching the semantics of Databricks-native `h3_tessellateaswkb` (which is also a covering-set clip).
+**When to use `covering` — tessellate family:** building a full-coverage index across tile boundaries; reconstructing a complete raster from chips; matching the semantics of Databricks-native `h3_tessellateaswkb` (which is also a covering-set clip). **For the rastertogrid\* family:** area-weighted assignment — each pixel contributes fractionally to every cell it overlaps — is useful when you need mass-conserving totals rather than single-cell centroid assignment.
 
 ### Fill: always a separate explicit step
 
