@@ -346,6 +346,32 @@ Powered by the **quadbin** package. All cells within Chebyshev distance `k` (inc
 
 ---
 
+### quadbin_kloop
+
+<Tier both/>
+
+Return the hollow ring of quadbin cells at exactly Chebyshev distance `k` from the center cell. At `k=1` the ring contains the 8 surrounding cells (center excluded); at `k=0` the result is a single-element array containing the center cell.
+
+:::note Lightweight tier (pygx)
+Powered by the **quadbin** package. The cells at exactly Chebyshev distance `k` (center excluded for `k ≥ 1`). Exact cell-set parity with the heavyweight tier.
+:::
+
+**Signature:** `quadbin_kloop(cellId: Column, k: Column): Column`
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs at exactly distance `k` (up to `(2k+1)^2 - (2(k-1)+1)^2` cells)
+
+<FunctionExamples
+  name="quadbin_kloop"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
 ### quadbin_tessellate
 
 <Tier both/>
@@ -441,6 +467,44 @@ Powered by the **quadbin** package. Chebyshev distance on tile coordinates; mirr
 
 <FunctionExamples
   name="quadbin_distance"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### quadbin_cellfill
+
+<Tier both/> <Impl groupedAgg/>
+
+Fill NULL quadbin cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
+
+:::warning Lightweight and heavyweight return different types
+Heavyweight `gbx_quadbin_cellfill` returns `ARRAY<STRUCT<cellid BIGINT, value DOUBLE>>`; the lightweight function returns `BINARY` in both Python and SQL. A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight aggregate emits a serialized result. The functional content (cell IDs and filled values) is equivalent.
+:::
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python quadbin interpolation port**. Cell-set and value parity with the heavyweight tier for mean interpolation.
+:::
+
+**Signature:** `quadbin_cellfill(cellid, value, [k], [method], [power])`
+
+**Parameters:**
+- `cellid` — `BIGINT` quadbin cell ID column
+- `value` — `DOUBLE` value column (`NULL` for cells to fill)
+- `k` — neighbourhood radius in k-rings (default: `1`)
+- `method` — interpolation method: `'mean'` (default) or `'idw'` (inverse-distance-weighted)
+- `power` — IDW distance exponent (default: `2.0`; ignored for `method='mean'`)
+
+**Returns:**
+- Heavyweight: `ARRAY<STRUCT<cellid BIGINT, value DOUBLE>>`
+- Lightweight: `BINARY`
+
+<FunctionExamples
+  name="quadbin_cellfill"
   sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
   pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
   pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
@@ -1087,6 +1151,44 @@ GROUP BY group_key
 
 ---
 
+### bng_cellfill
+
+<Tier both/> <Impl groupedAgg/>
+
+Fill NULL BNG cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. BNG cell IDs are `STRING`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
+
+:::warning Lightweight and heavyweight return different types
+Heavyweight `gbx_bng_cellfill` returns `ARRAY<STRUCT<cellid STRING, value DOUBLE>>`; the lightweight function returns `BINARY` in both Python and SQL. A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight aggregate emits a serialized result. The functional content (cell IDs and filled values) is equivalent.
+:::
+
+:::note Lightweight tier (pygx)
+Powered by the **pure-Python port of `BNG.scala`**. Cell-set and value parity with the heavyweight tier for mean interpolation.
+:::
+
+**Signature:** `bng_cellfill(cellid, value, [k], [method], [power])`
+
+**Parameters:**
+- `cellid` — BNG `STRING` cell reference column
+- `value` — `DOUBLE` value column (`NULL` for cells to fill)
+- `k` — neighbourhood radius in k-rings (default: `1`)
+- `method` — interpolation method: `'mean'` (default) or `'idw'` (inverse-distance-weighted)
+- `power` — IDW distance exponent (default: `2.0`; ignored for `method='mean'`)
+
+**Returns:**
+- Heavyweight: `ARRAY<STRUCT<cellid STRING, value DOUBLE>>`
+- Lightweight: `BINARY`
+
+<FunctionExamples
+  name="bng_cellfill"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
 ## Generator Functions
 
 Explode array results into individual rows.
@@ -1448,6 +1550,95 @@ Return all custom grid cells within `k` steps of a center cell (filled neighborh
 
 <FunctionExamples
   name="custom_kring"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_kloop
+
+<Tier both/>
+
+Return the hollow ring of custom grid cells at exactly `k` steps from the center cell. The ring at distance `k` is the set of cells in `kRing(k)` but not in `kRing(k-1)`, clamped to the grid boundary. At `k=0` the result contains only the center cell.
+
+**Signature:** `gbx_custom_kloop(cell, grid, k)`
+
+**Parameters:**
+- `cell` — `BIGINT` center cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `k` — integer ring distance (0 = center only; 1 = 8-cell ring excluding center)
+
+**Returns:**
+- `ARRAY<BIGINT>` of cell IDs at exactly distance `k`
+
+<FunctionExamples
+  name="custom_kloop"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_distance
+
+<Tier both/>
+
+Chebyshev (king-move) distance in grid steps between two custom grid cells. Returns the minimum `k` such that the second cell appears in `kRing(firstCell, k)`, i.e. `max(|dx|, |dy|)` in cell-position units. Both cells must be at the same resolution; the grid spec enforces consistent encoding.
+
+**Signature:** `gbx_custom_distance(cellid1, grid, cellid2)`
+
+**Parameters:**
+- `cellid1` — `BIGINT` first cell ID
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `cellid2` — `BIGINT` second cell ID
+
+**Returns:**
+- `BIGINT` Chebyshev grid distance in cell steps
+
+<FunctionExamples
+  name="custom_distance"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_cellfill
+
+<Tier both/> <Impl groupedAgg/>
+
+Fill NULL custom grid cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. The grid spec is passed as the third argument (unlike the BNG/quadbin/h3 variants where the grid identity is implicit). With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
+
+:::warning Lightweight and heavyweight return different types
+Heavyweight `gbx_custom_cellfill` returns `ARRAY<STRUCT<cellid BIGINT, value DOUBLE>>`; the lightweight function returns `BINARY` in both Python and SQL. A PySpark grouped-aggregate `pandas_udf` cannot return a `StructType`, so the lightweight aggregate emits a serialized result. The functional content (cell IDs and filled values) is equivalent.
+:::
+
+**Signature:** `gbx_custom_cellfill(cellid, value, grid, [k], [method], [power])`
+
+**Parameters:**
+- `cellid` — `BIGINT` custom grid cell ID column
+- `value` — `DOUBLE` value column (`NULL` for cells to fill)
+- `grid` — custom grid descriptor returned by `gbx_custom_grid`
+- `k` — neighbourhood radius in k-rings (default: `1`)
+- `method` — interpolation method: `'mean'` (default) or `'idw'` (inverse-distance-weighted)
+- `power` — IDW distance exponent (default: `2.0`; ignored for `method='mean'`)
+
+**Returns:**
+- Heavyweight: `ARRAY<STRUCT<cellid BIGINT, value DOUBLE>>`
+- Lightweight: `BINARY`
+
+<FunctionExamples
+  name="custom_cellfill"
   sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
   pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
   pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
