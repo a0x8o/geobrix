@@ -7,6 +7,10 @@ Pure-Python tests drive ``_cellfill.fill`` directly (no Spark).
 SQL tests drive the registered ``gbx_<grid>_cellfill`` pandas_udf and decode
 the returned BINARY payload via ``_cellfill.decode``.
 
+Column-wrapper regression tests drive the *Python wrapper functions* (h3_cellfill,
+bng_cellfill, quadbin_cellfill, custom_cellfill) via df.groupBy().agg() — the path
+that had the _col(method) bug.
+
 Four grids, same cell fixtures as CellFillTest.scala:
   H3      — centre = h3.latlng_to_cell(51.5, -0.1, 8) (int form)
   Quadbin — centre = quadbin.point_to_cell(-0.1, 51.5, 10)
@@ -20,6 +24,8 @@ import pytest
 h3 = pytest.importorskip("h3", reason="h3 not installed")
 quadbin = pytest.importorskip("quadbin", reason="quadbin not installed")
 shapely = pytest.importorskip("shapely", reason="shapely not installed")
+
+from pyspark.sql import functions as _f  # noqa: E402
 
 from databricks.labs.gbx.pygx import _bng, _cellfill, _custom  # noqa: E402
 from databricks.labs.gbx.pygx import functions as gx  # noqa: E402
@@ -382,3 +388,195 @@ def test_h3_cellfill_sql_idw_k2(spark):
     ).collect()
     decoded = _decode_result(result[0])
     assert decoded[center] == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# Column wrapper regression tests — method string-arg bug
+#
+# Bug (now fixed): the four cellfill Column wrappers (h3_cellfill,
+# bng_cellfill, quadbin_cellfill, custom_cellfill) converted the method
+# argument with ``_col(method)``.  Because ``_col`` passes str values through
+# unchanged (intended for column *names*), passing method="mean" produced
+# ``f.col("mean")`` — a reference to a column named "mean".  At collect()
+# Spark raised UNRESOLVED_COLUMN / "cannot resolve 'mean'" on every call that
+# used the default method.
+#
+# Fix: ``_method = f.lit(method) if isinstance(method, str) else _col(method)``
+#
+# WHY the existing SQL-string tests do NOT catch this:
+#   spark.sql("... gbx_h3_cellfill(cellid, value, 1, 'mean', 2.0) ...")
+#   The single-quoted 'mean' is a SQL string literal — it never passes
+#   through the Python ``_col()`` conversion.  Only the Python Column
+#   wrappers (df.groupBy().agg(gx.h3_cellfill(...))) hit the buggy path.
+#
+# Each test below uses df.groupBy("grp").agg(gx.<grid>_cellfill(...)) —
+# the Column wrapper path — with an explicit keyword method= argument.
+# Reverting the fix to ``_col(method)`` makes every test here fail with
+# AnalysisException / UNRESOLVED_COLUMN at collect() time.
+# ---------------------------------------------------------------------------
+
+
+def _decode_blob(blob) -> dict:
+    """Decode a BINARY cellfill payload to {cellid_int: value_or_None}."""
+    if blob is None:
+        return {}
+    return dict(_cellfill.decode(bytes(blob)))
+
+
+def test_h3_cellfill_wrapper_method_mean(spark):
+    """Regression: h3_cellfill Column wrapper with method='mean' executes without UNRESOLVED_COLUMN.
+
+    The old ``_col('mean')`` resolved "mean" as a column name; the fix wraps
+    string values with ``f.lit()``.  Asserts non-vacuous output (center filled).
+    """
+    gx.register(spark)
+    center_str = h3.latlng_to_cell(51.5, -0.1, 8)
+    center = int(center_str, 16)
+    ring1 = [int(c, 16) for c in h3.grid_ring(center_str, 1)]
+
+    rows = [(1, center, None)] + [(1, nb, 5.0) for nb in ring1]
+    df = spark.createDataFrame(rows, "grp int, cellid long, value double")
+
+    # Use the Python Column wrapper path — NOT a raw SQL string.
+    result = (
+        df.groupBy("grp")
+        .agg(gx.h3_cellfill("cellid", "value", k=1, method="mean").alias("v"))
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    assert decoded[center] == pytest.approx(5.0), "center not filled; wrapper method arg failed"
+    for nb in ring1:
+        assert decoded[nb] == pytest.approx(5.0), f"ring1 cell {nb} changed unexpectedly"
+
+
+def test_h3_cellfill_wrapper_method_idw(spark):
+    """Regression: h3_cellfill Column wrapper with method='idw' executes without UNRESOLVED_COLUMN.
+
+    Same bug path as mean; verifies both method string values go through f.lit().
+    Expected: idw k=2 power=2 with ring1[0]=10 ring2[0]=20 → center=12.0.
+    """
+    gx.register(spark)
+    center_str = h3.latlng_to_cell(51.5, -0.1, 8)
+    center = int(center_str, 16)
+    ring1 = [int(c, 16) for c in h3.grid_ring(center_str, 1)]
+    ring2 = [int(c, 16) for c in h3.grid_ring(center_str, 2)]
+    nb1, nb2 = ring1[0], ring2[0]
+
+    rows = [(1, center, None), (1, nb1, 10.0), (1, nb2, 20.0)]
+    df = spark.createDataFrame(rows, "grp int, cellid long, value double")
+
+    result = (
+        df.groupBy("grp")
+        .agg(gx.h3_cellfill("cellid", "value", k=2, method="idw", power=2.0).alias("v"))
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    assert decoded[center] == pytest.approx(12.0), "idw k=2 power=2 center value wrong"
+
+
+def test_bng_cellfill_wrapper_method_mean(spark):
+    """Regression: bng_cellfill Column wrapper with method='mean' executes without UNRESOLVED_COLUMN.
+
+    BNG uses string cell IDs — covers the string-cellid grid type alongside H3's int IDs.
+    """
+    gx.register(spark)
+    center_int = _bng.point_to_cell_id(530000.0, 180000.0, 4)
+    center_str = _bng.format(center_int)
+    ring1_int = _bng.k_loop(center_int, 1)
+    ring1_str = [_bng.format(c) for c in ring1_int]
+
+    rows = [(1, center_str, None)] + [(1, nb, 5.0) for nb in ring1_str]
+    df = spark.createDataFrame(rows, "grp int, cellid string, value double")
+
+    result = (
+        df.groupBy("grp")
+        .agg(gx.bng_cellfill("cellid", "value", k=1, method="mean").alias("v"))
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    # BINARY encodes int keys; BNG string IDs are converted to int64 by the UDF.
+    assert decoded[center_int] == pytest.approx(5.0), "BNG center not filled; wrapper method arg failed"
+    for nb_int in ring1_int:
+        assert decoded[nb_int] == pytest.approx(5.0), f"BNG ring1 cell {nb_int} changed unexpectedly"
+
+
+def test_bng_cellfill_wrapper_method_idw(spark):
+    """Regression: bng_cellfill Column wrapper with method='idw' executes without UNRESOLVED_COLUMN.
+
+    Expected: idw k=2 power=2 with ring1[0]=10 ring2[0]=20 → center=12.0 (BNG string IDs).
+    """
+    gx.register(spark)
+    center_int = _bng.point_to_cell_id(530000.0, 180000.0, 4)
+    center_str = _bng.format(center_int)
+    ring1_int = _bng.k_loop(center_int, 1)
+    ring2_int = _bng.k_loop(center_int, 2)
+    nb1_str = _bng.format(ring1_int[0])
+    nb2_str = _bng.format(ring2_int[0])
+
+    rows = [(1, center_str, None), (1, nb1_str, 10.0), (1, nb2_str, 20.0)]
+    df = spark.createDataFrame(rows, "grp int, cellid string, value double")
+
+    result = (
+        df.groupBy("grp")
+        .agg(gx.bng_cellfill("cellid", "value", k=2, method="idw", power=2.0).alias("v"))
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    assert decoded[center_int] == pytest.approx(12.0), "BNG idw k=2 power=2 center value wrong"
+
+
+def test_quadbin_cellfill_wrapper_method_mean(spark):
+    """Regression: quadbin_cellfill Column wrapper with method='mean' executes without UNRESOLVED_COLUMN."""
+    from databricks.labs.gbx.pygx import _quadbin
+
+    gx.register(spark)
+    center = quadbin.point_to_cell(-0.1, 51.5, 10)
+    ring1 = _quadbin.k_loop(center, 1)
+
+    rows = [(1, center, None)] + [(1, nb, 5.0) for nb in ring1]
+    df = spark.createDataFrame(rows, "grp int, cellid long, value double")
+
+    result = (
+        df.groupBy("grp")
+        .agg(gx.quadbin_cellfill("cellid", "value", k=1, method="mean").alias("v"))
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    assert decoded[center] == pytest.approx(5.0), "Quadbin center not filled; wrapper method arg failed"
+    for nb in ring1:
+        assert decoded[nb] == pytest.approx(5.0), f"Quadbin ring1 cell {nb} changed unexpectedly"
+
+
+def test_custom_cellfill_wrapper_method_mean(spark):
+    """Regression: custom_cellfill Column wrapper with method='mean' executes without UNRESOLVED_COLUMN.
+
+    The grid argument is built via ``_f.expr(...)`` so the Column wrapper receives
+    a real Column object for ``grid``, exercising the full wrapper code path.
+    """
+    gx.register(spark)
+    center = _custom.point_to_cell_id(_CUSTOM_CONF, 500000.0, 500000.0, 3)
+    ring1 = _custom.k_loop(_CUSTOM_CONF, center, 1)
+
+    rows = [(1, center, None)] + [(1, nb, 5.0) for nb in ring1]
+    df = spark.createDataFrame(rows, "grp int, cellid long, value double")
+
+    # Build the custom-grid struct as a Column expression (all literal args).
+    grid_col = _f.expr("gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700)")
+
+    result = (
+        df.groupBy("grp")
+        .agg(
+            gx.custom_cellfill("cellid", "value", grid=grid_col, k=1, method="mean").alias("v")
+        )
+        .collect()
+    )
+    assert len(result) == 1
+    decoded = _decode_blob(result[0]["v"])
+    assert decoded[center] == pytest.approx(5.0), "Custom center not filled; wrapper method arg failed"
+    for nb in ring1:
+        assert decoded[nb] == pytest.approx(5.0), f"Custom ring1 cell {nb} changed unexpectedly"

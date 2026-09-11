@@ -1369,8 +1369,11 @@ def h3_cellfill(
     Decode the result with ``_cellfill.decode``. k=1, method='mean', power=2.0
     are defaults (match heavy gbx_h3_cellfill).
     """
+    # method is a string enum value ('mean'/'idw'), never a column name; wrap as
+    # f.lit() so Spark does not resolve it as a column reference.
+    _method = f.lit(method) if isinstance(method, str) else _col(method)
     return f.call_function(
-        "gbx_h3_cellfill", _col(cellid), _col(value), _col(k), _col(method), _col(power)
+        "gbx_h3_cellfill", _col(cellid), _col(value), _col(k), _method, _col(power)
     )
 
 
@@ -1382,12 +1385,13 @@ def quadbin_cellfill(
     power: ColLike = 2.0,
 ) -> Column:
     """Aggregator: fill NULL Quadbin cells from valid neighbours; returns BINARY payload."""
+    _method = f.lit(method) if isinstance(method, str) else _col(method)
     return f.call_function(
         "gbx_quadbin_cellfill",
         _col(cellid),
         _col(value),
         _col(k),
-        _col(method),
+        _method,
         _col(power),
     )
 
@@ -1400,12 +1404,13 @@ def bng_cellfill(
     power: ColLike = 2.0,
 ) -> Column:
     """Aggregator: fill NULL BNG cells from valid neighbours; returns BINARY payload."""
+    _method = f.lit(method) if isinstance(method, str) else _col(method)
     return f.call_function(
         "gbx_bng_cellfill",
         _col(cellid),
         _col(value),
         _col(k),
-        _col(method),
+        _method,
         _col(power),
     )
 
@@ -1419,12 +1424,13 @@ def custom_cellfill(
     power: ColLike = 2.0,
 ) -> Column:
     """Aggregator: fill NULL custom-grid cells from valid neighbours; returns BINARY payload."""
+    _method = f.lit(method) if isinstance(method, str) else _col(method)
     return f.call_function(
         "gbx_custom_cellfill",
         _col(cellid),
         _col(value),
         _col(grid),
         _col(k),
-        _col(method),
+        _method,
         _col(power),
     )
