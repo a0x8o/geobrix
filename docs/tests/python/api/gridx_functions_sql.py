@@ -720,11 +720,11 @@ quadbin_kring_sql_example_output = """
 """
 
 quadbin_kloop_sql_example_output = """
-+-------------------------------------+
-|kloop                                |
-+-------------------------------------+
-|[..., (8 cells)]                     |
-+-------------------------------------+
++----------------+
+|kloop           |
++----------------+
+|[..., (8 cells)]|
++----------------+
 ... (8 cells: hollow ring at k=1, SF z10 center excluded)
 """
 
@@ -899,11 +899,11 @@ custom_kring_sql_example_output = """
 """
 
 custom_kloop_sql_example_output = """
-+-------------------------------+
-|kloop                          |
-+-------------------------------+
-|[..., (8 cells at k=1)]        |
-+-------------------------------+
++-----------------------+
+|kloop                  |
++-----------------------+
+|[..., (8 cells at k=1)]|
++-----------------------+
 ... (8 BIGINT cell IDs — hollow ring at k=1, center cell excluded)
 """
 

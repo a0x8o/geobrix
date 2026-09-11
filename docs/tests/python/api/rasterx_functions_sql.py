@@ -3417,11 +3417,11 @@ LATERAL gbx_rst_custom_rastertogridavg(
 
 
 rst_custom_rastertogridavg_sql_example_output = """
-+----+-------------------+------------------+
-|band|cellID             |measure           |
-+----+-------------------+------------------+
-|1   |<Long cell id>     |<avg pixel value> |
-+----+-------------------+------------------+
++----+--------------+-----------------+
+|band|cellID        |measure          |
++----+--------------+-----------------+
+|1   |<Long cell id>|<avg pixel value>|
++----+--------------+-----------------+
 (one row per band × custom-grid cell; cellID is a BIGINT)
 """
 
@@ -3440,11 +3440,11 @@ LATERAL gbx_rst_custom_rastertogridcount(
 
 
 rst_custom_rastertogridcount_sql_example_output = """
-+----+-------------------+-------+
-|band|cellID             |measure|
-+----+-------------------+-------+
-|1   |<Long cell id>     |<count>|
-+----+-------------------+-------+
++----+--------------+-------+
+|band|cellID        |measure|
++----+--------------+-------+
+|1   |<Long cell id>|<count>|
++----+--------------+-------+
 (pixel count per band × custom-grid cell; measure is DOUBLE)
 """
 
@@ -3463,11 +3463,11 @@ LATERAL gbx_rst_custom_rastertogridmax(
 
 
 rst_custom_rastertogridmax_sql_example_output = """
-+----+-------------------+-------+
-|band|cellID             |measure|
-+----+-------------------+-------+
-|1   |<Long cell id>     |<max>  |
-+----+-------------------+-------+
++----+--------------+-------+
+|band|cellID        |measure|
++----+--------------+-------+
+|1   |<Long cell id>|<max>  |
++----+--------------+-------+
 (max pixel value per band × custom-grid cell)
 """
 
@@ -3486,11 +3486,11 @@ LATERAL gbx_rst_custom_rastertogridmin(
 
 
 rst_custom_rastertogridmin_sql_example_output = """
-+----+-------------------+-------+
-|band|cellID             |measure|
-+----+-------------------+-------+
-|1   |<Long cell id>     |<min>  |
-+----+-------------------+-------+
++----+--------------+-------+
+|band|cellID        |measure|
++----+--------------+-------+
+|1   |<Long cell id>|<min>  |
++----+--------------+-------+
 (min pixel value per band × custom-grid cell)
 """
 
@@ -3509,11 +3509,11 @@ LATERAL gbx_rst_custom_rastertogridmedian(
 
 
 rst_custom_rastertogridmedian_sql_example_output = """
-+----+-------------------+--------+
-|band|cellID             |measure |
-+----+-------------------+--------+
-|1   |<Long cell id>     |<median>|
-+----+-------------------+--------+
++----+--------------+--------+
+|band|cellID        |measure |
++----+--------------+--------+
+|1   |<Long cell id>|<median>|
++----+--------------+--------+
 (median pixel value per band × custom-grid cell)
 """
 
@@ -3532,11 +3532,11 @@ LATERAL gbx_rst_custom_rastertogridsum(
 
 
 rst_custom_rastertogridsum_sql_example_output = """
-+----+-------------------+-------+
-|band|cellID             |measure|
-+----+-------------------+-------+
-|1   |<Long cell id>     |<sum>  |
-+----+-------------------+-------+
++----+--------------+-------+
+|band|cellID        |measure|
++----+--------------+-------+
+|1   |<Long cell id>|<sum>  |
++----+--------------+-------+
 (sum of pixel values per band × custom-grid cell)
 """
 
@@ -3555,11 +3555,11 @@ LATERAL gbx_rst_custom_rastertogridvariance(
 
 
 rst_custom_rastertogridvariance_sql_example_output = """
-+----+-------------------+----------+
-|band|cellID             |measure   |
-+----+-------------------+----------+
-|1   |<Long cell id>     |<variance>|
-+----+-------------------+----------+
++----+--------------+----------+
+|band|cellID        |measure   |
++----+--------------+----------+
+|1   |<Long cell id>|<variance>|
++----+--------------+----------+
 (population variance of pixel values per band × custom-grid cell)
 """
 
@@ -3578,11 +3578,11 @@ LATERAL gbx_rst_custom_rastertogridstddev(
 
 
 rst_custom_rastertogridstddev_sql_example_output = """
-+----+-------------------+--------+
-|band|cellID             |measure |
-+----+-------------------+--------+
-|1   |<Long cell id>     |<stddev>|
-+----+-------------------+--------+
++----+--------------+--------+
+|band|cellID        |measure |
++----+--------------+--------+
+|1   |<Long cell id>|<stddev>|
++----+--------------+--------+
 (population standard deviation of pixel values per band × custom-grid cell)
 """
 
@@ -3611,11 +3611,11 @@ LATERAL gbx_rst_custom_tessellate(
 
 
 rst_custom_tessellate_sql_example_output = """
-+-------------------+-----------------------------------------------------------+
-|cellid             |raster                                                     |
-+-------------------+-----------------------------------------------------------+
-|<Long cell id>     |{<Long>, <chip raster bytes>, null, {driver -> GTiff, ...}}|
-+-------------------+-----------------------------------------------------------+
++--------------+------------------------------------------------------+
+|cellid        |raster                                                |
++--------------+------------------------------------------------------+
+|<Long cell id>|{<Long>, <raster bytes>, null, {driver -> GTiff, ...}}|
++--------------+------------------------------------------------------+
 (one v2 tile struct per cell; cellid is BIGINT encoding the custom cell)
 """
 
