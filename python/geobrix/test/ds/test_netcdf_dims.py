@@ -501,3 +501,164 @@ def test_fanout_coord_values_in_metadata(tmp_path):
         (float(t), 1000.0 if lev == 0 else 500.0) for t in range(3) for lev in range(2)
     )
     assert coord_pairs == expected, f"coord pairs mismatch: got {coord_pairs}"
+
+
+# ---------------------------------------------------------------------------
+# (j) bandDim option — multi-band stacking
+# ---------------------------------------------------------------------------
+
+
+def _open_bands(raster_bytes: bytes):
+    """Return an open rasterio DatasetReader for the tile bytes (context manager)."""
+    return MemoryFile(raster_bytes).open()
+
+
+def test_banddim_time_one_tile_three_bands(tmp_path, caplog):
+    """bandDim='time' → 1 tile, 3 bands."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.gbx.ds._netcdf"):
+        rows = _read_reader(p, {"bandDim": "time"})
+    assert len(rows) == 1
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        assert rds.count == 3
+
+
+def test_banddim_time_band_values_correct(tmp_path, caplog):
+    """bandDim='time': band k has mean = time*10 (level defaults to 0)."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.gbx.ds._netcdf"):
+        rows = _read_reader(p, {"bandDim": "time"})
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        # band 1 = time=0,level=0 → 0; band 2 = time=1 → 10; band 3 = time=2 → 20
+        np.testing.assert_allclose(rds.read(1).mean(), 0.0, atol=1e-4)
+        np.testing.assert_allclose(rds.read(2).mean(), 10.0, atol=1e-4)
+        np.testing.assert_allclose(rds.read(3).mean(), 20.0, atol=1e-4)
+
+
+def test_banddim_with_dimindex_pins_level(tmp_path):
+    """bandDim='time' + dimIndex='level=1' → 3-band tile, each band at level=1."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    rows = _read_reader(p, {"bandDim": "time", "dimIndex": "level=1"})
+    assert len(rows) == 1
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        assert rds.count == 3
+        # level=1: band k = t*10+1 → 1, 11, 21
+        np.testing.assert_allclose(rds.read(1).mean(), 1.0, atol=1e-4)
+        np.testing.assert_allclose(rds.read(2).mean(), 11.0, atol=1e-4)
+        np.testing.assert_allclose(rds.read(3).mean(), 21.0, atol=1e-4)
+
+
+def test_banddim_with_fanout_two_rows(tmp_path):
+    """bandDim='time' + fanout='level' → 2 rows, each a 3-band tile."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    rows = _read_reader(p, {"bandDim": "time", "fanout": "level"})
+    assert len(rows) == 2
+    for _, (_, raster_bytes, _) in rows:
+        with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+            assert rds.count == 3
+
+
+def test_banddim_with_fanout_correct_band_values(tmp_path):
+    """bandDim='time' + fanout='level': correct band values per row."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    rows = _read_reader(p, {"bandDim": "time", "fanout": "level"})
+    row_band_means = []
+    for _, (_, raster_bytes, _) in rows:
+        with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+            row_band_means.append(
+                tuple(float(rds.read(b + 1).mean()) for b in range(3))
+            )
+    row_band_means.sort()
+    # level=0 row: bands = 0*10+0, 1*10+0, 2*10+0 = 0, 10, 20
+    assert row_band_means[0] == pytest.approx((0.0, 10.0, 20.0), abs=1e-4)
+    # level=1 row: bands = 0*10+1, 1*10+1, 2*10+1 = 1, 11, 21
+    assert row_band_means[1] == pytest.approx((1.0, 11.0, 21.0), abs=1e-4)
+
+
+def test_banddim_dimindex_overlap_raises(tmp_path):
+    """bandDim and dimIndex naming the same dim → ValueError."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.raises(ValueError, match="bandDim|stacked|pinned"):
+        _read_reader(p, {"bandDim": "time", "dimIndex": "time=1"})
+
+
+def test_banddim_fanout_overlap_raises(tmp_path):
+    """bandDim and fanout naming the same dim → ValueError."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.raises(ValueError, match="bandDim|stacked|expanded"):
+        _read_reader(p, {"bandDim": "time", "fanout": "time"})
+
+
+def test_banddim_metadata_present(tmp_path, caplog):
+    """bandDim tile metadata carries bandDim, bandCoords, bandDescriptions."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with caplog.at_level(logging.WARNING):
+        rows = _read_reader(p, {"bandDim": "time"})
+    _, (_, _, meta) = rows[0]
+    assert meta.get("bandDim") == "time"
+    # bandCoords: time=[0.0, 1.0, 2.0]
+    assert meta.get("bandCoords") == "0.0,1.0,2.0"
+    # bandDescriptions: "time=0.0,time=1.0,time=2.0"
+    assert "bandDescriptions" in meta
+    assert "time=0.0" in meta["bandDescriptions"]
+    assert "time=2.0" in meta["bandDescriptions"]
+
+
+def test_banddim_source_contains_marker(tmp_path, caplog):
+    """Source for a bandDim row contains 'bandDim=time'."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with caplog.at_level(logging.WARNING):
+        rows = _read_reader(p, {"bandDim": "time"})
+    source, _ = rows[0]
+    assert "bandDim=time" in source, f"unexpected source: {source}"
+
+
+def test_banddim_pure_2d_var_silent(tmp_path):
+    """Pure-2-D variable + bandDim='time' → NO UserWarning, 1 single-band tile."""
+    import warnings as _warnings
+
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        rows = _read_reader(p, {"bandDim": "time", "variable": "sst"})
+    user_warns = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert user_warns == [], f"unexpected UserWarning for pure-2-D var: {user_warns}"
+    assert len(rows) == 1
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        assert rds.count == 1
+
+
+def test_banddim_soft_warn_large_stack(tmp_path, caplog, monkeypatch):
+    """Soft-warn fires when estimated decoded bytes exceed _BANDDIM_WARN_BYTES."""
+    import databricks.labs.gbx.ds.netcdf as netcdf_module
+
+    monkeypatch.setattr(netcdf_module, "_BANDDIM_WARN_BYTES", 1)
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with caplog.at_level(logging.WARNING):
+        with pytest.warns(UserWarning, match="estimated|fanout|MiB"):
+            _read_reader(p, {"bandDim": "time"})
+
+
+def test_banddim_unset_default_single_band(tmp_path):
+    """No bandDim → count=1, source unchanged (backward compat)."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    rows = _read_reader(p, {})
+    _, (_, raster_bytes, _) = rows[0]
+    with MemoryFile(bytes(raster_bytes)) as mf, mf.open() as rds:
+        assert rds.count == 1
