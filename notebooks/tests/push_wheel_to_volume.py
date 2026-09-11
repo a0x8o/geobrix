@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Build JAR first (unless GBX_BUNDLE_SKIP_JAR_UPLOAD=1), then build the GeoBrix Python wheel (python3 -m build)
-and upload to GBX_ARTIFACT_VOLUME/<whl_filename>. JAR is built before the wheel so the package can include it.
-Set GBX_BUNDLE_SKIP_WHEEL_UPLOAD=1 to skip wheel build/upload. Loads config from databricks_cluster_config.env.
+Build JAR first (always, unless GBX_BUNDLE_SKIP_JAR_UPLOAD=1 which builds but skips upload),
+then build the GeoBrix Python wheel (python3 -m build) and upload to
+GBX_ARTIFACT_VOLUME/<whl_filename>. Set GBX_BUNDLE_SKIP_WHEEL_UPLOAD=1 to build the wheel
+locally but skip the Databricks upload. Loads config from databricks_cluster_config.env.
 Overwrites if file already exists.
 """
 from __future__ import annotations
@@ -27,111 +28,116 @@ if _env_file.exists():
 
 
 def main() -> int:
-    artifact_volume = (os.environ.get("GBX_ARTIFACT_VOLUME") or "").strip().rstrip("/")
-    if not artifact_volume:
-        print("Set GBX_ARTIFACT_VOLUME (e.g. /Volumes/catalog/schema/volume/artifacts)", file=sys.stderr)
-        return 2
-
-    host = os.environ.get("DATABRICKS_HOST")
-    token = os.environ.get("DATABRICKS_TOKEN")
-    profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
-    if not (host and token) and not profile:
-        print("Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE", file=sys.stderr)
-        return 2
-
-    skip_wheel = os.environ.get("GBX_BUNDLE_SKIP_WHEEL_UPLOAD", "").strip().lower() in ("1", "true", "yes")
+    skip_wheel_upload = os.environ.get("GBX_BUNDLE_SKIP_WHEEL_UPLOAD", "").strip().lower() in ("1", "true", "yes")
+    # skip_jar is checked here only to decide whether the wheel upload also needs auth;
+    # push_jar_to_volume.py handles its own upload-skip logic internally.
     skip_jar = os.environ.get("GBX_BUNDLE_SKIP_JAR_UPLOAD", "").strip().lower() in ("1", "true", "yes")
 
     project_root = TESTS_DIR.parent.parent
     pkg_dir = project_root / "python" / "geobrix"
     dist = pkg_dir / "dist"
 
-    # JAR first so the wheel build can include it if needed
-    if not skip_jar:
-        lib_dir = pkg_dir / "lib"
-        if lib_dir.exists():
-            shutil.rmtree(lib_dir)
-        lib_dir.mkdir(parents=True)
-        print("Running push_jar_to_volume (JAR before wheel)...")
-        rc = subprocess.run([sys.executable, str(TESTS_DIR / "push_jar_to_volume.py")], cwd=project_root)
-        if rc.returncode != 0:
-            return rc.returncode
-    else:
-        print("GBX_BUNDLE_SKIP_JAR_UPLOAD=1: skipping JAR push.")
+    # Auth/volume checks: only required when uploading the wheel
+    artifact_volume = None
+    w = None
+    if not skip_wheel_upload:
+        artifact_volume = (os.environ.get("GBX_ARTIFACT_VOLUME") or "").strip().rstrip("/")
+        if not artifact_volume:
+            print("Set GBX_ARTIFACT_VOLUME (e.g. /Volumes/catalog/schema/volume/artifacts)", file=sys.stderr)
+            return 2
 
-    if not skip_wheel:
+        host = os.environ.get("DATABRICKS_HOST")
+        token = os.environ.get("DATABRICKS_TOKEN")
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        if not (host and token) and not profile:
+            print("Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE", file=sys.stderr)
+            return 2
+
         try:
             from databricks.sdk import WorkspaceClient
         except ImportError:
             print("Install databricks-sdk: pip install databricks-sdk", file=sys.stderr)
             return 2
 
-        if dist.exists():
-            shutil.rmtree(dist)
-        dist.mkdir(parents=True)
-        print("Building wheel (python3 -m build)...")
-        # The build's pip index comes from the AMBIENT environment (PIP_INDEX_URL /
-        # pip.conf). If your network firewalls public PyPI, set PIP_INDEX_URL to your
-        # mirror before running -- we do not hardcode one here.
-        build_env = dict(os.environ)
-        # Prefer the project venv (.venv-pyrx, Python 3.12) for the build: it has a coherent
-        # build backend, so `--no-isolation` builds without any PyPI fetch (the ambient
-        # `python` may be an unrelated interpreter with a mismatched setuptools/packaging that
-        # breaks even isolated builds). Fall back to sys.executable + isolation + the proxy
-        # (the CI path, where the runner's env is clean and just needs the mirror).
-        venv_py = Path(project_root) / ".venv-pyrx" / "bin" / "python"
-        if venv_py.exists():
-            build_cmd = [str(venv_py), "-m", "build", "--no-isolation", str(pkg_dir)]
-        else:
-            build_cmd = [sys.executable, "-m", "build", str(pkg_dir)]
-        rc = subprocess.run(
-            build_cmd, cwd=project_root, capture_output=False, env=build_env
-        )
-        if rc.returncode != 0:
-            print("Build failed", file=sys.stderr)
-            return 1
-        whl = next((f for f in dist.glob("geobrix-*.whl")), None)
-        if not whl:
-            print("No geobrix-*.whl in dist/", file=sys.stderr)
-            return 1
-
-        volume_path = f"{artifact_volume}/{whl.name}"
         w = WorkspaceClient(profile=profile) if profile else WorkspaceClient(host=host, token=token)
-        try:
-            w.files.create_directory(artifact_volume)
-        except Exception:
-            pass
-        print("Uploading to %s (overwrite if exists)..." % volume_path)
-        # Use files.upload (streaming PUT) — NOT files.upload_from. upload_from hits
-        # an admin-gated bulk API that PermissionDenies non-account-admins on some
-        # workspaces (e.g. dogfood: "This API is disabled for users without account
-        # admin status"), while the streaming files.upload may return without raising
-        # even if bytes do not land on some workspaces (e.g. dogfood for non-admins).
-        # Verify bytes actually landed by comparing remote size to local size.
-        local_size = whl.stat().st_size
-        with open(whl.resolve(), "rb") as _fh:
-            w.files.upload(volume_path, _fh, overwrite=True)
-        try:
-            remote_metadata = w.files.get_metadata(volume_path)
-            remote_size = remote_metadata.content_length
-            if remote_size != local_size:
-                print(
-                    f"Error: upload verification failed. Local size: {local_size}, "
-                    f"remote size: {remote_size}. Bytes may not have landed correctly.",
-                    file=sys.stderr,
-                )
-                return 1
-        except Exception as e:
+
+    # JAR first so the wheel build can include it if needed. Always run — push_jar_to_volume.py
+    # respects GBX_BUNDLE_SKIP_JAR_UPLOAD internally (build only vs build+upload).
+    lib_dir = pkg_dir / "lib"
+    if lib_dir.exists():
+        shutil.rmtree(lib_dir)
+    lib_dir.mkdir(parents=True)
+    print("Running push_jar_to_volume (JAR before wheel)...")
+    rc = subprocess.run([sys.executable, str(TESTS_DIR / "push_jar_to_volume.py")], cwd=project_root)
+    if rc.returncode != 0:
+        return rc.returncode
+
+    if dist.exists():
+        shutil.rmtree(dist)
+    dist.mkdir(parents=True)
+    print("Building wheel (python3 -m build)...")
+    # The build's pip index comes from the AMBIENT environment (PIP_INDEX_URL /
+    # pip.conf). If your network firewalls public PyPI, set PIP_INDEX_URL to your
+    # mirror before running -- we do not hardcode one here.
+    build_env = dict(os.environ)
+    # Prefer the project venv (.venv-pyrx, Python 3.12) for the build: it has a coherent
+    # build backend, so `--no-isolation` builds without any PyPI fetch (the ambient
+    # `python` may be an unrelated interpreter with a mismatched setuptools/packaging that
+    # breaks even isolated builds). Fall back to sys.executable + isolation + the proxy
+    # (the CI path, where the runner's env is clean and just needs the mirror).
+    venv_py = Path(project_root) / ".venv-pyrx" / "bin" / "python"
+    if venv_py.exists():
+        build_cmd = [str(venv_py), "-m", "build", "--no-isolation", str(pkg_dir)]
+    else:
+        build_cmd = [sys.executable, "-m", "build", str(pkg_dir)]
+    rc = subprocess.run(
+        build_cmd, cwd=project_root, capture_output=False, env=build_env
+    )
+    if rc.returncode != 0:
+        print("Build failed", file=sys.stderr)
+        return 1
+    whl = next((f for f in dist.glob("geobrix-*.whl")), None)
+    if not whl:
+        print("No geobrix-*.whl in dist/", file=sys.stderr)
+        return 1
+
+    if skip_wheel_upload:
+        print("GBX_BUNDLE_SKIP_WHEEL_UPLOAD=1: wheel built locally (%s); skipping Databricks upload." % whl.name)
+        return 0
+
+    volume_path = f"{artifact_volume}/{whl.name}"
+    try:
+        w.files.create_directory(artifact_volume)
+    except Exception:
+        pass
+    print("Uploading to %s (overwrite if exists)..." % volume_path)
+    # Use files.upload (streaming PUT) — NOT files.upload_from. upload_from hits
+    # an admin-gated bulk API that PermissionDenies non-account-admins on some
+    # workspaces (e.g. dogfood: "This API is disabled for users without account
+    # admin status"), while the streaming files.upload may return without raising
+    # even if bytes do not land on some workspaces (e.g. dogfood for non-admins).
+    # Verify bytes actually landed by comparing remote size to local size.
+    local_size = whl.stat().st_size
+    with open(whl.resolve(), "rb") as _fh:
+        w.files.upload(volume_path, _fh, overwrite=True)
+    try:
+        remote_metadata = w.files.get_metadata(volume_path)
+        remote_size = remote_metadata.content_length
+        if remote_size != local_size:
             print(
-                f"Error: failed to verify upload. Could not read remote metadata for "
-                f"{volume_path}: {e}",
+                f"Error: upload verification failed. Local size: {local_size}, "
+                f"remote size: {remote_size}. Bytes may not have landed correctly.",
                 file=sys.stderr,
             )
             return 1
-        print("Done: %s" % volume_path)
-    else:
-        print("GBX_BUNDLE_SKIP_WHEEL_UPLOAD=1: skipping wheel build/upload.")
-
+    except Exception as e:
+        print(
+            f"Error: failed to verify upload. Could not read remote metadata for "
+            f"{volume_path}: {e}",
+            file=sys.stderr,
+        )
+        return 1
+    print("Done: %s" % volume_path)
     return 0
 
 
