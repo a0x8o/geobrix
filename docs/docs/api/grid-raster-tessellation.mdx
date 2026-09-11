@@ -1,0 +1,259 @@
+---
+sidebar_position: 7
+title: Grid Raster Tessellation
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Grid Raster Tessellation
+
+GeoBrix provides a unified model for mapping raster tiles onto discrete global grids — H3 hexagons, quadbin tiles, BNG squares, and custom grids. Every raster-to-grid function (`rst_<grid>_tessellate`, `rst_<grid>_rastertogrid*`) shares three orthogonal, explicit policies: **coverage**, **assignment**, and **fill**. This page explains the model, per-grid specifics, custom-grid reproducibility rules, the interpolation decision guide, and the cross-tier guarantee.
+
+---
+
+## The common model
+
+### Coverage: `{sparse, complete}` (default: `complete`)
+
+*Coverage* controls whether grid cells that are geometrically covered by the raster footprint — but contain no valid pixel data — appear in the output.
+
+- **`complete`** (default): every cell whose geometry overlaps the raster bounding box is emitted. A covered cell with no valid pixels is emitted with a `NULL` measure and a pixel count of `0`. Downstream, any `NULL` in the result is **provably genuine missing data**, not a centroid-aliasing artifact.
+- **`sparse`**: covered-but-empty cells are dropped. The output contains only cells that caught at least one valid pixel.
+
+Three states are always distinguishable under `coverage='complete'`:
+
+| State | Output |
+|---|---|
+| Has valid pixels | `(cellid, value)` — count > 0 |
+| Covered, all-NoData | `(cellid, NULL)` — count = 0, row present |
+| Outside raster footprint | Absent — no row emitted |
+
+The footprint used for covered-cell enumeration is the raster **bounding box**, not a NoData-aware region. A cloud hole entirely inside the raster correctly reads as *covered + NULL*, not out-of-coverage.
+
+### Assignment: `{centroid, covering}` (default: `centroid`)
+
+*Assignment* controls how pixels are distributed to cells.
+
+- **`centroid`** (default): each valid pixel is mapped to the single cell containing that pixel's centroid coordinate. Pixels **partition** into cells — every valid pixel appears in exactly one output chip, no pixel is counted twice, and the union of all chips reproduces the full valid-pixel set.
+- **`covering`** (area-weighted): each pixel contributes to every cell its footprint overlaps, weighted by the fraction of the pixel's area inside each cell. Interior pixels (entirely within one cell) carry weight 1 and behave identically to centroid mode; only boundary pixels do area-split work. This fills centroid-aliasing gaps — a cell that sits between pixel centers without catching any centroid under `centroid` mode receives area-weighted contributions under `covering`. `sum` and `count` remain globally mass-conserving.
+
+The interaction between the two policies:
+
+- `centroid + complete`: covered cells with no assigned centroid appear as `NULL` — aliasing gaps are *visible but not closed*.
+- `covering + complete`: the only `NULL` cells are those where every overlapping pixel was NoData — aliasing gaps are *closed without interpolation*.
+
+**When to use `centroid` (default):** binning a collection of overlapping tiles without double-counting; building a deduplication pipeline; aggregating a time-series composite where each pixel should be counted once.
+
+**When to use `covering`:** building a full-coverage index across tile boundaries; reconstructing a complete raster from chips; matching the semantics of Databricks-native `h3_tessellateaswkb` (which is also a covering-set clip).
+
+### Fill: always a separate explicit step
+
+Fill is **never automatic**. No `rst_<grid>_tessellate` or `rst_<grid>_rastertogrid*` call fills gaps unless you invoke a fill function explicitly. This is a deliberate guarantee: a query that omits any fill step provably did not interpolate.
+
+Two fill granularities are available:
+
+- **Pixel space (pre-tessellation):** `rst_fillnodata` fills NoData pixels from neighboring pixels using GDAL inverse-distance weighting. Apply it to the raster *before* calling any `rst_<grid>_tessellate` or `rst_<grid>_rastertogrid*` function.
+- **Cell space (post-aggregation):** `gbx_<grid>_cellfill(cellid, value, [k], [method])` fills covered-but-`NULL` cells from valid cells within `k` rings of the grid. Apply it to the `(cellid, value)` table produced by any `rastertogrid*` function.
+
+See the [Interpolation and fill](#interpolation-and-fill) section for the full boundary guide.
+
+### Determinism: one boundary rule across all grids
+
+One tie-break rule applies uniformly across H3, quadbin, BNG, and custom grids: **lower-cell-owns, upper-exclusive**. A pixel centroid that falls exactly on a shared cell boundary goes to the cell with the lower coordinate — never split, never double-counted. This rule is enforced by the shared grid abstraction so results are reproducible regardless of grid type.
+
+---
+
+## Relationship to `rst_<grid>_rastertogrid*` {#relationship-to-rst_h3_rastertogrid}
+
+The raster-to-grid surface has two output shapes:
+
+| | `rst_<grid>_tessellate(...)` | `rst_<grid>_rastertogrid*` |
+|---|---|---|
+| **Output per cell** | Raster **chip** (clipped tile struct) | Scalar **measure** (avg / count / max / min / median) |
+| **Return type** | One row per cell via UDTF | `ARRAY<ARRAY<struct(cellid, measure)>>` per band |
+| **coverage** param | shared | shared |
+| **assignment** param | shared | shared |
+| **Use for** | Per-cell raster chips for downstream raster ops | Numeric aggregation into the grid |
+
+Both function families share the same pixel-assignment logic. `rst_<grid>_tessellate(..., assignment='centroid')` assigns pixels by the same centroid rule as `rst_<grid>_rastertogridavg` — the difference is the output: chips versus scalar measures.
+
+```sql
+-- chip-emitting (default assignment=centroid, coverage=complete)
+SELECT t.*
+FROM rasters,
+LATERAL gbx_rst_h3_tessellate(tile, 7) t;
+
+-- scalar-reducing (same pixel assignment, same coverage default)
+SELECT path, gbx_rst_h3_rastertogridavg(tile, 7) AS h3_avg
+FROM rasters;
+```
+
+---
+
+## Per-grid details
+
+<Tabs groupId="grid-type">
+<TabItem value="h3" label="H3">
+
+**Cell-id type:** `BIGINT` — a standard H3 integer cell ID.
+
+**CRS handling:**
+- `rst_h3_tessellate` reprojects the tile extent to **EPSG:4326** internally before H3 cell lookups. Any CRS supported by GDAL is accepted; no pre-transformation of the tile is required.
+- `rst_h3_rastertogrid*` interprets pixel coordinates as EPSG:4326 lon/lat directly. If your tiles are in a projected CRS (e.g., UTM), reproject them upstream with `rst_transform` before calling any `rst_h3_rastertogrid*` function.
+
+**Resolution:** an integer level 0–15 (higher = finer hexagons; level 7 ≈ 5 km² per cell; level 9 ≈ 0.1 km²).
+
+**Available functions:**
+- `gbx_rst_h3_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
+- `gbx_rst_h3_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_h3_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
+- `gbx_h3_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
+
+**Lineage:** the raster-to-H3 technique was pioneered by [DBLabs Mosaic](https://databrickslabs.github.io/mosaic/) (`rst_tessellate`, `rst_rastertogridavg`/`count`/`max`/`min`/`median`). Databricks has since adopted the same grid for vector operations — see the H3 geospatial functions reference ([AWS](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-h3-geospatial-functions) · [Azure](https://learn.microsoft.com/azure/databricks/sql/language-manual/sql-ref-h3-geospatial-functions) · [GCP](https://docs.databricks.com/gcp/en/sql/language-manual/sql-ref-h3-geospatial-functions)):
+
+- `h3_coverash3` — returns every H3 cell that overlaps a geometry (the covering set)
+- `h3_tessellateaswkb` — for each covering-set cell, returns the geometry clipped to that cell
+
+GeoBrix carries the **raster** side of this family and is designed to complement, not replace, the native `h3_*` functions. Use GeoBrix `rst_h3_tessellate` / `rst_h3_rastertogrid*` for raster data onto an H3 grid; use Databricks-native `h3_coverash3` / `h3_tessellateaswkb` for vector geometry operations on the same grid.
+
+The `cellid` in each tessellated output row is a standard H3 integer — join or aggregate it directly against Databricks-native H3 functions in the same query:
+
+```sql
+-- join raster chips with vector H3 data
+SELECT chips.cellid, chips.tile, vectors.name
+FROM (
+  SELECT t.*
+  FROM rasters,
+  LATERAL gbx_rst_h3_tessellate(tile, 7) t
+) chips
+JOIN h3_indexed_vectors vectors
+  ON chips.cellid = vectors.h3_cell_id;
+
+-- mean elevation per H3 cell from chips
+SELECT cellid, AVG(gbx_rst_avg(tile)) AS mean_elevation
+FROM (
+  SELECT t.*
+  FROM dem_tiles,
+  LATERAL gbx_rst_h3_tessellate(tile, 7) t
+)
+GROUP BY cellid;
+```
+
+See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst_h3_rastertogridavg` binning slope and aspect rasters into H3 cells to produce a per-cell score (NB03).
+
+</TabItem>
+<TabItem value="quadbin" label="Quadbin">
+
+**Cell-id type:** `BIGINT` — a Quadbin integer cell ID.
+
+**CRS handling:** tiles are reprojected to geographic coordinates internally. Any CRS supported by GDAL is accepted; no pre-transformation required.
+
+**Resolution:** an integer zoom level 0–26 (higher = finer tiles). Quadbin cells align with Web Mercator tile boundaries.
+
+**Available functions:**
+- `gbx_rst_quadbin_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
+- `gbx_rst_quadbin_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_quadbin_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
+- `gbx_quadbin_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
+
+</TabItem>
+<TabItem value="bng" label="BNG">
+
+**Cell-id type:** `STRING` — a human-readable BNG cell reference (e.g., `TQ38`, `TQ3882`).
+
+**CRS handling:** tiles are reprojected to **EPSG:27700** (British National Grid) internally. Any CRS supported by GDAL is accepted.
+
+**Resolution:** an integer index 1–6 (1 = 100 km, 2 = 10 km, 3 = 1 km, 4 = 100 m, 5 = 10 m, 6 = 1 m), or a string key from the BNG resolution map (e.g., `"1km"`, `"100m"`). Negative indices (−1 to −6) select quadrant sub-cells.
+
+**Available functions:**
+- `gbx_rst_bng_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
+- `gbx_rst_bng_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_bng_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
+- `gbx_bng_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
+
+</TabItem>
+<TabItem value="custom" label="Custom">
+
+**Cell-id type:** `BIGINT` — an origin-relative integer ID. Custom cell IDs are **not self-describing** and **not comparable across different grid definitions**; see [Custom-grid determinism](#custom-grid-determinism) below.
+
+**CRS handling:** the custom grid defines its own coordinate system. Tiles are expected to share the grid's CRS; no automatic reprojection is applied.
+
+**Resolution:** user-defined cell width and height in the grid's native coordinate units, specified as part of the grid struct passed to each function.
+
+**Available functions:**
+- `gbx_rst_custom_tessellate(tile, grid_struct, [assignment], [coverage])` — UDTF, one chip per cell
+- `gbx_rst_custom_rastertogrid{avg,count,max,min,median}(tile, grid_struct, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_custom_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
+- `gbx_custom_cellfill(cellid, value, grid_struct, [k], [method])` — post-aggregation cell-space fill
+
+</TabItem>
+</Tabs>
+
+---
+
+## Custom-grid determinism {#custom-grid-determinism}
+
+Custom grids assign integer cell IDs using origin-relative arithmetic — `(x − boundXMin) / cellWidth`. These IDs are **not self-describing** and **not comparable across different grid definitions**: a cell ID produced by one grid struct cannot be compared to a cell ID produced by a different grid struct, even if both structs use the same cell size. Four rules govern reproducible use:
+
+**R1 — carry the grid struct with any output.** Cell IDs are only meaningful relative to the grid struct that produced them. Any downstream join, aggregation, or storage operation that includes custom-grid cell IDs must carry the grid struct so that joins remain valid and IDs can be interpreted. Storing cell IDs without the grid struct makes the data uninterpretable in isolation.
+
+**R2 — fix bounds from a stable reference, not from the data.** Define the grid bounding box from a known geographic reference (e.g., a named study-area extent or a projection's natural bounds), never from the per-dataset raster extent. A dataset-derived extent shifts when input data changes, producing cell IDs that are silently incomparable across runs.
+
+**R3 — bounds must strictly contain the raster extent.** If the raster extent falls outside the declared grid bounds, the function raises a clear error immediately — before any pixel is processed — rather than failing mid-aggregation when a boundary pixel triggers an out-of-bounds lookup. Validate your bounds before running large jobs.
+
+**R4 — lower-cell-owns, upper-exclusive (universal).** This is the boundary tie-break rule for all grids (H3, quadbin, BNG, and custom). For custom grids specifically, a pixel centroid coordinate exactly equal to the declared upper bound falls *outside* the grid and triggers an error rather than being silently assigned.
+
+---
+
+## Interpolation and fill {#interpolation-and-fill}
+
+Several functions operate in the interpolation and gap-fill space. The table below draws explicit boundaries so you can choose the right tool at each stage of the pipeline:
+
+| Function | Domain | What it touches | Reach for it to… |
+|---|---|---|---|
+| `rst_sample` | raster → point | reads values (nearest-pixel) | extract pixel values at point locations |
+| `rst_resample*` | raster → raster | all pixels | change pixel resolution / grid density |
+| `rst_fillnodata` | raster (pixel) | only NoData pixels, pre-tessellation | fill pixel holes from neighbour pixels |
+| `gbx_<grid>_cellfill` | grid (cell) | only NULL cells, post-aggregation | fill missing grid cells from k-ring neighbour cells |
+| `rst_gridfrompoints`/`_agg` | points → raster | builds a new raster (IDW) | interpolate a raster from scattered point samples |
+| `rst_filter` / `rst_convolve` | raster → raster | all pixels | focal / neighbourhood stats & kernels (not gap-fill) |
+
+Rule of thumb: *sample* reads, *resample* changes resolution, *fill* replaces only the missing and leaves valid data untouched (pixel stage `rst_fillnodata`, cell stage `cellfill`), *gridfrompoints* builds from points, *focal* transforms every pixel.
+
+---
+
+## Cross-tier parity
+
+Behavior is **identical across the heavyweight (`rasterx` / Scala JAR) and lightweight (`pyrx` / pure Python) tiers** for all grids:
+
+- The same `{coverage, assignment}` parameters produce the same cell sets and the same per-cell values on both tiers.
+- Covered-but-missing cells are emitted with `NULL` measures under `coverage='complete'` on both tiers.
+- Area-weighted `covering` assignment produces mass-conserving weights on both tiers — verified by mass-conservation tests.
+
+Switch tiers with a one-line import change; the function calls are identical:
+
+<Tabs groupId="gbx-tier" queryString="tier" className="gbx-tier-tabs">
+<TabItem value="lightweight" label="Lightweight (pyrx)">
+
+```python
+from databricks.labs.gbx.pyrx import functions as rx  # lightweight tier
+
+chips = df.select(rx.rst_h3_tessellate("tile", 7))
+chips = df.select(rx.rst_h3_tessellate("tile", 7, assignment="covering", coverage="complete"))
+```
+
+</TabItem>
+<TabItem value="heavyweight" label="Heavyweight (rasterx)">
+
+```python
+from databricks.labs.gbx.rasterx import functions as rx  # heavyweight tier
+
+chips = df.select(rx.rst_h3_tessellate("tile", 7))
+chips = df.select(rx.rst_h3_tessellate("tile", 7, assignment="covering", coverage="complete"))
+```
+
+</TabItem>
+</Tabs>
+
+Parity is test-enforced per function: for each grid and each assignment mode, tests assert that the lightweight and heavyweight tiers produce the same cell set and the same per-cell chip pixels on border-containing tiles.
