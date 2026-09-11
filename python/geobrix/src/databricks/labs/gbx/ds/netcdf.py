@@ -13,7 +13,7 @@ Spark-config mutation or JVM-bridge access).
 from __future__ import annotations
 
 import warnings
-from typing import Dict, Iterator, List, Set, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 from pyspark.sql.datasource import DataSource, DataSourceReader
 from pyspark.sql.types import StructType
@@ -32,7 +32,7 @@ def _parse_dim_index(raw: str) -> Dict[str, int]:
         ValueError: if any entry is malformed or the index is not a valid integer.
     """
     result: Dict[str, int] = {}
-    seen: Set[str] = set()
+    seen: set = set()
     for part in raw.split(","):
         part = part.strip()
         if not part:
@@ -105,37 +105,29 @@ class NetcdfRasterReader(RasterGbxReader):
         with _netcdf.open_dataset(partition.file_path, self.group) as ds:
             variables = _netcdf.select_variables(ds, self.options, "raster")
 
-            # Validate that every dim named in dimIndex / fanout is a leading dim on
-            # at least one of the selected variables.  A typo'd name (e.g. "tyme=2")
-            # that matches no variable would otherwise silently land on the index-0
-            # slice.  A dim valid on some vars but absent on others is fine — the
-            # per-variable loop already handles that gracefully.
-            if dim_index or fanout_dims:
-                all_leading: Set[str] = set()
-                for var in variables:
-                    for dim, _ in _netcdf.leading_dims(ds, var):
-                        all_leading.add(dim)
-                unknown_index = set(dim_index) - all_leading
-                if unknown_index:
-                    raise ValueError(
-                        f"netcdf_gbx: dimIndex names unknown leading dim(s) "
-                        f"{sorted(unknown_index)!r}; valid leading dims for the "
-                        f"selected variable(s): {sorted(all_leading)!r}."
-                    )
-                unknown_fanout = set(fanout_dims) - all_leading
-                if unknown_fanout:
-                    raise ValueError(
-                        f"netcdf_gbx: fanout names unknown leading dim(s) "
-                        f"{sorted(unknown_fanout)!r}; valid leading dims for the "
-                        f"selected variable(s): {sorted(all_leading)!r}."
-                    )
-
             for var in variables:
                 transform, crs = _netcdf.grid_transform_crs(ds, var)
                 nodata = _netcdf.nodata_of(ds, var)
 
-                # Determine which fanout dims this variable actually has.
                 var_ldims = dict(_netcdf.leading_dims(ds, var))
+
+                # Per-variable warning: a requested dim unknown to this variable
+                # while the variable has other leading dims → likely a typo.
+                # A pure-2-D variable (no leading dims) is a silent no-op.
+                if var_ldims and (dim_index or fanout_dims):
+                    all_requested = set(dim_index) | set(fanout_dims)
+                    unknown_for_var = all_requested - set(var_ldims)
+                    if unknown_for_var:
+                        warnings.warn(
+                            f"netcdf_gbx: variable {var!r} has leading dims "
+                            f"{sorted(var_ldims)!r} but requested dim(s) "
+                            f"{sorted(unknown_for_var)!r} are not among them; "
+                            f"falling through (unknown dims ignored).",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+
+                # Determine which fanout dims this variable actually has.
                 active_fanout = [
                     (d, var_ldims[d]) for d in fanout_dims if d in var_ldims
                 ]
@@ -150,8 +142,13 @@ class NetcdfRasterReader(RasterGbxReader):
                 )
 
                 for combo in combos:
-                    # Merge dimIndex + current fanout combination into sel.
-                    sel: Dict[str, int] = dict(dim_index)
+                    # Only include dimIndex entries whose dim is a leading dim of
+                    # this variable (unknown dims have been warned about above and
+                    # are silently ignored — they don't appear in the source suffix
+                    # or tile metadata).
+                    sel: Dict[str, int] = {
+                        k: v for k, v in dim_index.items() if k in var_ldims
+                    }
                     for dim_name, idx in zip(fanout_dim_names, combo):
                         sel[dim_name] = idx
 

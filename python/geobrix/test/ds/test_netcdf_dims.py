@@ -60,21 +60,6 @@ def _write_4d_grid(path: str, ntime: int = 3, nlevel: int = 2) -> None:
                 v[t, lev, :, :] = float(t * 10 + lev)
 
 
-def _write_2d_grid(path: str) -> None:
-    """Write a (lat, lon) grid — no leading dims."""
-    with Dataset(path, "w") as ds:
-        ds.createDimension("lat", 3)
-        ds.createDimension("lon", 4)
-        lat = ds.createVariable("lat", "f8", ("lat",))
-        lon = ds.createVariable("lon", "f8", ("lon",))
-        lat.standard_name = "latitude"
-        lon.standard_name = "longitude"
-        lat[:] = [50.0, 49.5, 49.0]
-        lon[:] = [10.0, 10.5, 11.0, 11.5]
-        v = ds.createVariable("sst", "f4", ("lat", "lon"), fill_value=-9999.0)
-        v[:] = np.arange(12, dtype="float32").reshape(3, 4)
-
-
 def _write_mixed_grid(path: str) -> None:
     """Write a file with two variables in the same grid extent.
 
@@ -138,8 +123,8 @@ def test_leading_dims_returns_non_spatial(tmp_path):
 
 
 def test_leading_dims_empty_for_2d_var(tmp_path):
-    p = str(tmp_path / "g.nc")
-    _write_2d_grid(p)
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)  # 'sst' is a pure-2-D var in the mixed file
     with _netcdf.open_dataset(p, None) as ds:
         ld = _netcdf.leading_dims(ds, "sst")
     assert ld == []
@@ -398,34 +383,70 @@ def test_fanout_total_rows_mixed_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# (g) Unknown/typo'd dim → ValueError
+# (g) Unknown/typo'd dim → UserWarning + fall-through (not ValueError)
+#     Pure-2-D variable → silent no-op
 # ---------------------------------------------------------------------------
 
 
-def test_dimindex_unknown_dim_raises(tmp_path):
-    """A typo'd dim in dimIndex (unknown to all selected vars) → ValueError."""
+def test_dimindex_unknown_dim_warns(tmp_path):
+    """A typo'd dim in dimIndex (unknown to a var with other leading dims) →
+    UserWarning + index-0 fall-through (1 row, value=0)."""
     p = str(tmp_path / "g.nc")
     _write_4d_grid(p)
-    with pytest.raises(ValueError, match="tyme|unknown"):
+    with pytest.warns(UserWarning, match="tyme"):
+        rows = _read_reader(p, {"dimIndex": "tyme=2"})
+    # "tyme" unrecognised → sel={} → index 0 for all dims → value=0.0
+    assert len(rows) == 1
+    assert pytest.approx(_tile_mean(rows[0]), abs=1e-4) == 0.0
+
+
+def test_dimindex_unknown_dim_source_bare(tmp_path):
+    """When a dimIndex dim is unknown the source has no suffix (nothing applied)."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.warns(UserWarning):
+        rows = _read_reader(p, {"dimIndex": "tyme=2"})
+    source, _ = rows[0]
+    assert source == f'NETCDF:"{p}":temp', f"unexpected source: {source}"
+
+
+def test_fanout_unknown_dim_warns(tmp_path):
+    """A typo'd dim in fanout (unknown to a var with other leading dims) →
+    UserWarning + single default row (no expansion)."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.warns(UserWarning, match="tyme"):
+        rows = _read_reader(p, {"fanout": "tyme"})
+    # no expansion → 1 row at default index 0 for all dims → value=0.0
+    assert len(rows) == 1
+    assert pytest.approx(_tile_mean(rows[0]), abs=1e-4) == 0.0
+
+
+def test_dimindex_unknown_warning_names_actual_dims(tmp_path):
+    """The UserWarning for a typo'd dim names the variable's actual leading dims."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.warns(UserWarning) as warning_list:
         _read_reader(p, {"dimIndex": "tyme=2"})
+    msgs = [str(w.message) for w in warning_list]
+    assert any(
+        "time" in m and "level" in m for m in msgs
+    ), f"warning should name actual leading dims; got: {msgs}"
 
 
-def test_fanout_unknown_dim_raises(tmp_path):
-    """A typo'd dim in fanout (unknown to all selected vars) → ValueError."""
-    p = str(tmp_path / "g.nc")
-    _write_4d_grid(p)
-    with pytest.raises(ValueError, match="tyme|unknown"):
-        _read_reader(p, {"fanout": "tyme"})
+def test_pure_2d_var_unknown_dim_silent(tmp_path):
+    """A pure-2-D variable with a requested dim emits NO UserWarning (moot)."""
+    import warnings as _warnings
 
-
-def test_dimindex_valid_error_lists_known_dims(tmp_path):
-    """The ValueError message lists the valid leading dims to aid diagnosis."""
-    p = str(tmp_path / "g.nc")
-    _write_4d_grid(p)
-    with pytest.raises(ValueError) as exc_info:
-        _read_reader(p, {"dimIndex": "tyme=2"})
-    msg = str(exc_info.value)
-    assert "time" in msg and "level" in msg, f"error should name valid dims; got: {msg}"
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    # Select only 'sst' (no leading dims) — "time" is legitimately moot.
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        rows = _read_reader(p, {"fanout": "time", "variable": "sst"})
+    user_warns = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert user_warns == [], f"unexpected UserWarning for pure-2-D var: {user_warns}"
+    assert len(rows) == 1
 
 
 # ---------------------------------------------------------------------------
