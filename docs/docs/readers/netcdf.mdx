@@ -83,6 +83,7 @@ readers is not part of this release.
 | `group` | — | HDF5 group path for grouped NetCDF-4 files (e.g. Sentinel-5P `"/PRODUCT"`). |
 | `dimIndex` | — | Raster mode: pin one or more leading (non-spatial) dimensions to a specific integer index. Format: `"dim=index"` or `"dim1=i1,dim2=i2"`. Example: `"time=2,level=1"`. Absent dims fall back to index 0 (with a warning when the dim has more than one slice). An out-of-range index raises `ValueError`. |
 | `fanout` | — | Raster mode: expand one or more leading dimensions across all their indices. Format: `"dim"` or `"dim1,dim2"`. Each index combination becomes a separate `(source, tile)` row. A variable that lacks any of the named dims emits a single row (no expansion). Dims not listed are pinned by `dimIndex` or default to index 0. A dim that appears in both `dimIndex` and `fanout` raises `ValueError`. |
+| `bandDim` | — | Raster mode: stack one leading dimension's slices as bands in a single multi-band tile. Format: `"dim"` (one dim only). `bandDim="time"` on a variable with `(time=3, lat, lon)` produces one 3-band tile. Composes with `dimIndex` (pins other dims) and `fanout` (one multi-band tile per fanout combination). A dim named in `bandDim` cannot also appear in `dimIndex` or `fanout` — this raises `ValueError`. Estimated decoded bytes > ~256 MiB emits a `UserWarning` and suggests `fanout` instead. |
 | `bbox` / `bboxCrs` | — | Area-of-interest filter (`"minx,miny,maxx,maxy"`). |
 | `filterRegex` | `".*"` | When loading a directory, keep files whose full path matches. |
 | `sizeInMB` | `"-1"` | Raster mode: `<= 0` = one whole tile per variable. |
@@ -147,10 +148,54 @@ tile `metadata` map carries a `sliceDims` key (e.g. `"level=1,time=2"`) and, for
 dims that have coordinate values, a `sliceCoord_<dim>` key with the coordinate
 value as a string.
 
-:::note Single-band output per slice
-`dimIndex` and `fanout` each produce single-band tiles. Stacking multiple
-slices of a leading dimension into a multi-band tile (`bandDim`) is planned
-for a future release.
+### Multi-band stacking (`bandDim`)
+
+`bandDim` stacks a leading dimension's slices as bands in one tile, for
+per-pixel cross-slice math (e.g. anomaly detection, temporal differencing)
+that needs all time steps in a single raster.
+
+```python
+# Stack all 3 time slices as bands in one tile.
+df = (
+    spark.read.format("netcdf_gbx")
+    .option("variable", "temp")
+    .option("bandDim", "time")
+    .load("/Volumes/main/geobrix_samples/netcdf/era5_sample.nc")
+)
+df.show()
+```
+
+`bandDim` composes with `dimIndex` and `fanout` on **distinct** dimensions:
+
+```python
+# One 3-band tile per level (time stacked as bands, level fanned out).
+df = (
+    spark.read.format("netcdf_gbx")
+    .option("variable", "temp")
+    .option("bandDim", "time")
+    .option("fanout", "level")
+    .load("/Volumes/main/geobrix_samples/netcdf/era5_sample.nc")
+)
+```
+
+**Band provenance** is recorded in the tile metadata: `bandDim` (the stacked
+dimension name), `bandCoords` (comma-separated coordinate values for each
+band), and `bandDescriptions` (GDAL-style descriptions such as
+`"time=0.0,time=1.0,time=2.0"`). The tile's `source` column includes a
+`bandDim=<dim>` marker to identify the row.
+
+:::note bandDim vs fanout: use the right tool for the scale
+**`bandDim`** is for a modest number of slices you intend to work across together
+in one tile — per-pixel aggregations, temporal differencing, or deriving an index
+from multiple time steps. Peak decoded RAM ≈ 1 slice, but the full N-band GTiff
+is held in the executor while downstream processes it.
+
+**`fanout`** is memory-safe at scale: each row is one bounded 2-D slice, so any
+number of time steps can be processed in parallel without accumulating a large
+multi-band buffer per task.
+
+If `bandDim` would produce a tile larger than ~256 MiB of decoded data, the
+reader emits a `UserWarning` and suggests `fanout` instead.
 :::
 
 ### Vector mode — points & swath → per-cell points
