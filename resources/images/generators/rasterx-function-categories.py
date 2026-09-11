@@ -28,7 +28,7 @@ Rasterize landscape PNG (for slides / 16:9 decks):
 from dataclasses import dataclass, field
 from textwrap import dedent
 
-# --- Data: 129 functions, organized by category --------------------------------
+# --- Data: 146 functions, organized by category --------------------------------
 
 @dataclass
 class Section:
@@ -88,6 +88,7 @@ CARDS_LEFT = [
             "rst_dtmfromgeoms_agg", "rst_gridfrompoints_agg",
             "rst_h3_rasterize_agg",
             "rst_quadbin_rasterize_agg", "rst_bng_rasterize_agg",
+            "rst_custom_rasterize_agg",
         ],
     ),
     Card(
@@ -128,6 +129,7 @@ CARDS_RIGHT = [
             "rst_maketiles", "rst_retile", "rst_tooverlappingtiles",
             "rst_separatebands", "rst_h3_tessellate",
             "rst_quadbin_tessellate", "rst_bng_tessellate",
+            "rst_custom_tessellate",
         ],
     ),
     Card(
@@ -145,8 +147,11 @@ CARDS_RIGHT = [
             Section("Compute", [
                 "rst_filter", "rst_convolve",
                 "rst_mapalgebra", "rst_combineavg",
+                "rst_combinemin", "rst_combinemax", "rst_combinemedian",
+                "rst_combinesum", "rst_combinestddev", "rst_combinecount",
                 "rst_derivedband", "rst_initnodata",
                 "rst_threshold", "rst_fillnodata", "rst_proximity", "rst_contour",
+                "rst_align_to",
             ]),
             Section("Optimise", [
                 "rst_buildoverviews", "rst_cog_convert",
@@ -189,6 +194,17 @@ CARDS_RIGHT = [
             "rst_bng_rastertogridmax", "rst_bng_rastertogridmin",
             "rst_bng_rastertogridmedian", "rst_bng_rastertogridstddev",
             "rst_bng_rastertogridsum", "rst_bng_rastertogridvariance",
+        ],
+    ),
+    Card(
+        title="Custom Grid",
+        subtitle="Aggregate raster values onto user-defined custom grid cells",
+        color="#4B8E6A", tint="#E0F0E8",
+        fns=[
+            "rst_custom_rastertogridavg", "rst_custom_rastertogridcount",
+            "rst_custom_rastertogridmax", "rst_custom_rastertogridmin",
+            "rst_custom_rastertogridmedian", "rst_custom_rastertogridstddev",
+            "rst_custom_rastertogridsum", "rst_custom_rastertogridvariance",
         ],
     ),
     Card(
@@ -390,7 +406,7 @@ def render():
     )
     parts.append(
         f'<text x="{PAD}" y="{PAD + 56}" font-size="15" fill="#3F4D5E">'
-        f'129 SQL functions for raster data on Spark &#8212; registered as '
+        f'146 SQL functions for raster data on Spark &#8212; registered as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan>'
         f' &#183; also available in Python &amp; Scala as '
@@ -499,7 +515,7 @@ def render_landscape():
     )
     parts.append(
         f'<text x="{PAD}" y="{PAD + 56}" font-size="15" fill="#3F4D5E">'
-        f'129 SQL functions for raster data on Spark &#8212; registered as '
+        f'146 SQL functions for raster data on Spark &#8212; registered as '
         f'<tspan font-family="ui-monospace, SFMono-Regular, Menlo, monospace" '
         f'font-weight="700" fill="#0F1B2A">gbx_rst_*</tspan>'
         f' &#183; also available in Python &amp; Scala as '
