@@ -12,7 +12,8 @@ Spark-config mutation or JVM-bridge access).
 
 from __future__ import annotations
 
-from typing import Dict, Iterator, List, Tuple
+import warnings
+from typing import Dict, Iterator, List, Set, Tuple
 
 from pyspark.sql.datasource import DataSource, DataSourceReader
 from pyspark.sql.types import StructType
@@ -25,10 +26,13 @@ def _parse_dim_index(raw: str) -> Dict[str, int]:
     """Parse the ``dimIndex`` option string (e.g. ``"time=2,level=1"``) into a
     mapping of dim name → integer index.
 
+    Emits a ``UserWarning`` for duplicate dim names (last value wins).
+
     Raises:
         ValueError: if any entry is malformed or the index is not a valid integer.
     """
     result: Dict[str, int] = {}
+    seen: Set[str] = set()
     for part in raw.split(","):
         part = part.strip()
         if not part:
@@ -40,11 +44,20 @@ def _parse_dim_index(raw: str) -> Dict[str, int]:
         k, _, v = part.partition("=")
         k, v = k.strip(), v.strip()
         try:
-            result[k] = int(v)
+            idx = int(v)
         except ValueError:
             raise ValueError(
                 f"netcdf_gbx: dimIndex dim {k!r}: {v!r} is not a valid integer index."
             )
+        if k in seen:
+            warnings.warn(
+                f"netcdf_gbx: dimIndex has duplicate dim {k!r}; "
+                f"using the last value ({idx}).",
+                UserWarning,
+                stacklevel=2,
+            )
+        seen.add(k)
+        result[k] = idx
     return result
 
 
@@ -91,6 +104,32 @@ class NetcdfRasterReader(RasterGbxReader):
 
         with _netcdf.open_dataset(partition.file_path, self.group) as ds:
             variables = _netcdf.select_variables(ds, self.options, "raster")
+
+            # Validate that every dim named in dimIndex / fanout is a leading dim on
+            # at least one of the selected variables.  A typo'd name (e.g. "tyme=2")
+            # that matches no variable would otherwise silently land on the index-0
+            # slice.  A dim valid on some vars but absent on others is fine — the
+            # per-variable loop already handles that gracefully.
+            if dim_index or fanout_dims:
+                all_leading: Set[str] = set()
+                for var in variables:
+                    for dim, _ in _netcdf.leading_dims(ds, var):
+                        all_leading.add(dim)
+                unknown_index = set(dim_index) - all_leading
+                if unknown_index:
+                    raise ValueError(
+                        f"netcdf_gbx: dimIndex names unknown leading dim(s) "
+                        f"{sorted(unknown_index)!r}; valid leading dims for the "
+                        f"selected variable(s): {sorted(all_leading)!r}."
+                    )
+                unknown_fanout = set(fanout_dims) - all_leading
+                if unknown_fanout:
+                    raise ValueError(
+                        f"netcdf_gbx: fanout names unknown leading dim(s) "
+                        f"{sorted(unknown_fanout)!r}; valid leading dims for the "
+                        f"selected variable(s): {sorted(all_leading)!r}."
+                    )
+
             for var in variables:
                 transform, crs = _netcdf.grid_transform_crs(ds, var)
                 nodata = _netcdf.nodata_of(ds, var)

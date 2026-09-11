@@ -4,7 +4,8 @@ Fixture: (time=3, level=2, lat=3, lon=4) variable 'temp'.
 Slice (t, l) has all values == t * 10 + l, so exact slice identity
 is detectable without ambiguity.
 
-Also covers: default backward-compat, overlap ValueError, var-without-fanout-dim.
+Also covers: default backward-compat, overlap ValueError, var-without-fanout-dim,
+unknown/typo'd dim validation, duplicate dimIndex key warning, coord values in metadata.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ def _write_4d_grid(path: str, ntime: int = 3, nlevel: int = 2) -> None:
 
 
 def _write_2d_grid(path: str) -> None:
-    """Write a (lat, lon) grid — no leading dims.  Used to test fan-out skip."""
+    """Write a (lat, lon) grid — no leading dims."""
     with Dataset(path, "w") as ds:
         ds.createDimension("lat", 3)
         ds.createDimension("lon", 4)
@@ -72,6 +73,39 @@ def _write_2d_grid(path: str) -> None:
         lon[:] = [10.0, 10.5, 11.0, 11.5]
         v = ds.createVariable("sst", "f4", ("lat", "lon"), fill_value=-9999.0)
         v[:] = np.arange(12, dtype="float32").reshape(3, 4)
+
+
+def _write_mixed_grid(path: str) -> None:
+    """Write a file with two variables in the same grid extent.
+
+    - 'temp' (time=3, lat=3, lon=4): value at time t == float(t).
+    - 'sst'  (lat=3, lon=4): no leading dims.
+    Coordinates: time=[0.0, 1.0, 2.0].
+    Used to test per-variable fanout: 'temp' expands, 'sst' stays single-row.
+    """
+    with Dataset(path, "w") as ds:
+        ds.createDimension("time", 3)
+        ds.createDimension("lat", 3)
+        ds.createDimension("lon", 4)
+
+        lat = ds.createVariable("lat", "f8", ("lat",))
+        lon = ds.createVariable("lon", "f8", ("lon",))
+        lat.standard_name = "latitude"
+        lon.standard_name = "longitude"
+        lat[:] = [50.0, 49.5, 49.0]
+        lon[:] = [10.0, 10.5, 11.0, 11.5]
+
+        t_var = ds.createVariable("time", "f8", ("time",))
+        t_var[:] = [0.0, 1.0, 2.0]
+
+        temp = ds.createVariable(
+            "temp", "f4", ("time", "lat", "lon"), fill_value=-9999.0
+        )
+        for t in range(3):
+            temp[t, :, :] = float(t)
+
+        sst = ds.createVariable("sst", "f4", ("lat", "lon"), fill_value=-9999.0)
+        sst[:] = np.arange(12, dtype="float32").reshape(3, 4)
 
 
 def _read_reader(path: str, options: dict) -> List[Tuple]:
@@ -331,22 +365,118 @@ def test_overlap_dimindex_and_fanout_raises(tmp_path):
 
 # ---------------------------------------------------------------------------
 # (f) Variable lacking the fanout dim → single row, no expansion
+#     (uses a mixed file so the dim IS known to at least one var)
 # ---------------------------------------------------------------------------
 
 
-def test_fanout_dim_absent_in_var_emits_one_row(tmp_path):
-    """A variable without any of the fanout dims emits exactly one row."""
-    p = str(tmp_path / "g.nc")
-    _write_2d_grid(p)
-    # fanout requests 'time' but 'sst' has no time dim
-    rows = _read_reader(p, {"fanout": "time,level"})
-    assert len(rows) == 1
+def test_fanout_var_lacking_dim_emits_one_row(tmp_path):
+    """In a mixed file, the var without the fanout dim emits exactly one row."""
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    rows = _read_reader(p, {"fanout": "time"})
+    # temp → 3 rows (time=0,1,2); sst → 1 row (no time dim)
+    sst_rows = [r for r in rows if ":sst" in r[0]]
+    assert len(sst_rows) == 1
 
 
-def test_fanout_dim_absent_source_has_no_suffix(tmp_path):
-    """A variable lacking all fanout dims emits a bare source (no suffix)."""
+def test_fanout_var_lacking_dim_has_no_suffix(tmp_path):
+    """In a mixed file, the var without the fanout dim has a bare source."""
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    rows = _read_reader(p, {"fanout": "time"})
+    sst_sources = [r[0] for r in rows if ":sst" in r[0]]
+    assert len(sst_sources) == 1
+    assert "[" not in sst_sources[0], f"unexpected suffix: {sst_sources[0]}"
+
+
+def test_fanout_total_rows_mixed_file(tmp_path):
+    """In a mixed file, fanout='time' → 3 (temp) + 1 (sst) = 4 total rows."""
+    p = str(tmp_path / "m.nc")
+    _write_mixed_grid(p)
+    rows = _read_reader(p, {"fanout": "time"})
+    assert len(rows) == 4
+
+
+# ---------------------------------------------------------------------------
+# (g) Unknown/typo'd dim → ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_dimindex_unknown_dim_raises(tmp_path):
+    """A typo'd dim in dimIndex (unknown to all selected vars) → ValueError."""
     p = str(tmp_path / "g.nc")
-    _write_2d_grid(p)
+    _write_4d_grid(p)
+    with pytest.raises(ValueError, match="tyme|unknown"):
+        _read_reader(p, {"dimIndex": "tyme=2"})
+
+
+def test_fanout_unknown_dim_raises(tmp_path):
+    """A typo'd dim in fanout (unknown to all selected vars) → ValueError."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.raises(ValueError, match="tyme|unknown"):
+        _read_reader(p, {"fanout": "tyme"})
+
+
+def test_dimindex_valid_error_lists_known_dims(tmp_path):
+    """The ValueError message lists the valid leading dims to aid diagnosis."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.raises(ValueError) as exc_info:
+        _read_reader(p, {"dimIndex": "tyme=2"})
+    msg = str(exc_info.value)
+    assert "time" in msg and "level" in msg, f"error should name valid dims; got: {msg}"
+
+
+# ---------------------------------------------------------------------------
+# (h) Duplicate key in dimIndex → UserWarning, last value wins
+# ---------------------------------------------------------------------------
+
+
+def test_dimindex_duplicate_key_warns(tmp_path):
+    """dimIndex with a repeated dim emits UserWarning; last value is used."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    with pytest.warns(UserWarning, match="duplicate"):
+        rows = _read_reader(p, {"dimIndex": "time=1,time=2"})
+    # last value wins: time=2, level falls to 0 → value = 2*10+0 = 20.0
+    assert pytest.approx(_tile_mean(rows[0]), abs=1e-4) == 20.0
+
+
+# ---------------------------------------------------------------------------
+# (i) Coordinate values in tile metadata
+# ---------------------------------------------------------------------------
+
+
+def test_dimindex_coord_values_in_metadata(tmp_path):
+    """dimIndex: sliceCoord_time and sliceCoord_level carry the actual coord values."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
+    rows = _read_reader(p, {"dimIndex": "time=2,level=1"})
+    _, (_, _, meta) = rows[0]
+    # Fixture: time=[0.0,1.0,2.0] → time[2]=2.0; level=[1000.0,500.0] → level[1]=500.0
+    assert "sliceCoord_time" in meta, "sliceCoord_time missing from metadata"
+    assert "sliceCoord_level" in meta, "sliceCoord_level missing from metadata"
+    assert float(meta["sliceCoord_time"]) == pytest.approx(2.0)
+    assert float(meta["sliceCoord_level"]) == pytest.approx(500.0)
+
+
+def test_fanout_coord_values_in_metadata(tmp_path):
+    """fanout: each row's sliceCoord_* carries the correct coordinate value."""
+    p = str(tmp_path / "g.nc")
+    _write_4d_grid(p)
     rows = _read_reader(p, {"fanout": "time,level"})
-    source, _ = rows[0]
-    assert "[" not in source, f"unexpected suffix in source: {source}"
+    # Every row must carry both coord keys.
+    for _, (_, _, meta) in rows:
+        assert "sliceCoord_time" in meta
+        assert "sliceCoord_level" in meta
+    # Build the set of (time_coord, level_coord) pairs across all rows.
+    coord_pairs = frozenset(
+        (float(meta["sliceCoord_time"]), float(meta["sliceCoord_level"]))
+        for _, (_, _, meta) in rows
+    )
+    # Fixture: time=[0,1,2], level=[1000.0(idx0),500.0(idx1)]
+    expected = frozenset(
+        (float(t), 1000.0 if lev == 0 else 500.0) for t in range(3) for lev in range(2)
+    )
+    assert coord_pairs == expected, f"coord pairs mismatch: got {coord_pairs}"

@@ -222,7 +222,7 @@ def array_2d(ds, variable: str, sel: Optional[Dict[str, int]] = None) -> "object
                 _logger.warning(
                     "netcdf_gbx: variable %r has leading dimension %r of size %d; "
                     "reading only index 0 and dropping the other %d slice(s). "
-                    "Per-slice fan-out is not yet supported.",
+                    "Use the 'fanout' or 'dimIndex' option to read other slices.",
                     variable,
                     drop_dim,
                     drop_size,
