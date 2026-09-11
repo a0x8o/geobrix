@@ -376,6 +376,8 @@ Powered by the **quadbin** package. The cells at exactly Chebyshev distance `k` 
 
 <Tier both/>
 
+See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
+
 Tessellate a geometry into quadbin cells. Like `quadbin_polyfill` but returns the per-cell geometry chip alongside the cell ID, suitable for chip-based join patterns.
 
 :::note Lightweight tier (pygx)
@@ -479,6 +481,8 @@ Powered by the **quadbin** package. Chebyshev distance on tile coordinates; mirr
 ### quadbin_cellfill
 
 <Tier both/> <Impl groupedAgg/>
+
+See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
 
 Fill NULL quadbin cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 
@@ -1037,6 +1041,8 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Enumerates the
 
 <Tier both/>
 
+See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
+
 Tessellate a geometry into BNG cells with their geometries.
 
 :::note Lightweight tier (pygx)
@@ -1154,6 +1160,8 @@ GROUP BY group_key
 ### bng_cellfill
 
 <Tier both/> <Impl groupedAgg/>
+
+See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
 
 Fill NULL BNG cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. BNG cell IDs are `STRING`. With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 
@@ -1616,6 +1624,8 @@ Chebyshev (king-move) distance in grid steps between two custom grid cells. Retu
 ### custom_cellfill
 
 <Tier both/> <Impl groupedAgg/>
+
+See [Grid raster tessellation](./grid-raster-tessellation) for the shared coverage / assignment / fill model.
 
 Fill NULL custom grid cells from valid neighbours within `k` rings using nearest-neighbour interpolation. A grouped aggregator: the call must appear inside a `GROUP BY` query. Cell IDs are `BIGINT`. The grid spec is passed as the third argument (unlike the BNG/quadbin/h3 variants where the grid identity is implicit). With `k=1` and `method='mean'`, each NULL cell receives the unweighted mean of its ring-1 neighbours.
 
