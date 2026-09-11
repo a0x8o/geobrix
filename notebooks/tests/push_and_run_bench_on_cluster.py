@@ -876,7 +876,78 @@ def main() -> int:
     )
 
     # Attach the bench tests.jar only for the heavyweight leg (it carries the bench Scala classes).
-    libraries = [compute.Library(jar=tests_jar)] if heavyweight else None
+    # On an all-purpose cluster, job-attached libraries PERSIST as cluster libraries, so a second
+    # run fails with "Duplicate package installation detected" before the notebook ever starts.
+    # Guard: when an existing cluster is in use, query its installed libraries first.
+    #   - No geobrix *-tests.jar on cluster → attach as usual.
+    #   - Same path already installed → skip attachment (same bytes on classpath; safe reuse).
+    #   - Different geobrix tests.jar installed → REFUSE to submit.  The driver JVM caches classes
+    #     by name and won't reload them without a restart; running with the wrong JAR silently
+    #     executes stale Scala bench code.  Tell the operator to restart the cluster.
+    if heavyweight and cluster_id:
+        _existing_tests = []
+        try:
+            _existing_tests = [
+                fs.library.jar
+                for fs in w.libraries.cluster_status(cluster_id)
+                if fs.library
+                and fs.library.jar
+                and "geobrix" in fs.library.jar.lower()
+                and fs.library.jar.endswith("-tests.jar")
+            ]
+        except Exception as _lib_err:
+            print(
+                f"WARNING: could not read cluster library status ({_lib_err}); "
+                "proceeding with JAR attachment.",
+                file=sys.stderr,
+            )
+
+        if not _existing_tests:
+            # Nothing installed yet: attach as usual.
+            libraries = [compute.Library(jar=tests_jar)]
+        elif _existing_tests[0] == tests_jar:
+            # Exact same path already on cluster → same bytes; skip to avoid duplicate error.
+            print(
+                "  NOTE: tests.jar already installed on cluster (same path) — "
+                "skipping job-lib attachment to avoid duplicate-package error."
+            )
+            print(f"         installed : {_existing_tests[0]}")
+            libraries = None
+        else:
+            # Different geobrix tests.jar on cluster → stale-bytes risk; refuse loudly.
+            print("=" * 64, file=sys.stderr)
+            print(
+                "ERROR: a different geobrix tests.jar is already installed on this cluster.",
+                file=sys.stderr,
+            )
+            print(f"  installed : {_existing_tests[0]}", file=sys.stderr)
+            print(f"  this run  : {tests_jar}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(
+                "The driver JVM caches classes by name; running with the wrong JAR",
+                file=sys.stderr,
+            )
+            print(
+                "silently executes stale Scala bench code from the old tests.jar.",
+                file=sys.stderr,
+            )
+            print("", file=sys.stderr)
+            print(
+                "ACTION REQUIRED: restart the cluster in the Databricks UI, then re-run.",
+                file=sys.stderr,
+            )
+            print(
+                "  A cluster restart flushes the JVM class cache and the installed-library",
+                file=sys.stderr,
+            )
+            print(
+                "  list, letting the fresh tests.jar attach cleanly.",
+                file=sys.stderr,
+            )
+            print("=" * 64, file=sys.stderr)
+            return 2
+    else:
+        libraries = [compute.Library(jar=tests_jar)] if heavyweight else None
 
     if serverless:
         # Serverless submission: environment_version-pinned compute, no cluster_id, no JAR.
