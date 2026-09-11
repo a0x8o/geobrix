@@ -254,7 +254,8 @@ def _fingerprint_for(fs, out):
         # the heavy BNG_CellFill renders filled ids to OS grid reference STRINGS. Re-
         # render the decoded ids to strings so the string-cell-id fingerprint matches
         # the heavy ofDggsGridStr output.
-        from databricks.labs.gbx.pygx import _bng, _cellfill as _cf
+        from databricks.labs.gbx.pygx import _bng
+        from databricks.labs.gbx.pygx import _cellfill as _cf
 
         decoded = _cf.decode(bytes(out))
         return fingerprint_dggs_grid_str([[(_bng.format(c), v) for c, v in decoded]])

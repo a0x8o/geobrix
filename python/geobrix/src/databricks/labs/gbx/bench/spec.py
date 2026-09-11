@@ -21,6 +21,7 @@ import shapely.geometry
 import shapely.wkb
 from pyspark.sql import functions as F
 
+from databricks.labs.gbx.pygx import functions as pgx
 from databricks.labs.gbx.pyrx import functions as prx
 from databricks.labs.gbx.pyrx.core import accessors
 from databricks.labs.gbx.pyrx.core import agg as agg_core
@@ -44,7 +45,6 @@ from databricks.labs.gbx.pyrx.core import (
     xyz,
 )
 from databricks.labs.gbx.pyvx import functions as pyvx
-from databricks.labs.gbx.pygx import functions as pgx
 
 # Fixed 3x3 normalised mean kernel for rst_convolve. Hardcoded identically here
 # (Python core_fn + col_fn) and in the Scala BenchDispatch case so the two engines

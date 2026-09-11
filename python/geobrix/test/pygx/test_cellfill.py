@@ -445,9 +445,13 @@ def test_h3_cellfill_wrapper_method_mean(spark):
     )
     assert len(result) == 1
     decoded = _decode_blob(result[0]["v"])
-    assert decoded[center] == pytest.approx(5.0), "center not filled; wrapper method arg failed"
+    assert decoded[center] == pytest.approx(
+        5.0
+    ), "center not filled; wrapper method arg failed"
     for nb in ring1:
-        assert decoded[nb] == pytest.approx(5.0), f"ring1 cell {nb} changed unexpectedly"
+        assert decoded[nb] == pytest.approx(
+            5.0
+        ), f"ring1 cell {nb} changed unexpectedly"
 
 
 def test_h3_cellfill_wrapper_method_idw(spark):
@@ -498,9 +502,13 @@ def test_bng_cellfill_wrapper_method_mean(spark):
     assert len(result) == 1
     decoded = _decode_blob(result[0]["v"])
     # BINARY encodes int keys; BNG string IDs are converted to int64 by the UDF.
-    assert decoded[center_int] == pytest.approx(5.0), "BNG center not filled; wrapper method arg failed"
+    assert decoded[center_int] == pytest.approx(
+        5.0
+    ), "BNG center not filled; wrapper method arg failed"
     for nb_int in ring1_int:
-        assert decoded[nb_int] == pytest.approx(5.0), f"BNG ring1 cell {nb_int} changed unexpectedly"
+        assert decoded[nb_int] == pytest.approx(
+            5.0
+        ), f"BNG ring1 cell {nb_int} changed unexpectedly"
 
 
 def test_bng_cellfill_wrapper_method_idw(spark):
@@ -521,12 +529,16 @@ def test_bng_cellfill_wrapper_method_idw(spark):
 
     result = (
         df.groupBy("grp")
-        .agg(gx.bng_cellfill("cellid", "value", k=2, method="idw", power=2.0).alias("v"))
+        .agg(
+            gx.bng_cellfill("cellid", "value", k=2, method="idw", power=2.0).alias("v")
+        )
         .collect()
     )
     assert len(result) == 1
     decoded = _decode_blob(result[0]["v"])
-    assert decoded[center_int] == pytest.approx(12.0), "BNG idw k=2 power=2 center value wrong"
+    assert decoded[center_int] == pytest.approx(
+        12.0
+    ), "BNG idw k=2 power=2 center value wrong"
 
 
 def test_quadbin_cellfill_wrapper_method_mean(spark):
@@ -547,9 +559,13 @@ def test_quadbin_cellfill_wrapper_method_mean(spark):
     )
     assert len(result) == 1
     decoded = _decode_blob(result[0]["v"])
-    assert decoded[center] == pytest.approx(5.0), "Quadbin center not filled; wrapper method arg failed"
+    assert decoded[center] == pytest.approx(
+        5.0
+    ), "Quadbin center not filled; wrapper method arg failed"
     for nb in ring1:
-        assert decoded[nb] == pytest.approx(5.0), f"Quadbin ring1 cell {nb} changed unexpectedly"
+        assert decoded[nb] == pytest.approx(
+            5.0
+        ), f"Quadbin ring1 cell {nb} changed unexpectedly"
 
 
 def test_custom_cellfill_wrapper_method_mean(spark):
@@ -566,17 +582,25 @@ def test_custom_cellfill_wrapper_method_mean(spark):
     df = spark.createDataFrame(rows, "grp int, cellid long, value double")
 
     # Build the custom-grid struct as a Column expression (all literal args).
-    grid_col = _f.expr("gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700)")
+    grid_col = _f.expr(
+        "gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700)"
+    )
 
     result = (
         df.groupBy("grp")
         .agg(
-            gx.custom_cellfill("cellid", "value", grid=grid_col, k=1, method="mean").alias("v")
+            gx.custom_cellfill(
+                "cellid", "value", grid=grid_col, k=1, method="mean"
+            ).alias("v")
         )
         .collect()
     )
     assert len(result) == 1
     decoded = _decode_blob(result[0]["v"])
-    assert decoded[center] == pytest.approx(5.0), "Custom center not filled; wrapper method arg failed"
+    assert decoded[center] == pytest.approx(
+        5.0
+    ), "Custom center not filled; wrapper method arg failed"
     for nb in ring1:
-        assert decoded[nb] == pytest.approx(5.0), f"Custom ring1 cell {nb} changed unexpectedly"
+        assert decoded[nb] == pytest.approx(
+            5.0
+        ), f"Custom ring1 cell {nb} changed unexpectedly"

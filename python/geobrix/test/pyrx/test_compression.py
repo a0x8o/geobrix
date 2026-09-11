@@ -18,9 +18,9 @@ def test_auto_level_scales_down_with_size():
     # New ladder: ≤128 MiB → L6, ≤1 GiB → L3, >1 GiB → L1
     # Grounded by .superpowers/sdd/2026-09-10-grid-fidelity-stage3/followup-compression-matrix-report.md:
     # L6 is the universal knee; L9/L12 add nothing; L16 often regresses.
-    small = C.auto_level(1 * 1024**2)   # 1 MiB -> L6 (<=128 MiB)
-    mid = C.auto_level(200 * 1024**2)   # 200 MiB -> L3 (<=1 GiB)
-    big = C.auto_level(2 * 1024**3)     # 2 GiB -> L1 (>1 GiB)
+    small = C.auto_level(1 * 1024**2)  # 1 MiB -> L6 (<=128 MiB)
+    mid = C.auto_level(200 * 1024**2)  # 200 MiB -> L3 (<=1 GiB)
+    big = C.auto_level(2 * 1024**3)  # 2 GiB -> L1 (>1 GiB)
     assert small > mid > big  # monotonic non-increasing (strict across bands)
     assert big == 1  # >1 GiB OOM guard: L1 (was L6 before spike revision)
 
@@ -124,9 +124,9 @@ def test_auto_level_new_ladder_boundaries():
     # just over 1 GiB → L1
     assert C.auto_level(1 * 1024**3 + 1) == 1
     # representative values
-    assert C.auto_level(1 * 1024**2) == 6    # 1 MiB
+    assert C.auto_level(1 * 1024**2) == 6  # 1 MiB
     assert C.auto_level(200 * 1024**2) == 3  # 200 MiB
-    assert C.auto_level(2 * 1024**3) == 1    # 2 GiB
+    assert C.auto_level(2 * 1024**3) == 1  # 2 GiB
 
 
 # ---------------------------------------------------------------------------
@@ -158,17 +158,17 @@ def test_gbx_zstd_level_explicit_integer(monkeypatch):
 def test_gbx_zstd_level_default_keeps_ladder(monkeypatch):
     """GBX_ZSTD_LEVEL=default → size-adaptive ladder (same as unset)."""
     monkeypatch.setenv("GBX_ZSTD_LEVEL", "default")
-    assert C.auto_level(1 * 1024**2) == 6    # ≤128 MiB → L6
+    assert C.auto_level(1 * 1024**2) == 6  # ≤128 MiB → L6
     assert C.auto_level(200 * 1024**2) == 3  # ≤1 GiB → L3
-    assert C.auto_level(2 * 1024**3) == 1    # >1 GiB → L1
+    assert C.auto_level(2 * 1024**3) == 1  # >1 GiB → L1
 
 
 def test_gbx_zstd_level_unset_keeps_ladder(monkeypatch):
     """GBX_ZSTD_LEVEL unset → size-adaptive ladder."""
     monkeypatch.delenv("GBX_ZSTD_LEVEL", raising=False)
-    assert C.auto_level(1 * 1024**2) == 6    # ≤128 MiB → L6
+    assert C.auto_level(1 * 1024**2) == 6  # ≤128 MiB → L6
     assert C.auto_level(200 * 1024**2) == 3  # ≤1 GiB → L3
-    assert C.auto_level(2 * 1024**3) == 1    # >1 GiB → L1
+    assert C.auto_level(2 * 1024**3) == 1  # >1 GiB → L1
 
 
 def test_gbx_zstd_level_none_returns_default_level(monkeypatch):
