@@ -133,6 +133,21 @@ object BenchFingerprint {
     * per-cell measure); the string analogue of [[ofDggsGridIds]]. */
   def ofDggsGridStrIds(ids: Seq[String]): String = dggsGridStrJson(ids, None)
 
+  /** Fingerprint a `gbx_<grid>_cellfill` output (H3/quadbin/custom: LONG cell ids).
+    *
+    * cellfill returns the FILLED `[(cellid, value)]` set where an unfilled cell has
+    * a NULL value. Mirrors the python `cellfill` fingerprint (decode -> dggs_grid):
+    * the cell COUNT is over ALL ids, but the agg is over the PRESENT (non-null)
+    * values ONLY -- so `ids` carries every cell while `vals` carries only the cells
+    * that have a value. Reuses [[dggsGridJson]] (count = ids.length, agg =
+    * putStats(vals)), which treats the two independently. */
+  def ofCellFill(ids: Seq[Long], vals: Seq[Double]): String = dggsGridJson(ids, Some(vals))
+
+  /** String-cell-id cellfill fingerprint (BNG: OS grid reference STRING ids). The
+    * string analogue of [[ofCellFill]] -- ids over all cells, agg over present
+    * values only. Mirrors the python `cellfill_str` fingerprint. */
+  def ofCellFillStr(ids: Seq[String], vals: Seq[Double]): String = dggsGridStrJson(ids, Some(vals))
+
   /** Shared dggs_grid JSON builder for STRING cell ids (BNG): cell COUNT, sha256
     * over the SORTED string ids, the sorted ids, and the agg. Mirrors
     * [[dggsGridJson]] but keeps ids as strings (BNG is natively string-keyed). */

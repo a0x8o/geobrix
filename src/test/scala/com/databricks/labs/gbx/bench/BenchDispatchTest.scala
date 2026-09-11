@@ -39,7 +39,12 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     //   variance,stddev})
     // + 3 CRS-string ops (rst_crs accessor, rst_setcrs relabel, rst_transformcrs
     //   warp) -- the string siblings of the benchmarked rst_srid/setsrid/transform.
-    assert(BenchDispatch.all.size == 128)
+    // + 3 cellfill grouped aggregators heavy-dispatched here ({h3,quadbin,bng}_cellfill;
+    //   custom_cellfill needs a grid-struct arg the heavy dispatch can't stream, so it
+    //   is a pyrx-tier timing-only fn, not counted here) -> 128 + 3 = 131
+    // + 6 Stage-3 combine-stats fns (combinemin/max/median/sum/stddev/count) -> 131 + 6 = 137.
+    // + 1 rst_align_to (timing-only two-tile warp, format category) -> 137 + 1 = 138.
+    assert(BenchDispatch.all.size == 138)
     // bucket A: tile vs geometry aggregate input kinds + agg synth recipes.
     assert(BenchDispatch.inputKind("rst_combineavg_agg") == "tile_aggregate")
     assert(BenchDispatch.inputKind("rst_frombands_agg") == "tile_aggregate")
@@ -50,6 +55,23 @@ class BenchDispatchTest extends AnyFunSuite with BeforeAndAfterAll {
     assert(BenchDispatch.category("rst_h3_rasterize_agg") == "dggs")
     assert(BenchDispatch.h3RasterizeCells().size == BenchDispatch.h3RaggNCells)
     assert(BenchDispatch.h3RasterizeCells().toSet.size == BenchDispatch.h3RaggNCells)
+    // cellfill grouped aggregators: grid_aggregate kind + dggs category (heavy-dispatched
+    // {h3,quadbin,bng}; custom is pyrx-tier timing-only, absent from cats/cellFill).
+    for (fn <- Seq("h3_cellfill", "quadbin_cellfill", "bng_cellfill")) {
+      assert(BenchDispatch.inputKind(fn) == "grid_aggregate")
+      assert(BenchDispatch.category(fn) == "dggs")
+      assert(BenchDispatch.cellFill.contains(fn))
+    }
+    assert(!BenchDispatch.cellFill.contains("custom_cellfill"))
+    // cellFillValues: deterministic NULL subset (a fill over an all-valid set is
+    // vacuous) -- NULL every 4th cell (i % 4 == 0), else i.toDouble.
+    val cfv8 = BenchDispatch.cellFillValues(8)
+    assert(cfv8.length == 8)
+    assert(cfv8(0) == null && cfv8(4) == null)
+    assert(cfv8(1) == java.lang.Double.valueOf(1.0) && cfv8(7) == java.lang.Double.valueOf(7.0))
+    assert(cfv8.count(_ == null) == 2)
+    assert(BenchDispatch.cellFillLongCells("h3_cellfill").size == BenchDispatch.h3RaggNCells)
+    assert(BenchDispatch.cellFillLongCells("quadbin_cellfill").size == BenchDispatch.quadbinRaggNCells)
     assert(BenchDispatch.aggSynthRecipe("rst_combineavg_agg") == "combineavg")
     assert(BenchDispatch.aggSynthRecipe("rst_merge_agg") == "merge")
     assert(BenchDispatch.aggSynthRecipe("rst_frombands_agg") == "frombands")

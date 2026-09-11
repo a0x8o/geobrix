@@ -240,6 +240,24 @@ def _fingerprint_for(fs, out):
     if kind == "dggs_grid_str":
         # BNG: STRING cell ids (OS grid refs), not Longs -- no signed-int64 fold.
         return fingerprint_dggs_grid_str(out)
+    if kind == "cellfill":
+        # cellfill (H3/quadbin): the aggregate output is the BINARY encoding of the
+        # filled [(cellid LONG, value)] list. Decode it and route through the SAME
+        # dggs_grid fingerprint the heavy tier uses on its ARRAY<STRUCT<cellid,value>>
+        # (cell count + sorted signed-int64 cell-id hash + order-independent agg over
+        # filled values), so the two shapes compare on the identical filled cell set.
+        from databricks.labs.gbx.pygx import _cellfill as _cf
+
+        return fingerprint_dggs_grid([_cf.decode(bytes(out))])
+    if kind == "cellfill_str":
+        # BNG cellfill: the light BINARY decodes to the INTERNAL Long cell ids, but
+        # the heavy BNG_CellFill renders filled ids to OS grid reference STRINGS. Re-
+        # render the decoded ids to strings so the string-cell-id fingerprint matches
+        # the heavy ofDggsGridStr output.
+        from databricks.labs.gbx.pygx import _bng, _cellfill as _cf
+
+        decoded = _cf.decode(bytes(out))
+        return fingerprint_dggs_grid_str([[(_bng.format(c), v) for c, v in decoded]])
     if kind == "vector":
         return fingerprint_vector(out)
     if kind == "collection":
@@ -680,17 +698,24 @@ def _h3_aggregate_df(spark, fs):
 
 
 def _grid_aggregate_df(spark, fs):
-    """Build the (cellid, value DOUBLE) DataFrame for a quadbin/BNG rasterize agg.
+    """Build the (cellid, value DOUBLE) DataFrame for a grid-cell grouped agg.
 
-    The quadbin/BNG grid aggregators stream (cellid, value) rows from a fixed
-    deterministic cell set (the SAME recipe the Scala BenchDispatch generates, so
-    both tiers burn an identical cell set) and use the 2-arg auto-derive overload
-    (the grid is derived from the cell set, not passed explicitly like H3). Unlike
-    ``_h3_aggregate_df`` the cellid dtype varies by grid:
-      - quadbin: LONG cell ids (``spec.quadbin_rasterize_cells``).
-      - BNG:     STRING OS grid reference ids (``spec.bng_rasterize_cells``).
-    ``value`` is NULL on every row -> presence-mask burn (1.0). Returns a df with
-    columns (cellid, value DOUBLE).
+    Two families ride input_kind == "grid_aggregate":
+
+    RASTERIZE aggs (rst_{quadbin,bng}_rasterize_agg): stream (cellid, value) rows
+    from a fixed deterministic cell set and use the 2-arg auto-derive overload (the
+    grid is derived from the cell set). ``value`` is NULL on every row ->
+    presence-mask burn (1.0).
+
+    CELLFILL aggs ({h3,quadbin,bng,custom}_cellfill): stream the fixed cellfill
+    corpus, which REUSES the rasterize cell set but NULLs a deterministic subset of
+    the values (a fill over an all-valid set is vacuous) -- see spec.*_cellfill_cells.
+    Both tiers stream the IDENTICAL (cellid, value) rows (same recipe), so the
+    filled cell set is cross-tier comparable.
+
+    cellid dtype varies by grid: BNG streams STRING OS grid reference ids; H3 /
+    quadbin / custom stream LONG cell ids. Returns a df with columns
+    (cellid, value DOUBLE).
     """
     from pyspark.sql.types import (
         DoubleType,
@@ -700,14 +725,26 @@ def _grid_aggregate_df(spark, fs):
         StructType,
     )
 
-    if fs.name == "rst_bng_rasterize_agg":
-        cells = _spec.bng_rasterize_cells()  # STRING ids
+    is_cellfill = fs.name.endswith("_cellfill")
+    is_bng = fs.name in ("rst_bng_rasterize_agg", "bng_cellfill")
+    if is_bng:
         cid_type = StringType()
-        rows = [(str(c), None) for c in cells]
-    else:  # rst_quadbin_rasterize_agg: LONG ids
-        cells = _spec.quadbin_rasterize_cells()
+        if is_cellfill:
+            rows = [(str(c), v) for c, v in _spec.bng_cellfill_cells()]
+        else:
+            rows = [(str(c), None) for c in _spec.bng_rasterize_cells()]
+    else:
         cid_type = LongType()
-        rows = [(int(c), None) for c in cells]
+        if is_cellfill:
+            # h3_cellfill uses the H3 cell set; quadbin/custom use the quadbin set.
+            cells = (
+                _spec.h3_cellfill_cells()
+                if fs.name == "h3_cellfill"
+                else _spec.quadbin_cellfill_cells()
+            )
+            rows = [(int(c), v) for c, v in cells]
+        else:  # rst_quadbin_rasterize_agg
+            rows = [(int(c), None) for c in _spec.quadbin_rasterize_cells()]
     schema = StructType(
         [
             StructField("cellid", cid_type, False),
@@ -1964,6 +2001,23 @@ def run_spark_path(  # noqa: C901
         from databricks.labs.gbx.pyvx import functions as _pyvx_reg
 
         _pyvx_reg.register(spark, only=[f.sql_name for f in _geom_pyvx])
+
+    # grid_aggregate cellfill fns (h3/quadbin/bng/custom_cellfill) call
+    # call_function("gbx_<grid>_cellfill", ...) and require the pygx UDAFs to be
+    # registered in this session. The rasterize_agg fns that also ride
+    # grid_aggregate (rst_quadbin_rasterize_agg, rst_bng_rasterize_agg) are pyrx
+    # (sql_name starts with gbx_rst_) and are not registered here.
+    _cellfill_fns = [
+        f
+        for f in fnspecs
+        if "spark-path" in f.modes
+        and getattr(f, "input_kind", "tile") == "grid_aggregate"
+        and not f.sql_name.startswith("gbx_rst_")
+    ]
+    if _cellfill_fns:
+        from databricks.labs.gbx.pygx import functions as _pygx_reg
+
+        _pygx_reg.register(spark, only=[f.sql_name for f in _cellfill_fns])
 
     # Spark warm-up: one throwaway job so JVM/Spark spin-up isn't charged to the first
     # timed cell (delegated to _spark_path_warmup).
