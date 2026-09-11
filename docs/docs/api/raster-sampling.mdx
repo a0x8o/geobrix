@@ -310,7 +310,7 @@ result = (
 </Tabs>
 
 :::tip Scale note
-For millions of points × thousands of tiles, the **grid-index equi-join** is significantly faster than a geometry intersection — it avoids a cross-product and uses Spark's hash or sort-merge join. Index the raster tiles at ingest time with `rst_h3_tessellate` (see [H3 Raster Tessellation](./h3-raster-tessellation)) and assign points the same H3 resolution at query time.
+For millions of points × thousands of tiles, the **grid-index equi-join** is significantly faster than a geometry intersection — it avoids a cross-product and uses Spark's hash or sort-merge join. Index the raster tiles at ingest time with `rst_h3_tessellate` (see [Grid raster tessellation](./grid-raster-tessellation)) and assign points the same H3 resolution at query time.
 :::
 
 ---

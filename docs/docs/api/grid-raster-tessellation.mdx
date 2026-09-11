@@ -71,7 +71,7 @@ The raster-to-grid surface has two output shapes:
 | | `rst_<grid>_tessellate(...)` | `rst_<grid>_rastertogrid*` |
 |---|---|---|
 | **Output per cell** | Raster **chip** (clipped tile struct) | Scalar **measure** (avg / count / max / min / median) |
-| **Return type** | One row per cell via UDTF | `ARRAY<ARRAY<struct(cellid, measure)>>` per band |
+| **Return type** | One row per cell via UDTF | `ARRAY<ARRAY<STRUCT(cellid, measure)>>` per band |
 | **coverage** param | shared | shared |
 | **assignment** param | shared | shared |
 | **Use for** | Per-cell raster chips for downstream raster ops | Numeric aggregation into the grid |
@@ -216,7 +216,7 @@ Several functions operate in the interpolation and gap-fill space. The table bel
 | `rst_resample*` | raster → raster | all pixels | change pixel resolution / grid density |
 | `rst_fillnodata` | raster (pixel) | only NoData pixels, pre-tessellation | fill pixel holes from neighbour pixels |
 | `gbx_<grid>_cellfill` | grid (cell) | only NULL cells, post-aggregation | fill missing grid cells from k-ring neighbour cells |
-| `rst_gridfrompoints`/`_agg` | points → raster | builds a new raster (IDW) | interpolate a raster from scattered point samples |
+| `rst_gridfrompoints*` | points → raster | builds a new raster (IDW) | interpolate a raster from scattered point samples |
 | `rst_filter` / `rst_convolve` | raster → raster | all pixels | focal / neighbourhood stats & kernels (not gap-fill) |
 
 Rule of thumb: *sample* reads, *resample* changes resolution, *fill* replaces only the missing and leaves valid data untouched (pixel stage `rst_fillnodata`, cell stage `cellfill`), *gridfrompoints* builds from points, *focal* transforms every pixel.

@@ -1408,6 +1408,8 @@ df = (
 
 <Tier both/>
 
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
+
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **SciPy** (`cKDTree` IDW). Inverse-distance interpolation (`power`, `max_pts`) to a single-band Float64 grid; NoData −9999. Matches the heavyweight `invdist` defaults (`power=2.0`, `max_pts=12`).
 :::
@@ -1470,7 +1472,7 @@ Natural fit for CV image-tiling workflows that require Ordnance Survey–scale c
 Powered by **rasterio** + **h3**. Clips the raster to each overlapping H3 cell at `resolution`, returning one row per cell via streaming UDTF (matches the heavyweight generator behavior).
 :::
 
-**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column, [assignment: Column], [coverage: Column]): Column` — Tessellate raster to H3 cells. assignment is `"centroid"` (default — pixel-centroid single-assignment) or `"covering"` (every overlapping cell, clipped); coverage is `"complete"` (default) or `"sparse"`. See [H3 Raster Tessellation](./h3-raster-tessellation) for the full guide.
+**Signature:** `rst_h3_tessellate(tile: Column, resolution: Column, [assignment: Column], [coverage: Column]): Column` — Tessellate raster to H3 cells. assignment is `"centroid"` (default — pixel-centroid single-assignment) or `"covering"` (every overlapping cell, clipped); coverage is `"complete"` (default) or `"sparse"`. See [Grid raster tessellation](./grid-raster-tessellation) for the full guide.
 
 Covering mode uses a **positive-area overlap** rule (shared by all three grids — `rst_h3_tessellate`, `rst_quadbin_tessellate`, `rst_bng_tessellate`): a cell is emitted **iff its geometry has greater-than-zero area overlap** with the raster. A cell that merely touches the raster along a boundary edge or corner (zero pixel overlap — common on grid-aligned tiles where the raster edges land on cell boundaries) is **excluded**. A within-extent cell whose pixels are all NoData **is** emitted — NoData renders in place, it does not punch a gap into the mosaic. This rule is identical on the lightweight and heavyweight tiers, so covering-mode cell sets match exactly across tiers.
 
@@ -1616,6 +1618,8 @@ Powered by **rasterio**. Streams one tile row per overlapping region via streami
 ---
 
 ## Grid Functions (H3) {#h3-grid}
+
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
 
 Aggregate raster values to H3 grid cells, and utility functions for H3-based canvas setup (9 total).
 
@@ -1897,6 +1901,8 @@ Heavyweight registers `gbx_rst_h3_rastertogridvariance` as a scalar (ARRAY-retur
 
 ## Grid Functions (quadbin)
 
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
+
 Aggregate raster values to CARTO quadbin v0 grid cells (8 reducers). Each reducer returns an array (one entry per band) of `struct<cellID: BIGINT, measure: DOUBLE>` rows; explode the array element you want to drive per-cell rows. Resolution is the quadbin zoom (0..26). See also [`rst_quadbin_tessellate`](#rst_quadbin_tessellate) (Generator Functions) and [`rst_quadbin_rasterize_agg`](#rst_quadbin_rasterize_agg) (Aggregator Functions) for the remaining quadbin raster-grid surface.
 
 ### rst_quadbin_rastertogridavg
@@ -2103,6 +2109,8 @@ Heavyweight registers `gbx_rst_quadbin_rastertogridvariance` as a scalar (ARRAY-
 
 ## Grid Functions (BNG) {#bng-grid}
 
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
+
 Aggregate raster values to British National Grid (BNG) cells (8 total). BNG functions automatically reproject the input raster to **EPSG:27700** before sampling — no `rst_transform` needed upstream. Resolution accepts integer indices **±1..±6** (1 = 100 km, 2 = 10 km, 3 = 1 km, 4 = 100 m, 5 = 10 m, 6 = 1 m; negative indices address quadrant sub-cells) or string keys (e.g. `"1km"`, `"100m"`). Cell IDs are **STRING**.
 
 :::note Lightweight tier (pyrx)
@@ -2300,6 +2308,8 @@ Heavyweight registers `gbx_rst_bng_rastertogridvariance` as a scalar (ARRAY-retu
 />
 
 ## Grid Functions (Custom Grid) {#custom-grid}
+
+See [Grid raster tessellation](./grid-raster-tessellation) for the coverage / assignment / fill model shared by all grids.
 
 Aggregate raster values to user-defined custom-grid cells (8 total). Custom grids are defined via `gbx_custom_grid(origin_x, origin_y, min_x, min_y, max_x, max_y, root_cell_size_x, root_cell_size_y, crs_srid)` — a regular planar grid with an explicit origin, bounds, and cell size. Cell IDs are **BIGINT** encoded by the custom-grid layout, and the resolution parameter selects the subdivision level. The raster is expected to be in the grid's native CRS — no automatic reprojection is performed; use `rst_transform` upstream if needed.
 
@@ -2580,6 +2590,8 @@ _Example clip geometry: a WKT polygon in the raster's native CRS (EPSG:32618, no
 
 <Tier both/>
 
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) for how combining composes with tessellation and how to choose among the sample/resample/fill family.
+
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** + **NumPy**. Takes an `ARRAY<tile>` and returns the NoData-aware per-pixel mean; input tiles must share the same grid (shape/extent/CRS). cellid is preserved when all inputs share one, else −1.
 :::
@@ -2729,6 +2741,8 @@ Per-pixel sum across an `ARRAY` of aligned tiles. Use to accumulate total precip
 
 <Tier both/>
 
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
+
 :::note Lightweight tier (pyrx)
 Powered by **SciPy** (`scipy.ndimage`). Output is Float64 and border pixels are filled by edge-replication; the heavyweight tier preserves the input dtype and leaves border pixels unchanged.
 :::
@@ -2776,6 +2790,8 @@ The lightweight **Python** binding accepts three optional keyword arguments the 
 ### rst_filter
 
 <Tier both/>
+
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
 
 :::note Lightweight tier (pyrx)
 Powered by **SciPy** (`scipy.ndimage`). The averaging filter is named `'mean'` (not `'avg'`) and `'mode'` is unavailable; the averaging output is Float32 and near-edge values may differ slightly from the heavyweight tier.
@@ -2974,6 +2990,8 @@ Powered by **rasterio**.
 ### rst_resample
 
 <Tier both/>
+
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.warp`).
@@ -3683,6 +3701,8 @@ The lightweight **Python** binding accepts three optional keyword arguments the 
 
 <Tier both/>
 
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
+
 :::note Lightweight tier (pyrx)
 Powered by **rasterio** (`rasterio.fill`).
 :::
@@ -3726,6 +3746,8 @@ _Examples use the multiband fixture (`rgb_nir_small.tif`, 3 bands) so the histog
 ### rst_sample
 
 <Tier both/>
+
+See [interpolation & fill](./grid-raster-tessellation#interpolation-and-fill) to choose among sampling, resampling, and gap-filling.
 
 :::note Lightweight tier (pyrx)
 Powered by **rasterio**. Point geometries only; the point is assumed to be in the raster's CRS.
