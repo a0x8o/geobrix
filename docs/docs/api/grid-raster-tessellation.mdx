@@ -36,7 +36,9 @@ The footprint used for covered-cell enumeration is the raster **bounding box**, 
 *Assignment* controls how pixels are distributed to cells.
 
 - **`centroid`** (default): each valid pixel is mapped to the single cell containing that pixel's centroid coordinate. Pixels **partition** into cells — every valid pixel appears in exactly one output chip, no pixel is counted twice, and the union of all chips reproduces the full valid-pixel set.
-- **`covering`** (area-weighted): each pixel contributes to every cell its footprint overlaps, weighted by the fraction of the pixel's area inside each cell. Interior pixels (entirely within one cell) carry weight 1 and behave identically to centroid mode; only boundary pixels do area-split work. This fills centroid-aliasing gaps — a cell that sits between pixel centers without catching any centroid under `centroid` mode receives area-weighted contributions under `covering`. `sum` and `count` remain globally mass-conserving.
+- **`covering`** — the meaning differs by function family:
+  - **Chip-emitting (`rst_<grid>_tessellate`):** covering-set clip. A cell is emitted if and only if its geometry has positive-area overlap with the raster; a boundary-touch with zero pixel overlap is excluded. A within-extent cell that contains only NoData pixels is still emitted (NoData renders in place).
+  - **Scalar-reducing (`rst_<grid>_rastertogrid*`):** area-weighted. Each pixel contributes to every cell its footprint overlaps, weighted by the fraction of the pixel's area inside that cell. Interior pixels (entirely within one cell) carry weight 1; only boundary pixels split. This fills centroid-aliasing gaps — a cell that catches no centroid in `centroid` mode receives area-weighted contributions under `covering`. `sum` and `count` remain globally mass-conserving.
 
 The interaction between the two policies:
 
@@ -106,7 +108,7 @@ FROM rasters;
 
 **Available functions:**
 - `gbx_rst_h3_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
-- `gbx_rst_h3_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_h3_rastertogrid{avg,count,max,min,median}(tile, resolution, [coverage], [assignment])` — scalar aggregation
 - `gbx_rst_h3_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
 - `gbx_h3_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
 
@@ -153,7 +155,7 @@ See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst
 
 **Available functions:**
 - `gbx_rst_quadbin_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
-- `gbx_rst_quadbin_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_quadbin_rastertogrid{avg,count,max,min,median}(tile, resolution, [coverage], [assignment])` — scalar aggregation
 - `gbx_rst_quadbin_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
 - `gbx_quadbin_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
 
@@ -168,7 +170,7 @@ See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst
 
 **Available functions:**
 - `gbx_rst_bng_tessellate(tile, resolution, [assignment], [coverage])` — UDTF, one chip per cell
-- `gbx_rst_bng_rastertogrid{avg,count,max,min,median}(tile, resolution, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_bng_rastertogrid{avg,count,max,min,median}(tile, resolution, [coverage], [assignment])` — scalar aggregation
 - `gbx_rst_bng_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
 - `gbx_bng_cellfill(cellid, value, [k], [method])` — post-aggregation cell-space fill
 
@@ -179,13 +181,13 @@ See the [Helios notebooks](../notebooks/helios) for a worked example of `gbx_rst
 
 **CRS handling:** the custom grid defines its own coordinate system. Tiles are expected to share the grid's CRS; no automatic reprojection is applied.
 
-**Resolution:** user-defined cell width and height in the grid's native coordinate units, specified as part of the grid struct passed to each function.
+**Resolution:** the grid struct defines the grid's origin, bounds, and root cell size; the separate `resolution` argument selects the subdivision level, filling the same role as for H3, quadbin, and BNG grids.
 
 **Available functions:**
-- `gbx_rst_custom_tessellate(tile, grid_struct, [assignment], [coverage])` — UDTF, one chip per cell
-- `gbx_rst_custom_rastertogrid{avg,count,max,min,median}(tile, grid_struct, [assignment], [coverage])` — scalar aggregation
+- `gbx_rst_custom_tessellate(tile, grid, resolution, [assignment], [coverage])` — UDTF, one chip per cell
+- `gbx_rst_custom_rastertogrid{avg,count,max,min,median}(tile, grid, resolution, [coverage], [assignment])` — scalar aggregation
 - `gbx_rst_custom_rasterize_agg(...)` — burns grid cell geometries onto a raster output (inverse direction)
-- `gbx_custom_cellfill(cellid, value, grid_struct, [k], [method])` — post-aggregation cell-space fill
+- `gbx_custom_cellfill(cellid, value, grid, [k], [method], [power])` — post-aggregation cell-space fill
 
 </TabItem>
 </Tabs>
@@ -229,7 +231,7 @@ Behavior is **identical across the heavyweight (`rasterx` / Scala JAR) and light
 
 - The same `{coverage, assignment}` parameters produce the same cell sets and the same per-cell values on both tiers.
 - Covered-but-missing cells are emitted with `NULL` measures under `coverage='complete'` on both tiers.
-- Area-weighted `covering` assignment produces mass-conserving weights on both tiers — verified by mass-conservation tests.
+- For `rastertogrid*`, area-weighted `covering` produces mass-conserving weights on both tiers. For `tessellate`, `covering` is a covering-set clip — cells are emitted iff they have positive-area overlap with the raster. Both behaviors are verified by cross-tier parity tests.
 
 Switch tiers with a one-line import change; the function calls are identical:
 
