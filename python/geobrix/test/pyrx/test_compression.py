@@ -15,11 +15,14 @@ def test_predictor_for_dtype():
 
 
 def test_auto_level_scales_down_with_size():
-    small = C.auto_level(1 * 1024**2)  # 1 MiB -> L16
-    mid = C.auto_level(200 * 1024**2)  # 200 MiB -> L9
-    big = C.auto_level(2 * 1024**3)  # 2 GiB -> L6
+    # New ladder: ≤128 MiB → L6, ≤1 GiB → L3, >1 GiB → L1
+    # Grounded by .superpowers/sdd/2026-09-10-grid-fidelity-stage3/followup-compression-matrix-report.md:
+    # L6 is the universal knee; L9/L12 add nothing; L16 often regresses.
+    small = C.auto_level(1 * 1024**2)   # 1 MiB -> L6 (<=128 MiB)
+    mid = C.auto_level(200 * 1024**2)   # 200 MiB -> L3 (<=1 GiB)
+    big = C.auto_level(2 * 1024**3)     # 2 GiB -> L1 (>1 GiB)
     assert small > mid > big  # monotonic non-increasing (strict across bands)
-    assert big <= 9 and big >= 6  # large payloads stay low (OOM guard)
+    assert big == 1  # >1 GiB OOM guard: L1 (was L6 before spike revision)
 
 
 def test_creation_opts_auto_zstd_with_predictor():
@@ -98,6 +101,119 @@ def test_creation_opts_cog_deflate_uses_level():
     assert "LEVEL" in o  # COG deflate uses LEVEL
     assert "zlevel" not in o  # GTiff-only option
     assert o["LEVEL"] == "9"
+
+
+# ---------------------------------------------------------------------------
+# New ladder exact values (L6 knee — grounded by compression-matrix spike)
+# ---------------------------------------------------------------------------
+
+
+def test_auto_default_level_is_6():
+    """_AUTO_DEFAULT_LEVEL must be 6 (was 9; L6 is the universal knee)."""
+    assert C._AUTO_DEFAULT_LEVEL == 6
+
+
+def test_auto_level_new_ladder_boundaries():
+    """Exact boundary values for the new _AUTO_LADDER."""
+    # ≤128 MiB → L6
+    assert C.auto_level(128 * 1024**2) == 6
+    # just over 128 MiB → L3
+    assert C.auto_level(128 * 1024**2 + 1) == 3
+    # exactly at 1 GiB → L3
+    assert C.auto_level(1 * 1024**3) == 3
+    # just over 1 GiB → L1
+    assert C.auto_level(1 * 1024**3 + 1) == 1
+    # representative values
+    assert C.auto_level(1 * 1024**2) == 6    # 1 MiB
+    assert C.auto_level(200 * 1024**2) == 3  # 200 MiB
+    assert C.auto_level(2 * 1024**3) == 1    # 2 GiB
+
+
+# ---------------------------------------------------------------------------
+# GBX_ZSTD_LEVEL knob
+# ---------------------------------------------------------------------------
+
+
+def test_gbx_zstd_level_fast(monkeypatch):
+    """GBX_ZSTD_LEVEL=fast → L1 for auto path, overriding ladder."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "fast")
+    assert C.auto_level(1 * 1024**2) == 1
+    assert C.auto_level(2 * 1024**3) == 1  # size doesn't matter when knob set
+
+
+def test_gbx_zstd_level_max(monkeypatch):
+    """GBX_ZSTD_LEVEL=max → L9 for auto path, overriding ladder."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "max")
+    assert C.auto_level(1 * 1024**2) == 9
+    assert C.auto_level(2 * 1024**3) == 9
+
+
+def test_gbx_zstd_level_explicit_integer(monkeypatch):
+    """GBX_ZSTD_LEVEL=3 → fixed L3 regardless of decoded size."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "3")
+    assert C.auto_level(1 * 1024**2) == 3
+    assert C.auto_level(2 * 1024**3) == 3  # size doesn't matter when knob set
+
+
+def test_gbx_zstd_level_default_keeps_ladder(monkeypatch):
+    """GBX_ZSTD_LEVEL=default → size-adaptive ladder (same as unset)."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "default")
+    assert C.auto_level(1 * 1024**2) == 6    # ≤128 MiB → L6
+    assert C.auto_level(200 * 1024**2) == 3  # ≤1 GiB → L3
+    assert C.auto_level(2 * 1024**3) == 1    # >1 GiB → L1
+
+
+def test_gbx_zstd_level_unset_keeps_ladder(monkeypatch):
+    """GBX_ZSTD_LEVEL unset → size-adaptive ladder."""
+    monkeypatch.delenv("GBX_ZSTD_LEVEL", raising=False)
+    assert C.auto_level(1 * 1024**2) == 6    # ≤128 MiB → L6
+    assert C.auto_level(200 * 1024**2) == 3  # ≤1 GiB → L3
+    assert C.auto_level(2 * 1024**3) == 1    # >1 GiB → L1
+
+
+def test_gbx_zstd_level_none_returns_default_level(monkeypatch):
+    """GBX_ZSTD_LEVEL unset, decoded_bytes=None → _AUTO_DEFAULT_LEVEL."""
+    monkeypatch.delenv("GBX_ZSTD_LEVEL", raising=False)
+    assert C.auto_level(None) == C._AUTO_DEFAULT_LEVEL
+
+
+def test_gbx_zstd_level_invalid_out_of_range_warns_and_falls_back(monkeypatch):
+    """GBX_ZSTD_LEVEL with out-of-range integer → warn + ladder fallback."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "99")
+    with pytest.warns(UserWarning, match="GBX_ZSTD_LEVEL"):
+        result = C.auto_level(1 * 1024**2)
+    assert result == 6  # ladder: 1 MiB → L6
+
+
+def test_gbx_zstd_level_invalid_non_integer_warns_and_falls_back(monkeypatch):
+    """GBX_ZSTD_LEVEL with unrecognised string → warn + ladder fallback."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "foo")
+    with pytest.warns(UserWarning, match="GBX_ZSTD_LEVEL"):
+        result = C.auto_level(1 * 1024**2)
+    assert result == 6  # ladder: 1 MiB → L6
+
+
+def test_gbx_zstd_level_knob_case_insensitive(monkeypatch):
+    """GBX_ZSTD_LEVEL is parsed case-insensitively."""
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "FAST")
+    assert C.auto_level(1 * 1024**2) == 1
+
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "MAX")
+    assert C.auto_level(1 * 1024**2) == 9
+
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "DEFAULT")
+    assert C.auto_level(1 * 1024**2) == 6  # ladder for 1 MiB
+
+
+def test_gbx_zstd_level_knob_does_not_affect_explicit_compress(monkeypatch):
+    """creation_opts(compress='zstd', level=9) is unaffected by GBX_ZSTD_LEVEL.
+
+    The knob overrides ONLY the compress='auto' path; explicit codec call sites
+    already carry an explicit level and must honour it.
+    """
+    monkeypatch.setenv("GBX_ZSTD_LEVEL", "fast")
+    o = C.creation_opts("int16", compress="zstd", level=9)
+    assert o["zstd_level"] == "9"  # explicit path ignores the env knob
 
 
 def test_creation_opts_gtiff_deflate_uses_zlevel():
