@@ -238,6 +238,53 @@ def test_h3_geom_expand_cells_holed_holes_core_nonempty():
     assert isinstance(result, set) and all(isinstance(x, int) for x in result)
 
 
+def test_h3_geom_expand_cells_hole_in_fills_hole():
+    """hole-in k=1 from h_border grows INWARD through hole cells.
+
+    Constructs a genuine holes_cover/holes_core from the h3 lib:
+        center cell c = the hole's single interior cell (h_core = {c})
+        h_border = cells that overlap the hole but aren't fully inside
+                 = holes_cover - holes_core = ring(c, 1) (the 6 outer hole cells)
+
+    With mode="hole-in", frontier = h_border = ring(c, 1); admit = n in h_core = {c}.
+    k=1 dilation: from ring(c,1) look for neighbors in h_core → center c → result = {c}.
+
+    Asserts:
+      - result contains h_core cells (hole was filled)
+      - result is DISJOINT from p_core (inward fill stays inside the hole)
+    """
+    c = _nyc_cell(res=7)
+    # Hole: center cell is h_core, surrounding ring is h_border
+    holes_core = {c}
+    holes_cover = _disk_ints(c, 1)  # 7 cells; h_border = ring(c,1)
+
+    # Outer polygon covers disk(c, 2); core = ring(c, 2) (doesn't include hole area)
+    cover = _disk_ints(c, 2)  # 19 cells
+    p_core = _ring_ints(c, 2)  # 12 cells: ring-2 only (outer ring is "fully inside")
+    # p_core is disjoint from holes_core by construction (ring-2 vs center)
+    assert c not in p_core, "Fixture: p_core must not contain the hole cell"
+
+    result = _h3.geom_expand_cells(
+        "ring",
+        1,
+        "hole-in",
+        cover=cover,
+        core=p_core,
+        holes_cover=holes_cover,
+        holes_core=holes_core,
+    )
+    # The hole-in result should contain the h_core cell (filled into the hole)
+    assert (
+        holes_core <= result
+    ), f"hole-in should fill into h_core; result={result}, h_core={holes_core}"
+    # Result must be DISJOINT from p_core (inward fill stays inside the hole)
+    assert result.isdisjoint(
+        p_core
+    ), f"hole-in result must not bleed into p_core; overlap={result & p_core}"
+    # All results are ints
+    assert all(isinstance(x, int) for x in result)
+
+
 def test_h3_geom_expand_cells_invalid_mode_raises():
     """Unknown mode raises ValueError (delegated from _dilate.mode_setup)."""
     c = _nyc_cell()
@@ -374,16 +421,24 @@ def test_h3_product_polyfillash3_matches_h3_lib(spark):
 
 
 @pytest.mark.integration
-def test_h3_geomkring_boundary_out_matches_product_kring(spark):
-    """Cross-check: gbx_h3_geomkring boundary-out k=1 matches product h3_kring reference.
+def test_h3_geomkring_boundary_out_expands_beyond_cover(spark):
+    """Cross-check: gbx_h3_geomkring boundary-out k=1 genuinely expands beyond cover.
 
-    VERIFY: product function names h3_kring, h3_coverash3/h3_polyfillash3, and
-    SQL composition must be confirmed at integration time.
+    Uses h3_coverash3 (overlap → p_cover) and h3_polyfillash3 (contained → p_core)
+    for a REAL frontier: p_border = cover − core is non-empty for any real polygon,
+    so boundary-out dilation actually adds cells beyond the covering set.
+
+    Asserts:
+      1. gbx_set >= cover_set (result contains the original covering set)
+      2. gbx_set > cover_set (expansion actually happened — new cells added)
+
+    VERIFY: product function names h3_coverash3, h3_polyfillash3, h3_kring,
+    and containment semantics must be confirmed at integration time.
     """
     pytest.skip(
         "Integration test: requires Databricks session with product h3_* functions and "
         "gbx_h3_geomkring registered. Run with --with-integration on a Databricks cluster. "
-        "VERIFY product function names: h3_kring, h3_polyfillash3, h3_coverash3."
+        "VERIFY product function names: h3_coverash3 (overlap), h3_polyfillash3 (contained)."
     )
 
     from shapely import to_wkb
@@ -396,40 +451,44 @@ def test_h3_geomkring_boundary_out_matches_product_kring(spark):
     geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75)).hex()
     res = 9
 
-    # Product reference: union h3_kring over all covering cells
-    # VERIFY: exact SQL — h3_kring, h3_polyfillash3/h3_coverash3, array_union semantics
-    product_ref = spark.sql(f"""
-        WITH cover AS (
-            SELECT explode(
-                h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res})
-            ) AS cellid
-        )
-        SELECT array_distinct(flatten(collect_list(h3_kring(cellid, 1)))) AS cells
-        FROM cover
-    """).collect()[0]["cells"]
-    product_set = set(product_ref or [])
-
-    # GeoBrix boundary-out k=1 via the expansion UDF directly
-    # (the full SQL composition is tested via integration of the gridx/h3 wrapper)
-    cover_row = spark.sql(f"""
-        SELECT h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}) AS cover,
+    # Product cover (overlap) and core (contained) — real frontier between them
+    # VERIFY: h3_coverash3 = overlap semantics; h3_polyfillash3 = contained semantics
+    cover_result = spark.sql(f"""
+        SELECT h3_coverash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}) AS cover,
                h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}) AS core
     """).collect()[0]
+    cover_set = set(cover_result["cover"] or [])
+    core_set = set(cover_result["core"] or [])
+
+    # Sanity: frontier must be non-empty for expansion to happen
+    border = cover_set - core_set
+    assert len(border) > 0, (
+        "VERIFY product names — cover and core are identical; "
+        "h3_coverash3 may have different semantics than expected"
+    )
+
+    # GeoBrix boundary-out k=1: cover=h3_coverash3, core=h3_polyfillash3
+    # (real frontier → real expansion)
     gbx_result = spark.sql(f"""
         SELECT gbx_h3_geomkring(
-            h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}),
+            h3_coverash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}),
             h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}),
             array(),
             array(),
             1,
             'boundary-out'
         ) AS cells
+        -- VERIFY exact product function names h3_coverash3, h3_polyfillash3
     """).collect()[0]["cells"]
     gbx_set = set(gbx_result or [])
 
-    # boundary-out k=1 from the cover should be at least the cover itself
-    assert gbx_set >= {
-        c for c in (cover_row["cover"] or [])
-    }, "boundary-out result should contain the original covering set"
-    # Cross-check: consistent with product h3_kring reference
-    assert gbx_set or product_set, "Both results should be non-empty"
+    # 1. Result contains the original covering set (no cells lost)
+    assert gbx_set >= cover_set, (
+        f"boundary-out result must contain all cover cells; "
+        f"missing: {cover_set - gbx_set}"
+    )
+    # 2. Result is strictly larger (expansion actually happened)
+    assert len(gbx_set) > len(cover_set), (
+        f"boundary-out k=1 must add cells beyond the cover; "
+        f"gbx={len(gbx_set)}, cover={len(cover_set)}"
+    )

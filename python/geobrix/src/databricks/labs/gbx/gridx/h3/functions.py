@@ -39,15 +39,22 @@ from pyspark.sql import functions as F
 ColLike = Union[Column, str, bool, int, float, bytes]
 
 
-def _col(x: ColLike) -> Union[Column, str]:
-    """Auto-wrap bool/int/float/bytes scalars via F.lit(); pass strings and Columns through."""
-    if isinstance(x, Column) or isinstance(x, str):
+def _col(x: ColLike) -> Column:
+    """Coerce a ColLike to a Column: column name str -> F.col, scalars -> F.lit."""
+    if isinstance(x, Column):
         return x
+    if isinstance(x, str):
+        # String arguments at this layer are always column NAMES, not literals.
+        # Callers that want a literal string must wrap it in F.lit() themselves.
+        return F.col(x)
     return F.lit(x)
 
 
-def _cover_col(geom_col: str, resolution: int) -> Column:
+def _cover_col(geom_col: Column, resolution: int) -> Column:
     """H3 cells overlapping the geometry at `resolution` (product h3_coverash3).
+
+    Uses F.call_function for Spark Connect / Serverless compatibility — no
+    F.expr(f-string), no ._jc references.
 
     VERIFY: exact product function name (h3_coverash3) and overlap-vs-contained
     semantics on a Databricks cluster at integration time.
@@ -55,11 +62,13 @@ def _cover_col(geom_col: str, resolution: int) -> Column:
     (overlap semantics = _dilate p_cover).
     """
     # VERIFY exact product function name: h3_coverash3
-    return F.expr(f"h3_coverash3({geom_col}, {int(resolution)})")
+    return F.call_function("h3_coverash3", geom_col, F.lit(int(resolution)))
 
 
-def _core_col(geom_col: str, resolution: int) -> Column:
+def _core_col(geom_col: Column, resolution: int) -> Column:
     """H3 cells fully inside the geometry at `resolution` (product h3_polyfillash3).
+
+    Uses F.call_function for Spark Connect / Serverless compatibility.
 
     VERIFY: exact product function name (h3_polyfillash3) and containment
     semantics on a Databricks cluster at integration time.
@@ -67,33 +76,31 @@ def _core_col(geom_col: str, resolution: int) -> Column:
     (containment semantics = _dilate p_core).
     """
     # VERIFY exact product function name: h3_polyfillash3
-    return F.expr(f"h3_polyfillash3({geom_col}, {int(resolution)})")
+    return F.call_function("h3_polyfillash3", geom_col, F.lit(int(resolution)))
 
 
-def _holes_arrays(geom_col: str, resolution: int):
+def _holes_arrays(resolution: int):
     """Return (holes_cover_col, holes_core_col) for interior ring cells.
 
-    For geometries without holes these return empty arrays. For holed
-    geometries the interior ring cells are extracted via product ST_* /
-    H3 functions.
+    Hole extraction is DEFERRED to the Databricks integration step.
+    For geometries without holes these empty-array columns are safe and do not
+    affect boundary-out / boundary-in behavior.
 
-    VERIFY: The product SQL path for hole extraction must be confirmed at
-    integration time. The approach below uses ST_NumInteriorRings and
-    ST_InteriorRingN to get each hole as a polygon, then polyfills it.
-    Adjust to match available product functions on your Databricks runtime.
+    For geometries WITH holes the following modes degrade when holes are empty:
+    - hole-in / hole-out / hole-out-ignore-geom: return empty results
+      (h_cover=h_core={} → h_border empty → no frontier). Correct emptiness.
+    - boundary-in-ignore-holes: silently degrades to boundary-in (s_core==p_core),
+      returns non-empty but INCORRECT results on holed geometries.
+      NOTE: this is a correctness issue, not just a missing feature.
+    VERIFY and fix all hole modes when hole extraction is wired at integration.
 
-    For hole-free geometries (the common case) these are safe to call —
-    they return empty arrays and do not affect boundary-out/boundary-in
-    behavior.
+    A full implementation would iterate interior rings using product ST_* and
+    polyfill each one, e.g.:
+      holes_cover = h3_coverash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
+      holes_core  = h3_polyfillash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
+    VERIFY ST_NumInteriorRings, ST_InteriorRingN, h3_coverash3 availability on
+    the target Databricks runtime before wiring.
     """
-    # VERIFY: ST_NumInteriorRings, ST_InteriorRingN, h3_coverash3 on ring geometry
-    # For now use a safe approximation: empty arrays for holes.
-    # A full implementation would iterate interior rings using product ST_* and
-    # polyfill each one, e.g.:
-    #   holes_cover = h3_coverash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
-    #   holes_core  = h3_polyfillash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
-    # For geoms with holes this approximation means hole modes (hole-in, hole-out,
-    # hole-out-ignore-geom) return empty results. VERIFY and fix at integration.
     empty = F.lit(None).cast("array<bigint>")
     return empty, empty
 
@@ -107,10 +114,11 @@ def geomkring(
     """ARRAY<BIGINT> H3 geometry-aware k-ring from a geometry column.
 
     Composes product h3_coverash3/h3_polyfillash3 (columnar geometry → cell arrays)
-    with the _h3_geomkring UDF (dilation engine over cell arrays).
+    with the _h3_geomkring UDF (dilation engine over cell arrays). Connect-safe:
+    uses F.call_function throughout — no F.expr(f-string), no ._jc references.
 
     Args:
-        geom_col:   Column name or Column expression holding the geometry
+        geom_col:   Column name (str) or Column expression holding the geometry
                     (WKB BINARY or WKT STRING accepted by the product h3_* functions).
         resolution: H3 resolution (0..15).
         k:          Ring distance (0 = covering set only).
@@ -122,11 +130,10 @@ def geomkring(
 
     VERIFY: product function names (h3_coverash3, h3_polyfillash3) at integration.
     """
-    geom_str = geom_col if isinstance(geom_col, str) else geom_col._jc.toString()
-    cover = _cover_col(geom_str, resolution)
-    core = _core_col(geom_str, resolution)
-    holes_cover, holes_core = _holes_arrays(geom_str, resolution)
-    mode_arg = F.lit(mode)
+    geom = _col(geom_col)
+    cover = _cover_col(geom, resolution)
+    core = _core_col(geom, resolution)
+    holes_cover, holes_core = _holes_arrays(resolution)
     return F.call_function(
         "gbx_h3_geomkring",
         cover,
@@ -134,7 +141,7 @@ def geomkring(
         holes_cover,
         holes_core,
         _col(k),
-        mode_arg,
+        F.lit(mode),
     )
 
 
@@ -146,15 +153,15 @@ def geomkloop(
 ) -> Column:
     """ARRAY<BIGINT> H3 geometry-aware k-loop (hollow shell at exactly k steps).
 
-    See :func:`geomkring` for parameter details.
+    See :func:`geomkring` for parameter details. Connect-safe: uses F.call_function
+    throughout — no F.expr(f-string), no ._jc references.
 
     VERIFY: product function names (h3_coverash3, h3_polyfillash3) at integration.
     """
-    geom_str = geom_col if isinstance(geom_col, str) else geom_col._jc.toString()
-    cover = _cover_col(geom_str, resolution)
-    core = _core_col(geom_str, resolution)
-    holes_cover, holes_core = _holes_arrays(geom_str, resolution)
-    mode_arg = F.lit(mode)
+    geom = _col(geom_col)
+    cover = _cover_col(geom, resolution)
+    core = _core_col(geom, resolution)
+    holes_cover, holes_core = _holes_arrays(resolution)
     return F.call_function(
         "gbx_h3_geomkloop",
         cover,
@@ -162,5 +169,5 @@ def geomkloop(
         holes_cover,
         holes_core,
         _col(k),
-        mode_arg,
+        F.lit(mode),
     )

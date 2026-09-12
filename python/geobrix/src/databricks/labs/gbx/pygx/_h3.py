@@ -51,15 +51,19 @@ def geom_expand_cells(kind, k, mode, *, cover, core, holes_cover, holes_core):
 
     Notes on s_cover / s_core (solid = outer ring with holes filled):
         For h3 we approximate s_cover = cover | holes_cover and
-        s_core = core | holes_core.  In the product-based composition the
-        cover/core are derived from h3_coverash3/h3_polyfillash3 on the raw
-        geom (which already excludes holes), while holes_cover/holes_core come
-        from h3_coverash3/h3_polyfillash3 on the hole polygons. The solid would
-        ideally come from polyfilling the outer ring with holes filled (S = outer
-        ring polygon), but that requires an extra product call and the
-        approximation is sufficient for boundary-in-ignore-holes (which only
-        needs s_core to decide admission). VERIFY this approximation vs the
-        product classification at integration time (Step 5).
+        s_core = core | holes_core.  When holes_cover/holes_core are both empty
+        (deferred extraction), s_core == p_core. This means:
+        - boundary-in-ignore-holes silently degrades to boundary-in on holed
+          geometries (s_core = p_core, not the solid-fill core): non-empty but
+          INCORRECT, not empty. NOTE: this is a correctness concern, not just
+          a missing feature — boundary-in-ignore-holes is supposed to grow
+          inward ignoring the holes, but with s_core == p_core it's blocked by
+          the same holes as boundary-in. VERIFY and fix when hole extraction is
+          wired at integration.
+        - hole-in / hole-out / hole-out-ignore-geom correctly return empty
+          results (h_cover=h_core={} → h_border empty → no frontier).
+        VERIFY the full s_cover/s_core approximation vs product classification
+        at integration time (Step 5).
     """
     p_cover = _to_int_set(cover)
     p_core = _to_int_set(core)
