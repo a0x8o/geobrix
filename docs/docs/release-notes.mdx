@@ -81,7 +81,7 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
   from databricks.labs.gbx.gridx.h3.functions import geomkring
   df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
   ```
-  Hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`) require hole extraction wiring that is pending Databricks integration verification; they return empty results for holed geometries until that wiring is complete. Boundary-mode variants (`'boundary-out'` and `'boundary-in'`) are fully functional. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
+  All six dilation modes work, including the hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`): the Python column API extracts the geometry's holes columnar and polyfills them with the product H3 functions. For those hole-reading modes the geometry input must be WKB `BINARY`; `'boundary-out'` and `'boundary-in'` also accept WKT `STRING`. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
 
 ### Covering assignment performance improvement
 

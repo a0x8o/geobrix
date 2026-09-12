@@ -25,10 +25,11 @@ SQL surface:
     directly (from product h3_* calls). For a single SQL expression see the
     SQL-body example in the doc tests.
 
-VERIFY: Product function names (h3_coverash3, h3_polyfillash3) and their
-containment semantics must be confirmed at integration time on a Databricks
-cluster. The names used here match the expected Databricks H3 API conventions
-but have not been run against a live cluster.
+Product function names/semantics verified on e2-demo-field-eng 2026-09-12:
+h3_coverash3(STRING|BINARY, res) = overlap (p_cover); h3_polyfillash3 =
+contained (p_core). Both reject a GEOMETRY value, so ST outputs are wrapped in
+ST_AsBinary. Geometry input: WKB BINARY (canonical) for every mode; WKT STRING
+also works for boundary-out / boundary-in (which skip the ST/hole chain).
 """
 
 from typing import Union
@@ -56,12 +57,9 @@ def _cover_col(geom_col: Column, resolution: int) -> Column:
     Uses F.call_function for Spark Connect / Serverless compatibility — no
     F.expr(f-string), no ._jc references.
 
-    VERIFY: exact product function name (h3_coverash3) and overlap-vs-contained
-    semantics on a Databricks cluster at integration time.
-    h3_coverash3 is expected to return cells whose hexagon intersects the geometry
-    (overlap semantics = _dilate p_cover).
+    h3_coverash3 returns cells whose hexagon intersects the geometry (overlap
+    semantics = _dilate p_cover). Verified 2026-09-12 (see module docstring).
     """
-    # VERIFY exact product function name: h3_coverash3
     return F.call_function("h3_coverash3", geom_col, F.lit(int(resolution)))
 
 
@@ -70,39 +68,57 @@ def _core_col(geom_col: Column, resolution: int) -> Column:
 
     Uses F.call_function for Spark Connect / Serverless compatibility.
 
-    VERIFY: exact product function name (h3_polyfillash3) and containment
-    semantics on a Databricks cluster at integration time.
-    h3_polyfillash3 is expected to return cells fully contained by the geometry
-    (containment semantics = _dilate p_core).
+    h3_polyfillash3 returns cells fully contained by the geometry (containment
+    semantics = _dilate p_core). Verified 2026-09-12 (see module docstring).
     """
-    # VERIFY exact product function name: h3_polyfillash3
     return F.call_function("h3_polyfillash3", geom_col, F.lit(int(resolution)))
 
 
-def _holes_arrays(resolution: int):
-    """Return (holes_cover_col, holes_core_col) for interior ring cells.
+# Modes whose traversal reads the holes classification (h_cover/h_core, or the
+# solid-fill core built from holes_core). The other two (boundary-out,
+# boundary-in) never touch holes, so we skip the ST chain for them — which also
+# keeps WKT-string geometry input working for those common modes.
+_HOLE_MODES = frozenset(
+    {"boundary-in-ignore-holes", "hole-in", "hole-out", "hole-out-ignore-geom"}
+)
 
-    Hole extraction is DEFERRED to the Databricks integration step.
-    For geometries without holes these empty-array columns are safe and do not
-    affect boundary-out / boundary-in behavior.
 
-    For geometries WITH holes the following modes degrade when holes are empty:
-    - hole-in / hole-out / hole-out-ignore-geom: return empty results
-      (h_cover=h_core={} → h_border empty → no frontier). Correct emptiness.
-    - boundary-in-ignore-holes: silently degrades to boundary-in (s_core==p_core),
-      returns non-empty but INCORRECT results on holed geometries.
-      NOTE: this is a correctness issue, not just a missing feature.
-    VERIFY and fix all hole modes when hole extraction is wired at integration.
+def _holes_arrays(geom: Column, resolution: int, mode: str):
+    """Return (holes_cover_col, holes_core_col) for the geometry's holes union.
 
-    A full implementation would iterate interior rings using product ST_* and
-    polyfill each one, e.g.:
-      holes_cover = h3_coverash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
-      holes_core  = h3_polyfillash3(ST_MakePolygon(ST_InteriorRingN(geom, i)), res)
-    VERIFY ST_NumInteriorRings, ST_InteriorRingN, h3_coverash3 availability on
-    the target Databricks runtime before wiring.
+    For modes that don't read holes (boundary-out, boundary-in) this returns
+    empty-array columns and emits no ST/product calls — so those modes also keep
+    accepting WKT-string geometry. For hole-reading modes it extracts the holes
+    union in a single columnar expression that handles any number of interior
+    rings without a per-row loop:
+
+        holes = ST_Difference(ST_MakePolygon(ST_ExteriorRing(g)), g)
+
+    i.e. (outer ring filled) minus (the donut) = exactly the holes. Then the
+    product h3_* functions polyfill it. All function names/semantics verified on
+    e2-demo-field-eng 2026-09-12 (see the SDD ledger):
+      - holes_cover = h3_coverash3(ST_AsBinary(holes), res)   → h_cover (overlap)
+      - holes_core  = h3_polyfillash3(ST_AsBinary(holes), res) → h_core (contained)
+
+    Holeless geometries: ST_Difference → POLYGON EMPTY → h3_coverash3 returns an
+    empty (size-0) array, so hole modes correctly no-op. h3_* reject a GEOMETRY
+    value, hence the ST_AsBinary wrap.
+
+    For a hole-reading mode, `geom` must be a WKB BINARY geometry column (the
+    GeoBrix canonical form); ST_GeomFromWKB parses it for the ST chain.
     """
     empty = F.lit(None).cast("array<bigint>")
-    return empty, empty
+    if mode not in _HOLE_MODES:
+        return empty, empty
+    g = F.call_function("ST_GeomFromWKB", geom)
+    solid = F.call_function("ST_MakePolygon", F.call_function("ST_ExteriorRing", g))
+    holes_wkb = F.call_function(
+        "ST_AsBinary", F.call_function("ST_Difference", solid, g)
+    )
+    res_lit = F.lit(int(resolution))
+    holes_cover = F.call_function("h3_coverash3", holes_wkb, res_lit)
+    holes_core = F.call_function("h3_polyfillash3", holes_wkb, res_lit)
+    return holes_cover, holes_core
 
 
 def geomkring(
@@ -118,8 +134,10 @@ def geomkring(
     uses F.call_function throughout — no F.expr(f-string), no ._jc references.
 
     Args:
-        geom_col:   Column name (str) or Column expression holding the geometry
-                    (WKB BINARY or WKT STRING accepted by the product h3_* functions).
+        geom_col:   Column name (str) or Column expression holding the geometry.
+                    WKB BINARY is canonical and required for hole-reading modes
+                    (boundary-in-ignore-holes, hole-*); WKT STRING also works for
+                    boundary-out / boundary-in.
         resolution: H3 resolution (0..15).
         k:          Ring distance (0 = covering set only).
         mode:       Dilation mode (default "boundary-out"). One of the 6 modes
@@ -127,13 +145,11 @@ def geomkring(
 
     Returns:
         Column of ARRAY<BIGINT> h3 cell ids.
-
-    VERIFY: product function names (h3_coverash3, h3_polyfillash3) at integration.
     """
     geom = _col(geom_col)
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
-    holes_cover, holes_core = _holes_arrays(resolution)
+    holes_cover, holes_core = _holes_arrays(geom, resolution, mode)
     return F.call_function(
         "gbx_h3_geomkring",
         cover,
@@ -155,13 +171,11 @@ def geomkloop(
 
     See :func:`geomkring` for parameter details. Connect-safe: uses F.call_function
     throughout — no F.expr(f-string), no ._jc references.
-
-    VERIFY: product function names (h3_coverash3, h3_polyfillash3) at integration.
     """
     geom = _col(geom_col)
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
-    holes_cover, holes_core = _holes_arrays(resolution)
+    holes_cover, holes_core = _holes_arrays(geom, resolution, mode)
     return F.call_function(
         "gbx_h3_geomkloop",
         cover,

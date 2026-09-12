@@ -404,7 +404,7 @@ def test_h3_product_polyfillash3_matches_h3_lib(spark):
     # Product polyfill via SQL
     # VERIFY: h3_polyfillash3 vs h3_coverash3 — adjust to match actual Databricks SQL
     row = spark.sql(
-        f"SELECT h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb.hex()}')), {res}) AS cells"
+        f"SELECT h3_polyfillash3(unhex('{geom_wkb.hex()}'), {res}) AS cells"
     ).collect()[0]
     product_cells = set(row["cells"] or [])
 
@@ -454,8 +454,8 @@ def test_h3_geomkring_boundary_out_expands_beyond_cover(spark):
     # Product cover (overlap) and core (contained) — real frontier between them
     # VERIFY: h3_coverash3 = overlap semantics; h3_polyfillash3 = contained semantics
     cover_result = spark.sql(f"""
-        SELECT h3_coverash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}) AS cover,
-               h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}) AS core
+        SELECT h3_coverash3(unhex('{geom_wkb}'), {res}) AS cover,
+               h3_polyfillash3(unhex('{geom_wkb}'), {res}) AS core
     """).collect()[0]
     cover_set = set(cover_result["cover"] or [])
     core_set = set(cover_result["core"] or [])
@@ -471,8 +471,8 @@ def test_h3_geomkring_boundary_out_expands_beyond_cover(spark):
     # (real frontier → real expansion)
     gbx_result = spark.sql(f"""
         SELECT gbx_h3_geomkring(
-            h3_coverash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}),
-            h3_polyfillash3(ST_GeomFromWKB(unhex('{geom_wkb}')), {res}),
+            h3_coverash3(unhex('{geom_wkb}'), {res}),
+            h3_polyfillash3(unhex('{geom_wkb}'), {res}),
             array(),
             array(),
             1,

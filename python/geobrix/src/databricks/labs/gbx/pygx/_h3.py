@@ -50,20 +50,20 @@ def geom_expand_cells(kind, k, mode, *, cover, core, holes_cover, holes_core):
         set of int cell ids.
 
     Notes on s_cover / s_core (solid = outer ring with holes filled):
-        For h3 we approximate s_cover = cover | holes_cover and
-        s_core = core | holes_core.  When holes_cover/holes_core are both empty
-        (deferred extraction), s_core == p_core. This means:
-        - boundary-in-ignore-holes silently degrades to boundary-in on holed
-          geometries (s_core = p_core, not the solid-fill core): non-empty but
-          INCORRECT, not empty. NOTE: this is a correctness concern, not just
-          a missing feature — boundary-in-ignore-holes is supposed to grow
-          inward ignoring the holes, but with s_core == p_core it's blocked by
-          the same holes as boundary-in. VERIFY and fix when hole extraction is
-          wired at integration.
-        - hole-in / hole-out / hole-out-ignore-geom correctly return empty
-          results (h_cover=h_core={} → h_border empty → no frontier).
-        VERIFY the full s_cover/s_core approximation vs product classification
-        at integration time (Step 5).
+        holes_cover/holes_core are now supplied columnar by the PySpark wrapper
+        (gridx/h3/functions.py) for hole-reading modes, so hole-in / hole-out /
+        hole-out-ignore-geom operate on real hole cells. We reconstruct
+        s_cover = cover | holes_cover (exact: S = P ∪ H) and
+        s_core = core | holes_core.
+
+        s_core here UNDER-COUNTS the true solid core by the "rim-straddle" cells:
+        a cell fully inside the solid that straddles a hole boundary (partly in
+        the donut, partly in the hole) is in neither p_core nor h_core but IS in
+        s_core. Only boundary-in-ignore-holes reads s_core, so on holed
+        geometries its inward band can have small notches at hole rims. The
+        faithful fix is to pass a solid-polyfill core array (h3_polyfillash3 of
+        the solid) instead of reconstructing — a deliberate follow-up (see the
+        SDD ledger "Phase B"); rim-straddle was 0 for a typical box+hole probe.
     """
     p_cover = _to_int_set(cover)
     p_core = _to_int_set(core)
