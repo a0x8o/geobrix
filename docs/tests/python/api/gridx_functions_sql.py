@@ -1038,38 +1038,38 @@ LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1, 'boundary-out') t;
 
 
 custom_geomkring_sql_example_output = """
-+---------------------------------------------+
-|kring                                        |
-+---------------------------------------------+
-|[..., (cells within k=1 ring of 4.6 km box)] |
-+---------------------------------------------+
++--------------------------------------------+
+|kring                                       |
++--------------------------------------------+
+|[..., (cells within k=1 ring of 4.6 km box)]|
++--------------------------------------------+
 ... (ARRAY<BIGINT> — polyfill covering set plus one outer ring at resolution 0)
 """
 
 custom_geomkloop_sql_example_output = """
-+----------------------------------------------+
-|kloop                                         |
-+----------------------------------------------+
-|[..., (outer ring cells, polyfill excluded)]  |
-+----------------------------------------------+
++--------------------------------------------+
+|kloop                                       |
++--------------------------------------------+
+|[..., (outer ring cells, polyfill excluded)]|
++--------------------------------------------+
 ... (ARRAY<BIGINT> — hollow outer ring at k=1, polyfill cells excluded)
 """
 
 custom_geomkringexplode_sql_example_output = """
-+------------------+
-|cellid            |
-+------------------+
-|...(BIGINT)       |
-+------------------+
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
 ... (one row per BIGINT cell ID in the k=1 ring of the geometry)
 """
 
 custom_geomkloopexplode_sql_example_output = """
-+------------------+
-|cellid            |
-+------------------+
-|...(BIGINT)       |
-+------------------+
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
 ... (one row per BIGINT cell ID in the k=1 hollow outer ring)
 """
 
