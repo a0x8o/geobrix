@@ -1903,7 +1903,7 @@ The Python column API (`from databricks.labs.gbx.gridx.h3.functions import geomk
 For hole-reading modes the Python column API also extracts the geometry's holes columnar — `ST_Difference(ST_MakePolygon(ST_ExteriorRing(geom)), geom)` polyfilled by the product H3 functions — so the geometry input for those modes must be WKB `BINARY` (the canonical form); `'boundary-out'` and `'boundary-in'` additionally accept WKT `STRING`.
 :::
 
-**Dilation modes** work the same as for BNG/quadbin/custom, and all six operate on holed geometries: `'hole-in'`, `'hole-out'`, and `'hole-out-ignore-geom'` expand from the extracted holes. `'boundary-in-ignore-holes'` treats the polygon as solid; on holed geometries its inward band may leave small notches at hole rims (it reconstructs the solid-fill core from the hole cells rather than polyfilling the solid directly) — exact for geometries whose hole edges align to cell boundaries.
+**Dilation modes** work the same as for BNG/quadbin/custom, and all six operate on holed geometries: `'hole-in'`, `'hole-out'`, and `'hole-out-ignore-geom'` expand from the extracted holes; `'boundary-in-ignore-holes'` treats the polygon as solid, expanding inward across holes as if they were filled (the Python API polyfills the solid directly for an exact inward band).
 
 ### h3_geomkring
 
