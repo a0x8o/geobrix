@@ -318,7 +318,15 @@ def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
             cx = get_cell_center_x(conf, x, resolution)
             cy = get_cell_center_y(conf, y, resolution)
             if geometry.contains(_Point(cx, cy)):
-                out.append(point_to_cell_id(conf, cx, cy, resolution))
+                # The over-scan (and ceil-rounded grid extent) can produce an
+                # edge cell whose CENTER lies just past bound_x/y_max — not a
+                # real grid cell. Use the _or_none form so such a center is
+                # skipped rather than raising a data-context ValueError that
+                # would surface as a task failure (a geometry straddling the
+                # upper grid boundary). Bad resolution still raises (param).
+                cid = point_to_cell_id_or_none(conf, cx, cy, resolution)
+                if cid is not None:
+                    out.append(cid)
     return out
 
 

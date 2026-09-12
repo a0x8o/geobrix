@@ -173,3 +173,31 @@ def test_hole_in_mode_reaches_hcore():
     # Must not contain cells only in the solid interior (pCore \ hCover).
     solid_only = cls.p_core - cls.h_cover
     assert not (expanded & solid_only), "hole-in result leaked into solid pCore"
+
+
+def test_custom_polyfill_and_kring_geom_straddling_upper_boundary():
+    """Regression: a geometry straddling the grid's ceil-overshoot upper boundary
+    must not raise.
+
+    A custom grid whose extent is not an exact multiple of the root cell size has a
+    physical over-scan of up to one cell past bound_x/y_max (ceil rounding); the
+    over-scan candidate cell's center can lie just outside bound_max. Such a center
+    is not a real grid cell and must be skipped, not raise a data-context ValueError
+    (which previously surfaced as a Serverless task failure). Found by the geomk
+    stress benchmark.
+    """
+    conf = CustomGridConf(
+        bound_x_min=0,
+        bound_x_max=20000,  # 20000 / 65 = 307.7 -> ceil 308 -> 308*65 = 20020 overshoot
+        bound_y_min=0,
+        bound_y_max=20000,
+        cell_splits=2,
+        root_cell_size_x=65,
+        root_cell_size_y=65,
+        srid=27700,
+    )
+    g = box(19950, 19950, 20010, 20010)  # extends to 20010 > bound_max 20000
+    fill = _custom.polyfill(conf, g, 1)  # must not raise
+    ring = _custom.geometry_k_ring(conf, _wkb(g), 1, 1)  # must not raise
+    assert isinstance(fill, list) and isinstance(ring, list)
+    assert set(fill) <= set(ring)  # k=1 ring is a superset of the polyfill

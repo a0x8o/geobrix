@@ -178,8 +178,14 @@ case class CustomGridSystem(conf: GridConf) extends GridSystem {
             // Select only cells which center falls within the geometry
             .filter(cell => geometry.contains(JTS.point(cell._1, cell._2)))
 
-            // Extract cellIDs only
-            .map(cell => pointToCellID(cell._1, cell._2, resolution))
+            // Extract cellIDs. The over-scan (and ceil-rounded grid extent) can
+            // yield an edge cell whose CENTER lies just past boundX/YMax — not a
+            // real grid cell. pointToCellIdOrNull returns null for such an
+            // out-of-bounds center (a geometry straddling the upper boundary)
+            // instead of throwing, and we drop it — keeping polyfill/tessellate/
+            // geometryKRing robust and matching the light tier. Bad resolution
+            // still throws (a parameter error).
+            .flatMap(cell => Option(pointToCellIdOrNull(cell._1, cell._2, resolution)).map(_.longValue))
 
         result
     }
