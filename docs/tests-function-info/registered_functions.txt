@@ -169,6 +169,10 @@ gbx_quadbin_cellunion
 gbx_quadbin_cellfill
 gbx_quadbin_centroid
 gbx_quadbin_distance
+gbx_quadbin_geomkloop
+gbx_quadbin_geomkring
+gbx_quadbin_geomkloopexplode
+gbx_quadbin_geomkringexplode
 gbx_quadbin_kring
 gbx_quadbin_kloop
 gbx_quadbin_pointascell

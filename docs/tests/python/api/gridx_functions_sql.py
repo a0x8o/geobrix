@@ -597,6 +597,61 @@ SELECT gbx_quadbin_kloop(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS 
 """
 
 
+def quadbin_geomkring_sql_example():
+    """Polyfill a WGS84 geometry at given zoom then expand by k ring steps.
+
+    Returns ARRAY<BIGINT> — all quadbin cells within Chebyshev distance k
+    of the geometry's covering set. At zoom=12, k=1, the small NYC box
+    (~0.04° × 0.04°) polyfill cells plus one outer ring are returned.
+    """
+    return """
+SELECT gbx_quadbin_geomkring(
+  'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
+  12, 1
+) AS kring;
+"""
+
+
+def quadbin_geomkloop_sql_example():
+    """Polyfill a WGS84 geometry at given zoom then return only the outer ring.
+
+    Returns ARRAY<BIGINT> — cells at exactly ring distance k (hollow shell).
+    At zoom=12, k=1, returns the outer ring cells surrounding the polyfill.
+    """
+    return """
+SELECT gbx_quadbin_geomkloop(
+  'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
+  12, 1
+) AS kloop;
+"""
+
+
+def quadbin_geomkringexplode_sql_example():
+    """Explode geometry k-ring into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation. At zoom=12 with k=1, the
+    covering polyfill of the NYC box expands outward by one ring.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
+LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1) t;
+"""
+
+
+def quadbin_geomkloopexplode_sql_example():
+    """Explode geometry k-loop (hollow ring) into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation. At zoom=12 with k=1, returns
+    the hollow outer ring cells of the NYC box polyfill.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
+LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1) t;
+"""
+
+
 def quadbin_tessellate_sql_example():
     """Tessellate a geometry into quadbin cells; returns array of struct(cell, geom).
 

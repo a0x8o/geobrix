@@ -645,10 +645,10 @@ def test_bng_geomkring_geomkloop_mode_parity(spark_with_jar, mode):
     same sorted BNG cell-id list.
     """
     from pyspark.sql import functions as f
+    from shapely import from_wkt as _swkt
 
     from databricks.labs.gbx.gridx.bng import functions as hx
     from databricks.labs.gbx.pygx import _bng
-    from shapely import from_wkt as _swkt
 
     spark = spark_with_jar
 
@@ -669,10 +669,14 @@ def test_bng_geomkring_geomkloop_mode_parity(spark_with_jar, mode):
         return sorted(row) if row else []
 
     heavy_ring = arr(
-        f.call_function("gbx_bng_geomkring", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode))
+        f.call_function(
+            "gbx_bng_geomkring", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode)
+        )
     )
     heavy_loop = arr(
-        f.call_function("gbx_bng_geomkloop", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode))
+        f.call_function(
+            "gbx_bng_geomkloop", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode)
+        )
     )
 
     assert light_ring == heavy_ring, (

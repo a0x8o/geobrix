@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.gridx.quadbin
 
 import com.databricks.labs.gbx.expressions.RegistryDelegate
 import com.databricks.labs.gbx.gridx.quadbin.agg.Quadbin_CellUnionAgg
+import com.databricks.labs.gbx.gridx.quadbin.generators._
 import org.apache.spark.sql.adapters.{Column => ColumnAdapter}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.{Column, SparkSession}
@@ -36,6 +37,12 @@ object functions extends Serializable {
         rd.register(Quadbin_CellUnionAgg)
         rd.register(Quadbin_CellFill)
         rd.register(Quadbin_Distance)
+        rd.register(Quadbin_GeometryKRing)
+        rd.register(Quadbin_GeometryKLoop)
+
+        // Generators
+        rd.register(Quadbin_GeometryKRingExplode)
+        rd.register(Quadbin_GeometryKLoopExplode)
 
         sc.getConf.set(flag, "true")
     }
@@ -75,6 +82,24 @@ object functions extends Serializable {
     def quadbin_cellfill(cellid: Column, value: Column, k: Int, method: String, power: Double): Column =
         ColumnAdapter(Quadbin_CellFill.name, Seq(cellid, value, lit(k), lit(method), lit(power)))
 
+    def quadbin_geomkring(geom: Column, resolution: Column, k: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKRing.name, Seq(geom, resolution, k))
+
+    def quadbin_geomkring(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKRing.name, Seq(geom, resolution, k, mode))
+
+    def quadbin_geomkring(geom: Column, resolution: Column, k: Column, mode: String): Column =
+        quadbin_geomkring(geom, resolution, k, lit(mode))
+
+    def quadbin_geomkloop(geom: Column, resolution: Column, k: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKLoop.name, Seq(geom, resolution, k))
+
+    def quadbin_geomkloop(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKLoop.name, Seq(geom, resolution, k, mode))
+
+    def quadbin_geomkloop(geom: Column, resolution: Column, k: Column, mode: String): Column =
+        quadbin_geomkloop(geom, resolution, k, lit(mode))
+
     // ---------- Scalar-literal overloads ----------
 
     def quadbin_pointascell(longitude: Column, latitude: Column, resolution: Int): Column =
@@ -88,5 +113,17 @@ object functions extends Serializable {
 
     def quadbin_tessellate(geom: Column, resolution: Int): Column =
         quadbin_tessellate(geom, lit(resolution))
+
+    def quadbin_geomkring(geom: Column, resolution: Int, k: Int): Column =
+        quadbin_geomkring(geom, lit(resolution), lit(k))
+
+    def quadbin_geomkring(geom: Column, resolution: Int, k: Int, mode: String): Column =
+        quadbin_geomkring(geom, lit(resolution), lit(k), lit(mode))
+
+    def quadbin_geomkloop(geom: Column, resolution: Int, k: Int): Column =
+        quadbin_geomkloop(geom, lit(resolution), lit(k))
+
+    def quadbin_geomkloop(geom: Column, resolution: Int, k: Int, mode: String): Column =
+        quadbin_geomkloop(geom, lit(resolution), lit(k), lit(mode))
 
 }

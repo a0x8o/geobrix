@@ -128,6 +128,70 @@ def _cellunion_udf(cells: pd.Series) -> pd.Series:
 # plain row-at-a-time UDFs. NULL geom -> NULL (heavy propagateNull).
 
 
+# --- quadbin geometry-aware kring/kloop (array-output plain @udf) -----------
+
+
+def _quadbin_geomkring(geom, res, k, mode="boundary-out"):
+    if geom is None or res is None or k is None:
+        return None
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+    try:
+        return _quadbin.geometry_k_ring(geom, int(res), int(k), mode or "boundary-out")
+    except ValueError:
+        raise  # re-raise param errors (bad mode propagated from engine)
+    except Exception:
+        return None  # bad WKB/WKT geom DATA -> degrade to NULL (matches heavy)
+
+
+def _quadbin_geomkloop(geom, res, k, mode="boundary-out"):
+    if geom is None or res is None or k is None:
+        return None
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+    try:
+        return _quadbin.geometry_k_loop(geom, int(res), int(k), mode or "boundary-out")
+    except ValueError:
+        raise  # re-raise param errors
+    except Exception:
+        return None  # bad WKB/WKT geom DATA -> degrade to NULL (matches heavy)
+
+
+# --- quadbin geomkring/geomkloop explode UDTFs (SQL-LATERAL only) -----------
+
+
+@udtf(returnType="cellid: bigint")
+class _QuadbinGeomKRingExplode:
+    def eval(self, geom, res, k, mode="boundary-out"):
+        if geom is None or res is None or k is None:
+            return
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+        try:
+            for c in sorted(
+                _quadbin.geometry_k_ring(geom, int(res), int(k), mode or "boundary-out")
+            ):
+                yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
+        except Exception:
+            return  # bad WKB/WKT geom DATA -> zero rows (matches heavy)
+
+
+@udtf(returnType="cellid: bigint")
+class _QuadbinGeomKLoopExplode:
+    def eval(self, geom, res, k, mode="boundary-out"):
+        if geom is None or res is None or k is None:
+            return
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+        try:
+            for c in sorted(
+                _quadbin.geometry_k_loop(geom, int(res), int(k), mode or "boundary-out")
+            ):
+                yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
+        except Exception:
+            return  # bad WKB/WKT geom DATA -> zero rows (matches heavy)
+
+
 def _kring(cell, k):
     if cell is None or k is None:
         return None
@@ -956,6 +1020,18 @@ def _registrar_groups() -> List[_register.Group]:
         "gbx_quadbin_cellfill": lambda s: s.udf.register(
             "gbx_quadbin_cellfill", _quadbin_cellfill_agg_udf
         ),
+        "gbx_quadbin_geomkring": lambda s: s.udf.register(
+            "gbx_quadbin_geomkring", _quadbin_geomkring, ArrayType(LongType())
+        ),
+        "gbx_quadbin_geomkloop": lambda s: s.udf.register(
+            "gbx_quadbin_geomkloop", _quadbin_geomkloop, ArrayType(LongType())
+        ),
+        "gbx_quadbin_geomkringexplode": lambda s: s.udtf.register(
+            "gbx_quadbin_geomkringexplode", _QuadbinGeomKRingExplode
+        ),
+        "gbx_quadbin_geomkloopexplode": lambda s: s.udtf.register(
+            "gbx_quadbin_geomkloopexplode", _QuadbinGeomKLoopExplode
+        ),
     }
     bng = {
         "gbx_bng_pointascell": lambda s: s.udf.register(
@@ -1145,6 +1221,64 @@ def quadbin_tessellate(geom: ColLike, resolution: ColLike) -> Column:
 def quadbin_cellunion_agg(cellid: ColLike) -> Column:
     """Aggregator: union a group's cell boundaries into one EWKB (SRID 4326) BINARY."""
     return _cellunion_agg_udf(_col(cellid))
+
+
+def quadbin_geomkring(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """ARRAY<BIGINT> geometry-aware k-ring around a geometry's covering cells.
+
+    mode: dilation mode (default ``"boundary-out"``). One of the 6 modes in
+    ``_dilate.MODES``.
+    """
+    # mode is always a string VALUE (never a column name); use f.lit so Spark
+    # does not misinterpret it as an unresolved column reference.
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_quadbin_geomkring", _col(geom), _col(resolution), _col(k), mode_arg
+    )
+
+
+def quadbin_geomkloop(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """ARRAY<BIGINT> geometry-aware k-loop (hollow shell) around a geometry's covering cells.
+
+    mode: dilation mode (default ``"boundary-out"``). See :func:`quadbin_geomkring`.
+    """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_quadbin_geomkloop", _col(geom), _col(resolution), _col(k), mode_arg
+    )
+
+
+# The two *explode functions are SQL-LATERAL-only table functions in the light
+# tier — they have no Python DataFrame Column form (unlike the heavy tier).
+
+_QUADBIN_EXPLODE_HINT = (
+    "Light quadbin {name} is a streaming table function (registered UDTF {udtf}): it "
+    "emits one row per cell with no array materialized, so it has no pyspark "
+    "Column form by design. Invoke via SQL LATERAL, e.g. "
+    "SELECT t.* FROM <df>, LATERAL {udtf}(...) t  (or spark.sql(...))."
+)
+
+
+def quadbin_geomkringexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkringexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        _QUADBIN_EXPLODE_HINT.format(
+            name="quadbin_geomkringexplode", udtf="gbx_quadbin_geomkringexplode"
+        )
+    )
+
+
+def quadbin_geomkloopexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkloopexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        _QUADBIN_EXPLODE_HINT.format(
+            name="quadbin_geomkloopexplode", udtf="gbx_quadbin_geomkloopexplode"
+        )
+    )
 
 
 # --- BNG Column wrappers (mirror heavy gridx.bng.functions) ----------------------------------
