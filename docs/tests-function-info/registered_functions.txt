@@ -163,6 +163,10 @@ gbx_bng_kringexplode
 gbx_bng_tessellateexplode
 gbx_h3_cell_bbox
 gbx_h3_cellfill
+gbx_h3_geomkring
+gbx_h3_geomkloop
+gbx_h3_geomkringexplode
+gbx_h3_geomkloopexplode
 gbx_quadbin_aswkb
 gbx_quadbin_cellunion_agg
 gbx_quadbin_cellunion

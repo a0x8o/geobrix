@@ -138,11 +138,13 @@ def bng_geomkring_sql_example():
     Returns ARRAY<STRING> — all cells within Chebyshev distance k of the polyfill.
     Geometry must be in EPSG:27700 (BNG eastings/northings); WGS84 yields empty arrays.
     At res=3 (1km), k=1: polyfill 9 cells + 16 outer cells → 25 cells.
+    The optional mode parameter controls how boundary cells are classified;
+    'boundary-out' (default) expands outward from the geometry edge.
     """
     return """
 SELECT gbx_bng_geomkring(
   'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))',
-  3, 1
+  3, 1, 'boundary-out'
 ) AS kring;
 """
 
@@ -152,11 +154,12 @@ def bng_geomkloop_sql_example():
     Returns ARRAY<STRING> — cells at exactly ring distance k (hollow shell).
     Geometry must be in EPSG:27700 (BNG eastings/northings); WGS84 yields empty arrays.
     At res=3 (1km), k=1: the 16 outer cells surrounding the 9-cell polyfill.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT gbx_bng_geomkloop(
   'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))',
-  3, 1
+  3, 1, 'boundary-out'
 ) AS kloop;
 """
 
@@ -168,11 +171,12 @@ def bng_geomkringexplode_sql_example():
     MUST be in EPSG:27700 (BNG eastings/northings) — WGS84 lon/lat yields
     empty results.  At res=3 (1km) with k=1, the 9-cell polyfill of the
     3km × 3km polygon expands to 25 cells.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src,
-LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1) t;
+LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1, 'boundary-out') t;
 """
 
 
@@ -183,11 +187,12 @@ def bng_geomkloopexplode_sql_example():
     MUST be in EPSG:27700 (BNG eastings/northings) — WGS84 lon/lat yields
     empty results.  At res=3 (1km) with k=1, the outer hollow ring
     of the 3km × 3km polygon polyfill contains 16 cells.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src,
-LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1) t;
+LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1, 'boundary-out') t;
 """
 
 
@@ -1182,4 +1187,96 @@ custom_cellfill_sql_example_output = """
 |1     |[binary]|
 +------+--------+
 ... (BINARY — decoded: center cell 216172782113787048 filled to 5.0; neighbours unchanged)
+"""
+
+
+# ============================================================================
+# H3 Geometry-Aware K-Ring/K-Loop Functions (light-only)
+#
+# NOTE: gbx_h3_geomkring / gbx_h3_geomkloop take pre-computed cover/core cell
+# arrays, which are produced on Databricks by product h3_coverash3 /
+# h3_polyfillash3. The SQL-level UDFs are registered by the pygx light tier and
+# work with any ARRAY<BIGINT> inputs; the geometry-to-cell decomposition requires
+# Databricks product H3 functions at runtime.
+#
+# These examples are structured for function-info generation and docs rendering.
+# The UDFs can be tested locally with literal ARRAY<BIGINT> inputs (no product
+# h3_* calls needed for the dilation step itself).
+# ============================================================================
+
+
+def h3_geomkring_sql_example():
+    """Geometry-aware H3 k-ring from pre-computed cover/core cell arrays.
+
+    Returns ARRAY<BIGINT> — all H3 cells within k dilation steps of the geometry's
+    covering set.  The cover/core arrays are produced on Databricks by product
+    h3_coverash3 / h3_polyfillash3; mode controls boundary classification.
+
+    On Databricks use the Python API geomkring() from gridx.h3.functions which
+    composes the product h3_* calls automatically.
+    """
+    return """
+SELECT gbx_h3_geomkring(
+  h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12),
+  h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12),
+  array(),
+  array(),
+  1,
+  'boundary-out'
+) AS kring;
+"""
+
+
+def h3_geomkloop_sql_example():
+    """Geometry-aware H3 k-loop (hollow shell) from pre-computed cover/core cell arrays.
+
+    Returns ARRAY<BIGINT> — H3 cells at exactly k dilation steps from the geometry's
+    covering set (hollow ring, no interior cells).  The cover/core arrays are produced
+    on Databricks by product h3_coverash3 / h3_polyfillash3.
+    """
+    return """
+SELECT gbx_h3_geomkloop(
+  h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12),
+  h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12),
+  array(),
+  array(),
+  1,
+  'boundary-out'
+) AS kloop;
+"""
+
+
+def h3_geomkringexplode_sql_example():
+    """Explode geometry-aware H3 k-ring into one row per cell via SQL LATERAL.
+
+    Each row yields one BIGINT H3 cell id.  The cover/core arrays are produced
+    on Databricks by product h3_coverash3 / h3_polyfillash3.  SQL LATERAL is the
+    only invocation path for this streaming UDTF (no Python Column form).
+    """
+    return """
+SELECT t.*
+FROM (
+  SELECT
+    h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS cover,
+    h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS core
+) src,
+LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;
+"""
+
+
+def h3_geomkloopexplode_sql_example():
+    """Explode geometry-aware H3 k-loop (hollow ring) into one row per cell via SQL LATERAL.
+
+    Each row yields one BIGINT H3 cell id at exactly k steps.  The cover/core arrays
+    are produced on Databricks by product h3_coverash3 / h3_polyfillash3.  SQL LATERAL
+    is the only invocation path for this streaming UDTF (no Python Column form).
+    """
+    return """
+SELECT t.*
+FROM (
+  SELECT
+    h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS cover,
+    h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS core
+) src,
+LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;
 """

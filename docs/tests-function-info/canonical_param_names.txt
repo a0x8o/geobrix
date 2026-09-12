@@ -161,8 +161,8 @@ gbx_bng_centroid	cellid
 gbx_bng_distance	cellid1, cellid2
 gbx_bng_eastnorthasbng	easting, northing, resolution
 gbx_bng_euclideandistance	cellid1, cellid2
-gbx_bng_geomkloop	geom, resolution, k
-gbx_bng_geomkring	geom, resolution, k
+gbx_bng_geomkloop	geom, resolution, k, [mode]
+gbx_bng_geomkring	geom, resolution, k, [mode]
 gbx_bng_kloop	cellid, k
 gbx_bng_kring	cellid, k
 gbx_bng_pointascell	geom, resolution
@@ -170,8 +170,8 @@ gbx_bng_polyfill	geom, resolution
 gbx_bng_tessellate	geom, resolution, [keep_core_geom]
 gbx_bng_cellintersection_agg	input_chip
 gbx_bng_cellunion_agg	input_chip
-gbx_bng_geomkloopexplode	geom, resolution, k
-gbx_bng_geomkringexplode	geom, resolution, k
+gbx_bng_geomkloopexplode	geom, resolution, k, [mode]
+gbx_bng_geomkringexplode	geom, resolution, k, [mode]
 gbx_bng_kloopexplode	cellid, k
 gbx_bng_kringexplode	cellid, k
 gbx_bng_tessellateexplode	geom, resolution, keep_core_geom
@@ -186,6 +186,10 @@ gbx_quadbin_pointascell	longitude, latitude, resolution
 gbx_quadbin_polyfill	geom, resolution
 gbx_quadbin_resolution	cell
 gbx_quadbin_tessellate	geom, resolution
+gbx_quadbin_geomkring	geom, resolution, k, [mode]
+gbx_quadbin_geomkloop	geom, resolution, k, [mode]
+gbx_quadbin_geomkringexplode	geom, resolution, k, [mode]
+gbx_quadbin_geomkloopexplode	geom, resolution, k, [mode]
 gbx_custom_grid	bound_x_min, bound_x_max, bound_y_min, bound_y_max, cell_splits, root_cell_size_x, root_cell_size_y, srid
 gbx_custom_pointascell	point, grid, resolution
 gbx_custom_cellaswkb	cell, grid
@@ -193,6 +197,14 @@ gbx_custom_cellaswkt	cell, grid
 gbx_custom_centroid	cell, grid
 gbx_custom_polyfill	geom, grid, resolution
 gbx_custom_kring	cell, grid, k
+gbx_custom_geomkring	geom, grid, resolution, k, [mode]
+gbx_custom_geomkloop	geom, grid, resolution, k, [mode]
+gbx_custom_geomkringexplode	geom, grid, resolution, k, [mode]
+gbx_custom_geomkloopexplode	geom, grid, resolution, k, [mode]
+gbx_h3_geomkring	cover, core, holes_cover, holes_core, k, [mode]
+gbx_h3_geomkloop	cover, core, holes_cover, holes_core, k, [mode]
+gbx_h3_geomkringexplode	cover, core, holes_cover, holes_core, k, [mode]
+gbx_h3_geomkloopexplode	cover, core, holes_cover, holes_core, k, [mode]
 gbx_st_asmvt	geom, attrs, layer_name
 gbx_st_asmvt_pyramid	geom, attrs, min_z, max_z, layer_name, [extent]
 gbx_st_legacyaswkb	geom

@@ -1426,6 +1426,34 @@
         "sql"
       ]
     },
+    "gbx_h3_geomkloop": {
+      "examples": "Examples:\n      > SELECT gbx_h3_geomkloop( h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12), h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12), array(), array(), 1, 'boundary-out' ) AS kloop;",
+      "bindings": [
+        "sql",
+        "python-light"
+      ]
+    },
+    "gbx_h3_geomkloopexplode": {
+      "examples": "Examples:\n      > SELECT t.* FROM ( SELECT h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS cover, h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS core ) src, LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;",
+      "bindings": [
+        "sql",
+        "python-light"
+      ]
+    },
+    "gbx_h3_geomkring": {
+      "examples": "Examples:\n      > SELECT gbx_h3_geomkring( h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12), h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12), array(), array(), 1, 'boundary-out' ) AS kring;",
+      "bindings": [
+        "sql",
+        "python-light"
+      ]
+    },
+    "gbx_h3_geomkringexplode": {
+      "examples": "Examples:\n      > SELECT t.* FROM ( SELECT h3_coverash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS cover, h3_polyfillash3(ST_GeomFromWKT('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))'), 12) AS core ) src, LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;",
+      "bindings": [
+        "sql",
+        "python-light"
+      ]
+    },
     "_package_gridx": "--- gridx ---",
     "gbx_bng_aswkb": {
       "examples": "Examples:\n      > SELECT gbx_bng_aswkb('TQ3080') as wkb_geom;",
@@ -1545,7 +1573,7 @@
       ]
     },
     "gbx_bng_geomkloop": {
-      "examples": "Examples:\n      > SELECT gbx_bng_geomkloop( 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))', 3, 1 ) AS kloop;",
+      "examples": "Examples:\n      > SELECT gbx_bng_geomkloop( 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))', 3, 1, 'boundary-out' ) AS kloop;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
         "sql",
@@ -1555,7 +1583,7 @@
       ]
     },
     "gbx_bng_geomkloopexplode": {
-      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src, LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1) t;",
+      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src, LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1, 'boundary-out') t;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
         "sql",
@@ -1563,7 +1591,7 @@
       ]
     },
     "gbx_bng_geomkring": {
-      "examples": "Examples:\n      > SELECT gbx_bng_geomkring( 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))', 3, 1 ) AS kring;",
+      "examples": "Examples:\n      > SELECT gbx_bng_geomkring( 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))', 3, 1, 'boundary-out' ) AS kring;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
         "sql",
@@ -1573,7 +1601,7 @@
       ]
     },
     "gbx_bng_geomkringexplode": {
-      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src, LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1) t;",
+      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src, LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1, 'boundary-out') t;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
         "sql",
@@ -1703,28 +1731,40 @@
       "examples": "Examples:\n      > SELECT gbx_custom_geomkloop( 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0, 1 ) AS kloop;",
       "usage_args": "geom, grid, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_custom_geomkloopexplode": {
       "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src, LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1) t;",
       "usage_args": "geom, grid, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_custom_geomkring": {
       "examples": "Examples:\n      > SELECT gbx_custom_geomkring( 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0, 1 ) AS kring;",
       "usage_args": "geom, grid, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_custom_geomkringexplode": {
       "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src, LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1) t;",
       "usage_args": "geom, grid, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_custom_grid": {
@@ -2017,28 +2057,40 @@
       "examples": "Examples:\n      > SELECT gbx_quadbin_geomkloop( 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))', 12, 1 ) AS kloop;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_quadbin_geomkloopexplode": {
       "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src, LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1) t;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_quadbin_geomkring": {
       "examples": "Examples:\n      > SELECT gbx_quadbin_geomkring( 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))', 12, 1 ) AS kring;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_quadbin_geomkringexplode": {
       "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src, LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1) t;",
       "usage_args": "geom, resolution, k, [mode]",
       "bindings": [
-        "sql"
+        "sql",
+        "python-light",
+        "python-heavy",
+        "scala"
       ]
     },
     "gbx_quadbin_kloop": {

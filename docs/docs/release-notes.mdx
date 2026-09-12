@@ -57,6 +57,32 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 - **Quadbin and custom grids now have `kloop` and `distance` functions, completing parity across all four grid families.** `gbx_quadbin_kloop(cellid, k)` returns the hollow ring of quadbin cells at exactly Chebyshev distance `k` from the input cell (the complement of the filled `gbx_quadbin_kring`) — matching the `kloop` functions already available for H3 and BNG. `gbx_custom_kloop(cellid, grid_struct, k)` provides the same hollow-ring operation for user-defined custom grids. `gbx_custom_distance(cellid1, grid_struct, cellid2)` returns the Chebyshev grid distance between two custom-grid cells, closing a gap that existed since the custom grid was introduced in v0.4.0. Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
 
+### Geometry-aware kring/kloop across all grid families (new)
+
+- **BNG `gbx_bng_geomkring` / `gbx_bng_geomkloop` (and their `*explode` variants) gain an optional `mode` parameter.** The new `mode` argument controls how cells that touch the geometry boundary are classified. The default (`'boundary-out'`) preserves the existing behavior — boundary cells are included and expansion grows outward — so existing calls with three arguments continue to work unchanged on the JAR-based heavy tier. The lightweight SQL tier now requires an explicit fourth argument if you want non-default behavior; `mode` defaults to `'boundary-out'` if omitted. Available in both the heavyweight and lightweight tiers.
+
+  The six mode values are:
+
+  | Mode | Behaviour |
+  |------|-----------|
+  | `'boundary-out'` | Default. Boundary cells included; expansion grows outward from the geometry edge. |
+  | `'boundary-in'` | Boundary cells included; expansion grows inward into the geometry. |
+  | `'boundary-in-ignore-holes'` | Like `'boundary-in'` but hole boundaries are not subtracted from the expansion. |
+  | `'hole-in'` | Expands inward from the interior edge of holes only. |
+  | `'hole-out'` | Expands outward from hole boundaries into the surrounding geometry. |
+  | `'hole-out-ignore-geom'` | Expands outward from holes, ignoring the outer geometry boundary. |
+
+- **New `gbx_quadbin_geomkring`, `gbx_quadbin_geomkloop`, `gbx_quadbin_geomkringexplode`, `gbx_quadbin_geomkloopexplode` — geometry-aware expansion for quadbin.** These four functions follow the same contract as the BNG variants: polyfill a WGS84 geometry into quadbin cells at a given zoom level, then expand by `k` dilation steps using the optional `mode` parameter. Cell IDs are `BIGINT` (quadbin format). Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
+
+- **New `gbx_custom_geomkring`, `gbx_custom_geomkloop`, `gbx_custom_geomkringexplode`, `gbx_custom_geomkloopexplode` — geometry-aware expansion for custom grids.** Same contract as the quadbin and BNG variants, extended with a `grid` struct argument (from `gbx_custom_grid`) that identifies the custom coordinate system. The geometry must be in the grid's native CRS. Cell IDs are `BIGINT`. Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
+
+- **New `gbx_h3_geomkring`, `gbx_h3_geomkloop`, `gbx_h3_geomkringexplode`, `gbx_h3_geomkloopexplode` — geometry-aware expansion for H3 (light-only, Serverless-targeted).** These four functions are **lightweight-tier only** — there is no heavy (Scala) implementation. The geometry decomposition is a PySpark composition: it delegates to Databricks product functions (`h3_coverash3`, `h3_polyfillash3`) for the geometry-to-cell step, then runs the shared dilation engine as a Python UDF for the topological expansion. Use the Python column API for the most natural on-Databricks experience:
+  ```python
+  from databricks.labs.gbx.gridx.h3.functions import geomkring
+  df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
+  ```
+  Hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`) require hole extraction wiring that is pending Databricks integration verification; they return empty results for holed geometries until that wiring is complete. Boundary-mode variants (`'boundary-out'` and `'boundary-in'`) are fully functional. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
+
 ### Covering assignment performance improvement
 
 - **Covering assignment is now computed over cell boundaries only.** The `covering` assignment mode (available on all `gbx_rst_{h3,quadbin,bng,custom}_rastertogrid*` and `*_tessellate` functions) previously computed area fractions by evaluating overlap for every pixel in the raster extent. It now uses a boundary-driven algorithm that processes only cells that intersect the raster perimeter, reducing computation proportionally to the boundary-to-interior ratio. For rasters with large solid interiors — where most cells are fully covered — this is significantly faster. Results are numerically identical; this is a performance improvement only.

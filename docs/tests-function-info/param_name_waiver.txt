@@ -56,5 +56,11 @@ gbx_bng_geomkringexplode  # [B] INTENTIONAL: registered streaming UDTF (one row/
 gbx_bng_kloopexplode      # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
 gbx_bng_kringexplode      # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
 gbx_bng_tessellateexplode # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_quadbin_geomkringexplode  # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_quadbin_geomkloopexplode  # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_custom_geomkringexplode   # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_custom_geomkloopexplode   # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_h3_geomkringexplode       # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
+gbx_h3_geomkloopexplode       # [B] INTENTIONAL: registered streaming UDTF (one row/cell, array-free); no pyspark Column form by design. SQL LATERAL only.
 # Task 2 DONE: gbx_rst_xyzpyramid light rescale added (arity now 7, matches heavy)
 # Task 3 DONE: gbx_bng_tessellate light keep_core_geom added (arity now 3, matches heavy)

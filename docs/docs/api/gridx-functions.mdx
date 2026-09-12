@@ -516,6 +516,125 @@ Powered by the **pure-Python quadbin interpolation port**. Cell-set and value pa
 
 ---
 
+### Geometry-Aware Expansion (Quadbin)
+
+Geometry-aware functions polyfill a geometry into the grid and then expand outward (or inward at holes) using the dilation engine. They generalise the cell-centric `quadbin_kring` / `quadbin_kloop` to operate on arbitrary geometry shapes. The optional `mode` parameter controls how cells that touch the geometry boundary are classified; `'boundary-out'` (the default) keeps the covering boundary cells and expands outward.
+
+**Dilation modes** (exact hyphenated values):
+
+| Mode | Behaviour |
+|------|-----------|
+| `'boundary-out'` | Default. Boundary cells included; expansion grows outward from the edge. |
+| `'boundary-in'` | Boundary cells included; expansion grows inward into the geometry. |
+| `'boundary-in-ignore-holes'` | Like `'boundary-in'` but hole boundaries are not subtracted. |
+| `'hole-in'` | Expands inward from the interior edge of holes only. |
+| `'hole-out'` | Expands outward from hole boundaries into the surrounding geometry. |
+| `'hole-out-ignore-geom'` | Expands outward from holes ignoring the outer geometry boundary. |
+
+### quadbin_geomkring
+
+<Tier both/>
+
+Polyfill a geometry at a given quadbin zoom level then expand by `k` ring steps. Returns all cells within Chebyshev distance `k` of the covering set.
+
+**Signature:** `quadbin_geomkring(geom, resolution, k, [mode])`
+
+**Parameters:**
+- `geom` — Geometry column (WKT or WKB, WGS84 coordinates)
+- `resolution` — Quadbin zoom level (integer `0..20`)
+- `k` — Ring distance (0 = covering set only)
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See table above.
+
+**Returns:**
+- `ARRAY<BIGINT>` of quadbin cell IDs
+
+<FunctionExamples
+  name="quadbin_geomkring"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### quadbin_geomkloop
+
+<Tier both/>
+
+Polyfill a geometry at a given quadbin zoom level then return only the hollow outer ring at exactly `k` steps.
+
+**Signature:** `quadbin_geomkloop(geom, resolution, k, [mode])`
+
+**Parameters:**
+- `geom` — Geometry column (WKT or WKB, WGS84 coordinates)
+- `resolution` — Quadbin zoom level (integer `0..20`)
+- `k` — Ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See table above.
+
+**Returns:**
+- `ARRAY<BIGINT>` of quadbin cell IDs at exactly distance k
+
+<FunctionExamples
+  name="quadbin_geomkloop"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### quadbin_geomkringexplode
+
+<Tier both/> <Impl udtf/>
+
+Streaming UDTF version of `quadbin_geomkring` — one row per cell. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `quadbin_geomkringexplode(geom, resolution, k, [mode])`
+
+**Parameters:** Same as `quadbin_geomkring`.
+
+**Returns:**
+- One row per `BIGINT` cell ID in the k-ring
+
+<FunctionExamples
+  name="quadbin_geomkringexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### quadbin_geomkloopexplode
+
+<Tier both/> <Impl udtf/>
+
+Streaming UDTF version of `quadbin_geomkloop` — one row per cell at exactly `k` steps. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `quadbin_geomkloopexplode(geom, resolution, k, [mode])`
+
+**Parameters:** Same as `quadbin_geomkloop`.
+
+**Returns:**
+- One row per `BIGINT` cell ID at exactly distance k
+
+<FunctionExamples
+  name="quadbin_geomkloopexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
 ## British National Grid (BNG)
 
 <Tier both/> BNG runs in both tiers. The lightweight tier is the `pygx` BNG package — powered by a **pure-Python port of `BNG.scala`** + **shapely** for geometry; identical `gbx_bng_*` SQL names, so it is a drop-in swap. Cell IDs are `STRING` references; geometry outputs are plain WKB in **EPSG:27700** coordinates with **no SRID** (unlike quadbin's EWKB SRID 4326). Cell-id math (`bng_eastnorthasbng`, `bng_pointascell`, `bng_distance`, `bng_kring`, `bng_polyfill`, …) is exact-parity with the heavyweight tier; exact cell-set parity is enforced by the cross-tier parity suite.
@@ -949,15 +1068,16 @@ Generate a k-ring of cells around a geometry at specified resolution.
 Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the geometry then expands by ring distance `k`. Exact cell-set parity with the heavyweight tier.
 :::
 
-**Signature:** `bng_geomkring(geom: Column, resolution: Column, k: Column): Column`
+**Signature:** `bng_geomkring(geom, resolution, k, [mode])`
 
 **Parameters:**
-- `geom` - Input geometry (any type)
-- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. '1km', '100m')
+- `geom` - Input geometry (WKT or WKB, EPSG:27700 coordinates required)
+- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. `'1km'`, `'100m'`)
 - `k` - Integer ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). Controls how cells touching the geometry edge are treated. Values: `'boundary-out'`, `'boundary-in'`, `'boundary-in-ignore-holes'`, `'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`.
 
 **Returns:**
-- Array of BNG cell references
+- `ARRAY<STRING>` of BNG cell references
 
 <FunctionExamples
   name="bng_geomkring"
@@ -974,21 +1094,22 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the 
 
 <Tier both/>
 
-Generate a k-loop of cells around a geometry at specified resolution.
+Generate a k-loop of cells around a geometry at specified resolution. The loop is the hollow outer ring: cells in `kring(k)` but not in `kring(k-1)`.
 
 :::note Lightweight tier (pygx)
 Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the geometry then returns only the cells at exactly ring distance `k`. Exact cell-set parity with the heavyweight tier.
 :::
 
-**Signature:** `bng_geomkloop(geom: Column, resolution: Column, k: Column): Column`
+**Signature:** `bng_geomkloop(geom, resolution, k, [mode])`
 
 **Parameters:**
-- `geom` - Input geometry (any type)
-- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. '1km', '100m')
+- `geom` - Input geometry (WKT or WKB, EPSG:27700 coordinates required)
+- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. `'1km'`, `'100m'`)
 - `k` - Integer ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See `bng_geomkring` for the full list of values.
 
 **Returns:**
-- Array of BNG cell references at exactly distance k
+- `ARRAY<STRING>` of BNG cell references at exactly distance k
 
 <FunctionExamples
   name="bng_geomkloop"
@@ -1263,15 +1384,16 @@ Explode geometry k-ring cells into separate rows.
 Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming UDTF — one output row per geometry k-ring cell. Exact cell-set parity with the heavyweight tier.
 :::
 
-**Signature:** `bng_geomkringexplode(geom: Column, resolution: Column, k: Column): Column`
+**Signature:** `bng_geomkringexplode(geom, resolution, k, [mode])`
 
 **Parameters:**
-- `geom` - Input geometry
-- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. '1km', '100m')
+- `geom` - Input geometry (WKT or WKB, EPSG:27700 coordinates required)
+- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. `'1km'`, `'100m'`)
 - `k` - Integer ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See `bng_geomkring` for the full list of values.
 
 **Returns:**
-- Exploded rows, one per cell
+- Exploded rows, one per cell (`STRING` BNG cell reference)
 
 <FunctionExamples
   name="bng_geomkringexplode"
@@ -1292,15 +1414,16 @@ Explode geometry k-loop cells into separate rows.
 Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming UDTF — one output row per geometry k-loop cell. Exact cell-set parity with the heavyweight tier.
 :::
 
-**Signature:** `bng_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column`
+**Signature:** `bng_geomkloopexplode(geom, resolution, k, [mode])`
 
 **Parameters:**
-- `geom` - Input geometry
-- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. '1km', '100m')
+- `geom` - Input geometry (WKT or WKB, EPSG:27700 coordinates required)
+- `resolution` - BNG resolution: integer index (e.g. 3 for 1 km) or string (e.g. `'1km'`, `'100m'`)
 - `k` - Integer ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See `bng_geomkring` for the full list of values.
 
 **Returns:**
-- Exploded rows, one per cell at distance k
+- Exploded rows, one per cell at distance k (`STRING` BNG cell reference)
 
 <FunctionExamples
   name="bng_geomkloopexplode"
@@ -1590,6 +1713,120 @@ Return the hollow ring of custom grid cells at exactly `k` steps from the center
 
 ---
 
+### Geometry-Aware Expansion (Custom Grid)
+
+Geometry-aware functions polyfill a geometry into the custom grid and then expand using the shared dilation engine. The `mode` parameter behaves the same as for `bng_geomkring` / `quadbin_geomkring` (see the Quadbin section for the full mode table). The grid descriptor is supplied as an additional `grid` argument (unlike the BNG and quadbin variants where the grid identity is implicit in the system).
+
+:::note Boundary alignment
+When the geometry edges fall exactly on cell boundaries, all cells in the polyfill may be classified as interior (no boundary cells), making the `boundary-out` frontier empty and the k=1 ring identical to the k=0 covering set. This occurs for polygons whose coordinates are exact multiples of the grid's cell size at the requested resolution. Use geometries with sub-cell offsets, or a finer resolution, to get outward expansion.
+:::
+
+### custom_geomkring
+
+<Tier both/>
+
+Polyfill a geometry at a given custom grid resolution then expand by `k` ring steps.
+
+**Signature:** `custom_geomkring(geom, grid, resolution, k, [mode])`
+
+**Parameters:**
+- `geom` — Geometry column (WKT or WKB, native grid CRS)
+- `grid` — Custom grid descriptor returned by `gbx_custom_grid`
+- `resolution` — Resolution level
+- `k` — Ring distance (0 = covering set only)
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See Quadbin section for values.
+
+**Returns:**
+- `ARRAY<BIGINT>` of custom grid cell IDs
+
+<FunctionExamples
+  name="custom_geomkring"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_geomkloop
+
+<Tier both/>
+
+Polyfill a geometry at a given custom grid resolution then return only the hollow outer ring at exactly `k` steps.
+
+**Signature:** `custom_geomkloop(geom, grid, resolution, k, [mode])`
+
+**Parameters:**
+- `geom` — Geometry column (WKT or WKB, native grid CRS)
+- `grid` — Custom grid descriptor returned by `gbx_custom_grid`
+- `resolution` — Resolution level
+- `k` — Ring distance
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`). See Quadbin section for values.
+
+**Returns:**
+- `ARRAY<BIGINT>` of custom grid cell IDs at exactly distance k
+
+<FunctionExamples
+  name="custom_geomkloop"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_geomkringexplode
+
+<Tier both/> <Impl udtf/>
+
+Streaming UDTF version of `custom_geomkring` — one row per cell. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `custom_geomkringexplode(geom, grid, resolution, k, [mode])`
+
+**Parameters:** Same as `custom_geomkring`.
+
+**Returns:**
+- One row per `BIGINT` cell ID in the k-ring
+
+<FunctionExamples
+  name="custom_geomkringexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### custom_geomkloopexplode
+
+<Tier both/> <Impl udtf/>
+
+Streaming UDTF version of `custom_geomkloop` — one row per cell at exactly `k` steps. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `custom_geomkloopexplode(geom, grid, resolution, k, [mode])`
+
+**Parameters:** Same as `custom_geomkloop`.
+
+**Returns:**
+- One row per `BIGINT` cell ID at exactly distance k
+
+<FunctionExamples
+  name="custom_geomkloopexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
+  scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
 ### custom_distance
 
 <Tier both/>
@@ -1649,6 +1886,122 @@ Heavyweight `gbx_custom_cellfill` returns `ARRAY<STRUCT<cellid BIGINT, value DOU
   pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
   pythonHeavy={gridxFunctionsExamples}   pythonHeavySource="docs/tests/python/api/gridx_functions.py"
   scala={scalaApiExamplesCode}           scalaSource="docs/tests/scala/api/ScalaApiExamples.scala"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+## H3 Geometry-Aware Expansion (Light-Only)
+
+<Tier light/>
+
+H3 geometry-aware kring/kloop functions are **light-only** — there is no heavy (Scala) implementation. They are designed for Serverless compute on Databricks, where the geometry-to-cell decomposition is done by Databricks product H3 functions (`h3_coverash3`, `h3_polyfillash3`). The topological expansion step (the dilation engine) runs as a pure-Python UDF registered by the `pygx` light tier.
+
+:::note Architecture
+The Python column API (`from databricks.labs.gbx.gridx.h3.functions import geomkring`) composes the two steps automatically: it calls the product H3 functions columnar to compute cover/core cell arrays, then passes those arrays to the `gbx_h3_geomkring` UDF. The SQL functions (`gbx_h3_geomkring` etc.) take the pre-computed arrays directly.
+
+Product function names (`h3_coverash3`, `h3_polyfillash3`) are confirmed against the Databricks H3 API conventions. Hole extraction (for hole-mode variants) is deferred pending integration verification — hole modes will return empty results for geometries with holes until wiring is complete.
+:::
+
+**Dilation modes** work the same as for BNG/quadbin/custom, but hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`) require hole extraction which is not yet wired; they return empty results on holed geometries.
+
+### h3_geomkring
+
+<Tier light/>
+
+Geometry-aware H3 k-ring. Computes the covering set via product H3 functions then expands by `k` ring steps using H3 neighbour topology.
+
+**Signature:** `h3_geomkring(cover, core, holes_cover, holes_core, k, [mode])`
+
+**SQL surface (direct):** Takes pre-computed `ARRAY<BIGINT>` cover/core arrays.
+
+**Python API (recommended on Databricks):**
+```python
+from databricks.labs.gbx.gridx.h3.functions import geomkring
+df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
+```
+
+**Parameters:**
+- `cover` — `ARRAY<BIGINT>` cells overlapping the geometry (from `h3_coverash3`)
+- `core` — `ARRAY<BIGINT>` cells fully inside the geometry (from `h3_polyfillash3`)
+- `holes_cover` — `ARRAY<BIGINT>` cells overlapping holes (empty array if no holes)
+- `holes_core` — `ARRAY<BIGINT>` cells inside holes (empty array if no holes)
+- `k` — Ring distance (0 = covering set only)
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`)
+
+**Returns:**
+- `ARRAY<BIGINT>` of H3 cell IDs
+
+<FunctionExamples
+  name="h3_geomkring"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### h3_geomkloop
+
+<Tier light/>
+
+Geometry-aware H3 k-loop (hollow ring at exactly `k` steps).
+
+**Signature:** `h3_geomkloop(cover, core, holes_cover, holes_core, k, [mode])`
+
+**Parameters:** Same as `h3_geomkring`.
+
+**Returns:**
+- `ARRAY<BIGINT>` of H3 cell IDs at exactly distance k
+
+<FunctionExamples
+  name="h3_geomkloop"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### h3_geomkringexplode
+
+<Tier light/> <Impl udtf/>
+
+Streaming UDTF version of `h3_geomkring` — one row per cell. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `h3_geomkringexplode(cover, core, holes_cover, holes_core, k, [mode])`
+
+**Parameters:** Same as `h3_geomkring`.
+
+**Returns:**
+- One row per `BIGINT` H3 cell ID
+
+<FunctionExamples
+  name="h3_geomkringexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
+  testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
+/>
+
+---
+
+### h3_geomkloopexplode
+
+<Tier light/> <Impl udtf/>
+
+Streaming UDTF version of `h3_geomkloop` — one row per cell at exactly `k` steps. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
+
+**Signature:** `h3_geomkloopexplode(cover, core, holes_cover, holes_core, k, [mode])`
+
+**Parameters:** Same as `h3_geomkloop`.
+
+**Returns:**
+- One row per `BIGINT` H3 cell ID at exactly distance k
+
+<FunctionExamples
+  name="h3_geomkloopexplode"
+  sql={gridxFunctionsSqlExamples}        sqlSource="docs/tests/python/api/gridx_functions_sql.py"
+  pythonLight={gridxLightCode}           pythonLightSource="docs/tests/python/api/gridx_functions_python_light.py"
   testFile="docs/tests/python/api/test_gridx_functions_python_light.py"
 />
 
