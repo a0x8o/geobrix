@@ -207,3 +207,46 @@ def test_line_fill_chips_follow_line():
     gkr = _bng.geometry_k_ring_str(line, res, 0)
     # k=0 ring = the line's own covering cells (border chips, no expansion).
     assert len(gkr) >= 3
+
+
+# ---------------------------------------------------------------------------
+# Mode param — Task 3
+# ---------------------------------------------------------------------------
+
+
+def test_bng_geomkring_default_mode_matches_no_mode():
+    geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
+    res = _bng.get_resolution("1km")
+    assert set(_bng.geometry_k_ring_str(geom, res, 1)) == set(
+        _bng.geometry_k_ring_str(geom, res, 1, "boundary-out")
+    )
+
+
+def test_bng_geomkring_boundary_in_nonempty_and_inside():
+    # boundary-out uses the get_chips path; boundary-in uses the engine (generic classify).
+    # Do NOT assert a cross-classifier subset (fragile). Assert the engine path runs for BNG,
+    # returns a non-empty inward band, and differs from boundary-out.
+    #
+    # NOTE: the box must be NON-grid-aligned (not on exact 1km boundaries) so that
+    # the classify engine sees perimeter cells as p_border (corners outside the box)
+    # rather than p_core. A perfectly grid-aligned 5km box puts all 25 cells fully
+    # inside the geometry (geom.contains(cell_geom)=True for all), leaving p_border={}
+    # and boundary-in empty. Insetting by 300m keeps all 25 cell centroids inside
+    # (polyfill unchanged) while making the 16 perimeter cells straddle the boundary.
+    geom = _towkb(
+        _box2(529300.0, 179300.0, 533700.0, 183700.0)
+    )  # ~4.4km box, non-grid-aligned
+    res = _bng.get_resolution("1km")
+    inn = set(_bng.geometry_k_ring_str(geom, res, 1, "boundary-in"))
+    out = set(_bng.geometry_k_ring_str(geom, res, 1, "boundary-out"))
+    assert (
+        inn
+    ), "boundary-in should return a non-empty inward band for a multi-cell polygon"
+    assert inn != out, "boundary-in must differ from boundary-out"
+
+
+def test_bng_geomkring_bad_mode_raises_via_str_wrapper():
+    geom = _towkb(_box2(530000.0, 180000.0, 531000.0, 181000.0))
+    res = _bng.get_resolution("1km")
+    with pytest.raises(ValueError):
+        _bng.geometry_k_ring_str(geom, res, 1, "sideways")

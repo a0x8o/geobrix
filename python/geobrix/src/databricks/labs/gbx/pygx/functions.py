@@ -29,6 +29,7 @@ from pyspark.sql.types import (
 from databricks.labs.gbx import _register
 
 from . import _bng, _cellfill, _custom, _env, _quadbin
+from ._dilate import MODES as _MODES
 from ._geom import parse_geom
 from ._serde import BNG_CHIP_SCHEMA, CUSTOM_GRID_SCHEMA, QUADBIN_CELL_SCHEMA
 
@@ -375,24 +376,38 @@ def _bng_polyfill(geom, res):
         return None  # bad WKB/WKT geom DATA -> degrade to NULL (matches heavy)
 
 
-def _bng_geomkring(geom, res, k):
+def _bng_geomkring(geom, res, k, mode="boundary-out"):
     if geom is None or res is None or k is None:
         return None
     _bng.get_resolution(_norm_res(res))  # bad resolution PARAMETER -> raises
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
     k_int = int(k)  # bad k PARAMETER -> raises
     try:
-        return sorted(_bng.geometry_k_ring_str(geom, _norm_res(res), k_int))
+        return sorted(
+            _bng.geometry_k_ring_str(
+                geom, _norm_res(res), k_int, mode or "boundary-out"
+            )
+        )
+    except ValueError:
+        raise  # re-raise param errors (bad mode propagated from engine)
     except Exception:
         return None  # bad WKB/WKT geom DATA -> degrade to NULL (matches heavy)
 
 
-def _bng_geomkloop(geom, res, k):
+def _bng_geomkloop(geom, res, k, mode="boundary-out"):
     if geom is None or res is None or k is None:
         return None
     _bng.get_resolution(_norm_res(res))  # bad resolution PARAMETER -> raises
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
     k_int = int(k)  # bad k PARAMETER -> raises
     try:
-        return sorted(_bng.geometry_k_loop_str(geom, _norm_res(res), k_int))
+        return sorted(
+            _bng.geometry_k_loop_str(
+                geom, _norm_res(res), k_int, mode or "boundary-out"
+            )
+        )
+    except ValueError:
+        raise  # re-raise param errors
     except Exception:
         return None  # bad WKB/WKT geom DATA -> degrade to NULL (matches heavy)
 
@@ -442,28 +457,42 @@ class _BngKLoopExplode:
 
 @udtf(returnType="cellid: string")
 class _BngGeomKRingExplode:
-    def eval(self, geom, res, k):
+    def eval(self, geom, res, k, mode="boundary-out"):
         if geom is None or res is None or k is None:
             return
         _bng.get_resolution(_norm_res(res))  # bad resolution PARAMETER -> raises
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         k_int = int(k)  # bad k PARAMETER -> raises
         try:
-            for c in sorted(_bng.geometry_k_ring_str(geom, _norm_res(res), k_int)):
+            for c in sorted(
+                _bng.geometry_k_ring_str(
+                    geom, _norm_res(res), k_int, mode or "boundary-out"
+                )
+            ):
                 yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
         except Exception:
             return  # bad WKB/WKT geom DATA -> zero rows (matches heavy)
 
 
 @udtf(returnType="cellid: string")
 class _BngGeomKLoopExplode:
-    def eval(self, geom, res, k):
+    def eval(self, geom, res, k, mode="boundary-out"):
         if geom is None or res is None or k is None:
             return
         _bng.get_resolution(_norm_res(res))  # bad resolution PARAMETER -> raises
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         k_int = int(k)  # bad k PARAMETER -> raises
         try:
-            for c in sorted(_bng.geometry_k_loop_str(geom, _norm_res(res), k_int)):
+            for c in sorted(
+                _bng.geometry_k_loop_str(
+                    geom, _norm_res(res), k_int, mode or "boundary-out"
+                )
+            ):
                 yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
         except Exception:
             return  # bad WKB/WKT geom DATA -> zero rows (matches heavy)
 
@@ -529,6 +558,16 @@ def _bng_cellunion_agg_udf(chip: pd.DataFrame) -> Optional[bytes]:
 @pandas_udf(BinaryType())
 def _bng_cellintersection_agg_udf(chip: pd.DataFrame) -> Optional[bytes]:
     return _fold_chip_geom(chip, _bng.cell_intersection)
+
+
+def _dilate_check_mode(mode):
+    """Raise ValueError for an unknown dilation mode (parameter error).
+
+    ``None`` is allowed and treated as the default mode by callers.
+    Tasks 5/6/7 reuse this helper — keep it at module scope.
+    """
+    if mode is not None and mode not in _MODES:
+        raise ValueError(f"unknown mode {mode!r}; expected one of {_MODES}")
 
 
 def _norm_res(res):
@@ -1183,14 +1222,30 @@ def bng_polyfill(geom: ColLike, resolution: ColLike) -> Column:
     return f.call_function("gbx_bng_polyfill", _col(geom), _col(resolution))
 
 
-def bng_geomkring(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """ARRAY<STRING> k-ring around a geometry's covering chips."""
-    return f.call_function("gbx_bng_geomkring", _col(geom), _col(resolution), _col(k))
+def bng_geomkring(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """ARRAY<STRING> k-ring around a geometry's covering chips.
+
+    mode: dilation mode (default ``"boundary-out"``). One of the 6 modes in
+    ``_dilate.MODES``. ``"boundary-out"`` retains the existing get_chips path
+    (byte-identical with the heavy tier); the 5 other modes use the engine.
+    """
+    return f.call_function(
+        "gbx_bng_geomkring", _col(geom), _col(resolution), _col(k), _col(mode)
+    )
 
 
-def bng_geomkloop(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """ARRAY<STRING> k-loop around a geometry's covering chips."""
-    return f.call_function("gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k))
+def bng_geomkloop(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """ARRAY<STRING> k-loop around a geometry's covering chips.
+
+    mode: dilation mode (default ``"boundary-out"``). See :func:`bng_geomkring`.
+    """
+    return f.call_function(
+        "gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k), _col(mode)
+    )
 
 
 def bng_tessellate(
