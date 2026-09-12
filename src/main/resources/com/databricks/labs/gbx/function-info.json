@@ -1699,6 +1699,34 @@
         "sql"
       ]
     },
+    "gbx_custom_geomkloop": {
+      "examples": "Examples:\n      > SELECT gbx_custom_geomkloop( 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0, 1 ) AS kloop;",
+      "usage_args": "geom, grid, resolution, k, [mode]",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_custom_geomkloopexplode": {
+      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src, LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1) t;",
+      "usage_args": "geom, grid, resolution, k, [mode]",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_custom_geomkring": {
+      "examples": "Examples:\n      > SELECT gbx_custom_geomkring( 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0, 1 ) AS kring;",
+      "usage_args": "geom, grid, resolution, k, [mode]",
+      "bindings": [
+        "sql"
+      ]
+    },
+    "gbx_custom_geomkringexplode": {
+      "examples": "Examples:\n      > SELECT t.* FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src, LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1) t;",
+      "usage_args": "geom, grid, resolution, k, [mode]",
+      "bindings": [
+        "sql"
+      ]
+    },
     "gbx_custom_grid": {
       "examples": "Examples:\n      > SELECT gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid;",
       "usage_args": "bound_x_min, bound_x_max, bound_y_min, bound_y_max, cell_splits, root_cell_size_x, root_cell_size_y, srid",

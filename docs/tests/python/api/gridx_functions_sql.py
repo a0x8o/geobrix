@@ -972,6 +972,103 @@ custom_distance_sql_example_output = """
 """
 
 
+def custom_geomkring_sql_example():
+    """Polyfill a geometry in the custom grid CRS then expand by k ring steps.
+
+    Returns ARRAY<BIGINT> — all custom grid cells within Chebyshev distance k
+    of the geometry's covering set.  Uses the canonical 1 km grid from the
+    other custom-grid examples; the 4 600-unit box covers ~25 cells at res 0,
+    and k=1 adds the surrounding outer ring.
+    """
+    return """
+SELECT gbx_custom_geomkring(
+  'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
+  gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+  0, 1
+) AS kring;
+"""
+
+
+def custom_geomkloop_sql_example():
+    """Polyfill a geometry in the custom grid CRS then return only the outer ring.
+
+    Returns ARRAY<BIGINT> — cells at exactly ring distance k (hollow shell).
+    At res=0, k=1, returns the outer ring cells surrounding the polyfill.
+    """
+    return """
+SELECT gbx_custom_geomkloop(
+  'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
+  gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+  0, 1
+) AS kloop;
+"""
+
+
+def custom_geomkringexplode_sql_example():
+    """Explode geometry k-ring (custom grid) into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation.  At res=0 with k=1, the covering
+    polyfill of the box expands outward by one ring; each cell emitted as a row.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
+             gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
+LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1) t;
+"""
+
+
+def custom_geomkloopexplode_sql_example():
+    """Explode geometry k-loop (custom grid hollow ring) into one row per BIGINT cell.
+
+    SQL LATERAL is the canonical invocation.  At res=0, k=1, returns the hollow
+    outer ring cells surrounding the geometry's polyfill.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
+             gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
+LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1) t;
+"""
+
+
+custom_geomkring_sql_example_output = """
++---------------------------------------------+
+|kring                                        |
++---------------------------------------------+
+|[..., (cells within k=1 ring of 4.6 km box)]|
++---------------------------------------------+
+... (ARRAY<BIGINT> — polyfill covering set plus one outer ring at resolution 0)
+"""
+
+custom_geomkloop_sql_example_output = """
++----------------------------------------------+
+|kloop                                         |
++----------------------------------------------+
+|[..., (outer ring cells, polyfill excluded)]  |
++----------------------------------------------+
+... (ARRAY<BIGINT> — hollow outer ring at k=1, polyfill cells excluded)
+"""
+
+custom_geomkringexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|...(BIGINT)       |
++------------------+
+... (one row per BIGINT cell ID in the k=1 ring of the geometry)
+"""
+
+custom_geomkloopexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|...(BIGINT)       |
++------------------+
+... (one row per BIGINT cell ID in the k=1 hollow outer ring)
+"""
+
+
 # ============================================================================
 # Cell-fill grouped aggregators — fill NULL (covered-but-missing) cells from
 # valid neighbours in the same group.  All four grids.

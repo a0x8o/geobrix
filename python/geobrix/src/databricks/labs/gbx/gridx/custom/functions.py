@@ -183,3 +183,88 @@ def custom_kring(cell: ColLike, grid: ColLike, k: ColLike) -> Column:
         Column of ``ARRAY<BIGINT>`` custom grid cell ids.
     """
     return f.call_function("gbx_custom_kring", _col(cell), _col(grid), _col(k))
+
+
+def custom_geomkring(
+    geom: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Geometry-aware k-ring for a custom grid.
+
+    Returns all cells reachable from the geometry's covering set in at most ``k``
+    Chebyshev steps.
+
+    Args:
+        geom: Geometry column (WKB bytes or WKT string, native grid CRS).
+        grid: Grid-spec struct column produced by ``custom_grid``.
+        resolution: Resolution level.
+        k: Dilation distance (0 = covering set only).
+        mode: Dilation mode (default ``"boundary-out"``).
+
+    Returns:
+        Column of ``ARRAY<BIGINT>`` custom grid cell ids.
+    """
+    # mode is always a string VALUE (never a column name); use f.lit so Spark
+    # does not misinterpret it as an unresolved column reference.
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_custom_geomkring",
+        _col(geom),
+        _col(grid),
+        _col(resolution),
+        _col(k),
+        mode_arg,
+    )
+
+
+def custom_geomkloop(
+    geom: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Geometry-aware k-loop (hollow ring) for a custom grid.
+
+    Returns cells at EXACTLY ``k`` Chebyshev steps from the geometry's covering set.
+
+    Args:
+        geom: Geometry column (WKB bytes or WKT string, native grid CRS).
+        grid: Grid-spec struct column produced by ``custom_grid``.
+        resolution: Resolution level.
+        k: Dilation distance.
+        mode: Dilation mode (default ``"boundary-out"``).
+
+    Returns:
+        Column of ``ARRAY<BIGINT>`` custom grid cell ids.
+    """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_custom_geomkloop",
+        _col(geom),
+        _col(grid),
+        _col(resolution),
+        _col(k),
+        mode_arg,
+    )
+
+
+def custom_geomkringexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_custom_geomkringexplode(geom, grid, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light custom_geomkringexplode is a streaming table function (registered UDTF "
+        "gbx_custom_geomkringexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_custom_geomkringexplode(...) t."
+    )
+
+
+def custom_geomkloopexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_custom_geomkloopexplode(geom, grid, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light custom_geomkloopexplode is a streaming table function (registered UDTF "
+        "gbx_custom_geomkloopexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_custom_geomkloopexplode(...) t."
+    )

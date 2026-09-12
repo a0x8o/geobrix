@@ -189,6 +189,10 @@ gbx_custom_kring
 gbx_custom_kloop
 gbx_custom_distance
 gbx_custom_cellfill
+gbx_custom_geomkring
+gbx_custom_geomkloop
+gbx_custom_geomkringexplode
+gbx_custom_geomkloopexplode
 gbx_rst_custom_rastertogridavg
 gbx_rst_custom_rastertogridcount
 gbx_rst_custom_rastertogridmax

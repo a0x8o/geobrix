@@ -30,6 +30,9 @@ from shapely import to_wkb as _to_wkb
 from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
 
+from . import _dilate
+from ._geom import parse_geom
+
 ID_BITS = 56  # GridConf.idBits — low 56 bits hold the cell position
 RES_BITS = 8  # GridConf.resBits — top 8 bits hold the resolution
 _POSITION_MASK = 0x00FFFFFFFFFFFFFF
@@ -434,3 +437,70 @@ def distance(conf: CustomGridConf, cell_a: int, cell_b: int) -> int:
     by = get_cell_position_y(conf, pos_b, res_b)
 
     return max(abs(ax - bx), abs(ay - by))
+
+
+# --- geometry-aware kring/kloop (shared dilation engine) ----------------------
+
+
+def _cell_geom(conf: CustomGridConf, cell_id: int):
+    """Shapely polygon for a custom-grid cell (reuses cell_id_to_polygon)."""
+    return cell_id_to_polygon(conf, cell_id)
+
+
+def classify(conf: CustomGridConf, geom, resolution: int):
+    """Classify polyfill candidates vs P (geom), S (solid), H (holes).
+
+    geom must already be a Shapely geometry; call parse_geom first if raw
+    bytes/str.  Closures capture `conf` so callers need not thread it into
+    the engine internals.
+    """
+    return _dilate.classify(
+        geom,
+        int(resolution),
+        polyfill_fn=lambda g, r: polyfill(conf, g, r),
+        cell_geom_fn=lambda c: _cell_geom(conf, c),
+    )
+
+
+def geometry_k_ring(
+    conf: CustomGridConf,
+    geom,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+) -> List[int]:
+    """Geometry-aware k-ring for a custom grid.
+
+    Mirrors ``_quadbin.geometry_k_ring`` with the leading ``conf`` argument
+    that all custom-grid functions require.
+
+    geom: WKB bytes, WKT string, or Shapely geometry.
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(conf, parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("ring", int(k), mode, cls, lambda c: k_loop(conf, c, 1))
+    )
+
+
+def geometry_k_loop(
+    conf: CustomGridConf,
+    geom,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+) -> List[int]:
+    """Geometry-aware k-loop (hollow ring) for a custom grid.
+
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(conf, parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("loop", int(k), mode, cls, lambda c: k_loop(conf, c, 1))
+    )
