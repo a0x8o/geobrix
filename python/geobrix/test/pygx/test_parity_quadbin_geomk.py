@@ -4,8 +4,12 @@ Tests all 6 dilation modes on both a simple polygon and a holed polygon, compari
 light ``_quadbin.geometry_k_ring/loop`` against heavy ``gbx_quadbin_geomkring/geomkloop``
 registered functions.
 
-Fixture: NYC lon/lat box (-73.99, 40.71 → -73.95, 40.75) at resolution 12.
-Holed polygon: same outer box with inner hole (-73.975, 40.725 → -73.965, 40.735) at res 13.
+Simple fixture: NYC lon/lat box (-73.99, 40.71 → -73.95, 40.75) at resolution 12.
+Holed fixture: large east-US box (-76, 38 → -72, 43) with a 2°×3° interior hole
+(-75, 39 → -73, 42) at resolution 10. At res 10 (cells ≈0.35°) the hole spans
+~6 cells wide × ~9 cells tall, so hCore (cells fully inside the hole) is non-empty
+(~50 cells). This ensures hole-in/hole-out exercise genuine inward fill, not just
+h_border traversal.
 
 Heavy requires the geobrix JAR. Mark integration; skips when no JAR under python/geobrix/lib/.
 
@@ -34,11 +38,14 @@ _JARS = sorted((_HERE.parents[2] / "lib").glob("geobrix-*-jar-with-dependencies.
 _NYC_BOX = box(-73.99, 40.71, -73.95, 40.75)
 _RES_SIMPLE = 12
 
-# Holed polygon: NYC outer with small interior hole, at res 13
-_OUTER = [(-73.99, 40.71), (-73.95, 40.71), (-73.95, 40.75), (-73.99, 40.75)]
-_HOLE = [(-73.975, 40.725), (-73.965, 40.725), (-73.965, 40.735), (-73.975, 40.735)]
-_HOLED_POLY = Polygon(_OUTER, [_HOLE])
-_RES_HOLED = 13
+# Holed polygon: large east-US box (-76,38)→(-72,43) with 2°×3° interior hole (-75,39)→(-73,42).
+# At res 10 (cells ≈0.35° wide) the hole spans ~6 cells wide × ~9 cells tall.
+# Cells in roughly x∈[299..303], y∈[381..390] are fully contained by the hole polygon
+# → hCore is non-empty (~50 cells), so hole-in/hole-out genuinely exercise inward fill.
+_OUTER_H = [(-76.0, 38.0), (-72.0, 38.0), (-72.0, 43.0), (-76.0, 43.0)]
+_HOLE_H = [(-75.0, 39.0), (-73.0, 39.0), (-73.0, 42.0), (-75.0, 42.0)]
+_HOLED_POLY = Polygon(_OUTER_H, [_HOLE_H])
+_RES_HOLED = 10
 
 _MODES = (
     "boundary-out",

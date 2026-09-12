@@ -100,6 +100,19 @@ object functions extends Serializable {
     def quadbin_geomkloop(geom: Column, resolution: Column, k: Column, mode: String): Column =
         quadbin_geomkloop(geom, resolution, k, lit(mode))
 
+    // Generators
+    def quadbin_geomkringexplode(geom: Column, resolution: Column, k: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKRingExplode.name, Seq(geom, resolution, k))
+
+    def quadbin_geomkringexplode(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKRingExplode.name, Seq(geom, resolution, k, mode))
+
+    def quadbin_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKLoopExplode.name, Seq(geom, resolution, k))
+
+    def quadbin_geomkloopexplode(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(Quadbin_GeometryKLoopExplode.name, Seq(geom, resolution, k, mode))
+
     // ---------- Scalar-literal overloads ----------
 
     def quadbin_pointascell(longitude: Column, latitude: Column, resolution: Int): Column =
@@ -125,5 +138,17 @@ object functions extends Serializable {
 
     def quadbin_geomkloop(geom: Column, resolution: Int, k: Int, mode: String): Column =
         quadbin_geomkloop(geom, lit(resolution), lit(k), lit(mode))
+
+    def quadbin_geomkringexplode(geom: Column, resolution: Int, k: Int): Column =
+        quadbin_geomkringexplode(geom, lit(resolution), lit(k))
+
+    def quadbin_geomkringexplode(geom: Column, resolution: Int, k: Int, mode: String): Column =
+        quadbin_geomkringexplode(geom, lit(resolution), lit(k), lit(mode))
+
+    def quadbin_geomkloopexplode(geom: Column, resolution: Int, k: Int): Column =
+        quadbin_geomkloopexplode(geom, lit(resolution), lit(k))
+
+    def quadbin_geomkloopexplode(geom: Column, resolution: Int, k: Int, mode: String): Column =
+        quadbin_geomkloopexplode(geom, lit(resolution), lit(k), lit(mode))
 
 }
