@@ -612,7 +612,7 @@ def quadbin_geomkring_sql_example():
     return """
 SELECT gbx_quadbin_geomkring(
   'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
-  12, 1
+  12, 1, 'boundary-out'
 ) AS kring;
 """
 
@@ -626,7 +626,7 @@ def quadbin_geomkloop_sql_example():
     return """
 SELECT gbx_quadbin_geomkloop(
   'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
-  12, 1
+  12, 1, 'boundary-out'
 ) AS kloop;
 """
 
@@ -640,7 +640,7 @@ def quadbin_geomkringexplode_sql_example():
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
-LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1) t;
+LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1, 'boundary-out') t;
 """
 
 
@@ -653,7 +653,7 @@ def quadbin_geomkloopexplode_sql_example():
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
-LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1) t;
+LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1, 'boundary-out') t;
 """
 
 
@@ -989,7 +989,7 @@ def custom_geomkring_sql_example():
 SELECT gbx_custom_geomkring(
   'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
   gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
-  0, 1
+  0, 1, 'boundary-out'
 ) AS kring;
 """
 
@@ -1004,7 +1004,7 @@ def custom_geomkloop_sql_example():
 SELECT gbx_custom_geomkloop(
   'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
   gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
-  0, 1
+  0, 1, 'boundary-out'
 ) AS kloop;
 """
 
@@ -1019,7 +1019,7 @@ def custom_geomkringexplode_sql_example():
 SELECT t.*
 FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
              gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
-LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1) t;
+LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1, 'boundary-out') t;
 """
 
 
@@ -1033,7 +1033,7 @@ def custom_geomkloopexplode_sql_example():
 SELECT t.*
 FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
              gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
-LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1) t;
+LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1, 'boundary-out') t;
 """
 
 

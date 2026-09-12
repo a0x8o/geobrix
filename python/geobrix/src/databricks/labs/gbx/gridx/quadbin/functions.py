@@ -224,51 +224,19 @@ def quadbin_geomkloop(
     )
 
 
-def quadbin_geomkringexplode(
-    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
-) -> Column:
-    """Geometry-aware k-ring explode for quadbin (SQL LATERAL table function).
-
-    Returns one row per cell id (BIGINT) in the geometry-aware k-ring.
-
-    Args:
-        geom: Geometry column (WKT or WKB).
-        resolution: Quadbin zoom level.
-        k: Ring distance.
-        mode: Dilation mode (default ``"boundary-out"``).
-
-    Returns:
-        Column for use in SQL LATERAL / UDTF context.
-    """
-    return f.call_function(
-        "gbx_quadbin_geomkringexplode",
-        _col(geom),
-        _col(resolution),
-        _col(k),
-        mode if isinstance(mode, Column) else f.lit(mode),
+def quadbin_geomkringexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkringexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light quadbin_geomkringexplode is a streaming table function (registered UDTF "
+        "gbx_quadbin_geomkringexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_quadbin_geomkringexplode(...) t."
     )
 
 
-def quadbin_geomkloopexplode(
-    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
-) -> Column:
-    """Geometry-aware k-loop explode for quadbin (SQL LATERAL table function).
-
-    Returns one row per cell id (BIGINT) in the geometry-aware k-loop.
-
-    Args:
-        geom: Geometry column (WKT or WKB).
-        resolution: Quadbin zoom level.
-        k: Ring distance.
-        mode: Dilation mode (default ``"boundary-out"``).
-
-    Returns:
-        Column for use in SQL LATERAL / UDTF context.
-    """
-    return f.call_function(
-        "gbx_quadbin_geomkloopexplode",
-        _col(geom),
-        _col(resolution),
-        _col(k),
-        mode if isinstance(mode, Column) else f.lit(mode),
+def quadbin_geomkloopexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkloopexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light quadbin_geomkloopexplode is a streaming table function (registered UDTF "
+        "gbx_quadbin_geomkloopexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_quadbin_geomkloopexplode(...) t."
     )

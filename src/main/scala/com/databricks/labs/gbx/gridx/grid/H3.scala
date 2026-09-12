@@ -244,6 +244,22 @@ object H3 extends GridSystem {
         )
     }
 
+    /** H3 geometry-aware kring is light-tier only (never registered as a Scala SQL expression).
+      * Callers should use the gbx_h3_geomkring SQL function or the Python API from
+      * databricks.labs.gbx.gridx.h3.functions. This override prevents the generic
+      * GridSystem default from silently running against H3 topology.
+      */
+    override def geometryKRing(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        throw new UnsupportedOperationException(
+            "h3 geometry-aware kring/kloop is light-tier only; use the gbx_h3_geomkring/geomkloop SQL/Python functions"
+        )
+
+    /** H3 geometry-aware kloop is light-tier only. See geometryKRing for details. */
+    override def geometryKLoop(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        throw new UnsupportedOperationException(
+            "h3 geometry-aware kring/kloop is light-tier only; use the gbx_h3_geomkring/geomkloop SQL/Python functions"
+        )
+
     /** Supported H3 resolutions 0-15 (0 = coarsest, 122 hexagons; 15 = finest). */
     def resolutions: Set[Int] = (0 to 15).toSet
 

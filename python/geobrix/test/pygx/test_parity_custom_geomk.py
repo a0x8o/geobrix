@@ -128,7 +128,7 @@ def _collect_light_loop(conf, geom, res, k, mode):
     return set(_custom.geometry_k_loop(conf, _wkb(geom), res, k, mode))
 
 
-def _collect_heavy(spark, geom, grid_row, res, k, mode, fn_name):
+def _collect_heavy(spark, geom, res, k, mode, fn_name):
     """Collect heavy result for one (geom, res, k, mode) combination via registered SQL fn."""
     from pyspark.sql import functions as f
 
@@ -196,7 +196,7 @@ def test_parity_custom_geomkring_simple_all_modes(spark_with_jar):
     hx.register(spark)
     for mode in _MODES:
         heavy = _collect_heavy(
-            spark, _SIMPLE_GEOM, conf, _SIMPLE_RES, 1, mode, "gbx_custom_geomkring"
+            spark, _SIMPLE_GEOM, _SIMPLE_RES, 1, mode, "gbx_custom_geomkring"
         )
         light = light_results[mode]
         assert light == heavy, (
@@ -223,7 +223,7 @@ def test_parity_custom_geomkloop_simple_all_modes(spark_with_jar):
     hx.register(spark)
     for mode in _MODES:
         heavy = _collect_heavy(
-            spark, _SIMPLE_GEOM, conf, _SIMPLE_RES, 1, mode, "gbx_custom_geomkloop"
+            spark, _SIMPLE_GEOM, _SIMPLE_RES, 1, mode, "gbx_custom_geomkloop"
         )
         light = light_results[mode]
         assert light == heavy, (
@@ -249,7 +249,7 @@ def test_parity_custom_geomkring_holed_all_modes(spark_with_jar):
     hx.register(spark)
     for mode in _MODES:
         heavy = _collect_heavy(
-            spark, _HOLED_POLY, conf, _RES_HOLED, 1, mode, "gbx_custom_geomkring"
+            spark, _HOLED_POLY, _RES_HOLED, 1, mode, "gbx_custom_geomkring"
         )
         light = light_results[mode]
         assert light == heavy, (
@@ -276,7 +276,7 @@ def test_parity_custom_geomkloop_holed_all_modes(spark_with_jar):
     hx.register(spark)
     for mode in _MODES:
         heavy = _collect_heavy(
-            spark, _HOLED_POLY, conf, _RES_HOLED, 1, mode, "gbx_custom_geomkloop"
+            spark, _HOLED_POLY, _RES_HOLED, 1, mode, "gbx_custom_geomkloop"
         )
         light = light_results[mode]
         assert light == heavy, (

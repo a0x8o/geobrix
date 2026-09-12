@@ -1900,10 +1900,10 @@ H3 geometry-aware kring/kloop functions are **light-only** — there is no heavy
 :::note Architecture
 The Python column API (`from databricks.labs.gbx.gridx.h3.functions import geomkring`) composes the two steps automatically: it calls the product H3 functions columnar to compute cover/core cell arrays, then passes those arrays to the `gbx_h3_geomkring` UDF. The SQL functions (`gbx_h3_geomkring` etc.) take the pre-computed arrays directly.
 
-Product function names (`h3_coverash3`, `h3_polyfillash3`) are confirmed against the Databricks H3 API conventions. Hole extraction (for hole-mode variants) is deferred pending integration verification — hole modes will return empty results for geometries with holes until wiring is complete.
+Product function names (`h3_coverash3`, `h3_polyfillash3`) follow expected Databricks H3 API conventions and are pending integration verification. Hole extraction (for hole-mode variants) is deferred pending integration verification — hole modes will return empty results for geometries with holes until wiring is complete.
 :::
 
-**Dilation modes** work the same as for BNG/quadbin/custom, but hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`) require hole extraction which is not yet wired; they return empty results on holed geometries.
+**Dilation modes** work the same as for BNG/quadbin/custom, but hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`) require hole extraction which is not yet wired; they return empty results on holed geometries. `'boundary-in-ignore-holes'` returns non-empty results on holed geometries but the output is incorrect until hole extraction is wired — do not rely on it for holed inputs.
 
 ### h3_geomkring
 

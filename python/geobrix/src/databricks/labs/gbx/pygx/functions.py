@@ -167,8 +167,8 @@ class _QuadbinGeomKRingExplode:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         try:
-            for c in sorted(
-                _quadbin.geometry_k_ring(geom, int(res), int(k), mode or "boundary-out")
+            for c in _quadbin.geometry_k_ring(
+                geom, int(res), int(k), mode or "boundary-out"
             ):
                 yield (c,)
         except ValueError:
@@ -184,8 +184,8 @@ class _QuadbinGeomKLoopExplode:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         try:
-            for c in sorted(
-                _quadbin.geometry_k_loop(geom, int(res), int(k), mode or "boundary-out")
+            for c in _quadbin.geometry_k_loop(
+                geom, int(res), int(k), mode or "boundary-out"
             ):
                 yield (c,)
         except ValueError:
@@ -831,14 +831,12 @@ class _CustomGeomKRingExplode:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         try:
-            for c in sorted(
-                _custom.geometry_k_ring(
-                    _custom.conf_from_row(grid),
-                    geom,
-                    int(res),
-                    int(k),
-                    mode or "boundary-out",
-                )
+            for c in _custom.geometry_k_ring(
+                _custom.conf_from_row(grid),
+                geom,
+                int(res),
+                int(k),
+                mode or "boundary-out",
             ):
                 yield (c,)
         except ValueError:
@@ -854,14 +852,12 @@ class _CustomGeomKLoopExplode:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
         try:
-            for c in sorted(
-                _custom.geometry_k_loop(
-                    _custom.conf_from_row(grid),
-                    geom,
-                    int(res),
-                    int(k),
-                    mode or "boundary-out",
-                )
+            for c in _custom.geometry_k_loop(
+                _custom.conf_from_row(grid),
+                geom,
+                int(res),
+                int(k),
+                mode or "boundary-out",
             ):
                 yield (c,)
         except ValueError:

@@ -118,6 +118,50 @@ class Custom_GeometrySuite extends AnyFunSuite {
         assert(result.asInstanceOf[ArrayData].numElements() > 0)
     }
 
+    test("Custom_GeometryKRing expression eval — WKT returns same cells as WKB") {
+        import org.apache.spark.sql.catalyst.InternalRow
+        import org.apache.spark.sql.catalyst.expressions.Literal
+        import org.apache.spark.sql.catalyst.util.ArrayData
+        import org.apache.spark.sql.types.{BinaryType, IntegerType, LongType, StringType}
+        import org.apache.spark.unsafe.types.UTF8String
+
+        val gridRow = Custom_Grid(
+            Literal(0L, LongType), Literal(1_000_000L, LongType),
+            Literal(0L, LongType), Literal(1_000_000L, LongType),
+            Literal(2, IntegerType), Literal(1000, IntegerType), Literal(1000, IntegerType),
+            Literal(-1, IntegerType)
+        ).eval(InternalRow.empty).asInstanceOf[InternalRow]
+
+        val exprWKT = Custom_GeometryKRing(
+            Literal(UTF8String.fromString(SIMPLE_WKT), StringType),
+            Literal.create(gridRow, Custom_GridSpec.gridStructType),
+            Literal(SIMPLE_RES, IntegerType),
+            Literal(1, IntegerType),
+            Literal(GeomDilation.DEFAULT_MODE)
+        )
+        val exprWKB = Custom_GeometryKRing(
+            Literal(SIMPLE_WKB, BinaryType),
+            Literal.create(gridRow, Custom_GridSpec.gridStructType),
+            Literal(SIMPLE_RES, IntegerType),
+            Literal(1, IntegerType),
+            Literal(GeomDilation.DEFAULT_MODE)
+        )
+
+        val wktResult = exprWKT.eval(InternalRow.empty).asInstanceOf[ArrayData]
+        val wkbResult = exprWKB.eval(InternalRow.empty).asInstanceOf[ArrayData]
+
+        assert(wktResult != null, "WKT eval returned null")
+        assert(wkbResult != null, "WKB eval returned null")
+
+        val wktCells = (0 until wktResult.numElements()).map(wktResult.getLong(_)).toSet
+        val wkbCells = (0 until wkbResult.numElements()).map(wkbResult.getLong(_)).toSet
+        assert(
+          wktCells == wkbCells,
+          s"WKT and WKB eval paths differ: WKT=${wktCells.size} WKB=${wkbCells.size} " +
+          s"wkt_only=${(wktCells diff wkbCells).take(5)} wkb_only=${(wkbCells diff wktCells).take(5)}"
+        )
+    }
+
     test("Custom_GeometryKLoop expression eval — WKB returns non-null ArrayData") {
         import org.apache.spark.sql.catalyst.InternalRow
         import org.apache.spark.sql.catalyst.expressions.Literal
