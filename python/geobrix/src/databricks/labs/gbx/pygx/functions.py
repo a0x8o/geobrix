@@ -28,7 +28,9 @@ from pyspark.sql.types import (
 
 from databricks.labs.gbx import _register
 
-from . import _bng, _cellfill, _custom, _env, _quadbin
+from . import _bng, _cellfill, _custom, _env
+from . import _h3 as _h3mod
+from . import _quadbin
 from ._dilate import MODES as _MODES
 from ._geom import parse_geom
 from ._serde import BNG_CHIP_SCHEMA, CUSTOM_GRID_SCHEMA, QUADBIN_CELL_SCHEMA
@@ -1058,6 +1060,140 @@ def _custom_cellfill_agg_udf(
     return _cellfill.encode(filled)
 
 
+# ============================================================================
+# H3 geometry-aware kring/kloop (light-only — no Scala/heavy equivalent)
+#
+# The public SQL surface `gbx_h3_geomkring(geom, res, k [, mode])` is a
+# PySpark composition: the geometry work (cover/core cell arrays) is supplied
+# columnar via product h3_* SQL functions by the Python wrapper in
+# gridx/h3/functions.py. These array-expansion UDFs receive pre-computed
+# cell-id arrays and run the shared dilation engine (via _h3mod) over them.
+#
+# UDF shape: plain @udf (row-by-row) — variable-length array output at scale.
+# Explode shape: @udtf (SQL-LATERAL only, no DataFrame Column form).
+#
+# Cell ids are BIGINT (int); h3 library provides neighbor topology only.
+# Serverless-safe: no spark.conf / _jvm / .rdd access.
+# ============================================================================
+
+
+def _h3_geomkring(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+    """Array-expansion UDF: geometry-aware h3 k-ring from precomputed cell arrays.
+
+    Args:
+        cover:       ARRAY<BIGINT> cells overlapping the geometry (product h3_coverash3).
+                     VERIFY exact product function name at integration time.
+        core:        ARRAY<BIGINT> cells fully inside the geometry (product h3_polyfillash3).
+                     VERIFY exact product function name at integration time.
+        holes_cover: ARRAY<BIGINT> cells overlapping the holes (may be empty).
+        holes_core:  ARRAY<BIGINT> cells fully inside the holes (may be empty).
+        k:           Ring distance (int >= 0).
+        mode:        Dilation mode (default "boundary-out"); one of _dilate.MODES.
+
+    Returns:
+        sorted list of int cell ids, or None on NULL/error.
+    """
+    if cover is None or k is None:
+        return None
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+    try:
+        return sorted(
+            _h3mod.geom_expand_cells(
+                "ring",
+                int(k),
+                mode or "boundary-out",
+                cover=cover or [],
+                core=core or [],
+                holes_cover=holes_cover or [],
+                holes_core=holes_core or [],
+            )
+        )
+    except ValueError:
+        raise  # re-raise param errors (bad mode propagated from engine)
+    except Exception:
+        return None  # bad cell ids DATA -> degrade to NULL (matches heavy)
+
+
+def _h3_geomkloop(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+    """Array-expansion UDF: geometry-aware h3 k-loop (hollow shell) from precomputed cell arrays.
+
+    Args: same as _h3_geomkring. Returns sorted list at exactly k steps.
+    """
+    if cover is None or k is None:
+        return None
+    _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+    try:
+        return sorted(
+            _h3mod.geom_expand_cells(
+                "loop",
+                int(k),
+                mode or "boundary-out",
+                cover=cover or [],
+                core=core or [],
+                holes_cover=holes_cover or [],
+                holes_core=holes_core or [],
+            )
+        )
+    except ValueError:
+        raise  # re-raise param errors
+    except Exception:
+        return None  # bad cell ids DATA -> degrade to NULL
+
+
+@udtf(returnType="cellid: bigint")
+class _H3GeomKRingExplode:
+    """SQL-LATERAL UDTF: geometry-aware h3 k-ring, one row per cell id."""
+
+    def eval(self, cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+        if cover is None or k is None:
+            return
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+        try:
+            for c in sorted(
+                _h3mod.geom_expand_cells(
+                    "ring",
+                    int(k),
+                    mode or "boundary-out",
+                    cover=cover or [],
+                    core=core or [],
+                    holes_cover=holes_cover or [],
+                    holes_core=holes_core or [],
+                )
+            ):
+                yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
+        except Exception:
+            return  # bad cell ids DATA -> zero rows
+
+
+@udtf(returnType="cellid: bigint")
+class _H3GeomKLoopExplode:
+    """SQL-LATERAL UDTF: geometry-aware h3 k-loop, one row per cell id."""
+
+    def eval(self, cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+        if cover is None or k is None:
+            return
+        _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
+        try:
+            for c in sorted(
+                _h3mod.geom_expand_cells(
+                    "loop",
+                    int(k),
+                    mode or "boundary-out",
+                    cover=cover or [],
+                    core=core or [],
+                    holes_cover=holes_cover or [],
+                    holes_core=holes_core or [],
+                )
+            ):
+                yield (c,)
+        except ValueError:
+            raise  # re-raise param errors
+        except Exception:
+            return  # bad cell ids DATA -> zero rows
+
+
 def _registrar_groups() -> List[_register.Group]:
     quadbin = {
         "gbx_quadbin_pointascell": lambda s: s.udf.register(
@@ -1224,6 +1360,22 @@ def _registrar_groups() -> List[_register.Group]:
     h3 = {
         "gbx_h3_cellfill": lambda s: s.udf.register(
             "gbx_h3_cellfill", _h3_cellfill_agg_udf
+        ),
+        # H3 geometry-aware kring/kloop (light-only PySpark composition).
+        # The UDF receives pre-computed cover/core cell arrays from product
+        # h3_coverash3/h3_polyfillash3 SQL functions (columnar geometry work).
+        # VERIFY exact product function names at integration time.
+        "gbx_h3_geomkring": lambda s: s.udf.register(
+            "gbx_h3_geomkring", _h3_geomkring, ArrayType(LongType())
+        ),
+        "gbx_h3_geomkloop": lambda s: s.udf.register(
+            "gbx_h3_geomkloop", _h3_geomkloop, ArrayType(LongType())
+        ),
+        "gbx_h3_geomkringexplode": lambda s: s.udtf.register(
+            "gbx_h3_geomkringexplode", _H3GeomKRingExplode
+        ),
+        "gbx_h3_geomkloopexplode": lambda s: s.udtf.register(
+            "gbx_h3_geomkloopexplode", _H3GeomKLoopExplode
         ),
     }
     return [
@@ -1788,4 +1940,90 @@ def custom_cellfill(
         _col(k),
         _method,
         _col(power),
+    )
+
+
+# --- H3 geometry-aware kring/kloop Column wrappers --------------------------
+# These wrappers accept the pre-computed cover/core cell arrays from product
+# h3_* SQL functions (columnar). For the full PySpark composition (from a raw
+# geometry column), use gridx.h3.functions.geomkring/geomkloop which wire
+# the product h3_coverash3/h3_polyfillash3 calls automatically.
+# VERIFY exact product function names at integration time.
+
+
+def h3_geomkring(
+    cover: ColLike,
+    core: ColLike,
+    holes_cover: ColLike,
+    holes_core: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """ARRAY<BIGINT> h3 geometry-aware k-ring from pre-computed cover/core arrays.
+
+    cover/core/holes_cover/holes_core are ARRAY<BIGINT> columns of h3 cell ids
+    (from product h3_coverash3/h3_polyfillash3 — VERIFY names at integration).
+    """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_h3_geomkring",
+        _col(cover),
+        _col(core),
+        _col(holes_cover),
+        _col(holes_core),
+        _col(k),
+        mode_arg,
+    )
+
+
+def h3_geomkloop(
+    cover: ColLike,
+    core: ColLike,
+    holes_cover: ColLike,
+    holes_core: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """ARRAY<BIGINT> h3 geometry-aware k-loop (hollow shell) from pre-computed arrays.
+
+    See :func:`h3_geomkring`. Returns cells at EXACTLY k steps.
+    """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_h3_geomkloop",
+        _col(cover),
+        _col(core),
+        _col(holes_cover),
+        _col(holes_core),
+        _col(k),
+        mode_arg,
+    )
+
+
+# The two *explode functions are SQL-LATERAL-only table functions in the light
+# tier — they have no Python DataFrame Column form (unlike the heavy tier).
+
+_H3_EXPLODE_HINT = (
+    "Light h3 {name} is a streaming table function (registered UDTF {udtf}): it "
+    "emits one row per cell with no array materialized, so it has no pyspark "
+    "Column form by design. Invoke via SQL LATERAL, e.g. "
+    "SELECT t.* FROM <df>, LATERAL {udtf}(...) t  (or spark.sql(...))."
+)
+
+
+def h3_geomkringexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_h3_geomkringexplode(cover, core, holes_cover, holes_core, k). No Column form."""
+    raise NotImplementedError(
+        _H3_EXPLODE_HINT.format(
+            name="h3_geomkringexplode", udtf="gbx_h3_geomkringexplode"
+        )
+    )
+
+
+def h3_geomkloopexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_h3_geomkloopexplode(cover, core, holes_cover, holes_core, k). No Column form."""
+    raise NotImplementedError(
+        _H3_EXPLODE_HINT.format(
+            name="h3_geomkloopexplode", udtf="gbx_h3_geomkloopexplode"
+        )
     )
