@@ -506,6 +506,52 @@ def test_bng_geomkring_wkt(spark, bng_registered):
     assert len(row["geomkring"]) > 0
 
 
+def test_bng_geomkring_mode_string(spark, bng_registered):
+    """bng_geomkring accepts a bare string mode (auto-promoted to literal, not column ref)."""
+    polygon_wkt = (
+        "POLYGON ((530000 180000, 530100 180000, 530100 180100, 530000 180100, 530000 180000))"
+    )
+    for mode in ("boundary-out", "boundary-in"):
+        col = bng_registered.bng_geomkring(f.lit(polygon_wkt), f.lit(1), f.lit(1), mode)
+        assert hasattr(col, "_jc"), f"bng_geomkring(mode={mode!r}) did not return a Column"
+        row = spark.range(1).select(col.alias("r")).collect()[0]
+        assert row["r"] is not None, f"bng_geomkring(mode={mode!r}) returned null"
+
+
+def test_bng_geomkloop_mode_string(spark, bng_registered):
+    """bng_geomkloop accepts a bare string mode (auto-promoted to literal, not column ref)."""
+    polygon_wkt = (
+        "POLYGON ((530000 180000, 530100 180000, 530100 180100, 530000 180100, 530000 180000))"
+    )
+    for mode in ("boundary-out", "boundary-in"):
+        col = bng_registered.bng_geomkloop(f.lit(polygon_wkt), f.lit(1), f.lit(1), mode)
+        assert hasattr(col, "_jc"), f"bng_geomkloop(mode={mode!r}) did not return a Column"
+        row = spark.range(1).select(col.alias("r")).collect()[0]
+        assert row["r"] is not None, f"bng_geomkloop(mode={mode!r}) returned null"
+
+
+def test_bng_geomkringexplode_mode_column_builds(spark, bng_registered):
+    """bng_geomkringexplode with a mode string builds a Column without raising."""
+    polygon_wkt = (
+        "POLYGON ((530000 180000, 530100 180000, 530100 180100, 530000 180100, 530000 180000))"
+    )
+    col = bng_registered.bng_geomkringexplode(
+        f.lit(polygon_wkt), f.lit(1), f.lit(1), "boundary-out"
+    )
+    assert hasattr(col, "_jc"), "bng_geomkringexplode(mode=...) did not return a Column"
+
+
+def test_bng_geomkloopexplode_mode_column_builds(spark, bng_registered):
+    """bng_geomkloopexplode with a mode string builds a Column without raising."""
+    polygon_wkt = (
+        "POLYGON ((530000 180000, 530100 180000, 530100 180100, 530000 180100, 530000 180000))"
+    )
+    col = bng_registered.bng_geomkloopexplode(
+        f.lit(polygon_wkt), f.lit(1), f.lit(1), "boundary-out"
+    )
+    assert hasattr(col, "_jc"), "bng_geomkloopexplode(mode=...) did not return a Column"
+
+
 # ====== Aggregator Functions ======
 
 
