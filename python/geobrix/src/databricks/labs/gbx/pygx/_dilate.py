@@ -109,6 +109,8 @@ def mode_setup(mode, cls):
 
 def geom_expand(kind, k, mode, cls, neighbors):
     """kind='ring' (filled <=k) or 'loop' (shell at exactly k). k>=0."""
+    if kind not in ("ring", "loop"):
+        raise ValueError(f"kind must be 'ring' or 'loop'; got {kind!r}")
     frontier0, visited0, admit, k0 = mode_setup(mode, cls)
     if k == 0:
         return set(k0)

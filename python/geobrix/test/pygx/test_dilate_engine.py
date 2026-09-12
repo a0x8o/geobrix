@@ -34,13 +34,6 @@ def test_admit_prunes_frontier_and_bounds_walk():
     shells = dict(itertools.islice(D.dilate(seed, seed, _neighbors, admit), 5))
     assert all(_xy(c)[0] >= 5 for shell in shells.values() for c in shell)
 
-MODE_MATRIX = [  # (mode, kind, k, expected_predicate_on_result)
-    ("boundary-out", "ring", 1, "filled_includes_core"),
-    ("boundary-in", "ring", 1, "inside_only"),
-    ("hole-in", "ring", 2, "inside_hole_only"),
-    ("hole-out-ignore-geom", "ring", 1, "may_exceed_outer"),
-]
-
 @pytest.fixture
 def holed_cls():
     # A ~10x10 solid box with a ~3x3 hole at half-integer coords so cells straddle
@@ -95,14 +88,34 @@ def test_loop_is_ring_difference(holed_cls):
 def test_k0_loop_is_covering_set(holed_cls):
     assert D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors) == holed_cls.p_cover
 
+def test_boundary_in_ignore_holes_crosses_hole_interior(holed_cls):
+    # boundary-in-ignore-holes admits s_core (solid + hole interior);
+    # boundary-in admits p_core only (solid, hole excluded).
+    k = 3
+    r_ign = D.geom_expand("ring", k, "boundary-in-ignore-holes", holed_cls, _neighbors)
+    r_std = D.geom_expand("ring", k, "boundary-in", holed_cls, _neighbors)
+    # ignore-holes reaches hole-region cells (s_core cells not in p_core)
+    hole_region = holed_cls.s_core - holed_cls.p_core
+    assert r_ign & hole_region              # some hole-region cells reached
+    assert r_std.isdisjoint(holed_cls.h_core)  # boundary-in respects the hole
+    assert r_std <= r_ign                   # ignoring holes only ever adds cells
+    assert r_ign > r_std                    # strictly more cells when hole reachable
+
 def test_no_holes_hole_modes_return_empty():
     solid = box(0, 0, 10, 10)
     def polyfill_fn(g, res): return [_cid(x, y) for x in range(-1, 12) for y in range(-1, 12)]
     def cell_geom_fn(c):
         x, y = _xy(c); return box(x, y, x+1, y+1)
     cls = D.classify(solid, 1, polyfill_fn, cell_geom_fn)
+    # all three hole modes share the empty-frontier path when H is None
     assert D.geom_expand("ring", 3, "hole-in", cls, _neighbors) == set()
+    assert D.geom_expand("ring", 3, "hole-out", cls, _neighbors) == set()
+    assert D.geom_expand("ring", 3, "hole-out-ignore-geom", cls, _neighbors) == set()
 
 def test_bad_mode_raises():
     with pytest.raises(ValueError):
         D.mode_setup("sideways", D.Classification(set(),set(),set(),set(),set(),set()))
+
+def test_bad_kind_raises(holed_cls):
+    with pytest.raises(ValueError):
+        D.geom_expand("disk", 1, "boundary-out", holed_cls, _neighbors)
