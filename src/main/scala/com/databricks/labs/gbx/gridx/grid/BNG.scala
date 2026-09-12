@@ -678,6 +678,20 @@ object BNG extends GridSystem {
         id.toLong
     }
 
+    /** Set of cell IDs forming the k-ring around the geometry at the given resolution,
+      * using the given dilation mode. boundary-out delegates to the proven flatMap
+      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
+    override def geometryKRing(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        if (mode == GeomDilation.DEFAULT_MODE) geometryKRing(geometry, resolution, k)
+        else GeomDilation.expand("ring", k, mode, BNG, geometry, resolution)
+
+    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution,
+      * using the given dilation mode. boundary-out delegates to the proven flatMap
+      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
+    override def geometryKLoop(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        if (mode == GeomDilation.DEFAULT_MODE) geometryKLoop(geometry, resolution, k)
+        else GeomDilation.expand("loop", k, mode, BNG, geometry, resolution)
+
     /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution. */
     def geometryKLoop(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
         // TODO: MOVE TO ITERATOR

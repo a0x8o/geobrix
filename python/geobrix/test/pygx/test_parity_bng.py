@@ -612,3 +612,76 @@ def test_bng_pointascell_all_four_encodings(spark_with_jar):
     assert (
         light["a"] == heavy["a"]
     ), f"pointascell cross-tier mismatch: light={light['a']} heavy={heavy['a']}"
+
+
+# --- geomkring / geomkloop mode parity (all 6 modes) -----------------------------------------
+
+# Holed BNG polygon: 6 km x 6 km outer ring with a 2 km x 2 km inner hole,
+# centred around (531000, 181000) in EPSG:27700. Exercises hole-in/hole-out modes.
+_HOLED_WKT = (
+    "POLYGON("
+    "(528000 178000,528000 184000,534000 184000,534000 178000,528000 178000),"
+    "(530000 180000,530000 182000,532000 182000,532000 180000,530000 180000))"
+)
+
+_DILATION_MODES = [
+    "boundary-out",
+    "boundary-in",
+    "boundary-in-ignore-holes",
+    "hole-in",
+    "hole-out",
+    "hole-out-ignore-geom",
+]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("mode", _DILATION_MODES)
+def test_bng_geomkring_geomkloop_mode_parity(spark_with_jar, mode):
+    """Light (_bng pure-Python) vs heavy (gbx_bng_geomkring/kloop) for all 6 dilation
+    modes on a holed BNG polygon.
+
+    boundary-out uses the legacy BNG algorithm on both tiers (expected identical).
+    The other 5 modes use GeomDilation.expand on both tiers. All must produce the
+    same sorted BNG cell-id list.
+    """
+    from pyspark.sql import functions as f
+
+    from databricks.labs.gbx.gridx.bng import functions as hx
+    from databricks.labs.gbx.pygx import _bng
+    from shapely import from_wkt as _swkt
+
+    spark = spark_with_jar
+
+    holed_geom = _swkt(_HOLED_WKT)
+    holed_wkb = bytearray(_to_wkb(holed_geom))
+    _res_local = 3  # 1 km
+
+    # --- LIGHT: call _bng directly (pure Python, no Spark) ---
+    light_ring = sorted(_bng.geometry_k_ring_str(holed_geom, _res_local, 1, mode))
+    light_loop = sorted(_bng.geometry_k_loop_str(holed_geom, _res_local, 1, mode))
+
+    # --- HEAVY: register heavy and collect via SQL ---
+    hx.register(spark)
+    df_h = spark.createDataFrame([(holed_wkb, _res_local)], "geom binary, res int")
+
+    def arr(col_expr):
+        row = df_h.select(col_expr.alias("a")).collect()[0]["a"]
+        return sorted(row) if row else []
+
+    heavy_ring = arr(
+        f.call_function("gbx_bng_geomkring", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode))
+    )
+    heavy_loop = arr(
+        f.call_function("gbx_bng_geomkloop", f.col("geom"), f.col("res"), f.lit(1), f.lit(mode))
+    )
+
+    assert light_ring == heavy_ring, (
+        f"geomkring mode={mode!r} mismatch:\n"
+        f"  light_only={sorted(set(light_ring) - set(heavy_ring))}\n"
+        f"  heavy_only={sorted(set(heavy_ring) - set(light_ring))}"
+    )
+    assert light_loop == heavy_loop, (
+        f"geomkloop mode={mode!r} mismatch:\n"
+        f"  light_only={sorted(set(light_loop) - set(heavy_loop))}\n"
+        f"  heavy_only={sorted(set(heavy_loop) - set(light_loop))}"
+    )

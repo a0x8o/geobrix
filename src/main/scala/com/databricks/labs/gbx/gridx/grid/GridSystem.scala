@@ -47,6 +47,22 @@ trait GridSystem extends Serializable {
   def renderCellId(cellID: Long): Any = cellID
 
   /**
+   * Geometry-aware k-ring with dilation mode. Default implementation routes through
+   * [[GeomDilation.expand]] so quadbin and custom grids get this for free. BNG overrides
+   * with an option-B split: boundary-out delegates to its proven flatMap algorithm,
+   * the other 5 modes use the engine.
+   */
+  def geometryKRing(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+    GeomDilation.expand("ring", k, mode, this, geom, resolution)
+
+  /**
+   * Geometry-aware k-loop with dilation mode. Default implementation routes through
+   * [[GeomDilation.expand]] so quadbin and custom grids get this for free.
+   */
+  def geometryKLoop(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+    GeomDilation.expand("loop", k, mode, this, geom, resolution)
+
+  /**
    * True iff this grid's point-partition (`pointToCellID`) coincides EXACTLY with the polygon
    * `cellIdToGeometry` returns — so a pixel whose four corners all bin to one cell provably lies
    * wholly inside that (convex) cell polygon. When true, the covering raster→grid path may assign

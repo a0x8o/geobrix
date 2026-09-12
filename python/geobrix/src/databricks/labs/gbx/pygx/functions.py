@@ -1231,8 +1231,11 @@ def bng_geomkring(
     ``_dilate.MODES``. ``"boundary-out"`` retains the existing get_chips path
     (byte-identical with the heavy tier); the 5 other modes use the engine.
     """
+    # mode is always a string VALUE (never a column name); use f.lit so Spark
+    # does not misinterpret it as an unresolved column reference.
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     return f.call_function(
-        "gbx_bng_geomkring", _col(geom), _col(resolution), _col(k), _col(mode)
+        "gbx_bng_geomkring", _col(geom), _col(resolution), _col(k), mode_arg
     )
 
 
@@ -1243,8 +1246,9 @@ def bng_geomkloop(
 
     mode: dilation mode (default ``"boundary-out"``). See :func:`bng_geomkring`.
     """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     return f.call_function(
-        "gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k), _col(mode)
+        "gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k), mode_arg
     )
 
 
