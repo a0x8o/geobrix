@@ -24,7 +24,7 @@ GeoBrix is [supported on DBR 17.3 LTS, 18 LTS, and — for the lightweight tier 
 - **[FILE-on ≈ FILE-off on dedicated clusters](#file-capability-cog-multiwindow)** — FILE is governed file access, not a per-tile read optimization. Grouping (open amortization) is the performance lever. Serverless: the FILE-column Delta-table read path is **~16–17× faster** than a directory scan (~2 s vs. ~30 s per 1,000 tiles, verified on environment v6); the directory `raster_gbx` DataSource path is slower there — see [capability tiers](../readers-writers#capability-tiers) and [Serverless & Memory](../serverless-and-memory).
 - **[Band math: 60–130× lightweight win](#pure-core)** — spectral indices run 60–130× faster on the lightweight tier (NumPy in-process vs. heavyweight subprocess `gdal_calc` per call). This is the single largest advantage and sustains at scale.
 - **[Lightweight at parity for aggregators and geometry](#results)** — `st_asmvt` MVT encoding (~6% gap), `pmtiles_agg` archive folding (~7% gap), and quadbin/BNG grid math (±20% variance) all run within or very near parity on a cluster, with decoded output matching exactly.
-- **[Geometry-aware expansion scales linearly](#results)** — `geomkring`/`geomkloop` grow grid rings from a geometry: on Serverless, 10,000 notional building footprints expand to h3 res-10 rings (`k=10`) in ~6.3 s (~1,600 buildings/s), and 100,000 footprints reach 34.6M cells in ~47 s. h3 leads the four grids; see the Grid tab.
+- **[Geometry-aware expansion scales linearly](#results)** — `geomkring`/`geomkloop` grow grid rings from a geometry: on Serverless, 10,000 notional building footprints expand to h3 res-10 rings (`k=10`) in ~7.9 s (~1,260 buildings/s), and 100,000 footprints reach 35.7M cells in ~72 s. h3 leads the four grids; see the Grid tab.
 
 ## Measurement modes
 
@@ -1195,43 +1195,43 @@ The quadbin and BNG functions run at or faster than parity: cell-space geometry 
 
 The geometry-aware expansion functions grow grid rings outward from a *geometry's* covering set (not a single cell). This is a **throughput/scaling** benchmark — how expansion cost grows with the number of input geometries `N` and the ring distance `k` — rather than a light-vs-heavy parity table. Inputs are synthetic **notional building footprints** across five shapes (rectangle, L, U, courtyard-with-hole, irregular) and three sizes (~15 / 50 / 200 m), scattered over a city-scale extent so each building lands on a distinct cell set.
 
-> **Environment:** Databricks **Serverless** (environment 6) · `light_env6` wheel · `geomkring`/`geomkloop`, `boundary-out` · best-of-3 warm timing of a full distributed aggregate (`sum(size(cells))` over all rows). Target cell size ≈ 65 m: **h3** res 10, **quadbin** res 19, **custom** 65 m root cell, **BNG** res 4 (100 m — the nearest discrete BNG step). h3 and quadbin run on WGS84; custom and BNG on EPSG:27700. Footprints come from the `bench/buildings.py` generator. Cell counts are the total emitted across all input geometries.
+> **Environment:** Databricks **Serverless** (environment 6) · `light_env6` wheel · `geomkring`/`geomkloop`, `boundary-out` · best-of-3 warm timing of a full distributed aggregate (`sum(size(cells))` over all rows). Target cell size ≈ 65 m: **h3** res 10, **quadbin** res 19, **custom** 65 m root cell, **BNG** res 4 (100 m — the nearest discrete BNG step). h3 and quadbin run on WGS84; custom and BNG on EPSG:27700. Footprints come from the `bench/buildings.py` generator. Cell counts are the total emitted across all input geometries. (Serverless wall-clock carries run-to-run variance from autoscaling — read the ordering and magnitudes, not the last digit.)
 
-**Headline** — 10,000 building footprints, h3 res 10, `geomkring` `boundary-out`, `k=10`: **≈ 6.3 s** producing **3,470,960 cells** — about **1,600 buildings/s** and **550k cells/s** on Serverless.
+**Headline** — 10,000 building footprints, h3 res 10, `geomkring` `boundary-out`, `k=10`: **≈ 7.9 s** producing **3,573,051 cells** — about **1,260 buildings/s** and **450k cells/s** on Serverless.
 
 **Across grids** (10,000 buildings, `k=10`, `geomkring`):
 
 | Grid | Resolution (≈65 m cell) | Wall (s) | Cells | Buildings/s | Cells/s |
 |---|---|---|---|---|---|
-| h3 | res 10 | **6.3** | 3,470,960 | 1,589 | 551k |
-| custom | 65 m root (EPSG:27700) | 13.2 | 3,651,174 | 758 | 277k |
-| quadbin | res 19 | 41.6 | 4,951,123 | 240 | 119k |
-| bng | res 4 (100 m) | 53.2 | 4,762,643 | 188 | 90k |
+| h3 | res 10 | **7.9** | 3,573,051 | 1,264 | 452k |
+| custom | 65 m root (EPSG:27700) | 14.6 | 3,651,174 | 685 | 250k |
+| quadbin | res 19 | 41.5 | 4,951,123 | 241 | 119k |
+| bng | res 4 (100 m) | 52.3 | 4,762,643 | 191 | 91k |
 
-h3 is fastest — its neighbour step is pure integer index math (`h3` grid-disk topology) and the geometry work is offloaded to Databricks-native `h3_coverash3`/`h3_polyfillash3`. custom is a close second (a pure-Python lattice walk). quadbin (web-mercator `(z,x,y)` math + EWKB) and BNG (STRING cell ids + chip geometry) carry more per-cell work; BNG's res 4 also emits coarser 100 m cells. Cell sizes and CRS differ per grid, so read the ordering rather than a direct cell-for-cell comparison.
+h3 is fastest — its polyfill uses the h3 library's performant `polygon_to_cells_experimental` (C-backed) and its neighbour step is pure integer index math (`grid_disk`). custom is next (a pure-Python lattice walk). quadbin (web-mercator `(z,x,y)` math + EWKB) and BNG (STRING cell ids + chip geometry) carry more per-cell work; BNG's res 4 also emits coarser 100 m cells. Cell sizes and CRS differ per grid, so read the ordering rather than a direct cell-for-cell comparison.
 
 **Ring distance `k`** (h3, 10,000 buildings; `geomkring` filled disk vs `geomkloop` hollow shell):
 
 | k | `geomkring` (s) | Ring cells | `geomkloop` (s) | Loop cells |
 |---|---|---|---|---|
-| 1 | 1.65 | 108,554 | 1.63 | 79,803 |
-| 5 | 3.25 | 1,019,705 | 3.02 | 315,327 |
-| 10 | 6.3 | 3,470,960 | 6.01 | 606,867 |
+| 1 | 3.03 | 113,181 | 3.02 | 84,430 |
+| 5 | 4.25 | 1,050,901 | 4.48 | 324,430 |
+| 10 | 7.9 | 3,573,051 | 7.88 | 624,430 |
 
-The filled ring's cell count grows ~`k²` (disk area) while the hollow loop grows ~`k` (perimeter), so at `k=10` the loop emits ~6× fewer cells; wall-clock tracks the covering-set frontier work, which is similar for both.
+The filled ring's cell count grows ~`k²` (disk area) while the hollow loop grows ~`k` (perimeter), so at `k=10` the loop emits ~6× fewer cells. Wall-clock tracks the covering-set frontier work (similar for ring and loop) plus a per-building polyfill cost that dominates at small `k` — hence `k=1` and `k=5` are closer together than the cell counts suggest.
 
 **Number of geometries `N`** (h3 res 10, `geomkring` `boundary-out`, `k=10`):
 
 | Buildings (N) | Wall (s) | Cells | Buildings/s |
 |---|---|---|---|
-| 100 | 0.99 | 35,053 | 101 |
-| 1,000 | 2.08 | 349,332 | 481 |
-| 10,000 | 6.3 | 3,470,960 | 1,589 |
-| 100,000 | 47.4 | 34,638,156 | 2,111 |
+| 100 | 0.94 | 35,774 | 106 |
+| 1,000 | 2.63 | 357,031 | 380 |
+| 10,000 | 7.9 | 3,573,051 | 1,264 |
+| 100,000 | 71.5 | 35,733,305 | 1,400 |
 
-Throughput scales ~linearly at volume: **100,000 building footprints expand to 34.6M cells in ≈ 47 s**. Buildings/s climbs with `N` as the fixed job overhead amortizes, plateauing around 2,000 buildings/s.
+Throughput scales ~linearly at volume: **100,000 building footprints expand to 35.7M cells in ≈ 72 s**. Buildings/s climbs with `N` as the fixed job overhead amortizes, plateauing around 1,400 buildings/s.
 
-**Hole modes at scale** — on courtyard footprints (buildings with an interior hole), `hole-in` `k=5` over 1,000 buildings emits 1,768 cells, expanding inward from each hole's edge — the hole-fill traversals work on holed geometries at scale, not just in unit tests.
+**Hole modes at scale** — on courtyard footprints (buildings with an interior hole), `hole-in` `k=5` over 1,000 buildings emits 1,796 cells, expanding inward from each hole's edge — the hole-fill traversals work on holed geometries at scale, not just in unit tests.
 
 </TabItem>
 

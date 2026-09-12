@@ -1193,57 +1193,39 @@ custom_cellfill_sql_example_output = """
 # ============================================================================
 # H3 Geometry-Aware K-Ring/K-Loop Functions (light-only)
 #
-# NOTE: gbx_h3_geomkring / gbx_h3_geomkloop take pre-computed cover/core cell
-# arrays, which are produced on Databricks by product h3_coverash3 /
-# h3_polyfillash3. The SQL-level UDFs are registered by the pygx light tier and
-# work with any ARRAY<BIGINT> inputs; the geometry-to-cell decomposition requires
-# Databricks product H3 functions at runtime.
-#
-# These examples are structured for function-info generation and docs rendering.
-# The UDFs can be tested locally with literal ARRAY<BIGINT> inputs (no product
-# h3_* calls needed for the dilation step itself).
+# gbx_h3_geomkring / gbx_h3_geomkloop take a geometry directly (WKB BINARY
+# or WKT STRING) and compute the polyfill + dilation entirely via the h3
+# library (polygon_to_cells_experimental + grid_disk).  No Databricks product
+# functions are required — these run locally and on any Databricks cluster.
 # ============================================================================
 
 
 def h3_geomkring_sql_example():
-    """Geometry-aware H3 k-ring from pre-computed cover/core cell arrays.
+    """Geometry-aware H3 k-ring from a geometry (WKB BINARY or WKT STRING).
 
     Returns ARRAY<BIGINT> — all H3 cells within k dilation steps of the geometry's
-    covering set.  The cover/core arrays are produced on Databricks by product
-    h3_coverash3 / h3_polyfillash3; mode controls boundary classification.
-
-    On Databricks use the Python API geomkring() from gridx.h3.functions which
-    composes the product h3_* calls automatically.
+    covering set.  Self-contained: the h3 library performs both the polyfill
+    (polygon_to_cells_experimental) and the neighbour walk (grid_disk), so no
+    Databricks product functions are required.  mode controls boundary classification.
     """
     return """
 SELECT gbx_h3_geomkring(
-  h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
-  h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
-  array(),
-  array(),
-  array(),
-  1,
-  'boundary-out'
+  'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))',
+  9, 1, 'boundary-out'
 ) AS kring;
 """
 
 
 def h3_geomkloop_sql_example():
-    """Geometry-aware H3 k-loop (hollow shell) from pre-computed cover/core cell arrays.
+    """Geometry-aware H3 k-loop (hollow shell) from a geometry (WKB BINARY or WKT STRING).
 
     Returns ARRAY<BIGINT> — H3 cells at exactly k dilation steps from the geometry's
-    covering set (hollow ring, no interior cells).  The cover/core arrays are produced
-    on Databricks by product h3_coverash3 / h3_polyfillash3.
+    covering set (hollow ring, no interior cells).  Self-contained via the h3 library.
     """
     return """
 SELECT gbx_h3_geomkloop(
-  h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
-  h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
-  array(),
-  array(),
-  array(),
-  1,
-  'boundary-out'
+  'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))',
+  9, 1, 'boundary-out'
 ) AS kloop;
 """
 
@@ -1251,34 +1233,113 @@ SELECT gbx_h3_geomkloop(
 def h3_geomkringexplode_sql_example():
     """Explode geometry-aware H3 k-ring into one row per cell via SQL LATERAL.
 
-    Each row yields one BIGINT H3 cell id.  The cover/core arrays are produced
-    on Databricks by product h3_coverash3 / h3_polyfillash3.  SQL LATERAL is the
-    only invocation path for this streaming UDTF (no Python Column form).
+    Each row yields one BIGINT H3 cell id.  SQL LATERAL is the only invocation
+    path for this streaming UDTF (no Python Column form).  Self-contained:
+    no Databricks product functions required.
     """
     return """
 SELECT t.*
-FROM (
-  SELECT
-    h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS cover,
-    h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS core
-) src,
-LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t;
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))' AS geom) src,
+LATERAL gbx_h3_geomkringexplode(src.geom, 9, 1, 'boundary-out') t;
 """
 
 
 def h3_geomkloopexplode_sql_example():
     """Explode geometry-aware H3 k-loop (hollow ring) into one row per cell via SQL LATERAL.
 
-    Each row yields one BIGINT H3 cell id at exactly k steps.  The cover/core arrays
-    are produced on Databricks by product h3_coverash3 / h3_polyfillash3.  SQL LATERAL
-    is the only invocation path for this streaming UDTF (no Python Column form).
+    Each row yields one BIGINT H3 cell id at exactly k steps.  SQL LATERAL is the
+    only invocation path for this streaming UDTF (no Python Column form).
     """
     return """
 SELECT t.*
-FROM (
-  SELECT
-    h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS cover,
-    h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS core
-) src,
-LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t;
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))' AS geom) src,
+LATERAL gbx_h3_geomkloopexplode(src.geom, 9, 1, 'boundary-out') t;
+"""
+
+
+# ---------------------------------------------------------------------------
+# Expected-output panels for the geometry-aware explode + quadbin/h3 ring/loop
+# examples (illustrative; product h3_*/quadbin cell math is data-dependent).
+# ---------------------------------------------------------------------------
+quadbin_geomkring_sql_example_output = """
++----------------------------------------+
+|kring                                   |
++----------------------------------------+
+|[..., (cells within k=1 ring at res 12)]|
++----------------------------------------+
+... (ARRAY<BIGINT> — quadbin covering set plus one outer ring)
+"""
+quadbin_geomkloop_sql_example_output = """
++--------------------------------------------+
+|kloop                                       |
++--------------------------------------------+
+|[..., (outer ring cells, polyfill excluded)]|
++--------------------------------------------+
+... (ARRAY<BIGINT> — hollow quadbin outer ring at k=1)
+"""
+h3_geomkring_sql_example_output = """
++------------------------------------+
+|kring                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — H3 res-9 covering cells of NYC box expanded by k=1 ring)
+"""
+h3_geomkloop_sql_example_output = """
++------------------------------------+
+|kloop                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — outer hollow ring at k=1, interior covering cells excluded)
+"""
+quadbin_geomkringexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 ring of the geometry)
+"""
+quadbin_geomkloopexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 hollow outer ring)
+"""
+h3_geomkringexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one row per BIGINT H3 cell ID in the k=1 ring around the NYC polygon at res 9)
+"""
+h3_geomkloopexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one row per BIGINT H3 cell ID in the k=1 hollow outer ring around the NYC polygon)
+"""
+bng_geomkringexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(STRING)|
++-----------+
+... (one row per STRING BNG cell ID in the k=1 ring of the geometry)
+"""
+bng_geomkloopexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(STRING)|
++-----------+
+... (one row per STRING BNG cell ID in the k=1 hollow outer ring)
 """

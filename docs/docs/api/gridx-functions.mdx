@@ -1895,15 +1895,17 @@ Heavyweight `gbx_custom_cellfill` returns `ARRAY<STRUCT<cellid BIGINT, value DOU
 
 <Tier light/>
 
-H3 geometry-aware kring/kloop functions are **light-only** — there is no heavy (Scala) implementation. They are designed for Serverless compute on Databricks, where the geometry-to-cell decomposition is done by Databricks product H3 functions (`h3_coverash3`, `h3_polyfillash3`). The topological expansion step (the dilation engine) runs as a pure-Python UDF registered by the `pygx` light tier.
+H3 geometry-aware kring/kloop are **light-tier only** (no Scala/heavy implementation), but they work exactly like the other grids: a single **geometry-taking** function does the whole job in pure Python via the `h3` library — the performant `polygon_to_cells_experimental` polyfill for the covering set and `grid_disk` for the neighbour walk. There is **no dependency on Databricks product functions**, so they run anywhere (local, Serverless, and classic clusters) and are called identically from SQL and PySpark:
 
-:::note Architecture
-The Python column API (`from databricks.labs.gbx.gridx.h3.functions import geomkring`) composes the two steps automatically: it calls the product H3 functions columnar to compute cover/core cell arrays, then passes those arrays to the `gbx_h3_geomkring` UDF. The SQL functions (`gbx_h3_geomkring` etc.) take the pre-computed arrays directly.
+```python
+from databricks.labs.gbx.pygx.functions import register
+from databricks.labs.gbx.gridx.h3.functions import geomkring
 
-For hole-reading modes the Python column API also extracts the geometry's holes columnar — `ST_Difference(ST_MakePolygon(ST_ExteriorRing(geom)), geom)` polyfilled by the product H3 functions — so the geometry input for those modes must be WKB `BINARY` (the canonical form); `'boundary-out'` and `'boundary-in'` additionally accept WKT `STRING`.
-:::
+register(spark)
+df.withColumn("kring", geomkring("geom_col", resolution=9, k=1))
+```
 
-**Dilation modes** work the same as for BNG/quadbin/custom, and all six operate on holed geometries: `'hole-in'`, `'hole-out'`, and `'hole-out-ignore-geom'` expand from the extracted holes; `'boundary-in-ignore-holes'` treats the polygon as solid, expanding inward across holes as if they were filled (the Python API polyfills the solid directly for an exact inward band).
+**Dilation modes** work the same as for BNG/quadbin/custom, and all six operate on holed geometries: `'hole-in'`, `'hole-out'`, and `'hole-out-ignore-geom'` expand from the geometry's holes; `'boundary-in-ignore-holes'` treats the polygon as solid, expanding inward across holes as if they were filled.
 
 ### h3_geomkring
 
@@ -1911,24 +1913,13 @@ For hole-reading modes the Python column API also extracts the geometry's holes 
 
 Geometry-aware H3 k-ring. Computes the covering set via product H3 functions then expands by `k` ring steps using H3 neighbour topology.
 
-**Signature:** `h3_geomkring(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
-
-**SQL surface (direct):** Takes pre-computed `ARRAY<BIGINT>` cover/core arrays.
-
-**Python API (recommended on Databricks):**
-```python
-from databricks.labs.gbx.gridx.h3.functions import geomkring
-df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
-```
+**Signature:** `h3_geomkring(geom, resolution, k, [mode])`
 
 **Parameters:**
-- `cover` — `ARRAY<BIGINT>` cells overlapping the geometry (from `h3_coverash3`)
-- `core` — `ARRAY<BIGINT>` cells fully inside the geometry (from `h3_polyfillash3`)
-- `holes_cover` — `ARRAY<BIGINT>` cells overlapping holes (empty array if no holes)
-- `holes_core` — `ARRAY<BIGINT>` cells inside holes (empty array if no holes)
-- `solid_core` — `ARRAY<BIGINT>` cells inside the solid (outer ring, holes filled); used only by `'boundary-in-ignore-holes'`, empty otherwise
-- `k` — Ring distance (0 = covering set only)
-- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`)
+- `geom` — geometry column (WKB `BINARY` or WKT `STRING`)
+- `resolution` — H3 resolution (`0`–`15`)
+- `k` — ring distance (`0` = covering set only)
+- `mode` *(optional)* — boundary classification mode (default `'boundary-out'`); one of `'boundary-out'`, `'boundary-in'`, `'boundary-in-ignore-holes'`, `'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`
 
 **Returns:**
 - `ARRAY<BIGINT>` of H3 cell IDs
@@ -1948,7 +1939,7 @@ df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
 
 Geometry-aware H3 k-loop (hollow ring at exactly `k` steps).
 
-**Signature:** `h3_geomkloop(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
+**Signature:** `h3_geomkloop(geom, resolution, k, [mode])`
 
 **Parameters:** Same as `h3_geomkring`.
 
@@ -1970,7 +1961,7 @@ Geometry-aware H3 k-loop (hollow ring at exactly `k` steps).
 
 Streaming UDTF version of `h3_geomkring` — one row per cell. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
 
-**Signature:** `h3_geomkringexplode(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
+**Signature:** `h3_geomkringexplode(geom, resolution, k, [mode])`
 
 **Parameters:** Same as `h3_geomkring`.
 
@@ -1992,7 +1983,7 @@ Streaming UDTF version of `h3_geomkring` — one row per cell. Invoke via SQL `L
 
 Streaming UDTF version of `h3_geomkloop` — one row per cell at exactly `k` steps. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
 
-**Signature:** `h3_geomkloopexplode(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
+**Signature:** `h3_geomkloopexplode(geom, resolution, k, [mode])`
 
 **Parameters:** Same as `h3_geomkloop`.
 

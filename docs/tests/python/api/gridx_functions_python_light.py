@@ -1734,105 +1734,107 @@ custom_geomkloopexplode_python_light_example_output = """
 # ---------------------------------------------------------------------------
 # H3 geometry-aware kring/kloop (light-only — no Scala/heavy equivalent)
 #
-# H3 geomk functions are light-only: the geometry-to-cell decomposition uses
-# Databricks product h3_coverash3 / h3_polyfillash3 (verified at integration).
-# The underlying dilation UDFs (gbx_h3_geomkring etc.) take pre-computed cell
-# arrays and run the shared dilation engine using h3.grid_disk for topology.
+# H3 geomk functions are geom-taking: the geometry-to-cell decomposition and
+# the dilation walk both use the h3 library (polygon_to_cells_experimental +
+# grid_disk), so they run anywhere (local + Databricks) with no dependency on
+# product h3_* functions.
 #
-# For local testing, the UDFs are called with literal cell arrays bypassing the
-# product h3_* calls.  Real on-Databricks usage goes through the Python API
-# (databricks.labs.gbx.gridx.h3.functions.geomkring) which composes the
-# product h3_* calls automatically.
+# The Python Column wrappers (gx.h3_geomkring / gx.h3_geomkloop) call the
+# registered gbx_h3_geomkring / gbx_h3_geomkloop UDFs with a geom column
+# exactly like the other grids.
 #
-# These examples use two known resolution-9 H3 cells to exercise the dilation
-# engine locally.
+# These examples pass a WKB geometry column built with shapely.
 # ---------------------------------------------------------------------------
+
+# NYC area box used as the example geometry for H3 geomk examples.
+_NYC_WKT_FOR_H3 = (
+    "POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))"
+)
 
 
 def h3_geomkring_python_light_example(spark):
-    """Geometry-aware H3 k-ring from pre-computed cover/core cell arrays (light pygx tier).
+    """Geometry-aware H3 k-ring from a WKB geometry column (light pygx tier).
 
-    Uses literal H3 resolution-9 cell arrays to demonstrate the dilation UDF
-    locally (bypasses product h3_coverash3 / h3_polyfillash3 which require
-    Databricks runtime).  The cover (cells overlapping the geometry) and core
-    (cells fully inside) are passed directly.  At k=1, the ring expands by one
-    step using H3 neighbour topology.  Returns ``ARRAY<BIGINT>``.
+    Creates a single-row DataFrame with the NYC box as WKB, then calls
+    ``gx.h3_geomkring`` to return the k=1 covering ring at H3 resolution 9.
+    Self-contained: no Databricks product functions required.
+    Returns ``ARRAY<BIGINT>``.
     """
     from pyspark.sql import functions as f  # noqa: PLC0415
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
     from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
 
-    gx.register(spark)
-    # Two known res-9 H3 cells (NYC area) used as cover/core arrays.
-    cover = [617733151020810239, 617733151021334527]
-    core = [617733151020810239]
-    result = spark.sql(
-        f"SELECT gbx_h3_geomkring("
-        f"  array({cover[0]}L, {cover[1]}L),"
-        f"  array({core[0]}L),"
-        f"  array(), array(), array(), 1, 'boundary-out'"
-        f") AS kring"
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    result = df.select(
+        gx.h3_geomkring(f.col("geom"), 9, 1).alias("kring")
     ).first()
     return result["kring"]
 
 
 h3_geomkring_python_light_example_output = """
-+-------------------------------+
-|kring                          |
-+-------------------------------+
-|[617733151020810239, ..., (...)]|
-+-------------------------------+
-... (ARRAY<BIGINT> — H3 res-9 cells within k=1 dilation of the cover/core input)
++------------------------------------+
+|kring                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — H3 res-9 k=1 covering ring of the NYC WKB geometry)
 """
 
 
 def h3_geomkloop_python_light_example(spark):
-    """Geometry-aware H3 k-loop (hollow ring) from pre-computed cell arrays (light pygx tier).
+    """Geometry-aware H3 k-loop (hollow shell) from a WKB geometry column (light pygx tier).
 
-    Uses literal H3 resolution-9 cell arrays.  At k=1, returns only the outer
-    shell cells at exactly one step from the covering set.  Returns ``ARRAY<BIGINT>``.
+    At k=1 returns only the outer shell cells at exactly one step from the
+    geometry's covering set.  Returns ``ARRAY<BIGINT>``.
     """
     from pyspark.sql import functions as f  # noqa: PLC0415
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
     from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
 
-    gx.register(spark)
-    cover = [617733151020810239, 617733151021334527]
-    core = [617733151020810239]
-    result = spark.sql(
-        f"SELECT gbx_h3_geomkloop("
-        f"  array({cover[0]}L, {cover[1]}L),"
-        f"  array({core[0]}L),"
-        f"  array(), array(), array(), 1, 'boundary-out'"
-        f") AS kloop"
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    result = df.select(
+        gx.h3_geomkloop(f.col("geom"), 9, 1).alias("kloop")
     ).first()
     return result["kloop"]
 
 
 h3_geomkloop_python_light_example_output = """
-+-------------------------------+
-|kloop                          |
-+-------------------------------+
-|[617733151021858815, ..., (...)]|
-+-------------------------------+
-... (ARRAY<BIGINT> — outer ring at k=1, interior covering cells excluded)
++------------------------------------+
+|kloop                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — hollow outer ring at k=1, interior covering cells excluded)
 """
 
 
 def h3_geomkringexplode_python_light_example(spark):
     """Geometry-aware H3 k-ring explode: one row per cell via SQL LATERAL (light pygx tier).
 
-    Uses literal H3 cell arrays.  SQL LATERAL is the canonical invocation for this
-    streaming UDTF — there is no Python DataFrame Column form.
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.  Self-contained: no Databricks product
+    functions required.
     """
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
     from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
 
     gx.register(spark)
-    cover = [617733151020810239, 617733151021334527]
-    core = [617733151020810239]
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    df.createOrReplaceTempView("_h3_geomk_src")
     result = spark.sql(
-        f"SELECT t.cellid FROM "
-        f"(SELECT array({cover[0]}L, {cover[1]}L) AS cover, array({core[0]}L) AS core) src, "
-        f"LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t"
+        "SELECT t.cellid FROM _h3_geomk_src src, "
+        "LATERAL gbx_h3_geomkringexplode(src.geom, 9, 1, 'boundary-out') t"
     ).collect()
+    spark.catalog.dropTempView("_h3_geomk_src")
     return result
 
 
@@ -1843,26 +1845,30 @@ h3_geomkringexplode_python_light_example_output = """
 |617733151020810239|
 |...               |
 +------------------+
-... (one BIGINT row per H3 cell in the k=1 ring around the cover/core input)
+... (one BIGINT row per H3 cell in the k=1 ring around the NYC geometry at res 9)
 """
 
 
 def h3_geomkloopexplode_python_light_example(spark):
     """Geometry-aware H3 k-loop explode: one row per outer-ring cell via SQL LATERAL (light pygx tier).
 
-    Uses literal H3 cell arrays.  SQL LATERAL is the canonical invocation for this
-    streaming UDTF — there is no Python DataFrame Column form.
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
     """
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
     from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
 
     gx.register(spark)
-    cover = [617733151020810239, 617733151021334527]
-    core = [617733151020810239]
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    df.createOrReplaceTempView("_h3_geomk_src")
     result = spark.sql(
-        f"SELECT t.cellid FROM "
-        f"(SELECT array({cover[0]}L, {cover[1]}L) AS cover, array({core[0]}L) AS core) src, "
-        f"LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t"
+        "SELECT t.cellid FROM _h3_geomk_src src, "
+        "LATERAL gbx_h3_geomkloopexplode(src.geom, 9, 1, 'boundary-out') t"
     ).collect()
+    spark.catalog.dropTempView("_h3_geomk_src")
     return result
 
 
@@ -1870,7 +1876,7 @@ h3_geomkloopexplode_python_light_example_output = """
 +------------------+
 |cellid            |
 +------------------+
-|617733151021858815|
+|617733151020810239|
 |...               |
 +------------------+
 ... (one BIGINT row per H3 cell in the outer ring at k=1, interior cells excluded)

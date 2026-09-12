@@ -1,84 +1,108 @@
-"""h3 geometry-aware expansion: runs the shared dilation engine over precomputed
-h3 cell-id arrays (cover/core/holes from product h3_* columnar functions).
+"""h3 geometry-aware expansion — self-contained, geom-taking (light-only).
 
-Neighbors come from the h3 package (grid_disk) — topology only, no geometry.
-The geometry work (polyfill / coverage of the geom and its holes) is supplied
-columnar via F.expr by the PySpark composition wrapper in gridx/h3/functions.py.
+Unlike the earlier product-columnar approach, h3 now behaves like the other
+grids: a single geom-taking function does the whole job in pure Python, so it
+runs anywhere (local + Databricks) with no dependency on Databricks product
+functions.
 
-Spec §6: h3 is light-tier ONLY (no Scala/heavy equivalent).
+Both halves use the ``h3`` library:
+  - polyfill / cover: ``h3.polygon_to_cells_experimental`` — the performant
+    experimental H3-core polyfill, whose ``contain=`` modes give exactly the two
+    classifications the dilation engine needs: ``'overlap'`` = cover (cells whose
+    hexagon overlaps the geometry) and ``'full'`` = core (cells fully inside).
+  - neighbours: ``h3.grid_disk`` (topological, index math only).
+
+The 6-set covering Classification (§4 of the design) is built by polyfilling the
+donut P (exterior with holes), the solid S (exterior only), and each hole H, then
+fed to the shared ``_dilate`` engine. h3 uses (lat, lng) order; shapely uses
+(lng, lat) — rings are swapped when building ``h3.LatLngPoly``.
 """
 
 import h3
+from shapely import from_wkb, from_wkt
+from shapely.geometry import MultiPolygon
 
 from databricks.labs.gbx.pygx import _dilate
 
+_CONTAIN_COVER = "overlap"  # cells overlapping the shape  -> p_cover
+_CONTAIN_CORE = "full"  # cells fully inside the shape -> p_core
 
-def _neighbors(c: int) -> list:
-    """Return the 6 H3 neighbors of integer cell id c (grid_disk topology only).
 
-    h3 v4 uses hex-string cell ids internally; we convert int → str → h3 → int.
-    This mirrors the _h3_k_loop adapter in pygx/functions.py (cellfill agg).
+def _parse_geom(g):
+    """Parse a geometry from WKB bytes or a WKT string; None/empty -> None."""
+    if g is None:
+        return None
+    geom = from_wkb(bytes(g)) if isinstance(g, (bytes, bytearray)) else from_wkt(str(g))
+    return None if (geom is None or geom.is_empty) else geom
+
+
+def _latlng_ring(coords):
+    """shapely (lng, lat) ring -> h3 (lat, lng) ring."""
+    return [(y, x) for (x, y) in coords]
+
+
+def _shapes(geom):
+    """Return (P, S, H): h3.LatLngPoly lists for the donut, the solid, and holes.
+
+    P = exterior with interior rings (the geometry itself);
+    S = exterior only (solid, holes filled);
+    H = one LatLngPoly per interior ring (the holes).
     """
+    parts = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
+    p_shapes, s_shapes, h_shapes = [], [], []
+    for part in parts:
+        if part.geom_type != "Polygon" or part.is_empty:
+            continue
+        ext = _latlng_ring(part.exterior.coords)
+        holes = [_latlng_ring(r.coords) for r in part.interiors]
+        p_shapes.append(h3.LatLngPoly(ext, *holes))
+        s_shapes.append(h3.LatLngPoly(ext))
+        for hole in holes:
+            h_shapes.append(h3.LatLngPoly(hole))
+    return p_shapes, s_shapes, h_shapes
+
+
+def _to_int(cell):
+    return int(cell, 16) if isinstance(cell, str) else int(cell)
+
+
+def _fill(shapes, res, contain):
+    """Union of h3 polyfill (given containment mode) over a list of LatLngPoly."""
+    out = set()
+    for shape in shapes:
+        out |= {
+            _to_int(c) for c in h3.polygon_to_cells_experimental(shape, res, contain)
+        }
+    return out
+
+
+def classify(geom, res):
+    """Build the 6-set covering Classification for a geometry via h3-lib polyfill."""
+    p_shapes, s_shapes, h_shapes = _shapes(geom)
+    return _dilate.Classification(
+        p_cover=_fill(p_shapes, res, _CONTAIN_COVER),
+        p_core=_fill(p_shapes, res, _CONTAIN_CORE),
+        s_cover=_fill(s_shapes, res, _CONTAIN_COVER),
+        s_core=_fill(s_shapes, res, _CONTAIN_CORE),
+        h_cover=_fill(h_shapes, res, _CONTAIN_COVER),
+        h_core=_fill(h_shapes, res, _CONTAIN_CORE),
+    )
+
+
+def _neighbors(c):
+    """6 (or 5) H3 neighbours of integer cell id c (grid_disk topology, ring 1)."""
     c_str = h3.int_to_str(c)
     return [int(n, 16) for n in h3.grid_disk(c_str, 1) if n != c_str]
 
 
-def _to_int_set(cells) -> set:
-    """Convert an iterable of h3 cell ids (int or hex string) to a set of ints."""
-    result = set()
-    for c in cells:
-        if isinstance(c, int):
-            result.add(c)
-        else:
-            result.add(int(c, 16))
-    return result
+def geom_expand(kind, geom, resolution, k, mode):
+    """Geometry-aware h3 ring/loop from a geometry (WKB bytes or WKT string).
 
-
-def geom_expand_cells(
-    kind, k, mode, *, cover, core, holes_cover, holes_core, solid_core=None
-):
-    """Run the shared dilation engine over precomputed h3 cell-id arrays.
-
-    Args:
-        kind:        "ring" (filled <=k) or "loop" (shell at exactly k).
-        k:           Ring distance (int >= 0).
-        mode:        Dilation mode string; one of _dilate.MODES.
-        cover:       Cells that overlap the geometry P (iterable of int or hex str).
-        core:        Cells fully inside P (iterable of int or hex str).
-        holes_cover: Cells that overlap the holes union H (iterable of int or hex str).
-        holes_core:  Cells fully inside H (iterable of int or hex str).
-        solid_core:  Cells fully inside the SOLID S (outer ring, holes filled) —
-                     the faithful s_core, supplied only for boundary-in-ignore-holes.
-                     When empty/None, s_core falls back to core | holes_core.
-
-    Returns:
-        set of int cell ids.
-
-    s_core (solid = outer ring with holes filled):
-        boundary-in-ignore-holes is the only mode that reads s_core. When the
-        wrapper supplies solid_core = h3_polyfillash3(solid), s_core is exact.
-        Otherwise s_core = core | holes_core, which UNDER-COUNTS by the
-        "rim-straddle" cells (fully inside the solid but straddling a hole
-        boundary, so in neither p_core nor h_core), leaving small notches at
-        hole rims — the reason boundary-in-ignore-holes passes solid_core.
-
-        s_cover = cover | holes_cover is exact (S = P ∪ H) and unused by the
-        engine's mode table, so it is not supplied separately.
+    kind='ring' (filled <=k) or 'loop' (shell at exactly k). Returns a set of int
+    cell ids; empty for a null/empty geometry.
     """
-    p_cover = _to_int_set(cover)
-    p_core = _to_int_set(core)
-    h_cover = _to_int_set(holes_cover)
-    h_core = _to_int_set(holes_core)
-    s_cover = p_cover | h_cover  # exact; unused by the engine mode table
-    # Faithful solid core when supplied (boundary-in-ignore-holes); else reconstruct.
-    s_core = _to_int_set(solid_core) if solid_core else (p_core | h_core)
-
-    cls = _dilate.Classification(
-        p_cover=p_cover,
-        p_core=p_core,
-        s_cover=s_cover,
-        s_core=s_core,
-        h_cover=h_cover,
-        h_core=h_core,
-    )
+    g = _parse_geom(geom)
+    if g is None:
+        return set()
+    cls = classify(g, int(resolution))
     return _dilate.geom_expand(kind, int(k), mode, cls, _neighbors)
