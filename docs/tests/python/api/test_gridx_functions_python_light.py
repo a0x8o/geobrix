@@ -793,7 +793,7 @@ def test_custom_geomkloopexplode_python_light_example(spark):
 
 
 def test_h3_geomkring_python_light_example(spark):
-    """h3_geomkring (light) returns a non-empty array from literal cover/core cell arrays, k=1."""
+    """h3_geomkring (light) returns a non-empty array from a geometry column, k=1."""
     assert light_examples is not None
     result = light_examples.h3_geomkring_python_light_example(spark)
     assert result is not None, "h3_geomkring should return a non-null array"
@@ -803,7 +803,7 @@ def test_h3_geomkring_python_light_example(spark):
 
 
 def test_h3_geomkloop_python_light_example(spark):
-    """h3_geomkloop (light) returns a non-empty array from literal cover/core cell arrays, k=1."""
+    """h3_geomkloop (light) returns a non-empty array from a geometry column, k=1."""
     assert light_examples is not None
     result = light_examples.h3_geomkloop_python_light_example(spark)
     assert result is not None, "h3_geomkloop should return a non-null array"
@@ -812,7 +812,7 @@ def test_h3_geomkloop_python_light_example(spark):
 
 
 def test_h3_geomkringexplode_python_light_example(spark):
-    """h3_geomkringexplode (light) returns non-empty rows via SQL LATERAL with literal arrays."""
+    """h3_geomkringexplode (light) returns non-empty rows via SQL LATERAL from a geometry column."""
     assert light_examples is not None
     result = light_examples.h3_geomkringexplode_python_light_example(spark)
     assert result is not None, "h3_geomkringexplode should return non-null rows"
@@ -820,7 +820,7 @@ def test_h3_geomkringexplode_python_light_example(spark):
 
 
 def test_h3_geomkloopexplode_python_light_example(spark):
-    """h3_geomkloopexplode (light) returns non-empty rows via SQL LATERAL with literal arrays."""
+    """h3_geomkloopexplode (light) returns non-empty rows via SQL LATERAL from a geometry column."""
     assert light_examples is not None
     result = light_examples.h3_geomkloopexplode_python_light_example(spark)
     assert result is not None, "h3_geomkloopexplode should return non-null rows"

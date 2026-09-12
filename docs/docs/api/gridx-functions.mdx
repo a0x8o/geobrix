@@ -1911,7 +1911,7 @@ df.withColumn("kring", geomkring("geom_col", resolution=9, k=1))
 
 <Tier light/>
 
-Geometry-aware H3 k-ring. Computes the covering set via product H3 functions then expands by `k` ring steps using H3 neighbour topology.
+Geometry-aware H3 k-ring: the geometry's covering set expanded outward by `k` ring steps — the polyfill and neighbour walk both use the `h3` library, with no dependency on Databricks product functions.
 
 **Signature:** `h3_geomkring(geom, resolution, k, [mode])`
 

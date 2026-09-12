@@ -1059,11 +1059,11 @@ def _custom_cellfill_agg_udf(
 # ============================================================================
 # H3 geometry-aware kring/kloop (light-only — no Scala/heavy equivalent)
 #
-# The public SQL surface `gbx_h3_geomkring(geom, res, k [, mode])` is a
-# PySpark composition: the geometry work (cover/core cell arrays) is supplied
-# columnar via product h3_* SQL functions by the Python wrapper in
-# gridx/h3/functions.py. These array-expansion UDFs receive pre-computed
-# cell-id arrays and run the shared dilation engine (via _h3mod) over them.
+# The registered UDFs take a geometry directly — gbx_h3_geomkring(geom,
+# resolution, k [, mode]) — and do the whole job in Python via the h3 library
+# (polygon_to_cells_experimental for cover/core, grid_disk for neighbours),
+# feeding the shared dilation engine (via _h3mod). No Databricks product
+# functions; runs anywhere.
 #
 # UDF shape: plain @udf (row-by-row) — variable-length array output at scale.
 # Explode shape: @udtf (SQL-LATERAL only, no DataFrame Column form).
@@ -1330,10 +1330,9 @@ def _registrar_groups() -> List[_register.Group]:
         "gbx_h3_cellfill": lambda s: s.udf.register(
             "gbx_h3_cellfill", _h3_cellfill_agg_udf
         ),
-        # H3 geometry-aware kring/kloop (light-only PySpark composition).
-        # The UDF receives pre-computed cover/core cell arrays from product
-        # h3_coverash3/h3_polyfillash3 SQL functions (columnar geometry work).
-        # VERIFY exact product function names at integration time.
+        # H3 geometry-aware kring/kloop (light-only). Geom-taking UDFs — the
+        # h3 library does the polyfill + neighbour walk in Python, so these run
+        # anywhere with no Databricks product-function dependency.
         "gbx_h3_geomkring": lambda s: s.udf.register(
             "gbx_h3_geomkring", _h3_geomkring, ArrayType(LongType())
         ),

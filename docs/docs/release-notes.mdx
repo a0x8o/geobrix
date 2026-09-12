@@ -76,16 +76,20 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 - **New `gbx_custom_geomkring`, `gbx_custom_geomkloop`, `gbx_custom_geomkringexplode`, `gbx_custom_geomkloopexplode` — geometry-aware expansion for custom grids.** Same contract as the quadbin and BNG variants, extended with a `grid` struct argument (from `gbx_custom_grid`) that identifies the custom coordinate system. The geometry must be in the grid's native CRS. Cell IDs are `BIGINT`. Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
 
-- **New `gbx_h3_geomkring`, `gbx_h3_geomkloop`, `gbx_h3_geomkringexplode`, `gbx_h3_geomkloopexplode` — geometry-aware expansion for H3 (light-only, Serverless-targeted).** These four functions are **lightweight-tier only** — there is no heavy (Scala) implementation. The geometry decomposition is a PySpark composition: it delegates to Databricks product functions (`h3_coverash3`, `h3_polyfillash3`) for the geometry-to-cell step, then runs the shared dilation engine as a Python UDF for the topological expansion. Use the Python column API for the most natural on-Databricks experience:
+- **New `gbx_h3_geomkring`, `gbx_h3_geomkloop`, `gbx_h3_geomkringexplode`, `gbx_h3_geomkloopexplode` — geometry-aware expansion for H3 (light-only).** These four functions are **lightweight-tier only** — there is no heavy (Scala) implementation. Like the other grids, they take a geometry directly and do the whole job in pure Python via the `h3` library — `h3.polygon_to_cells_experimental` for the covering set (holes handled natively) and `grid_disk` for the neighbour walk — so `gbx_h3_geomkring(geom, resolution, k, [mode])` is a single function callable identically from SQL and PySpark, with no dependency on Databricks product functions (it runs on Serverless, classic clusters, and locally). Use the Python column API for the most natural experience:
   ```python
   from databricks.labs.gbx.gridx.h3.functions import geomkring
   df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
   ```
-  All six dilation modes work, including the hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`): the Python column API extracts the geometry's holes columnar and polyfills them with the product H3 functions. For those hole-reading modes the geometry input must be WKB `BINARY`; `'boundary-out'` and `'boundary-in'` also accept WKT `STRING`. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
+  All six dilation modes work, including the hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`). Geometry input is WKB `BINARY` or WKT `STRING`. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
 
 ### Covering assignment performance improvement
 
 - **Covering assignment is now computed over cell boundaries only.** The `covering` assignment mode (available on all `gbx_rst_{h3,quadbin,bng,custom}_rastertogrid*` and `*_tessellate` functions) previously computed area fractions by evaluating overlap for every pixel in the raster extent. It now uses a boundary-driven algorithm that processes only cells that intersect the raster perimeter, reducing computation proportionally to the boundary-to-interior ratio. For rasters with large solid interiors — where most cells are fully covered — this is significantly faster. Results are numerically identical; this is a performance improvement only.
+
+### Dependency pins refreshed (v0.5.0 artifacts regenerated)
+
+- **After the initial v0.5.0 release the light-tier extras' dependency pins were refreshed, and the v0.5.0 release artifacts were regenerated against that update.** The runtime-pinned `light_*` extras (`light_env5`/`light_env6`, `light_dbr17`–`light_dbr19`, and their `_all` variants) pin their transitive dependencies to the versions already present in the matching Databricks base, so an `_all` install on Serverless env5/env6 changes no preinstalled packages (`%pip` output stays quiet); the source-specific downloaders `[earthdata]` (NASA Earthdata / EMIT) and `[overture]` (Overture Maps) are opt-in extras outside `_all`. The **v0.5.0** assets — lightweight wheel, heavyweight JAR, docs bundle, and the pre-built GDAL native tarball — were regenerated to carry these pins, and v0.5.1 carries them forward. See [Installation](./installation?tier=lightweight).
 
 ---
 
