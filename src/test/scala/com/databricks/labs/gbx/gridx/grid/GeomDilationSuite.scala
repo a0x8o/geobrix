@@ -34,13 +34,29 @@ class GeomDilationSuite extends AnyFunSuite {
   test("boundary-in stays inside geom and respects a hole") {
     val g = wkt.read("POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3),(-1 -1,-1 1,1 1,1 -1,-1 -1))")
     val cls = GeomDilation.classify(grid, g, res)
+    // Precondition: fix A must produce a non-empty hCore (polyfill SOLID fills hole interior)
+    assert(cls.hCore.nonEmpty, "hCore must be non-empty after classify polyfills the solid")
     val r = GeomDilation.expand("ring", 2, "boundary-in", grid, g, res)
     assert(r.subsetOf(cls.pCore union cls.pBorder))
     assert(r.intersect(cls.hCore).isEmpty)
   }
 
+  test("hole-in fills hole interior") {
+    val g = wkt.read("POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3),(-1 -1,-1 1,1 1,1 -1,-1 -1))")
+    val cls = GeomDilation.classify(grid, g, res)
+    assert(cls.hCore.nonEmpty, "hCore must be non-empty (precondition for hole-in)")
+    val r = GeomDilation.expand("ring", 20, "hole-in", grid, g, res)
+    assert(cls.hCore.subsetOf(r), "hole-in ring must include all hCore cells")
+    assert(r.intersect(cls.pCore).isEmpty, "hole-in must not enter the solid")
+  }
+
   test("unknown mode throws") {
     val g = wkt.read("POLYGON((0 0,0 1,1 1,1 0,0 0))")
     assertThrows[IllegalArgumentException](GeomDilation.expand("ring", 1, "sideways", grid, g, res))
+  }
+
+  test("unknown kind throws") {
+    val g = wkt.read("POLYGON((0 0,0 1,1 1,1 0,0 0))")
+    assertThrows[IllegalArgumentException](GeomDilation.expand("disk", 1, "boundary-out", grid, g, res))
   }
 }

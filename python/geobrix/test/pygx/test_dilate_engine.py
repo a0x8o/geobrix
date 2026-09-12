@@ -119,3 +119,34 @@ def test_bad_mode_raises():
 def test_bad_kind_raises(holed_cls):
     with pytest.raises(ValueError):
         D.geom_expand("disk", 1, "boundary-out", holed_cls, _neighbors)
+
+
+def test_classify_filtering_polyfill_finds_hcore():
+    """Fix B: classify re-polyfills S (solid), so a filtering polyfill still populates h_core.
+
+    A filtering polyfill over the original donut never returns hole-interior cells.
+    classify must call polyfill_fn(S, res) internally so hole modes work correctly.
+    """
+    outer = box(0.5, 0.5, 9.5, 9.5)
+    hole = box(3.5, 3.5, 6.5, 6.5)
+    geom = Polygon(outer.exterior.coords, [list(hole.exterior.coords)])
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    # Filtering polyfill: only returns cells that have area-overlap with the polyfill target.
+    # When the target is the donut (geom), hole-interior cells are excluded.
+    # classify must call polyfill_fn(S, res) internally so those cells become candidates.
+    def filtering_polyfill_fn(g, res):
+        return [
+            _cid(x, y) for x in range(-1, 11) for y in range(-1, 11)
+            if cell_geom_fn(_cid(x, y)).intersects(g)
+            and cell_geom_fn(_cid(x, y)).intersection(g).area > 0
+        ]
+
+    cls = D.classify(geom, 1, filtering_polyfill_fn, cell_geom_fn)
+    assert cls.h_core, "h_core empty: fix B — classify must polyfill S (solid), not original geom"
+    r = D.geom_expand("ring", 5, "hole-in", cls, _neighbors)
+    assert cls.h_core <= r         # hole filled inward
+    assert r.isdisjoint(cls.p_core)  # never enters the solid

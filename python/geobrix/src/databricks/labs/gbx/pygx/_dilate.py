@@ -69,7 +69,8 @@ def _solid_and_holes(geom):
 def classify(geom, res, polyfill_fn, cell_geom_fn):
     """Partition polyfill candidate cells vs P (geom), S (solid), H (holes)."""
     S, H = _solid_and_holes(geom)
-    cands = set(polyfill_fn(geom, res))
+    # polyfill the SOLID so hole-interior cells are classified (hole modes need h_core)
+    cands = set(polyfill_fn(S, res))
     p_cover, p_core, s_cover, s_core, h_cover, h_core = (set() for _ in range(6))
     for c in cands:
         g = cell_geom_fn(c)

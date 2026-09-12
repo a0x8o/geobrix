@@ -31,7 +31,8 @@ object GeomDilation {
 
   def classify(grid: GridSystem, geom: Geometry, res: Int): Classification = {
     val (solid, holeOpt) = solidAndHoles(geom)
-    val cands = grid.polyfill(geom, res).toSet
+    // polyfill the SOLID so hole-interior cells are classified (hole modes need hCore)
+    val cands = grid.polyfill(solid, res).toSet
     val pCover, pCore, sCover, sCore, hCover, hCore = mutable.Set.empty[Long]
     cands.foreach { c =>
       val g = grid.cellIdToGeometry(c)
@@ -58,10 +59,11 @@ object GeomDilation {
     case "hole-in"                  => (cls.hBorder, cls.hBorder, cls.hCore.contains, cls.hBorder)
     case "hole-out"                 => (cls.hBorder, cls.hCover, cls.pCore.contains, cls.hBorder)
     case "hole-out-ignore-geom"     => (cls.hBorder, cls.hCover, (n: Long) => !cls.hCore.contains(n), cls.hBorder)
-    case other => throw new IllegalArgumentException(s"unknown mode '$other'; expected ${MODES.mkString(",")}")
+    case other => throw new IllegalArgumentException(s"unknown mode '$other'; expected ${MODES.mkString(", ")}")
   }
 
   def expand(kind: String, k: Int, mode: String, grid: GridSystem, geom: Geometry, res: Int): Set[Long] = {
+    require(kind == "ring" || kind == "loop", s"kind must be 'ring' or 'loop'; got '$kind'")
     val cls = classify(grid, geom, res)
     val (frontier0, visited0, admit, k0) = setup(mode, cls)
     if (k == 0) return k0
