@@ -551,7 +551,7 @@ st_explainvalidity_python_light_example_output = """
 +----------------------------------------------------------------------+
 |detail                                                                |
 +----------------------------------------------------------------------+
-|{"valid": false, "reason": "Self-intersection[0.5 0.5]", "code": 10,|
+|{"valid": false, "reason": "Self-intersection[0.5 0.5]", "code": 10,  |
 +----------------------------------------------------------------------+
 ... (JSON string — {valid, reason, code, location} for SFS validity diagnosis)
 """
@@ -585,11 +585,11 @@ def st_simplifypreservetopology_python_light_example(spark):
 
 
 st_simplifypreservetopology_python_light_example_output = """
-+--------+
++----------+
 |simplified|
-+--------+
-|[binary]|
-+--------+
++----------+
+|[binary]  |
++----------+
 ... (WKB binary — simplified polygon with near-collinear vertex removed, topology preserved)
 """
 
