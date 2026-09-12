@@ -1911,7 +1911,7 @@ For hole-reading modes the Python column API also extracts the geometry's holes 
 
 Geometry-aware H3 k-ring. Computes the covering set via product H3 functions then expands by `k` ring steps using H3 neighbour topology.
 
-**Signature:** `h3_geomkring(cover, core, holes_cover, holes_core, k, [mode])`
+**Signature:** `h3_geomkring(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
 
 **SQL surface (direct):** Takes pre-computed `ARRAY<BIGINT>` cover/core arrays.
 
@@ -1926,6 +1926,7 @@ df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
 - `core` — `ARRAY<BIGINT>` cells fully inside the geometry (from `h3_polyfillash3`)
 - `holes_cover` — `ARRAY<BIGINT>` cells overlapping holes (empty array if no holes)
 - `holes_core` — `ARRAY<BIGINT>` cells inside holes (empty array if no holes)
+- `solid_core` — `ARRAY<BIGINT>` cells inside the solid (outer ring, holes filled); used only by `'boundary-in-ignore-holes'`, empty otherwise
 - `k` — Ring distance (0 = covering set only)
 - `mode` *(optional)* — boundary classification mode (default `'boundary-out'`)
 
@@ -1947,7 +1948,7 @@ df.withColumn("kring", geomkring("geom_col", resolution=12, k=1))
 
 Geometry-aware H3 k-loop (hollow ring at exactly `k` steps).
 
-**Signature:** `h3_geomkloop(cover, core, holes_cover, holes_core, k, [mode])`
+**Signature:** `h3_geomkloop(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
 
 **Parameters:** Same as `h3_geomkring`.
 
@@ -1969,7 +1970,7 @@ Geometry-aware H3 k-loop (hollow ring at exactly `k` steps).
 
 Streaming UDTF version of `h3_geomkring` — one row per cell. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
 
-**Signature:** `h3_geomkringexplode(cover, core, holes_cover, holes_core, k, [mode])`
+**Signature:** `h3_geomkringexplode(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
 
 **Parameters:** Same as `h3_geomkring`.
 
@@ -1991,7 +1992,7 @@ Streaming UDTF version of `h3_geomkring` — one row per cell. Invoke via SQL `L
 
 Streaming UDTF version of `h3_geomkloop` — one row per cell at exactly `k` steps. Invoke via SQL `LATERAL`; there is no Python DataFrame Column form.
 
-**Signature:** `h3_geomkloopexplode(cover, core, holes_cover, holes_core, k, [mode])`
+**Signature:** `h3_geomkloopexplode(cover, core, holes_cover, holes_core, solid_core, k, [mode])`
 
 **Parameters:** Same as `h3_geomkloop`.
 

@@ -1073,16 +1073,19 @@ def _custom_cellfill_agg_udf(
 # ============================================================================
 
 
-def _h3_geomkring(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+def _h3_geomkring(
+    cover, core, holes_cover, holes_core, solid_core, k, mode="boundary-out"
+):
     """Array-expansion UDF: geometry-aware h3 k-ring from precomputed cell arrays.
 
     Args:
         cover:       ARRAY<BIGINT> cells overlapping the geometry (product h3_coverash3).
-                     VERIFY exact product function name at integration time.
         core:        ARRAY<BIGINT> cells fully inside the geometry (product h3_polyfillash3).
-                     VERIFY exact product function name at integration time.
         holes_cover: ARRAY<BIGINT> cells overlapping the holes (may be empty).
         holes_core:  ARRAY<BIGINT> cells fully inside the holes (may be empty).
+        solid_core:  ARRAY<BIGINT> cells fully inside the solid (outer ring, holes
+                     filled) — the faithful s_core, supplied only for
+                     boundary-in-ignore-holes; empty otherwise.
         k:           Ring distance (int >= 0).
         mode:        Dilation mode (default "boundary-out"); one of _dilate.MODES.
 
@@ -1102,6 +1105,7 @@ def _h3_geomkring(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
                 core=core or [],
                 holes_cover=holes_cover or [],
                 holes_core=holes_core or [],
+                solid_core=solid_core or [],
             )
         )
     except ValueError:
@@ -1110,7 +1114,9 @@ def _h3_geomkring(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
         return None  # bad cell ids DATA -> degrade to NULL (matches heavy)
 
 
-def _h3_geomkloop(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+def _h3_geomkloop(
+    cover, core, holes_cover, holes_core, solid_core, k, mode="boundary-out"
+):
     """Array-expansion UDF: geometry-aware h3 k-loop (hollow shell) from precomputed cell arrays.
 
     Args: same as _h3_geomkring. Returns sorted list at exactly k steps.
@@ -1128,6 +1134,7 @@ def _h3_geomkloop(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
                 core=core or [],
                 holes_cover=holes_cover or [],
                 holes_core=holes_core or [],
+                solid_core=solid_core or [],
             )
         )
     except ValueError:
@@ -1140,7 +1147,9 @@ def _h3_geomkloop(cover, core, holes_cover, holes_core, k, mode="boundary-out"):
 class _H3GeomKRingExplode:
     """SQL-LATERAL UDTF: geometry-aware h3 k-ring, one row per cell id."""
 
-    def eval(self, cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+    def eval(
+        self, cover, core, holes_cover, holes_core, solid_core, k, mode="boundary-out"
+    ):
         if cover is None or k is None:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
@@ -1154,6 +1163,7 @@ class _H3GeomKRingExplode:
                     core=core or [],
                     holes_cover=holes_cover or [],
                     holes_core=holes_core or [],
+                    solid_core=solid_core or [],
                 )
             ):
                 yield (c,)
@@ -1167,7 +1177,9 @@ class _H3GeomKRingExplode:
 class _H3GeomKLoopExplode:
     """SQL-LATERAL UDTF: geometry-aware h3 k-loop, one row per cell id."""
 
-    def eval(self, cover, core, holes_cover, holes_core, k, mode="boundary-out"):
+    def eval(
+        self, cover, core, holes_cover, holes_core, solid_core, k, mode="boundary-out"
+    ):
         if cover is None or k is None:
             return
         _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
@@ -1181,6 +1193,7 @@ class _H3GeomKLoopExplode:
                     core=core or [],
                     holes_cover=holes_cover or [],
                     holes_core=holes_core or [],
+                    solid_core=solid_core or [],
                 )
             ):
                 yield (c,)
@@ -1952,13 +1965,16 @@ def h3_geomkring(
     core: ColLike,
     holes_cover: ColLike,
     holes_core: ColLike,
+    solid_core: ColLike,
     k: ColLike,
     mode: ColLike = "boundary-out",
 ) -> Column:
     """ARRAY<BIGINT> h3 geometry-aware k-ring from pre-computed cover/core arrays.
 
-    cover/core/holes_cover/holes_core are ARRAY<BIGINT> columns of h3 cell ids
-    (from product h3_coverash3/h3_polyfillash3 — VERIFY names at integration).
+    cover/core/holes_cover/holes_core/solid_core are ARRAY<BIGINT> columns of h3
+    cell ids (from product h3_coverash3/h3_polyfillash3). solid_core is the cells
+    inside the solid (outer ring, holes filled); used only by
+    boundary-in-ignore-holes, empty otherwise.
     """
     mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     return f.call_function(
@@ -1967,6 +1983,7 @@ def h3_geomkring(
         _col(core),
         _col(holes_cover),
         _col(holes_core),
+        _col(solid_core),
         _col(k),
         mode_arg,
     )
@@ -1977,6 +1994,7 @@ def h3_geomkloop(
     core: ColLike,
     holes_cover: ColLike,
     holes_core: ColLike,
+    solid_core: ColLike,
     k: ColLike,
     mode: ColLike = "boundary-out",
 ) -> Column:
@@ -1991,6 +2009,7 @@ def h3_geomkloop(
         _col(core),
         _col(holes_cover),
         _col(holes_core),
+        _col(solid_core),
         _col(k),
         mode_arg,
     )

@@ -321,7 +321,7 @@ def test_h3_geomkring_udf_boundary_out_k1():
     c = _nyc_cell()
     cover = [c]
     core: list = []  # no core → c is a border cell
-    result = _h3_geomkring(cover, core, [], [], 1, "boundary-out")
+    result = _h3_geomkring(cover, core, [], [], [], 1, "boundary-out")
     expected = sorted(_disk_ints(c, 1))
     assert result == expected
 
@@ -334,9 +334,9 @@ def test_h3_geomkloop_udf_is_ring_diff():
     cover = sorted(_disk_ints(c, 1))  # 7-cell disk
     core = [c]  # center only
 
-    r2 = set(_h3_geomkring(cover, core, [], [], 2))
-    r1 = set(_h3_geomkring(cover, core, [], [], 1))
-    loop2 = set(_h3_geomkloop(cover, core, [], [], 2))
+    r2 = set(_h3_geomkring(cover, core, [], [], [], 2))
+    r1 = set(_h3_geomkring(cover, core, [], [], [], 1))
+    loop2 = set(_h3_geomkloop(cover, core, [], [], [], 2))
     assert loop2 == (r2 - r1)
 
 
@@ -344,7 +344,7 @@ def test_h3_geomkring_udf_none_cover_returns_none():
     """None cover returns None (NULL propagation)."""
     from databricks.labs.gbx.pygx.functions import _h3_geomkring
 
-    assert _h3_geomkring(None, [], [], [], 1) is None
+    assert _h3_geomkring(None, [], [], [], [], 1) is None
 
 
 def test_h3_geomkring_udf_none_k_returns_none():
@@ -352,7 +352,7 @@ def test_h3_geomkring_udf_none_k_returns_none():
     from databricks.labs.gbx.pygx.functions import _h3_geomkring
 
     c = _nyc_cell()
-    assert _h3_geomkring([c], [], [], [], None) is None
+    assert _h3_geomkring([c], [], [], [], [], None) is None
 
 
 def test_h3_geomkring_udf_bad_mode_raises():
@@ -361,7 +361,7 @@ def test_h3_geomkring_udf_bad_mode_raises():
 
     c = _nyc_cell()
     with pytest.raises(ValueError, match="unknown mode"):
-        _h3_geomkring([c], [], [], [], 1, "BOGUS")
+        _h3_geomkring([c], [], [], [], [], 1, "BOGUS")
 
 
 def test_h3_geomkring_udf_returns_sorted_ints():
@@ -371,9 +371,39 @@ def test_h3_geomkring_udf_returns_sorted_ints():
     c = _nyc_cell()
     cover = [c]
     core: list = []
-    result = _h3_geomkring(cover, core, [], [], 1)
+    result = _h3_geomkring(cover, core, [], [], [], 1)
     assert result == sorted(result)
     assert all(isinstance(x, int) for x in result)
+
+
+def test_h3_boundary_in_ignore_holes_uses_solid_core():
+    """Phase B: solid_core supplies the faithful s_core for boundary-in-ignore-holes.
+
+    Build a frontier at p_border = {n1} and a neighbour n2 of n1 that is NOT in
+    core|holes_core. Without solid_core the engine reconstructs s_core = core
+    (so n2 is not admitted); passing solid_core containing n2 admits it — the
+    rim-straddle cell the reconstruction would have dropped.
+    """
+    import h3
+
+    from databricks.labs.gbx.pygx import _h3
+
+    base = h3.latlng_to_cell(40.5, -73.9, 9)
+    c0 = int(base, 16)
+    ring1 = [int(x, 16) for x in h3.grid_disk(base, 1) if x != base]
+    n1 = ring1[0]
+    n1_ring = [int(x, 16) for x in h3.grid_disk(h3.int_to_str(n1), 1)]
+    n2 = next(c for c in n1_ring if c not in (c0, n1) and c not in ring1)
+
+    common = dict(cover=[c0, n1], core=[c0], holes_cover=[], holes_core=[])
+    # Reconstructed s_core = core = {c0}: n2 is a neighbour of n1 but not admitted.
+    without = _h3.geom_expand_cells("ring", 1, "boundary-in-ignore-holes", **common)
+    assert n2 not in without
+    # Faithful s_core includes n2 → admitted.
+    with_sc = _h3.geom_expand_cells(
+        "ring", 1, "boundary-in-ignore-holes", solid_core=[c0, n2], **common
+    )
+    assert n2 in with_sc
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +503,7 @@ def test_h3_geomkring_boundary_out_expands_beyond_cover(spark):
         SELECT gbx_h3_geomkring(
             h3_coverash3(unhex('{geom_wkb}'), {res}),
             h3_polyfillash3(unhex('{geom_wkb}'), {res}),
+            array(),
             array(),
             array(),
             1,

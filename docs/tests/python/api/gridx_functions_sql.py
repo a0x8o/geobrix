@@ -1221,6 +1221,7 @@ SELECT gbx_h3_geomkring(
   h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
   array(),
   array(),
+  array(),
   1,
   'boundary-out'
 ) AS kring;
@@ -1238,6 +1239,7 @@ def h3_geomkloop_sql_example():
 SELECT gbx_h3_geomkloop(
   h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
   h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12),
+  array(),
   array(),
   array(),
   1,
@@ -1260,7 +1262,7 @@ FROM (
     h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS cover,
     h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS core
 ) src,
-LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;
+LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t;
 """
 
 
@@ -1278,5 +1280,5 @@ FROM (
     h3_coverash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS cover,
     h3_polyfillash3('POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))', 12) AS core
 ) src,
-LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t;
+LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t;
 """

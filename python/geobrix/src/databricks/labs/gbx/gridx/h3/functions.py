@@ -74,13 +74,35 @@ def _core_col(geom_col: Column, resolution: int) -> Column:
     return F.call_function("h3_polyfillash3", geom_col, F.lit(int(resolution)))
 
 
-# Modes whose traversal reads the holes classification (h_cover/h_core, or the
-# solid-fill core built from holes_core). The other two (boundary-out,
-# boundary-in) never touch holes, so we skip the ST chain for them — which also
-# keeps WKT-string geometry input working for those common modes.
-_HOLE_MODES = frozenset(
-    {"boundary-in-ignore-holes", "hole-in", "hole-out", "hole-out-ignore-geom"}
-)
+# Modes whose traversal reads the holes classification (h_cover/h_core):
+# expand from the holes. boundary-in-ignore-holes reads s_core instead (see
+# _solid_core below), not the holes. boundary-out/boundary-in touch neither, so
+# they skip the ST chain entirely — which also keeps WKT-string input working.
+_HOLE_MODES = frozenset({"hole-in", "hole-out", "hole-out-ignore-geom"})
+
+# The one mode that reads the solid-fill core (s_core).
+_SOLID_CORE_MODE = "boundary-in-ignore-holes"
+
+
+def _solid(geom: Column) -> Column:
+    """The solid (outer ring, holes filled) as a GEOMETRY: ST_MakePolygon(ST_ExteriorRing(g))."""
+    g = F.call_function("ST_GeomFromWKB", geom)
+    return F.call_function("ST_MakePolygon", F.call_function("ST_ExteriorRing", g))
+
+
+def _solid_core_col(geom: Column, resolution: int, mode: str) -> Column:
+    """ARRAY<BIGINT> cells fully inside the solid — the faithful s_core.
+
+    Only boundary-in-ignore-holes reads s_core, so this emits the ST/product
+    chain for that mode alone and returns an empty column otherwise. Polyfilling
+    the solid directly (h3_polyfillash3) yields the exact solid core, avoiding
+    the hole-rim-straddle under-count of reconstructing s_core = core|holes_core.
+    Requires WKB BINARY `geom` (ST_GeomFromWKB parses it).
+    """
+    if mode != _SOLID_CORE_MODE:
+        return F.lit(None).cast("array<bigint>")
+    solid_wkb = F.call_function("ST_AsBinary", _solid(geom))
+    return F.call_function("h3_polyfillash3", solid_wkb, F.lit(int(resolution)))
 
 
 def _holes_arrays(geom: Column, resolution: int, mode: str):
@@ -150,12 +172,14 @@ def geomkring(
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
     holes_cover, holes_core = _holes_arrays(geom, resolution, mode)
+    solid_core = _solid_core_col(geom, resolution, mode)
     return F.call_function(
         "gbx_h3_geomkring",
         cover,
         core,
         holes_cover,
         holes_core,
+        solid_core,
         _col(k),
         F.lit(mode),
     )
@@ -176,12 +200,14 @@ def geomkloop(
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
     holes_cover, holes_core = _holes_arrays(geom, resolution, mode)
+    solid_core = _solid_core_col(geom, resolution, mode)
     return F.call_function(
         "gbx_h3_geomkloop",
         cover,
         core,
         holes_cover,
         holes_core,
+        solid_core,
         _col(k),
         F.lit(mode),
     )

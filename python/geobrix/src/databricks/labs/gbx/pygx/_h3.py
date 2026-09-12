@@ -34,7 +34,9 @@ def _to_int_set(cells) -> set:
     return result
 
 
-def geom_expand_cells(kind, k, mode, *, cover, core, holes_cover, holes_core):
+def geom_expand_cells(
+    kind, k, mode, *, cover, core, holes_cover, holes_core, solid_core=None
+):
     """Run the shared dilation engine over precomputed h3 cell-id arrays.
 
     Args:
@@ -45,33 +47,31 @@ def geom_expand_cells(kind, k, mode, *, cover, core, holes_cover, holes_core):
         core:        Cells fully inside P (iterable of int or hex str).
         holes_cover: Cells that overlap the holes union H (iterable of int or hex str).
         holes_core:  Cells fully inside H (iterable of int or hex str).
+        solid_core:  Cells fully inside the SOLID S (outer ring, holes filled) —
+                     the faithful s_core, supplied only for boundary-in-ignore-holes.
+                     When empty/None, s_core falls back to core | holes_core.
 
     Returns:
         set of int cell ids.
 
-    Notes on s_cover / s_core (solid = outer ring with holes filled):
-        holes_cover/holes_core are now supplied columnar by the PySpark wrapper
-        (gridx/h3/functions.py) for hole-reading modes, so hole-in / hole-out /
-        hole-out-ignore-geom operate on real hole cells. We reconstruct
-        s_cover = cover | holes_cover (exact: S = P ∪ H) and
-        s_core = core | holes_core.
+    s_core (solid = outer ring with holes filled):
+        boundary-in-ignore-holes is the only mode that reads s_core. When the
+        wrapper supplies solid_core = h3_polyfillash3(solid), s_core is exact.
+        Otherwise s_core = core | holes_core, which UNDER-COUNTS by the
+        "rim-straddle" cells (fully inside the solid but straddling a hole
+        boundary, so in neither p_core nor h_core), leaving small notches at
+        hole rims — the reason boundary-in-ignore-holes passes solid_core.
 
-        s_core here UNDER-COUNTS the true solid core by the "rim-straddle" cells:
-        a cell fully inside the solid that straddles a hole boundary (partly in
-        the donut, partly in the hole) is in neither p_core nor h_core but IS in
-        s_core. Only boundary-in-ignore-holes reads s_core, so on holed
-        geometries its inward band can have small notches at hole rims. The
-        faithful fix is to pass a solid-polyfill core array (h3_polyfillash3 of
-        the solid) instead of reconstructing — a deliberate follow-up (see the
-        SDD ledger "Phase B"); rim-straddle was 0 for a typical box+hole probe.
+        s_cover = cover | holes_cover is exact (S = P ∪ H) and unused by the
+        engine's mode table, so it is not supplied separately.
     """
     p_cover = _to_int_set(cover)
     p_core = _to_int_set(core)
     h_cover = _to_int_set(holes_cover)
     h_core = _to_int_set(holes_core)
-    # Solid = outer ring filled = geom union holes (approximation for h3 arrays)
-    s_cover = p_cover | h_cover
-    s_core = p_core | h_core
+    s_cover = p_cover | h_cover  # exact; unused by the engine mode table
+    # Faithful solid core when supplied (boundary-in-ignore-holes); else reconstruct.
+    s_core = _to_int_set(solid_core) if solid_core else (p_core | h_core)
 
     cls = _dilate.Classification(
         p_cover=p_cover,

@@ -1769,7 +1769,7 @@ def h3_geomkring_python_light_example(spark):
         f"SELECT gbx_h3_geomkring("
         f"  array({cover[0]}L, {cover[1]}L),"
         f"  array({core[0]}L),"
-        f"  array(), array(), 1, 'boundary-out'"
+        f"  array(), array(), array(), 1, 'boundary-out'"
         f") AS kring"
     ).first()
     return result["kring"]
@@ -1801,7 +1801,7 @@ def h3_geomkloop_python_light_example(spark):
         f"SELECT gbx_h3_geomkloop("
         f"  array({cover[0]}L, {cover[1]}L),"
         f"  array({core[0]}L),"
-        f"  array(), array(), 1, 'boundary-out'"
+        f"  array(), array(), array(), 1, 'boundary-out'"
         f") AS kloop"
     ).first()
     return result["kloop"]
@@ -1831,7 +1831,7 @@ def h3_geomkringexplode_python_light_example(spark):
     result = spark.sql(
         f"SELECT t.cellid FROM "
         f"(SELECT array({cover[0]}L, {cover[1]}L) AS cover, array({core[0]}L) AS core) src, "
-        f"LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t"
+        f"LATERAL gbx_h3_geomkringexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t"
     ).collect()
     return result
 
@@ -1861,7 +1861,7 @@ def h3_geomkloopexplode_python_light_example(spark):
     result = spark.sql(
         f"SELECT t.cellid FROM "
         f"(SELECT array({cover[0]}L, {cover[1]}L) AS cover, array({core[0]}L) AS core) src, "
-        f"LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), 1, 'boundary-out') t"
+        f"LATERAL gbx_h3_geomkloopexplode(src.cover, src.core, array(), array(), array(), 1, 'boundary-out') t"
     ).collect()
     return result
 
