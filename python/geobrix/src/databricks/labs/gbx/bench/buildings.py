@@ -42,9 +42,7 @@ def _rect(hw: float, hh: float) -> Polygon:
 
 def _lshape(s: float) -> Polygon:
     """L-shaped footprint spanning [-s, s]; a quadrant is cut out (concave)."""
-    return Polygon(
-        [(-s, -s), (s, -s), (s, 0.0), (0.0, 0.0), (0.0, s), (-s, s)]
-    )
+    return Polygon([(-s, -s), (s, -s), (s, 0.0), (0.0, 0.0), (0.0, s), (-s, s)])
 
 
 def _ushape(s: float) -> Polygon:
@@ -84,7 +82,12 @@ def _irregular(s: float, rng: random.Random) -> Polygon:
 
 
 def building_polygon(
-    shape: str, size_m: float, cx: float, cy: float, deg_per_m: float, rng: random.Random
+    shape: str,
+    size_m: float,
+    cx: float,
+    cy: float,
+    deg_per_m: float,
+    rng: random.Random,
 ) -> Polygon:
     """One building footprint of ``shape`` and ``size_m`` centred at (cx, cy).
 
