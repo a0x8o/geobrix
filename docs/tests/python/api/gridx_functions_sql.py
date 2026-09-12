@@ -1041,7 +1041,7 @@ custom_geomkring_sql_example_output = """
 +---------------------------------------------+
 |kring                                        |
 +---------------------------------------------+
-|[..., (cells within k=1 ring of 4.6 km box)]|
+|[..., (cells within k=1 ring of 4.6 km box)] |
 +---------------------------------------------+
 ... (ARRAY<BIGINT> — polyfill covering set plus one outer ring at resolution 0)
 """
