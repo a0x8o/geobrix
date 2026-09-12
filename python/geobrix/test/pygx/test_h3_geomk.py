@@ -406,6 +406,22 @@ def test_h3_boundary_in_ignore_holes_uses_solid_core():
     assert n2 in with_sc
 
 
+def test_h3_composition_wrapper_requires_databricks(spark):
+    """Off-Databricks (no product h3_coverash3), the geometry composition wrapper
+    fails fast with a clear RuntimeError instead of an opaque UNRESOLVED_ROUTINE.
+
+    The local Spark session here has no Databricks product h3_*/ST_* functions, so
+    the guard's DESCRIBE FUNCTION probe fails and geomkring/geomkloop raise with a
+    message telling the caller these must run on Databricks.
+    """
+    from databricks.labs.gbx.gridx.h3 import functions as h3f
+
+    h3f._checked_sessions.clear()  # ensure the per-session probe runs
+    for fn in (h3f.geomkring, h3f.geomkloop):
+        with pytest.raises(RuntimeError, match="Databricks"):
+            fn("geom", 9, 1)
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (require Databricks + product h3_* SQL functions)
 # ---------------------------------------------------------------------------

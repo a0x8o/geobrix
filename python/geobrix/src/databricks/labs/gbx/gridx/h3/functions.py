@@ -30,6 +30,11 @@ h3_coverash3(STRING|BINARY, res) = overlap (p_cover); h3_polyfillash3 =
 contained (p_core). Both reject a GEOMETRY value, so ST outputs are wrapped in
 ST_AsBinary. Geometry input: WKB BINARY (canonical) for every mode; WKT STRING
 also works for boundary-out / boundary-in (which skip the ST/hole chain).
+
+Because these wrappers delegate the geometry work to Databricks product
+functions, geomkring/geomkloop fail fast with a clear RuntimeError when invoked
+off Databricks (no product h3_*/ST_*) — see _require_databricks_product. The
+pre-computed-array SQL UDFs and the dilation engine have no such dependency.
 """
 
 from typing import Union
@@ -38,6 +43,46 @@ from pyspark.sql import Column
 from pyspark.sql import functions as F
 
 ColLike = Union[Column, str, bool, int, float, bytes]
+
+# Databricks product functions the composition relies on (columnar geometry
+# work). Presence is probed once per session to fail fast off-Databricks.
+_PRODUCT_SENTINEL = "h3_coverash3"
+_checked_sessions: set = set()
+
+
+def _require_databricks_product() -> None:
+    """Fail fast with a clear message when the Databricks product H3/ST functions
+    the composition needs aren't available (i.e. invoked off Databricks).
+
+    These geometry-aware H3 functions delegate the geometry→cell work to
+    Databricks-native ``h3_coverash3``/``h3_polyfillash3`` (and ``ST_*`` for hole
+    extraction), so the Python column API only runs on Databricks (Serverless or
+    a Databricks cluster). Off-Databricks the columns would otherwise fail at
+    execution with an opaque ``UNRESOLVED_ROUTINE``; probe once per session
+    (``DESCRIBE FUNCTION``, which resolves built-ins too) and raise a clear
+    RuntimeError instead. If there is no active session, or the probe itself is
+    unavailable, defer to lazy execution rather than block.
+    """
+    from pyspark.sql import SparkSession  # noqa: PLC0415
+
+    spark = SparkSession.getActiveSession()
+    if spark is None:
+        return
+    key = id(spark)
+    if key in _checked_sessions:
+        return
+    try:
+        spark.sql(f"DESCRIBE FUNCTION {_PRODUCT_SENTINEL}").collect()
+    except Exception as exc:  # product function not resolvable -> not on Databricks
+        raise RuntimeError(
+            "GeoBrix h3 geometry-aware functions (geomkring/geomkloop) require the "
+            "Databricks product H3/ST SQL functions (h3_coverash3, h3_polyfillash3, "
+            "ST_*), which are not available in this Spark session. These light-tier "
+            "functions must run on Databricks (Serverless or a Databricks cluster). "
+            "The pre-computed-array SQL UDFs (gbx_h3_geomkring etc.) and the dilation "
+            "engine run anywhere; only this geometry composition needs Databricks."
+        ) from exc
+    _checked_sessions.add(key)
 
 
 def _col(x: ColLike) -> Column:
@@ -168,6 +213,7 @@ def geomkring(
     Returns:
         Column of ARRAY<BIGINT> h3 cell ids.
     """
+    _require_databricks_product()
     geom = _col(geom_col)
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
@@ -196,6 +242,7 @@ def geomkloop(
     See :func:`geomkring` for parameter details. Connect-safe: uses F.call_function
     throughout — no F.expr(f-string), no ._jc references.
     """
+    _require_databricks_product()
     geom = _col(geom_col)
     cover = _cover_col(geom, resolution)
     core = _core_col(geom, resolution)
