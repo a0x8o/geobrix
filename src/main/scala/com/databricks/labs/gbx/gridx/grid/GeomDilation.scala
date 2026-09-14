@@ -51,21 +51,36 @@ object GeomDilation {
     Classification(pCover.toSet, pCore.toSet, sCover.toSet, sCore.toSet, hCover.toSet, hCore.toSet)
   }
 
-  private def setup(mode: String, cls: Classification)
-      : (Set[Long], Set[Long], Long => Boolean, Set[Long]) = mode match {
-    case "boundary-out"             => (cls.pBorder, cls.pCover, _ => true, cls.pCover)
-    case "boundary-in"              => (cls.pBorder, cls.pBorder, cls.pCore.contains, cls.pBorder)
-    case "boundary-in-ignore-holes" => (cls.pBorder, cls.pBorder, cls.sCore.contains, cls.pBorder)
-    case "hole-in"                  => (cls.hBorder, cls.hBorder, cls.hCore.contains, cls.hBorder)
-    case "hole-out"                 => (cls.hBorder, cls.hCover, cls.pCore.contains, cls.hBorder)
-    case "hole-out-ignore-geom"     => (cls.hBorder, cls.hCover, (n: Long) => !cls.hCore.contains(n), cls.hBorder)
-    case other => throw new IllegalArgumentException(s"unknown mode '$other'; expected ${MODES.mkString(", ")}")
+  /** Outer perimeter of a cell set: cells in `sCover` that have at least one immediate
+    * neighbour (kLoop distance 1) outside `sCover`. This is alignment-robust — any
+    * non-empty covering set has a perimeter even when the geometry aligns exactly to cell
+    * boundaries and produces zero straddling cells.  Excludes the hole-rim: hole-interior
+    * cells are surrounded by other sCover cells and therefore never appear in the perimeter. */
+  def outerPerimeter(sCover: Set[Long], grid: GridSystem): Set[Long] =
+    sCover.filter(c => grid.kLoop(c, 1).exists(n => !sCover.contains(n)))
+
+  // `grid` is required so setup can compute the perimeter for boundary-* seeds.
+  private def setup(mode: String, cls: Classification, grid: GridSystem)
+      : (Set[Long], Set[Long], Long => Boolean, Set[Long]) = {
+    // Outer perimeter of the solid (hole-filled) cover: alignment-robust boundary seed.
+    // Replaces the old pBorder (pCover diff pCore = straddling cells) which was empty for
+    // grid-aligned geometries and incorrectly included the hole rim for holed polygons.
+    val op = outerPerimeter(cls.sCover, grid)
+    mode match {
+      case "boundary-out"             => (op, cls.pCover, _ => true, cls.pCover)
+      case "boundary-in"              => (op, op, cls.pCore.contains, op)
+      case "boundary-in-ignore-holes" => (op, op, cls.sCore.contains, op)
+      case "hole-in"                  => (cls.hBorder, cls.hBorder, cls.hCore.contains, cls.hBorder)
+      case "hole-out"                 => (cls.hBorder, cls.hCover, cls.pCore.contains, cls.hBorder)
+      case "hole-out-ignore-geom"     => (cls.hBorder, cls.hCover, (n: Long) => !cls.hCore.contains(n), cls.hBorder)
+      case other => throw new IllegalArgumentException(s"unknown mode '$other'; expected ${MODES.mkString(", ")}")
+    }
   }
 
   def expand(kind: String, k: Int, mode: String, grid: GridSystem, geom: Geometry, res: Int): Set[Long] = {
     require(kind == "ring" || kind == "loop", s"kind must be 'ring' or 'loop'; got '$kind'")
     val cls = classify(grid, geom, res)
-    val (frontier0, visited0, admit, k0) = setup(mode, cls)
+    val (frontier0, visited0, admit, k0) = setup(mode, cls, grid)
     if (k == 0) return k0
     val visited = mutable.Set.empty[Long] ++ visited0
     var frontier: Set[Long] = frontier0

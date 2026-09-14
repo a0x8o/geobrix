@@ -50,6 +50,29 @@ class GeomDilationSuite extends AnyFunSuite {
     assert(r.intersect(cls.pCore).isEmpty, "hole-in must not enter the solid")
   }
 
+  test("boundary-out is alignment-robust — outward band non-empty for grid-aligned solid") {
+    // A polygon whose corners snap exactly to Quadbin cell boundaries has zero straddling
+    // cells (pBorder = ∅).  The old pBorder seed produced no outward expansion.
+    // With the perimeter fix, the outer band must be strictly larger than pCover.
+    val g = wkt.read("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))")
+    val cls  = GeomDilation.classify(grid, g, res)
+    val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
+    assert(ring.size > cls.pCover.size,
+      "boundary-out k=1 must expand beyond pCover even when pBorder is empty (alignment-robustness)")
+  }
+
+  test("boundary-out hole is excluded — perimeter seed never includes hole-rim cells") {
+    // For a holed polygon the outer perimeter of sCover lies on the outer ring only.
+    // boundary-out must not expand from the hole rim (which was the Layer-1 / old pBorder bug).
+    val g   = wkt.read("POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3),(-1 -1,-1 1,1 1,1 -1,-1 -1))")
+    val cls = GeomDilation.classify(grid, g, res)
+    assert(cls.hCore.nonEmpty, "fixture must have a non-empty hole interior (hCore)")
+    val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
+    // hole interior cells must NOT appear in a boundary-out expansion
+    assert(ring.intersect(cls.hCore).isEmpty,
+      "boundary-out must not fill hole interior cells")
+  }
+
   test("unknown mode throws") {
     val g = wkt.read("POLYGON((0 0,0 1,1 1,1 0,0 0))")
     assertThrows[IllegalArgumentException](GeomDilation.expand("ring", 1, "sideways", grid, g, res))

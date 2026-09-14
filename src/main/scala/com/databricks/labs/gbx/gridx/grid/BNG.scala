@@ -692,34 +692,33 @@ object BNG extends GridSystem {
         if (mode == GeomDilation.DEFAULT_MODE) geometryKLoop(geometry, resolution, k)
         else GeomDilation.expand("loop", k, mode, BNG, geometry, resolution)
 
-    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution. */
+    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution.
+      * Uses the covering-set outer perimeter as the boundary seed, which is alignment-robust:
+      * any non-empty covering set has a perimeter even when all cells are fully contained (no
+      * straddling cells).  The kLoop is the outermost shell of the k-ring minus the (k-1)-ring. */
     def geometryKLoop(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
-        // TODO: MOVE TO ITERATOR
+        val cls = GeomDilation.classify(BNG, geometry, resolution)
+        if (k == 0) return cls.pCover.filter(BNG.isValid)
+        // Outer perimeter of sCover: alignment-robust replacement for straddling borderCells.
+        val op = GeomDilation.outerPerimeter(cls.sCover, BNG)
         val n: Int = k - 1
-        // This has to be converted from iterator to a Seq, as we need to know what should be excluded
-        // anything that was core will never be a part of a k-loop
-        val chips = getChips(geometry, resolution, keepCoreGeom = false).toSeq
-        val (coreCells, borderCells) = chips.partition(_._2)
-        val coreIDs = coreCells.map(_._1).toSet
-
-        // We use nRing as naming for kRing where k = n
-        val borderNRing = borderCells.flatMap(c => kRing(c._1, n))
-        val nRing = coreIDs ++ borderNRing
-
-        val borderKLoop = borderCells.toSet.flatMap((c: (Long, Boolean, Geometry)) => this.kLoop(c._1, k))
-
-        val kLoop = borderKLoop.diff(nRing)
-        kLoop.filter(BNG.isValid)
+        // nRing = everything in ring(k-1): pCover base + perimeter kRing expanded to n steps
+        val nRing: Set[Long] = cls.pCover ++ op.flatMap(c => kRing(c, n))
+        // Shell at distance k from the perimeter, minus the inner ring
+        val kShell = op.flatMap(c => kLoop(c, k))
+        kShell.diff(nRing).filter(BNG.isValid)
     }
 
-    /** Set of cell IDs forming the k-ring around the geometry at the given resolution. */
+    /** Set of cell IDs forming the k-ring around the geometry at the given resolution.
+      * Uses the covering-set outer perimeter as the boundary seed, which is alignment-robust:
+      * any non-empty covering set has a perimeter even when all cells are fully contained (no
+      * straddling cells). */
     def geometryKRing(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
-        // TODO: MOVE TO ITERATOR
-        val chips = getChips(geometry, resolution, keepCoreGeom = false).toSeq
-        val (coreCells, borderCells) = chips.partition(_._2)
-        val coreIDs = coreCells.map(_._1).toSet
-        val borderKRing = borderCells.flatMap(c => kRing(c._1, k))
-        (coreIDs ++ borderKRing).filter(BNG.isValid)
+        val cls = GeomDilation.classify(BNG, geometry, resolution)
+        // Outer perimeter of sCover: alignment-robust replacement for straddling borderCells.
+        val op = GeomDilation.outerPerimeter(cls.sCover, BNG)
+        val expansion = op.flatMap(c => kRing(c, k))
+        (cls.pCover ++ expansion).filter(BNG.isValid)
     }
 
     def getChips(
