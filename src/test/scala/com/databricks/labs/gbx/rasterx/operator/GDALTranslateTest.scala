@@ -262,6 +262,30 @@ class GDALTranslateTest extends AnyFunSuite with BeforeAndAfterAll {
         gdal.Unlink("/vsimem/float.tif")
     }
 
+    test("GDALTranslate -ot Byte on a Float source selects a Byte-compatible predictor (#82)") {
+        // Float input, Byte output: the predictor must match the OUTPUT type. Deriving
+        // PREDICTOR=3 (Float32/Float64-only) from the float *input* made gdal_translate
+        // reject the Byte output ("PREDICTOR=3 is only supported with Float32 or Float64").
+        val driver = gdal.GetDriverByName("MEM")
+        val floatDs = driver.Create("/vsimem/float_to_byte.tif", 100, 100, 1, gdalconstConstants.GDT_Float32)
+        floatDs.SetGeoTransform(Array(0.0, 1.0, 0.0, 0.0, 0.0, -1.0))
+
+        val outputPath = "/vsimem/translated_byte.tif"
+        val command = "gdal_translate -ot Byte"
+        val (resultDs, metadata) = GDALTranslate.executeTranslate(outputPath, floatDs, command, Map.empty)
+
+        resultDs should not be null
+        resultDs.GetRasterBand(1).getDataType shouldBe gdalconstConstants.GDT_Byte
+        metadata should contain key "last_command"
+        metadata("last_command") should include("PREDICTOR=1")
+        metadata("last_command") should not include ("PREDICTOR=3")
+
+        gdal.Unlink(outputPath)
+        resultDs.delete()
+        floatDs.delete()
+        gdal.Unlink("/vsimem/float_to_byte.tif")
+    }
+
     test("GDALTranslate should handle PNM format with scaling") {
         val outputPath = "/vsimem/translated.pnm"
         val command = "gdal_translate"

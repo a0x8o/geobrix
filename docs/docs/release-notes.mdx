@@ -103,6 +103,7 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 ### Reader and operator fixes
 
 - **`raster_gbx`: `splitStrategy` / `sizeInMB` now bound tile size on the default virtual-tiles path.** On the lightweight `raster_gbx` reader these budget options were silently ignored while `virtualTiles` stayed at its default `"true"` — a large raster came through as a single whole-image tile, with no split and no warning, and then out-of-memoried the first pixel-touching operation (`rst_sample`, aggregations). The decoded-byte budget now bounds each **virtual** tile the same way it already bounded materialized tiles, so a raster whose decoded footprint exceeds the budget is split into multiple virtual window tiles regardless of `virtualTiles`. `splitStrategy`/`sizeInMB` now behave identically on both paths. See [Raster Readers](./readers/raster).
+- **`gbx_rst_updatetype` (heavyweight) now selects a compression predictor that matches the output datatype.** Converting a Float raster to `Byte` failed because the TIFF predictor was derived from the input datatype — `PREDICTOR=3` (Float32/Float64-only) — while the output was `Byte`, so `gdal_translate` rejected the creation options (`PREDICTOR=3 is only supported with Float32 or Float64`). When a translate/calc command sets an explicit output type (`-ot` / `--type`), the predictor is now chosen from that type (`1` for Byte/Int8, `3` for Float32/Float64, `2` otherwise). The lightweight `rst_updatetype` was already correct.
 
 ---
 
