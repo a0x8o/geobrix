@@ -25,16 +25,19 @@ _HOLED_POLY = Polygon(_HOLED_OUTER, [_HOLED_HOLE])
 _HOLED_RES = 10
 
 
-def test_quadbin_geomkring_k0_is_covering_set():
+def test_quadbin_geomkring_boundary_out_k0_is_empty():
+    """boundary-out k=0 == ∅: the covering set / geom is EXCLUDED (LOCKED design)."""
     g, res = _wkb(), 12
-    k0 = set(_quadbin.geometry_k_ring(g, res, 0))
+    assert set(_quadbin.geometry_k_ring(g, res, 0)) == set()
+
+
+def test_quadbin_geomkring_boundary_out_excludes_polyfill():
+    """boundary-out k=1 is the outward band ONLY — disjoint from the covering set."""
+    g, res = _wkb(), 12
     fill = set(_quadbin.polyfill(g, res))
-    assert k0 == fill
-
-
-def test_quadbin_geomkring_filled_superset_of_polyfill():
-    g, res = _wkb(), 12
-    assert set(_quadbin.polyfill(g, res)) <= set(_quadbin.geometry_k_ring(g, res, 1))
+    k1 = set(_quadbin.geometry_k_ring(g, res, 1))
+    assert k1, "boundary-out k=1 must be a non-empty outward band"
+    assert k1.isdisjoint(fill), "boundary-out excludes the covering set (geom excluded)"
 
 
 def test_quadbin_geomkloop_is_ring_diff():
@@ -48,12 +51,11 @@ def test_quadbin_geomkring_returns_bigint():
     assert all(isinstance(c, int) for c in _quadbin.geometry_k_ring(_wkb(), 12, 1))
 
 
-def test_quadbin_geomkring_k0_boundary_out_is_polyfill():
-    """boundary-out k=0 == polyfill (the full covering set; k0 = p_cover, unchanged)."""
+def test_quadbin_geomkring_k0_boundary_out_is_empty():
+    """boundary-out k=0 == ∅ (geom EXCLUDED; k0 = ∅ under the LOCKED design)."""
     g, res = _wkb(), 12
-    fill = set(_quadbin.polyfill(g, res))
     k0 = set(_quadbin.geometry_k_ring(g, res, 0, mode="boundary-out"))
-    assert k0 == fill, f"boundary-out k=0={len(k0)} fill={len(fill)}"
+    assert k0 == set(), f"boundary-out k=0 must be ∅; got {len(k0)}"
 
 
 def test_quadbin_geomkring_k0_boundary_in_is_outer_perimeter():
@@ -73,11 +75,10 @@ def test_quadbin_geomkring_k0_boundary_in_is_outer_perimeter():
         assert k0 <= fill, f"mode={mode}: k0 must be a subset of polyfill"
 
 
-def test_quadbin_geomkloop_k0_returns_polyfill():
-    """k=0 loop == polyfill."""
+def test_quadbin_geomkloop_boundary_out_k0_is_empty():
+    """boundary-out k=0 loop == ∅ (geom excluded)."""
     g, res = _wkb(), 12
-    fill = set(_quadbin.polyfill(g, res))
-    assert set(_quadbin.geometry_k_loop(g, res, 0)) == fill
+    assert set(_quadbin.geometry_k_loop(g, res, 0)) == set()
 
 
 def test_quadbin_geomkring_all_modes_return_bigints():

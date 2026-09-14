@@ -208,28 +208,31 @@ def test_chipop_both_noncore_same_cell_intersection_clips():
 
 
 def test_line_fill_chips_follow_line():
-    # Line geometry: the classify engine now uses intersection.length > 0 for
-    # dim=1 geometries (not area > 0), and a point_to_cell_fn fallback to
-    # generate candidates when polyfill returns nothing.  k=0 (the covering set,
-    # boundary-out default mode) now returns the cells the line crosses.
+    # Line geometry: the classify engine uses intersection.length > 0 for dim=1
+    # geometries and a point_to_cell_fn fallback to generate candidates.  Under the
+    # LOCKED design, boundary-out k0=∅ EXCLUDES the covering set, so the line's
+    # crossing cells surface at boundary-in k=0 (the perimeter of a 1-D covering set
+    # is every crossing cell).  boundary-out k=1 is the outward buffer around the line.
     #
     # REVERSED from the 6dc1efe8 "empty" assertion: line support is now required.
     line = _towkb(
         shapely.geometry.LineString([(530100.0, 180500.0), (532900.0, 180500.0)])
     )
     res = _bng.get_resolution("1km")
-    gkr = _bng.geometry_k_ring_str(line, res, 0)
-    assert gkr, (
-        "boundary-out k=0 (covering set) on a BNG line must be non-empty; "
-        "FAILS before dimension-aware classify + point_to_cell_fn fallback; "
-        "PASSES after the fix"
-    )
-    # The 2.8 km horizontal line at 1km resolution must cover at least 2 cells.
+    # Covering set (the crossing cells) via boundary-in k=0.
+    cover = _bng.geometry_k_ring_str(line, res, 0, "boundary-in")
+    assert cover, "line covering set (boundary-in k=0) must be non-empty"
     assert (
-        len(gkr) >= 2
-    ), f"a 2.8 km line at 1km resolution must cover at least 2 cells; got {len(gkr)}"
+        len(cover) >= 2
+    ), f"a 2.8 km line at 1km resolution must cross at least 2 cells; got {len(cover)}"
+    # boundary-out k=1 is the outward buffer, EXCLUDING the crossing cells (k0=∅).
+    band = _bng.geometry_k_ring_str(line, res, 1)  # default boundary-out
+    assert band, "boundary-out k=1 on a BNG line must be a non-empty outward buffer"
+    assert set(band).isdisjoint(
+        set(cover)
+    ), "boundary-out excludes the line's own cells"
     # All returned IDs must be valid BNG string cell IDs.
-    for cid in gkr:
+    for cid in list(cover) + list(band):
         assert _bng.format(_bng.parse(cid)) == cid
 
 
@@ -252,24 +255,24 @@ def test_geomkring_boundary_out_grid_aligned_expands_outward():
     geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
     res = _bng.get_resolution("1km")
     cover = set(_bng.polyfill_str(geom, res))  # 9 covering cells
-    gkr_1 = set(_bng.geometry_k_ring_str(geom, res, 1))  # should expand outward
+    gkr_1 = set(_bng.geometry_k_ring_str(geom, res, 1))  # outward band (geom excluded)
 
-    # The covering set is a subset of the k=1 ring.
-    assert cover <= gkr_1, "covering set must be contained in k=1 ring"
-    # The k=1 ring must be STRICTLY larger (includes outer perimeter neighbours).
-    assert len(gkr_1) > len(cover), (
-        f"boundary-out k=1 on aligned polygon: expected outer expansion, "
-        f"got {len(gkr_1)} cells (same as cover={len(cover)})"
-    )
+    # boundary-out k=1 is the outward band ONLY (k0=∅): non-empty and DISJOINT from
+    # the covering set.  The perimeter model still makes it non-empty for an aligned
+    # polygon (outer_perimeter of a non-empty covering set is always non-empty).
+    assert gkr_1, "boundary-out k=1 on aligned polygon must be a non-empty outward band"
+    assert gkr_1.isdisjoint(
+        cover
+    ), "boundary-out excludes the covering set (geom excluded)"
 
 
-def test_geomkring_boundary_out_grid_aligned_polyfill_subset():
-    """polyfill result is always a subset of k-ring (sanity check for aligned polygons)."""
+def test_geomkring_boundary_out_grid_aligned_excludes_polyfill():
+    """boundary-out k=1 is disjoint from polyfill (geom excluded, k0=∅) for aligned polygons."""
     geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
     res = _bng.get_resolution("1km")
     fill = set(_bng.polyfill_str(geom, res))
     gkr = set(_bng.geometry_k_ring_str(geom, res, 1))
-    assert fill <= gkr
+    assert gkr and gkr.isdisjoint(fill)
 
 
 # ---------------------------------------------------------------------------

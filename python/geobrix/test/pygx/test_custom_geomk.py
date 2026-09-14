@@ -78,22 +78,21 @@ def _wkb(geom) -> bytes:
 # ── basic properties ──────────────────────────────────────────────────────────
 
 
-def test_custom_geomkring_k0_is_polyfill():
-    """k=0 ring == polyfill (the covering set at boundary-out default mode)."""
+def test_custom_geomkring_boundary_out_k0_is_empty():
+    """boundary-out k=0 == ∅: the covering set / geom is EXCLUDED (LOCKED design)."""
     conf = _conf()
     g = _wkb(_SIMPLE_GEOM)
-    k0 = set(_custom.geometry_k_ring(conf, g, _SIMPLE_RES, 0))
-    fill = set(_custom.polyfill(conf, _SIMPLE_GEOM, _SIMPLE_RES))
-    assert k0 == fill
+    assert set(_custom.geometry_k_ring(conf, g, _SIMPLE_RES, 0)) == set()
 
 
-def test_custom_geomkring_filled_superset_of_polyfill():
-    """k=1 ring is a superset of polyfill."""
+def test_custom_geomkring_boundary_out_excludes_polyfill():
+    """boundary-out k=1 is the outward band ONLY — disjoint from the covering set."""
     conf = _conf()
     g = _wkb(_SIMPLE_GEOM)
     fill = set(_custom.polyfill(conf, _SIMPLE_GEOM, _SIMPLE_RES))
     k1 = set(_custom.geometry_k_ring(conf, g, _SIMPLE_RES, 1))
-    assert fill <= k1
+    assert k1, "boundary-out k=1 must be a non-empty outward band"
+    assert k1.isdisjoint(fill), "boundary-out excludes the covering set (geom excluded)"
 
 
 def test_custom_geomkloop_is_ring_diff():
@@ -115,13 +114,12 @@ def test_custom_geomkring_returns_bigint():
     assert all(isinstance(c, int) for c in cells)
 
 
-def test_custom_geomkloop_k0_returns_polyfill():
-    """k=0 loop == polyfill (same as k=0 ring)."""
+def test_custom_geomkloop_boundary_out_k0_is_empty():
+    """boundary-out k=0 loop == ∅ (same as k=0 ring; geom excluded)."""
     conf = _conf()
     g = _wkb(_SIMPLE_GEOM)
-    fill = set(_custom.polyfill(conf, _SIMPLE_GEOM, _SIMPLE_RES))
     loop0 = set(_custom.geometry_k_loop(conf, g, _SIMPLE_RES, 0))
-    assert loop0 == fill
+    assert loop0 == set()
 
 
 def test_custom_geomkring_all_modes_return_bigints():
@@ -200,4 +198,5 @@ def test_custom_polyfill_and_kring_geom_straddling_upper_boundary():
     fill = _custom.polyfill(conf, g, 1)  # must not raise
     ring = _custom.geometry_k_ring(conf, _wkb(g), 1, 1)  # must not raise
     assert isinstance(fill, list) and isinstance(ring, list)
-    assert set(fill) <= set(ring)  # k=1 ring is a superset of the polyfill
+    # boundary-out k=1 is the outward band (geom excluded, k0=∅): disjoint from polyfill.
+    assert set(ring).isdisjoint(set(fill))

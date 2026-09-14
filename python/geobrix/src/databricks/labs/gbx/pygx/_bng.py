@@ -888,12 +888,17 @@ def classify_bng(geometry, resolution):
 
 
 def geometry_k_ring(
-    geometry, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+    geometry,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+    coverage: str = _dilate.DEFAULT_COVERAGE,
 ) -> set:
     """k-ring of cell ids covering ``geometry`` (BNG.geometryKRing, BNG.scala L639).
 
     All modes — including the default ``boundary-out`` — route through the shared
-    :mod:`_dilate` engine using the covering-set perimeter model.  The old
+    :mod:`_dilate` engine using the region-X perimeter model.  ``coverage`` ∈
+    {"coveras","polyfill","core"} selects the belongs-to basis.  The old
     ``get_chips`` straddling-border fast-path is retired: it produced empty results
     on grid-aligned geometries (s_border empty) and diverged from heavy's
     perimeter-based definition after commit b61ad384.
@@ -901,39 +906,64 @@ def geometry_k_ring(
     cls = classify_bng(geometry, resolution)
     return {
         c
-        for c in _dilate.geom_expand("ring", int(k), mode, cls, lambda c: k_loop(c, 1))
+        for c in _dilate.geom_expand(
+            "ring", int(k), mode, cls, lambda c: k_loop(c, 1), coverage
+        )
         if is_valid(c)
     }
 
 
 def geometry_k_loop(
-    geometry, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+    geometry,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+    coverage: str = _dilate.DEFAULT_COVERAGE,
 ) -> set:
     """Hollow k-loop of cell ids around ``geometry`` (BNG.geometryKLoop, L619).
 
-    All modes — including the default ``boundary-out`` — route through the shared
-    :mod:`_dilate` engine.  k=0 returns the covering set (matching heavy's
-    ``if (k==0) return cls.pCover`` guard, implemented via ``geom_expand``'s k=0
-    path which returns k0 = p_cover for boundary-out).
+    All modes route through the shared :mod:`_dilate` engine.  ``coverage`` selects
+    the belongs-to basis.  Under the LOCKED design, boundary-out has k0 = ∅ (the
+    covering set is EXCLUDED — only the outward band is returned).
     """
     cls = classify_bng(geometry, resolution)
     return {
         c
-        for c in _dilate.geom_expand("loop", int(k), mode, cls, lambda c: k_loop(c, 1))
+        for c in _dilate.geom_expand(
+            "loop", int(k), mode, cls, lambda c: k_loop(c, 1), coverage
+        )
         if is_valid(c)
     }
 
 
-def geometry_k_ring_str(geom, resolution, k, mode: str = _dilate.DEFAULT_MODE) -> list:
+def geometry_k_ring_str(
+    geom,
+    resolution,
+    k,
+    mode: str = _dilate.DEFAULT_MODE,
+    coverage: str = _dilate.DEFAULT_COVERAGE,
+) -> list:
     """String-id wrapper over :func:`geometry_k_ring` (parse geom -> walk -> format)."""
     res = get_resolution(resolution)
-    return [format(c) for c in geometry_k_ring(parse_geom(geom), res, int(k), mode)]
+    return [
+        format(c)
+        for c in geometry_k_ring(parse_geom(geom), res, int(k), mode, coverage)
+    ]
 
 
-def geometry_k_loop_str(geom, resolution, k, mode: str = _dilate.DEFAULT_MODE) -> list:
+def geometry_k_loop_str(
+    geom,
+    resolution,
+    k,
+    mode: str = _dilate.DEFAULT_MODE,
+    coverage: str = _dilate.DEFAULT_COVERAGE,
+) -> list:
     """String-id wrapper over :func:`geometry_k_loop` (parse geom -> walk -> format)."""
     res = get_resolution(resolution)
-    return [format(c) for c in geometry_k_loop(parse_geom(geom), res, int(k), mode)]
+    return [
+        format(c)
+        for c in geometry_k_loop(parse_geom(geom), res, int(k), mode, coverage)
+    ]
 
 
 # ---------------------------------------------------------------------------
