@@ -1895,7 +1895,7 @@ Heavyweight `gbx_custom_cellfill` returns `ARRAY<STRUCT<cellid BIGINT, value DOU
 
 <Tier light/>
 
-H3 geometry-aware kring/kloop are **light-tier only** (no Scala/heavy implementation), but they work exactly like the other grids: a single **geometry-taking** function does the whole job in pure Python via the `h3` library — the performant `polygon_to_cells_experimental` polyfill for the covering set and `grid_disk` for the neighbour walk. There is **no dependency on Databricks product functions**, so they run anywhere (local, Serverless, and classic clusters) and are called identically from SQL and PySpark:
+H3 geometry-aware kring/kloop are **light-tier only** (no Scala/heavy implementation), but they work exactly like the other grids: a single **geometry-taking** function does the whole job in pure Python via the `h3` library — the performant `polygon_to_cells_experimental` polyfill for the covering set and `grid_disk` for the neighbour walk. They run anywhere (local, Serverless, and classic clusters) and are called identically from SQL and PySpark:
 
 ```python
 from databricks.labs.gbx.pygx.functions import register
@@ -1911,7 +1911,7 @@ df.withColumn("kring", geomkring("geom_col", resolution=9, k=1))
 
 <Tier light/>
 
-Geometry-aware H3 k-ring: the geometry's covering set expanded outward by `k` ring steps — the polyfill and neighbour walk both use the `h3` library, with no dependency on Databricks product functions.
+Geometry-aware H3 k-ring: the geometry's covering set expanded outward by `k` ring steps — the polyfill and neighbour walk both use the `h3` library.
 
 **Signature:** `h3_geomkring(geom, resolution, k, [mode])`
 
