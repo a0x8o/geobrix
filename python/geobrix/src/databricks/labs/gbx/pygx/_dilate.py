@@ -375,10 +375,12 @@ def mode_setup(mode, cls, neighbors=None, coverage=DEFAULT_COVERAGE):
         return void_edge, void_edge, (lambda n: n in h_x), void_edge
     if mode == "hole-out":
         # Seed from solid-side (P_X cells adjacent to the hole).
-        # Expand outward into solid (admit P_X); visited = H_X (blocks hole entry).
-        return solid_edge, frozenset(h_x), (lambda n: n in p_x), solid_edge
+        # Expand outward into solid (admit P_X); visited = H_X ∪ solid_edge so
+        # the seed cannot reappear in shell 1 (disjoint-loop invariant).
+        return solid_edge, frozenset(h_x) | frozenset(solid_edge), (lambda n: n in p_x), solid_edge
     # hole-out-ignore-geom: solid-side seed, expand unbounded (admit not-in-H_X).
-    return solid_edge, frozenset(h_x), (lambda n: n not in h_x), solid_edge
+    # Same visited0 fix: include solid_edge so shell 1 is disjoint from the seed.
+    return solid_edge, frozenset(h_x) | frozenset(solid_edge), (lambda n: n not in h_x), solid_edge
 
 
 def geom_expand(kind, k, mode, cls, neighbors, coverage=DEFAULT_COVERAGE):
