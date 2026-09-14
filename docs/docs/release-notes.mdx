@@ -5,7 +5,7 @@ title: Release Notes
 
 # Release Notes
 
-:::info Current version: 0.5.0
+:::info Current version: 0.5.1
 The changes on this page are relative to 0.1.0 (and earlier).
 :::
 
@@ -49,6 +49,15 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 - **New `gbx_rst_align_to` — snap a tile to a reference grid.** `gbx_rst_align_to(tile, reference_tile)` resamples `tile` to match the CRS, extent, and pixel grid of `reference_tile` using nearest-neighbour resampling, so the two tiles land on exactly the same grid without fabricating interpolated values. The primary use case is preparing inputs before combining them with `gbx_rst_combine*`. Available on both the heavyweight and lightweight tiers. See [Raster Functions](./api/raster-functions).
 
+### NetCDF reader — multi-dimension handling (new)
+
+- **The lightweight `netcdf_gbx` raster reader gains `dimIndex`, `fanout`, and `bandDim` options for CF variables with extra (non-spatial) dimensions such as time and level.**
+  - `dimIndex` pins one or more leading dimensions to a specific index — `.option("dimIndex", "time=2,level=1")` — reading a single slice. Absent dimensions fall back to index 0 (with a warning when the dimension has more than one slice); an out-of-range index raises `ValueError`.
+  - `fanout` expands one or more dimensions across all their indices, emitting one `(source, tile)` row per index combination — `.option("fanout", "time,level")`. It composes with `dimIndex` (fanned dimensions expand; the rest stay pinned).
+  - `bandDim` stacks one dimension's slices as bands in a single multi-band tile — `.option("bandDim", "time")` turns a `(time=3, lat, lon)` variable into one 3-band tile; an estimated decode over ~256 MiB warns and suggests `fanout` instead.
+
+  A dimension may appear in only one of the three (conflicts raise `ValueError`). A variable that reaches the reader with an unrecognized extra dimension now emits a per-variable `UserWarning` (previously a hard `ValueError`), so a file mixing such variables still reads. See [NetCDF Reader](./readers/netcdf).
+
 ### Grid-native cell-space fill (new)
 
 - **New `gbx_{h3,quadbin,bng,custom}_cellfill` — gap-filling over a grid-indexed table.** Four new grouped aggregators — `gbx_h3_cellfill`, `gbx_quadbin_cellfill`, `gbx_bng_cellfill`, and `gbx_custom_cellfill` (one per grid system) — fill cells whose value is `NULL` by interpolating from neighbouring cells in the same group. Call as a `GROUP BY` aggregate: `gbx_h3_cellfill(cellid, value[, k[, method[, power]]])`. The optional `k` parameter (default `1`) controls the neighbourhood radius in k-rings; `method` selects the interpolation strategy — `'mean'` (simple unweighted average of valid neighbours, default) or `'idw'` (inverse-distance-weighted average); `power` (default `2.0`) is the IDW distance exponent. Each function returns `ARRAY<STRUCT<cellid, value DOUBLE>>`, where filled and original cells are both present. Useful for smoothing patchy raster-to-grid output, imputing sparse sensor grids, or filling NoData-derived nulls in any grid-indexed table — no coordinate projection is needed, all interpolation happens in cell space. BNG cell IDs are `STRING`; all others are `BIGINT`. Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
@@ -91,6 +100,11 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 - **After the initial v0.5.0 release the light-tier extras' dependency pins were refreshed, and the v0.5.0 release artifacts were regenerated against that update.** The runtime-pinned `light_*` extras (`light_env5`/`light_env6`, `light_dbr17`–`light_dbr19`, and their `_all` variants) pin their transitive dependencies to the versions already present in the matching Databricks base, so an `_all` install on Serverless env5/env6 changes no preinstalled packages (`%pip` output stays quiet); the source-specific downloaders `[earthdata]` (NASA Earthdata / EMIT) and `[overture]` (Overture Maps) are opt-in extras outside `_all`. The **v0.5.0** assets — lightweight wheel, heavyweight JAR, docs bundle, and the pre-built GDAL native tarball — were regenerated to carry these pins, and v0.5.1 carries them forward. See [Installation](./installation?tier=lightweight).
 
+### Reader and operator fixes
+
+- **`raster_gbx`: `splitStrategy` / `sizeInMB` now bound tile size on the default virtual-tiles path.** On the lightweight `raster_gbx` reader these budget options were silently ignored while `virtualTiles` stayed at its default `"true"` — a large raster came through as a single whole-image tile, with no split and no warning, and then out-of-memoried the first pixel-touching operation (`rst_sample`, aggregations). The decoded-byte budget now bounds each **virtual** tile the same way it already bounded materialized tiles, so a raster whose decoded footprint exceeds the budget is split into multiple virtual window tiles regardless of `virtualTiles`. `splitStrategy`/`sizeInMB` now behave identically on both paths. See [Raster Readers](./readers/raster).
+- **`gbx_rst_updatetype` (heavyweight) now selects a compression predictor that matches the output datatype.** Converting a Float raster to `Byte` failed because the TIFF predictor was derived from the input datatype — `PREDICTOR=3` (Float32/Float64-only) — while the output was `Byte`, so `gdal_translate` rejected the creation options (`PREDICTOR=3 is only supported with Float32 or Float64`). When a translate/calc command sets an explicit output type (`-ot` / `--type`), the predictor is now chosen from that type (`1` for Byte/Int8, `3` for Float32/Float64, `2` otherwise). The lightweight `rst_updatetype` was already correct.
+
 ---
 
 ## What's new in v0.5.0
@@ -99,9 +113,9 @@ Introduces **virtual tiles** — a bytes-free way to read and process huge raste
 
 ### Packaging
 
-- **Packaging: `[light]` and `[light_all]` are removed in 0.5.0 (beta break, no alias).** Every light-tier install now picks an explicit, runtime-pinned extra. On Serverless: install `geobrix[light_env6]` (environment v6, **recommended**) or `geobrix[light_env5]` (env 5). On classic clusters: install `geobrix[light_dbr17]`, `geobrix[light_dbr18]`, or `geobrix[light_dbr19]` to match your runtime. Full-feature-set variants (`_all`) are available for each extra. See [Installation](./installation?tier=lightweight).
+- **Packaging: `[light]` and `[light_all]` are removed in 0.5.0 (breaking change, no alias).** Every light-tier install now picks an explicit, runtime-pinned extra. On Serverless: install `geobrix[light_env6]` (environment v6, **recommended**) or `geobrix[light_env5]` (env 5). On classic clusters: install `geobrix[light_dbr17]`, `geobrix[light_dbr18]`, or `geobrix[light_dbr19]` to match your runtime. Full-feature-set variants (`_all`) are available for each extra. See [Installation](./installation?tier=lightweight).
 - **Light-tier dependencies are now pinned to the Databricks base.** All runtime-pinned light extras (`light_env5`, `light_env6`, `light_dbr17`–`light_dbr19`) pin their transitive dependencies to the versions already present in the corresponding Databricks base environment. Installing GeoBrix Light no longer unexpectedly upgrades preinstalled packages, and `%pip install` output is quieter.
-- **`earthaccess` and the EMIT downloader moved from `[stac]` to the new `[earthdata]` extra (beta break).** Installing `geobrix[...,stac]` no longer pulls in `earthaccess`. To use `EmitDownloader` or any NASA Earthdata / LP DAAC client, add the `[earthdata]` extra — e.g. `geobrix[light_env6,earthdata]`. The `[earthdata]` extra is not included in `_all` bundles because `earthaccess` updates `fsspec`, which can conflict with cluster preinstalled packages.
+- **`earthaccess` and the EMIT downloader moved from `[stac]` to the new `[earthdata]` extra (breaking change).** Installing `geobrix[...,stac]` no longer pulls in `earthaccess`. To use `EmitDownloader` or any NASA Earthdata / LP DAAC client, add the `[earthdata]` extra — e.g. `geobrix[light_env6,earthdata]`. The `[earthdata]` extra is not included in `_all` bundles because `earthaccess` updates `fsspec`, which can conflict with cluster preinstalled packages.
 - **`[overture]` is now an opt-in extra, excluded from `_all`.** The Overture Maps downloader (`overturemaps>=1.0`) ships behind the `[overture]` extra and is no longer included in `_all` bundles. Like `[earthdata]`, it changes a preinstalled base package on install — `overturemaps` 1.x bumps `click` — so it is opt-in. Add it explicitly when you need it: `geobrix[light_env6,overture]`. `_all` is now `[light_envN/_dbrN]` + `[stac]` + `[vizx]` — generic, quiet features only. Source-specific downloaders (`[earthdata]`, `[overture]`, and any future additions) follow this opt-in rule.
 
 ### Virtual tiles & tile struct

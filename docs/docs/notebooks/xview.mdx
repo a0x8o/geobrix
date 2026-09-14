@@ -36,7 +36,7 @@ You need a free account at [challenge.xviewdataset.org](https://challenge.xviewd
 ## Prerequisites
 
 - **Databricks Runtime 17.3 LTS / 18 LTS, or Serverless** (Scala 2.13 / Spark 4 / Python 3.12). The lightweight default runs on Serverless; the heavyweight tweak needs a classic x86 cluster.
-- **GeoBrix** (version 0.5.0). The setup cell `%pip`-installs the `geobrix[light_env6]` wheel, which brings the pure-Python bindings (`databricks.labs.gbx.pyrx`) and their dependencies (including `rasterio`, used for the in-notebook previews). For the heavyweight tweak, also attach the GeoBrix JAR **and the GDAL init script** to the cluster, and switch the import to `databricks.labs.gbx.rasterx`.
+- **GeoBrix** (version 0.5.1). The setup cell `%pip`-installs the `geobrix[light_env6]` wheel, which brings the pure-Python bindings (`databricks.labs.gbx.pyrx`) and their dependencies (including `rasterio`, used for the in-notebook previews). For the heavyweight tweak, also attach the GeoBrix JAR **and the GDAL init script** to the cluster, and switch the import to `databricks.labs.gbx.rasterx`.
 - **Unity Catalog**: set `catalog_name` / `schema_name` at the top of the notebook. A Volume named `data` must already exist under `<catalog>/<schema>`; the notebook will create the schema but not the Volume.
 - **Compute sizing**: xView training tiles are ~3000×3000 RGB GeoTIFFs. For the heavyweight tier, an x86 cluster is required for the GDAL JNI natives, and memory/disk-optimized variants (e.g. `r6id.*`, `m5d.*`) are recommended for the raster-processing step.
 
