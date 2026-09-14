@@ -1,6 +1,6 @@
 package com.databricks.labs.gbx.rasterx.operator
 
-import org.gdal.gdal.Dataset
+import org.gdal.gdal.{Dataset, gdal}
 import org.gdal.gdalconst.gdalconstConstants._
 
 /** Parses GDAL command strings and appends format/compression/block options for translate/warp/calc. */
@@ -27,17 +27,32 @@ object OperatorOptions {
 
         // Compute predictor based on dtype: 3 for float, 1 for uint8/int8, 2 for others.
         // Mirrors pyrx.core.compression._FLOAT, _SMALL_INT predictor mapping.
-        val predictor = {
-            val anyFloat = (1 to ds.GetRasterCount).exists { i =>
-                val dt = ds.GetRasterBand(i).GetRasterDataType
-                dt == GDT_Float32 || dt == GDT_Float64
-            }
-            val anySmallInt = (1 to ds.GetRasterCount).exists { i =>
-                val dt = ds.GetRasterBand(i).GetRasterDataType
-                dt == GDT_Byte || dt == GDT_Int8
-            }
-            if (anyFloat) "3" else if (anySmallInt) "1" else "2"
+        //
+        // GDAL applies the TIFF predictor to the OUTPUT raster, so it must match the
+        // output datatype (PREDICTOR=3 is Float32/Float64-only). When the command sets an
+        // explicit output type — gdal_translate "-ot <Type>", gdal_calc "--type <Type>" —
+        // derive the predictor from that type; otherwise fall back to the input band types.
+        // Without this, converting a Float raster to Byte (RST_UpdateType) derived
+        // PREDICTOR=3 from the float input and gdal_translate rejected the Byte output. (#82)
+        def predictorForType(dt: Int): String =
+            if (dt == GDT_Float32 || dt == GDT_Float64) "3"
+            else if (dt == GDT_Byte || dt == GDT_Int8) "1"
+            else "2"
+        val outputType: Int = {
+            val toks = command.split(" ")
+            val idx = toks.indexWhere(t => t == "-ot" || t == "--type")
+            if (idx >= 0 && idx + 1 < toks.length) gdal.GetDataTypeByName(toks(idx + 1))
+            else GDT_Unknown
         }
+        val predictor =
+            if (outputType != GDT_Unknown) {
+                predictorForType(outputType)
+            } else {
+                val bandTypes = (1 to ds.GetRasterCount).map(i => ds.GetRasterBand(i).GetRasterDataType)
+                if (bandTypes.exists(dt => dt == GDT_Float32 || dt == GDT_Float64)) "3"
+                else if (bandTypes.exists(dt => dt == GDT_Byte || dt == GDT_Int8)) "1"
+                else "2"
+            }
 
         val w = ds.GetRasterXSize; val h = ds.GetRasterYSize
         val rawBlk = math.max(64, math.min(writeOptions.getOrElse("blocksize", "512").toInt, math.min(w, h)))
