@@ -173,3 +173,45 @@ def test_tile_size_virtual_no_guard(tmp_path):
         p, 0, tile_size=(40000, 40000), overlap_percent=0, emit_virtual=True
     )
     assert len(parts) >= 1  # no raise
+
+
+# ---------------------------------------------------------------------------
+# Budget-aware virtual split (issue #84): splitStrategy / sizeInMB must bound
+# each VIRTUAL tile's decoded footprint too, not only materialized tiles.
+# Previously the emit_virtual short-circuit returned one whole-file tile and
+# never consulted the budget, so a large raster came through as a single tile
+# (and OOMed downstream) despite a positive budget.
+# ---------------------------------------------------------------------------
+
+
+def test_virtual_split_respects_budget(tmp_path):
+    # 1000x1000 float32 decodes to ~4 MB; a ~1 MB budget must split it into
+    # multiple VIRTUAL window tiles rather than one whole-file tile.
+    p = _write(tmp_path, width=1000, height=1000)
+    parts = _plan_partitions_for_file(p, 1_000_000, emit_virtual=True)
+    assert len(parts) > 1, "a positive budget must split the virtual raster"
+    assert all(pt.emit_virtual for pt in parts), "split tiles must stay virtual"
+    assert all(
+        pt.window is not None for pt in parts
+    ), "each budget-split virtual tile carries a concrete window"
+    assert all(not pt.is_whole for pt in parts)
+    assert all(pt.clip_polygon is None for pt in parts)
+
+
+def test_virtual_no_budget_keeps_lazy_single_partition(tmp_path):
+    # No budget (default): keep the lazy single whole-file virtual partition
+    # (window=None, header open deferred) — the unchanged fast path.
+    p = _write(tmp_path, width=1000, height=1000)
+    parts = _plan_partitions_for_file(p, 0, emit_virtual=True)
+    assert len(parts) == 1
+    assert parts[0].window is None
+    assert parts[0].is_whole is True
+    assert parts[0].emit_virtual is True
+
+
+def test_virtual_budget_but_fits_single_partition(tmp_path):
+    # Budget set but the raster fits within it -> a single virtual tile, no split.
+    p = _write(tmp_path, width=100, height=100)  # 100*100*4 = 40 KB << 1 MB
+    parts = _plan_partitions_for_file(p, 1_000_000, emit_virtual=True)
+    assert len(parts) == 1
+    assert parts[0].emit_virtual is True
