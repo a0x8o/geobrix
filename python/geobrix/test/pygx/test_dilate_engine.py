@@ -191,26 +191,30 @@ def test_boundary_out_holed_does_not_fill_hole(holed_cls):
 
 
 def test_boundary_in_holed_k0_excludes_hole_rim(holed_cls):
-    """FIX: boundary-in k=0 must seed only from s_border (outer rim), not hole rim.
+    """FIX: boundary-in k=0 must seed only from the outer perimeter, not the hole rim.
 
     Bug: with p_border seed, h_border (hole-rim) cells appear in k=0 because
     p_border = p_cover - p_core includes hole-rim cells (they touch P but are not
-    fully inside it).  Fix: k0 = s_border (outer ring only), disjoint from h_border.
+    fully inside it).
+    Fix (Layer-2): k0 = outer_perimeter(s_cover, neighbors) — hole-rim cells lie
+    inside the filled solid s and have all their neighbors in s_cover, so they are
+    not on the outer perimeter and are correctly excluded.
     """
     # loop(0) == k0
     k0 = D.geom_expand("loop", 0, "boundary-in", holed_cls, _neighbors)
     # FAILS with buggy code: p_border ⊇ h_border → k0 contains hole-rim cells
     assert k0.isdisjoint(holed_cls.h_border), (
         "boundary-in k=0 must not include hole-rim (h_border) cells; "
-        "only outer-boundary (s_border) cells should seed this mode"
+        "only outer-perimeter cells should seed this mode"
     )
 
 
 def test_boundary_in_ignore_holes_holed_k0_excludes_hole_rim(holed_cls):
-    """FIX: boundary-in-ignore-holes k=0 must also use s_border, not p_border.
+    """FIX: boundary-in-ignore-holes k=0 must seed from the outer perimeter, not p_border.
 
     Same structural issue as boundary-in: the ignore-holes variant must seed only
-    from the outer ring (s_border), not from p_border (which includes hole-rim cells).
+    from the outer perimeter (outer_perimeter(s_cover, neighbors)), not from p_border
+    which includes hole-rim cells.
     """
     k0 = D.geom_expand("loop", 0, "boundary-in-ignore-holes", holed_cls, _neighbors)
     # FAILS with buggy code: k0 = p_border ⊇ h_border
@@ -219,12 +223,14 @@ def test_boundary_in_ignore_holes_holed_k0_excludes_hole_rim(holed_cls):
     ), "boundary-in-ignore-holes k=0 must not include hole-rim (h_border) cells"
 
 
-def test_boundary_modes_holeless_s_border_equals_p_border():
-    """REGRESSION GUARD: for a no-hole polygon, s_border == p_border; boundary-* unchanged.
+def test_boundary_modes_holeless_classification_and_perimeter():
+    """Classification guard + perimeter-model k=0 check for a no-hole polygon.
 
-    For P without holes: S = P → s_core = p_core, s_cover = p_cover →
-    s_border = p_border.  The fix (seeding from s_border instead of p_border)
-    is therefore a no-op for holeless polygons.
+    For P without holes: S = P → s_border == p_border (a Classification invariant).
+
+    Under the Layer-2 perimeter fix, boundary-in/ignore-holes k=0 is the outer
+    perimeter of s_cover (not s_border / p_border, which may be empty for grid-aligned
+    polygons).  boundary-out k=0 is still p_cover (unchanged).
     """
     solid = box(0, 0, 10, 10)
 
@@ -236,15 +242,84 @@ def test_boundary_modes_holeless_s_border_equals_p_border():
         return box(x, y, x + 1, y + 1)
 
     cls = D.classify(solid, 1, polyfill_fn, cell_geom_fn)
-    # For no-hole polygon: s_border must equal p_border (S = P when no holes)
+    # Classification invariant (unchanged): s_border == p_border when S = P.
     assert (
         cls.s_border == cls.p_border
     ), "no-hole polygon: s_border must equal p_border (S = P when no holes)"
-    # boundary-in k=0 must be the full p_border (= s_border) for holeless case
+    # boundary-out k=0 is still the full covering set (p_cover).
+    k0_bo = D.geom_expand("loop", 0, "boundary-out", cls, _neighbors)
+    assert k0_bo == cls.p_cover, "boundary-out k=0 must be the full p_cover"
+    # Under the perimeter fix, boundary-in k=0 = outer_perimeter(s_cover, neighbors).
+    # For a grid-aligned polygon s_border may be empty, but the perimeter is always
+    # non-empty — this is the alignment-robustness the perimeter fix delivers.
     k0_bi = D.geom_expand("loop", 0, "boundary-in", cls, _neighbors)
+    expected_op = D.outer_perimeter(cls.s_cover, _neighbors)
     assert (
-        k0_bi == cls.p_border
-    ), "holeless boundary-in k=0 must equal p_border (= s_border for no holes)"
+        k0_bi == expected_op
+    ), "boundary-in k=0 must equal outer_perimeter(s_cover) under the perimeter fix"
+    assert k0_bi, (
+        "boundary-in k=0 must be non-empty even for a grid-aligned polygon "
+        "(outer_perimeter is always non-empty for non-empty s_cover)"
+    )
+
+
+@pytest.fixture
+def aligned_cls():
+    """Grid-aligned 5×5 solid: zero straddling cells (p_border = s_border = empty).
+
+    box(2,2,7,7) aligns exactly with unit-cell boundaries → every cell in s_cover
+    is fully contained by the solid → s_border empty.  Reproduces the custom-grid
+    failure: Layer-1 s_border seed is empty → boundary-* produce nothing.
+    """
+    solid = box(2, 2, 7, 7)
+
+    def polyfill_fn(g, res):
+        return [_cid(x, y) for x in range(20) for y in range(20)]
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    cls = D.classify(solid, 1, polyfill_fn, cell_geom_fn)
+    assert cls.s_border == set(), "aligned_cls fixture: s_border must be empty"
+    return cls
+
+
+def test_outer_perimeter_aligned_solid_nonempty(aligned_cls):
+    """outer_perimeter of a non-empty covering set is always non-empty."""
+    op = D.outer_perimeter(aligned_cls.s_cover, _neighbors)
+    assert op, "outer_perimeter must be non-empty for any non-empty s_cover"
+    assert op <= aligned_cls.s_cover, "outer_perimeter must be a subset of s_cover"
+
+
+def test_aligned_solid_boundary_out_expands_outward(aligned_cls):
+    """Layer-2 fix: boundary-out at k=2 expands outward even when s_border is empty.
+
+    RED under Layer-1 (s_border = empty → frontier = empty → no expansion beyond p_cover).
+    GREEN after the perimeter fix (op = outer ring of s_cover → outward BFS works).
+    """
+    r2 = D.geom_expand("ring", 2, "boundary-out", aligned_cls, _neighbors)
+    outward = r2 - aligned_cls.p_cover
+    assert outward, (
+        "boundary-out k=2 must expand outward beyond p_cover for a grid-aligned solid; "
+        "FAILS on Layer-1 (empty s_border seed), PASSES after outer_perimeter fix"
+    )
+
+
+def test_aligned_solid_boundary_in_nonempty_setback(aligned_cls):
+    """Layer-2 fix: boundary-in at k=2 produces a non-empty inward setback.
+
+    RED under Layer-1 (s_border = empty → frontier = empty → result is empty).
+    GREEN after the perimeter fix (op = outer ring → inward BFS into p_core works).
+    """
+    r2 = D.geom_expand("ring", 2, "boundary-in", aligned_cls, _neighbors)
+    assert r2, (
+        "boundary-in k=2 must be non-empty for a grid-aligned solid; "
+        "FAILS on Layer-1 (empty s_border seed), PASSES after outer_perimeter fix"
+    )
+    assert (
+        r2 <= aligned_cls.p_cover
+    ), "boundary-in result must stay within p_cover (the solid's covering cells)"
 
 
 def test_classify_filtering_polyfill_finds_hcore():

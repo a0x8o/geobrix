@@ -19,6 +19,22 @@ MODES = (
 DEFAULT_MODE = "boundary-out"
 
 
+def outer_perimeter(s_cover, neighbors):
+    """Covering-set perimeter: cells in s_cover with at least one neighbor outside s_cover.
+
+    outer_perimeter(S) = { c ∈ s_cover : ∃ n ∈ neighbors(c) with n ∉ s_cover }
+
+    Properties:
+    - Alignment-robust: any non-empty covering set has a perimeter, regardless of whether
+      any cell straddles the geometry boundary (fixes the grid-aligned empty-seed bug).
+    - Excludes hole-rim cells: for a holed polygon, hole-rim cells lie inside the filled
+      solid S, so all their neighbors are in s_cover → not on the perimeter.  Subsumes
+      Layer-1's s_border approach while fixing the aligned-solid case.
+    - Non-empty whenever s_cover is non-empty.
+    """
+    return frozenset(c for c in s_cover if any(n not in s_cover for n in neighbors(c)))
+
+
 def dilate(frontier0, visited0, neighbors, admit):
     """Yield (k, shell) for k=1,2,...; shell = cells first reached at step k.
 
@@ -109,27 +125,37 @@ def classify(geom, res, polyfill_fn, cell_geom_fn):
     return Classification(p_cover, p_core, s_cover, s_core, h_cover, h_core)
 
 
-def mode_setup(mode, cls):
-    """Return (frontier0, visited0, admit, k0) for a traversal mode."""
+def mode_setup(mode, cls, neighbors=None):
+    """Return (frontier0, visited0, admit, k0) for a traversal mode.
+
+    For boundary-* modes `neighbors` must be provided so that outer_perimeter can be
+    computed.  hole-* modes do not use `neighbors` and leave it optional.
+    """
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
-    # sb = outer-boundary cells only (s_cover - s_core).
-    # For a no-hole polygon S = P, so sb == pb — holeless behavior is unchanged.
-    # For a holed polygon, hole-rim cells are inside S (in s_core), so they are
-    # correctly excluded from sb.  This means boundary-* modes operate on the outer
-    # ring only; hole-rim traversal belongs to hole-* modes.
-    sb, hb = cls.s_border, cls.h_border
+    # boundary-* modes seed from the covering-set perimeter (topological outer ring).
+    # outer_perimeter is alignment-robust: a grid-aligned polygon has no straddling cells
+    # (s_border empty) but always has perimeter cells.  For a holed polygon, hole-rim
+    # cells lie inside s (all their s-neighbors are in s_cover) → excluded from the
+    # perimeter → boundary-* never seeds from the hole rim.
+    if mode.startswith("boundary-"):
+        if neighbors is None:
+            raise ValueError(
+                f"mode {mode!r} requires `neighbors` to compute outer_perimeter"
+            )
+        op = outer_perimeter(cls.s_cover, neighbors)
+
+    hb = cls.h_border
     if mode == "boundary-out":
-        return (
-            frozenset(sb),
-            frozenset(cls.p_cover),
-            (lambda n: True),
-            frozenset(cls.p_cover),
-        )
+        # frontier/k0: op (outer perimeter); visited: p_cover blocks inward path to hole
+        # admit: True (expand freely outward)
+        return op, frozenset(cls.p_cover), (lambda n: True), frozenset(cls.p_cover)
     if mode == "boundary-in":
-        return frozenset(sb), frozenset(sb), (lambda n: n in cls.p_core), frozenset(sb)
+        # frontier/visited/k0: op; admit: p_core only (respect holes)
+        return op, op, (lambda n: n in cls.p_core), op
     if mode == "boundary-in-ignore-holes":
-        return frozenset(sb), frozenset(sb), (lambda n: n in cls.s_core), frozenset(sb)
+        # frontier/visited/k0: op; admit: s_core (marches across hole interior)
+        return op, op, (lambda n: n in cls.s_core), op
     if mode == "hole-in":
         return frozenset(hb), frozenset(hb), (lambda n: n in cls.h_core), frozenset(hb)
     if mode == "hole-out":
@@ -152,7 +178,7 @@ def geom_expand(kind, k, mode, cls, neighbors):
     """kind='ring' (filled <=k) or 'loop' (shell at exactly k). k>=0."""
     if kind not in ("ring", "loop"):
         raise ValueError(f"kind must be 'ring' or 'loop'; got {kind!r}")
-    frontier0, visited0, admit, k0 = mode_setup(mode, cls)
+    frontier0, visited0, admit, k0 = mode_setup(mode, cls, neighbors)
     if k == 0:
         return set(k0)
     acc = set(k0) if kind == "ring" else set()

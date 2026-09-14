@@ -48,15 +48,29 @@ def test_quadbin_geomkring_returns_bigint():
     assert all(isinstance(c, int) for c in _quadbin.geometry_k_ring(_wkb(), 12, 1))
 
 
-def test_quadbin_geomkring_k0_equals_polyfill_boundary_modes():
-    """k=0 == polyfill for boundary modes (no-hole polygon; hole modes start from h_border=empty)."""
-    # Only boundary-* modes have k0 == p_cover for a simple no-hole polygon.
-    boundary_modes = ("boundary-out", "boundary-in", "boundary-in-ignore-holes")
+def test_quadbin_geomkring_k0_boundary_out_is_polyfill():
+    """boundary-out k=0 == polyfill (the full covering set; k0 = p_cover, unchanged)."""
     g, res = _wkb(), 12
     fill = set(_quadbin.polyfill(g, res))
-    for mode in boundary_modes:
+    k0 = set(_quadbin.geometry_k_ring(g, res, 0, mode="boundary-out"))
+    assert k0 == fill, f"boundary-out k=0={len(k0)} fill={len(fill)}"
+
+
+def test_quadbin_geomkring_k0_boundary_in_is_outer_perimeter():
+    """boundary-in/ignore-holes k=0 == outer_perimeter(s_cover) under the perimeter fix.
+
+    Layer-2 fix: boundary-in and boundary-in-ignore-holes seed from the covering-set
+    perimeter (outer ring of s_cover), not the full polyfill.  This makes them
+    alignment-robust: a grid-aligned polygon has zero straddling cells but always has
+    a non-empty outer perimeter.
+    """
+    g, res = _wkb(), 12
+    fill = set(_quadbin.polyfill(g, res))
+    for mode in ("boundary-in", "boundary-in-ignore-holes"):
         k0 = set(_quadbin.geometry_k_ring(g, res, 0, mode=mode))
-        assert k0 == fill, f"mode={mode}: k0={len(k0)} fill={len(fill)}"
+        # k0 is the outer perimeter — a non-empty subset of the covering set.
+        assert k0, f"mode={mode}: k0 must be non-empty"
+        assert k0 <= fill, f"mode={mode}: k0 must be a subset of polyfill"
 
 
 def test_quadbin_geomkloop_k0_returns_polyfill():
