@@ -885,18 +885,12 @@ def geometry_k_ring(
 ) -> set:
     """k-ring of cell ids covering ``geometry`` (BNG.geometryKRing, BNG.scala L639).
 
-    ``mode="boundary-out"`` (default) uses the existing ``get_chips`` path
-    (byte-identical with the heavy tier). The 5 other dilation modes route through
-    the shared :mod:`_dilate` engine.
+    All modes — including the default ``boundary-out`` — route through the shared
+    :mod:`_dilate` engine using the covering-set perimeter model.  The old
+    ``get_chips`` straddling-border fast-path is retired: it produced empty results
+    on grid-aligned geometries (s_border empty) and diverged from heavy's
+    perimeter-based definition after commit b61ad384.
     """
-    if mode == _dilate.DEFAULT_MODE:
-        # Existing behavior — unchanged; keep on the get_chips path for
-        # byte-identical results with the heavy tier.
-        chips = get_chips(geometry, resolution, keep_core_geom=False)
-        core_ids = {c for (c, core, _) in chips if core}
-        border = [c for (c, core, _) in chips if not core]
-        border_kring = {x for c in border for x in k_ring(c, k)}
-        return {c for c in (core_ids | border_kring) if is_valid(c)}
     cls = classify_bng(geometry, resolution)
     return {
         c
@@ -910,18 +904,11 @@ def geometry_k_loop(
 ) -> set:
     """Hollow k-loop of cell ids around ``geometry`` (BNG.geometryKLoop, L619).
 
-    ``mode="boundary-out"`` (default) uses the existing ``get_chips`` path.
-    The 5 other modes route through the shared :mod:`_dilate` engine.
+    All modes — including the default ``boundary-out`` — route through the shared
+    :mod:`_dilate` engine.  k=0 returns the covering set (matching heavy's
+    ``if (k==0) return cls.pCover`` guard, implemented via ``geom_expand``'s k=0
+    path which returns k0 = p_cover for boundary-out).
     """
-    if mode == _dilate.DEFAULT_MODE:
-        # Existing behavior — unchanged.
-        n = k - 1
-        chips = get_chips(geometry, resolution, keep_core_geom=False)
-        core_ids = {c for (c, core, _) in chips if core}
-        border = [c for (c, core, _) in chips if not core]
-        n_ring = core_ids | {x for c in border for x in k_ring(c, n)}
-        border_kloop = {x for c in border for x in k_loop(c, k)}
-        return {c for c in (border_kloop - n_ring) if is_valid(c)}
     cls = classify_bng(geometry, resolution)
     return {
         c

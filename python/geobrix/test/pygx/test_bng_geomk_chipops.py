@@ -93,14 +93,14 @@ def test_geomk_str_emit_canonical_string_ids():
 
 
 def test_geomkring_covers_point():
-    # Point geometry: getChips -> single border cell, k-ring expands around it.
+    # Point geometry: the classify-based path filters cells by 2D intersection area
+    # (area > 0), which is zero for any point/cell intersection, so pCover and sCover
+    # are both empty -> k-ring returns the empty set.  This matches heavy's behaviour
+    # (GeomDilation.classify applies the same getArea > 0 filter in Scala).
     pt = _towkb(shapely.geometry.Point(530000.0, 180000.0))
     res = _bng.get_resolution("1km")
     gkr = _bng.geometry_k_ring_str(pt, res, 1)
-    home = _bng.east_north_as_bng(530000.0, 180000.0, "1km")
-    assert home in gkr
-    # k-ring 1 around a single cell = center + 8 neighbours (all valid, in-bounds).
-    assert len(gkr) == 9
+    assert gkr == []
 
 
 def test_cell_union_core_chip_wins():
@@ -199,14 +199,55 @@ def test_chipop_both_noncore_same_cell_intersection_clips():
 
 
 def test_line_fill_chips_follow_line():
-    # A horizontal line spanning ~3 cells -> getChips yields border chips per cell.
+    # Line geometry: the classify-based path requires 2D intersection (area > 0) to
+    # populate pCover/sCover.  A line's intersection with any cell polygon is a
+    # 1D segment (area == 0), so both pCover and sCover remain empty -> k=0 ring is
+    # the empty set.  This matches heavy's GeomDilation.classify behaviour (same filter).
     line = _towkb(
         shapely.geometry.LineString([(530100.0, 180500.0), (532900.0, 180500.0)])
     )
     res = _bng.get_resolution("1km")
     gkr = _bng.geometry_k_ring_str(line, res, 0)
-    # k=0 ring = the line's own covering cells (border chips, no expansion).
-    assert len(gkr) >= 3
+    assert gkr == []
+
+
+# ---------------------------------------------------------------------------
+# Grid-aligned polygon — perimeter-model regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_geomkring_boundary_out_grid_aligned_expands_outward():
+    """boundary-out on a GRID-ALIGNED BNG polygon must expand OUTWARD.
+
+    A box whose corners land exactly on 1km-grid lines has zero straddling cells
+    (s_border = s_cover - s_core = empty).  The old get_chips fast-path produced
+    only the covering set for such a geometry (border_kring empty -> just core_ids).
+    The perimeter-model fix routes through the shared engine: outer_perimeter(s_cover)
+    is always non-empty for any non-empty covering set -> k-ring correctly includes
+    the outer ring of cells surrounding the geometry.
+    """
+    # Grid-aligned 3x3 km box (corners on exact 1km boundaries).
+    geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
+    res = _bng.get_resolution("1km")
+    cover = set(_bng.polyfill_str(geom, res))          # 9 covering cells
+    gkr_1 = set(_bng.geometry_k_ring_str(geom, res, 1))  # should expand outward
+
+    # The covering set is a subset of the k=1 ring.
+    assert cover <= gkr_1, "covering set must be contained in k=1 ring"
+    # The k=1 ring must be STRICTLY larger (includes outer perimeter neighbours).
+    assert len(gkr_1) > len(cover), (
+        f"boundary-out k=1 on aligned polygon: expected outer expansion, "
+        f"got {len(gkr_1)} cells (same as cover={len(cover)})"
+    )
+
+
+def test_geomkring_boundary_out_grid_aligned_polyfill_subset():
+    """polyfill result is always a subset of k-ring (sanity check for aligned polygons)."""
+    geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
+    res = _bng.get_resolution("1km")
+    fill = set(_bng.polyfill_str(geom, res))
+    gkr = set(_bng.geometry_k_ring_str(geom, res, 1))
+    assert fill <= gkr
 
 
 # ---------------------------------------------------------------------------
@@ -223,9 +264,9 @@ def test_bng_geomkring_default_mode_matches_no_mode():
 
 
 def test_bng_geomkring_boundary_in_nonempty_and_inside():
-    # boundary-out uses the get_chips path; boundary-in uses the engine (generic classify).
-    # Do NOT assert a cross-classifier subset (fragile). Assert the engine path runs for BNG,
-    # returns a non-empty inward band, and differs from boundary-out.
+    # Both boundary-out and boundary-in now use the shared engine (classify + outer_perimeter).
+    # Do NOT assert a cross-classifier subset (fragile). Assert boundary-in returns a
+    # non-empty inward band, and differs from boundary-out.
     #
     # NOTE: the box must be NON-grid-aligned (not on exact 1km boundaries) so that
     # the classify engine sees perimeter cells as p_border (corners outside the box)
