@@ -19,6 +19,13 @@ import com.databricks.labs.gbx.rasterx.expressions.RST_InitNoData
 import com.databricks.labs.gbx.rasterx.expressions.RST_MapAlgebra
 import com.databricks.labs.gbx.rasterx.expressions.RST_Merge
 import com.databricks.labs.gbx.rasterx.expressions.RST_CombineAvg
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineMin
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineMax
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineMedian
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineSum
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineStddev
+import com.databricks.labs.gbx.rasterx.expressions.RST_CombineCount
+import com.databricks.labs.gbx.rasterx.expressions.RST_AlignTo
 import com.databricks.labs.gbx.rasterx.expressions.constructor.RST_FromBands
 import com.databricks.labs.gbx.rasterx.expressions.RST_UpdateType
 import com.databricks.labs.gbx.rasterx.expressions.accessors._
@@ -164,6 +171,12 @@ object BenchDispatch {
     "rst_subdatasets" -> ACC, "rst_getsubdataset" -> ACC,
     // bucket C, group C3: multi-tile-input fns (consume an ARRAY of tiles) -> format.
     "rst_frombands" -> FMT, "rst_combineavg" -> FMT, "rst_merge" -> FMT,
+    // Stage-3 combine family: 6 pixel-stat reduces over aligned tile arrays.
+    "rst_combinemin" -> FMT, "rst_combinemax" -> FMT, "rst_combinemedian" -> FMT,
+    "rst_combinesum" -> FMT, "rst_combinestddev" -> FMT, "rst_combinecount" -> FMT,
+    // rst_align_to: warp one tile onto another tile's grid (CRS + extent + pixel size).
+    // timing-only (fingerprint=False): uses same tile as source + reference in bench.
+    "rst_align_to" -> FMT,
     // bucket C, group C4: tiling fns -> a COLLECTION of tiles -> format.
     "rst_maketiles" -> FMT, "rst_retile" -> FMT, "rst_tooverlappingtiles" -> FMT,
     "rst_separatebands" -> FMT, "rst_xyzpyramid" -> FMT,
@@ -208,7 +221,16 @@ object BenchDispatch {
     "rst_dtmfromgeoms_agg" -> VECTOR,
     // rst_h3_rasterize_agg: a GRID aggregator (cellid,value rows -> one tile,
     // pixel-centroid burn). dggs, like the other H3 fns.
-    "rst_h3_rasterize_agg" -> DGGS
+    "rst_h3_rasterize_agg" -> DGGS,
+    // gbx_<grid>_cellfill: GRID grouped aggregators that stream (cellid, value)
+    // rows and return the NULL-filled cell set (heavy: ARRAY<STRUCT<cellid,value>>).
+    // Routed through the grid-aggregate branch like the rasterize_aggs, but their
+    // consistency fingerprint is the dggs cell-set (via ofCellFill/ofCellFillStr),
+    // NOT a raster. dggs, like the other grid fns. custom_cellfill is NOT here: like
+    // every custom-grid fn it needs a grid STRUCT arg the heavy dispatch can't yet
+    // stream, so it is a pyrx-tier timing-only fn (fingerprint=False), not heavy-
+    // dispatched -- exactly as rst_custom_rasterize_agg is absent from this map.
+    "h3_cellfill" -> DGGS, "quadbin_cellfill" -> DGGS, "bng_cellfill" -> DGGS
   )
 
   // input_kind adapter (mirrors FnSpec.input_kind): what the heavy dispatch is
@@ -223,7 +245,10 @@ object BenchDispatch {
   // bucket C, group C3: multi-tile fns consume an ARRAY of tiles. The bench
   // synthesizes the multi-tile input from the corpus tile and writes it ONCE
   // (write-once-read-both); the heavy runner reads the SAME synthesized files.
-  private val tileArrayInput: Set[String] = Set("rst_frombands", "rst_combineavg", "rst_merge")
+  private val tileArrayInput: Set[String] = Set(
+    "rst_frombands", "rst_combineavg", "rst_merge",
+    "rst_combinemin", "rst_combinemax", "rst_combinemedian",
+    "rst_combinesum", "rst_combinestddev", "rst_combinecount")
   // bucket D: geometry-in fns are handed the open tile PLUS the tile's
   // GeometrySet (boxes/points/zpoints WKB, in the tile CRS) read from
   // geometry.json -- the SAME bytes the pyrx tier reads (write-once-read-both).
@@ -246,8 +271,19 @@ object BenchDispatch {
   // quadbin stream LONG cell ids; BNG streams STRING cell ids (OS grid refs).
   // Renamed from the H3-only h3Aggregate to hold all three grids' rasterize_aggs;
   // the branch behavior (fixed cell set -> explicit grid -> one tile) is identical.
+  // The cellfill grouped aggregators also ride the grid-aggregate branch (they
+  // stream (cellid, value) rows), but they RETURN the filled cell set (ARRAY<
+  // STRUCT<cellid, value>>), not a burned tile -- so the HeavyRunner fingerprints
+  // them via ofCellFill/ofCellFillStr (dggs cell-set), not the raster path. Their
+  // input corpus REUSES the rasterize cell set but NULLs a deterministic subset of
+  // the values (a fill over an all-valid set is vacuous), mirrored in the pyrx tier
+  // (spec.*_cellfill_cells). BNG streams STRING cell ids; the rest stream LONG.
+  // custom_cellfill is excluded (grid-struct arg not yet streamable -> pyrx-tier
+  // timing-only, no heavy dispatch), matching rst_custom_rasterize_agg.
+  val cellFill: Set[String] =
+    Set("h3_cellfill", "quadbin_cellfill", "bng_cellfill")
   private val gridAggregate: Set[String] =
-    Set("rst_h3_rasterize_agg", "rst_quadbin_rasterize_agg", "rst_bng_rasterize_agg")
+    Set("rst_h3_rasterize_agg", "rst_quadbin_rasterize_agg", "rst_bng_rasterize_agg") ++ cellFill
   def inputKind(fn: String): String =
     if (byteInput.contains(fn)) "bytes"
     else if (pathInput.contains(fn)) "path"
@@ -356,12 +392,44 @@ object BenchDispatch {
     BNG.kRing(center, bngRaggK).map(BNG.format).toSeq.sorted
   }
 
+  // --- cellfill: fixed (cellid, value) corpus (PARITY CONTRACT) ---
+  // Mirrors the pyrx spec.py cellfill block byte-for-byte (search "cellfill: fixed
+  // (cellid, value) corpus"). A cellfill over an ALL-VALID cell set is vacuous, so
+  // the corpus REUSES each grid's rasterize cell set (a dense kRing disk -> every
+  // cell has in-set neighbours) and NULLs a deterministic subset of the values:
+  // cell i (in the recipe's sorted order) is NULL when i % cellFillNullStride == 0,
+  // else carries value i.toDouble. NULL cells are ~1/4 of a dense disk, so each has
+  // valid 1-ring neighbours and the default-k=1 fill produces real values. The sort
+  // order matches the pyrx tier (signed Long for H3/quadbin, lexicographic String
+  // for BNG), so the i-th (cellid, value) pair is identical across tiers.
+  val cellFillNullStride: Int = 4
+
+  /** Deterministic value column for a cellfill corpus of `n` cells: `null` (SQL
+    * NULL, covered-but-missing) every `cellFillNullStride`-th cell, else `i.toDouble`.
+    * Uses java.lang.Double so NULLs are representable. Mirrors spec._cellfill_values. */
+  def cellFillValues(n: Int): Seq[java.lang.Double] =
+    (0 until n).map(i =>
+      if (i % cellFillNullStride == 0) null else java.lang.Double.valueOf(i.toDouble))
+
+  /** Fixed cellfill cell-id list for a grid (the SAME sorted list the pyrx tier
+    * zips values onto). h3_cellfill uses the H3 set; quadbin/custom the quadbin set. */
+  def cellFillLongCells(fn: String): Seq[Long] =
+    if (fn == "h3_cellfill") h3RasterizeCells() else quadbinRasterizeCells()
+
   // bench.synth recipe name for a tile_array fn (mirrors spec.synth_recipe).
+  // The 6 Stage-3 combine-stats functions all reuse the "combineavg" synth input
+  // (2 aligned copies of the corpus tile) — same recipe as rst_combineavg.
   def synthRecipe(fn: String): String = fn match {
-    case "rst_frombands"  => "frombands"
-    case "rst_combineavg" => "combineavg"
-    case "rst_merge"      => "merge"
-    case other            => throw new IllegalArgumentException(s"no synth recipe for: $other")
+    case "rst_frombands"     => "frombands"
+    case "rst_combineavg"    => "combineavg"
+    case "rst_combinemin"    => "combineavg"
+    case "rst_combinemax"    => "combineavg"
+    case "rst_combinemedian" => "combineavg"
+    case "rst_combinesum"    => "combineavg"
+    case "rst_combinestddev" => "combineavg"
+    case "rst_combinecount"  => "combineavg"
+    case "rst_merge"         => "merge"
+    case other               => throw new IllegalArgumentException(s"no synth recipe for: $other")
   }
 
   // bench.synth recipe whose tiles form a tile aggregator's fixed consistency group
@@ -530,6 +598,14 @@ object BenchDispatch {
         argB(a, "cutline_all_touched", false))
       RasterDriver.releaseDataset(res._1)
       BenchFingerprint.empty
+    // timing-only: align_to warps a tile onto its OWN grid (same ds as source+reference).
+    // A self-warp is a no-op geometrically but exercises the full gdalwarp path; fingerprint
+    // suppressed (fingerprint=False on both tiers, per Python FnSpec). Release the output ds
+    // since HeavyRunner reuses the input ds across warmup+measured iterations.
+    case "rst_align_to" =>
+      val (resDs, _) = RST_AlignTo.execute(ds, ds, Map.empty)
+      RasterDriver.releaseDataset(resDs)
+      BenchFingerprint.empty
     // timing-only: color-relief reads a color table (synthetic) and the GDAL
     // DEMProcessing interpolation diverges from the pyrx np.interp path.
     case "rst_color_relief" =>
@@ -665,7 +741,7 @@ object BenchDispatch {
     // fingerprint the id-only dggs_grid (count + hash, empty agg) -- mirroring the
     // light tessellate path that emits agg == {}.
     case "rst_h3_tessellate" =>
-      val iter = RasterTessellate.tessellateH3Iter(cloneDs(ds), Map.empty, argI(a, "resolution", 7))
+      val iter = RasterTessellate.tessellateH3Iter(cloneDs(ds), Map.empty, argI(a, "resolution", 7), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
@@ -675,7 +751,7 @@ object BenchDispatch {
     // quadbin tessellate: LONG cell ids, 4326-native. Same drain-release-fingerprint
     // shape as H3 tessellate (id-only dggs_grid, empty agg).
     case "rst_quadbin_tessellate" =>
-      val iter = RasterTessellate.tessellateQuadbinIter(cloneDs(ds), Map.empty, argI(a, "resolution", 15))
+      val iter = RasterTessellate.tessellateQuadbinIter(cloneDs(ds), Map.empty, argI(a, "resolution", 15), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[Long]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
@@ -687,7 +763,7 @@ object BenchDispatch {
     // STRING dggs_grid (empty agg), the string analogue of the H3/quadbin path.
     // resolution default 3 == "1km" (BNG.resolutionMap); NEVER metres-as-Int.
     case "rst_bng_tessellate" =>
-      val iter = RasterTessellate.tessellateBngIter(cloneDs(ds), Map.empty, argI(a, "resolution", 3))
+      val iter = RasterTessellate.tessellateBngIter(cloneDs(ds), Map.empty, argI(a, "resolution", 3), "covering", "complete")
       val ids = scala.collection.mutable.ArrayBuffer.empty[String]
       iter.foreach { case (cell, resDs, _) =>
         ids += cell
@@ -828,6 +904,25 @@ object BenchDispatch {
       // combineavg: NoData-aware per-pixel mean across the aligned copies.
       case "rst_combineavg" =>
         val (_, out, _) = RST_CombineAvg.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      // Stage-3 combine-stats family: per-pixel reduce over aligned copies.
+      case "rst_combinemin" =>
+        val (_, out, _) = RST_CombineMin.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case "rst_combinemax" =>
+        val (_, out, _) = RST_CombineMax.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case "rst_combinemedian" =>
+        val (_, out, _) = RST_CombineMedian.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case "rst_combinesum" =>
+        val (_, out, _) = RST_CombineSum.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case "rst_combinestddev" =>
+        val (_, out, _) = RST_CombineStddev.execute(tiles)
+        try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
+      case "rst_combinecount" =>
+        val (_, out, _) = RST_CombineCount.execute(tiles)
         try BenchFingerprint.ofDataset(out) finally RasterDriver.releaseDataset(out)
       // merge: mosaic the offset-origin copies into their union extent.
       case "rst_merge" =>
@@ -1090,9 +1185,19 @@ object BenchDispatch {
       // bucket C, group C3: multi-tile fns. The `tile` Column passed here IS the
       // ARRAY<tile> column the runner built from the synthesized tiles (the same
       // files the pure-core path reads). Each binding takes a single array column.
-      case "rst_frombands"  => rst_frombands(tile)
-      case "rst_combineavg" => rst_combineavg(tile)
-      case "rst_merge"      => rst_merge(tile)
+      case "rst_frombands"     => rst_frombands(tile)
+      case "rst_combineavg"   => rst_combineavg(tile)
+      case "rst_combinemin"   => rst_combinemin(tile)
+      case "rst_combinemax"   => rst_combinemax(tile)
+      case "rst_combinemedian" => rst_combinemedian(tile)
+      case "rst_combinesum"   => rst_combinesum(tile)
+      case "rst_combinestddev" => rst_combinestddev(tile)
+      case "rst_combinecount" => rst_combinecount(tile)
+      case "rst_merge"        => rst_merge(tile)
+      // rst_align_to: two-tile fn; bench passes same tile as both source + reference.
+      // Python spec modes=("pure-core",) so spark-path is timing-only; column form
+      // here keeps the match exhaustive (spark-path runner still invokes it when --modes=both).
+      case "rst_align_to"     => rst_align_to(tile, tile)
       // bucket C, group C4: tiling fns -> ARRAY column (spark-path is timing-only,
       // not fingerprint-compared, so the args only need to be valid). maketiles takes
       // an MB budget, matching the sizeInMB BalancedSubdivision the pure-core path uses.
@@ -1233,6 +1338,18 @@ object BenchDispatch {
       // expression regardless of the argument.
       case "rst_bng_rasterize_agg" =>
         rst_bng_rasterize_agg(col("cellid"), col("value"))
+      // gbx_<grid>_cellfill: stream (cellid, value) rows -> the NULL-filled cell set
+      // (ARRAY<STRUCT<cellid, value>>). k=1 / method='mean' / power=2.0 are passed
+      // explicitly to match the light wrapper defaults (pygx.<grid>_cellfill). The
+      // corpus (built by HeavyRunner from cellFillLongCells/bngRasterizeCells +
+      // cellFillValues) CONTAINS NULLs so the fill does real work. The output is NOT
+      // a tile -- HeavyRunner fingerprints the array via ofCellFill/ofCellFillStr.
+      case "h3_cellfill" =>
+        expr("gbx_h3_cellfill(cellid, value, 1, 'mean', 2.0)")
+      case "quadbin_cellfill" =>
+        expr("gbx_quadbin_cellfill(cellid, value, 1, 'mean', 2.0)")
+      case "bng_cellfill" =>
+        expr("gbx_bng_cellfill(cellid, value, 1, 'mean', 2.0)")
       case other => throw new IllegalArgumentException(s"not an aggregator: $other")
     }
   }

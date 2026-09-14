@@ -53,6 +53,13 @@ PYTHON_REGISTERED = {
     # coverage validity (light-only)
     "gbx_st_coverageisvalid",
     "gbx_st_coverageinvalidedges",
+    # H3 geom-aware kring/kloop — light-only (no Scala/heavy equivalent).
+    # These are PySpark UDF/UDTF registrations in pygx; the geometry work
+    # (cover/core arrays) is supplied by product h3_* SQL functions at runtime.
+    "gbx_h3_geomkring",
+    "gbx_h3_geomkloop",
+    "gbx_h3_geomkringexplode",
+    "gbx_h3_geomkloopexplode",
 }
 
 # `override def name: String = "gbx_..."` — the canonical SQL name a companion registers under.

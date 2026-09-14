@@ -196,9 +196,9 @@ class BNG_ExpressionExecuteTest extends AnyFunSuite {
 
     test("BNG_KLoop should return cell IDs of the KLoop disk") {
         val cellID = "TQ388792"
-        val kloop2 = BNG_KLoop.execute(cellID, 2).toSeq
+        val kloop2 = BNG_KLoop.execute(cellID, 2)
         val cellID2 = BNG.parse(cellID)
-        val kloop2_2 = BNG_KLoop.execute(cellID2, 2).toSeq
+        val kloop2_2 = BNG_KLoop.execute(cellID2, 2)
         kloop2.isEmpty should not be true
         kloop2_2.isEmpty should not be true
         kloop2.foreach(cell => BNG.euclideanDistance(BNG.parse(cell), cellID2) shouldBe 2)
@@ -206,9 +206,9 @@ class BNG_ExpressionExecuteTest extends AnyFunSuite {
 
     test("BNG_KRing should return cell IDs of the KLoop disk") {
         val cellID = "TQ388792"
-        val kloop2 = BNG_KRing.execute(cellID, 2).toSeq
+        val kloop2 = BNG_KRing.execute(cellID, 2)
         val cellID2 = BNG.parse(cellID)
-        val kloop2_2 = BNG_KRing.execute(cellID2, 2).toSeq
+        val kloop2_2 = BNG_KRing.execute(cellID2, 2)
         kloop2.isEmpty should not be true
         kloop2_2.isEmpty should not be true
         kloop2.foreach(cell => (BNG.euclideanDistance(BNG.parse(cell), cellID2) <= 2) shouldBe true)

@@ -233,29 +233,10 @@ case class RST_BNG_RasterizeAgg(
                     buffer.cells.iterator.map(_._1), pixelOpt, mode, kringPad, resolution)
             }
 
-        // 27700-native output raster; no per-pixel reprojection.
+        // 27700-native output raster; srid == BNG.crsSrid so no per-pixel reprojection.
         val rasterDs = VectorRasterBridge.buildEmptyRaster(xmin, ymin, xmax, ymax, width, height, srid)
         try {
-            val gt = rasterDs.GetGeoTransform
-            val band = rasterDs.GetRasterBand(1)
-            val rowBuf = new Array[Double](width)
-            var py = 0
-            while (py < height) {
-                var px = 0
-                while (px < width) {
-                    // Pixel-centroid coordinate in EPSG:27700 (RST_BNG_RasterToGrid affine).
-                    val xOffset = 0.5 + px
-                    val yOffset = 0.5 + py
-                    val e = gt(0) + xOffset * gt(1) + yOffset * gt(2)
-                    val n = gt(3) + xOffset * gt(4) + yOffset * gt(5)
-                    // Already in 27700 -> index directly to a BNG cell (no reprojection).
-                    val cellId = BNG.pointToCellID(e, n, resolution)
-                    rowBuf(px) = lut.getOrElse(cellId, NoData)
-                    px += 1
-                }
-                band.WriteRaster(0, py, width, 1, rowBuf)
-                py += 1
-            }
+            RasterizeBurn.burn(BNG, lut, srid, resolution, rasterDs, width, height)
             rasterDs.FlushCache()
             val bytes = VectorRasterBridge.toGTiffBytes(rasterDs)
             val mtd = Map(

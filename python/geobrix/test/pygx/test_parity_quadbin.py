@@ -352,3 +352,72 @@ def test_null_geom_propagation(spark_with_jar):
     assert (True, True, True) in light  # null geom -> both fns NULL
     assert (False, False, False) in light  # real geom -> not NULL
     assert light == heavy
+
+
+# --- kloop cross-tier parity (Stage 3 / Task 4) -----------------------------------------------
+
+
+def test_quadbin_kloop_parity(spark_with_jar):
+    """gbx_quadbin_kloop cross-tier parity: sorted cell-set equality at k=0, 1, 2.
+
+    kLoop semantics (FROZEN per stage-3 spec):
+      - k=0 → exactly [seed] (center cell only).
+      - k=1 → hollow ring of 8 cells at an interior position.
+      - k=2 → hollow outer ring (kring(2) minus kring(1)).
+      - Rings at different k values are pairwise disjoint.
+
+    Phase 1: register LIGHT (pygx UDFs) → collect results via gbx_quadbin_kloop SQL.
+    Phase 2: register HEAVY (JVM expressions overwrite the SQL name) → re-collect.
+    Assert sorted cell-ID lists are bit-exact across tiers for each k.
+    """
+    from databricks.labs.gbx.gridx.quadbin import functions as hx
+    from databricks.labs.gbx.pygx import functions as gx
+
+    spark = spark_with_jar
+    # Use the canonical SF z10 fixture cell (same as test_quadbin_full_parity).
+    seed = quadbin.point_to_cell(_LON, _LAT, _RES)
+
+    def collect_kloop():
+        """Collect kloop results at k=0,1,2 via the currently-registered SQL names."""
+        k0 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 0) AS r").collect()[0]["r"]
+        )
+        k1 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 1) AS r").collect()[0]["r"]
+        )
+        k2 = sorted(
+            spark.sql(f"SELECT gbx_quadbin_kloop({seed}L, 2) AS r").collect()[0]["r"]
+        )
+        return k0, k1, k2
+
+    # ---- LIGHT first (heavy register OVERWRITES the gbx_quadbin_* SQL names) ----
+    gx.register(spark)
+    light = collect_kloop()
+
+    # ---- HEAVY (overwrites the catalog names) ----
+    hx.register(spark)
+    heavy = collect_kloop()
+
+    # === cell-set parity (EXACT, sorted) ===
+    for ki, (lk, hk) in enumerate(zip(light, heavy)):
+        assert lk == hk, (
+            f"kloop k={ki} cell-set mismatch (the verbatim port and heavy DISAGREE; "
+            f"INVESTIGATE — do not weaken the test):\n  light={lk}\n  heavy={hk}\n"
+            f"  light_only={sorted(set(lk) - set(hk))} "
+            f"heavy_only={sorted(set(hk) - set(lk))}"
+        )
+
+    # === semantic invariants (verified against LIGHT; heavy must match above) ===
+    # k=0 → exactly [seed]: the FROZEN kLoop(k=0) → [center] contract.
+    assert light[0] == [seed], f"kloop k=0 must return exactly [seed]; got {light[0]}"
+    # At the SF z10 cell (interior position), k=1 ring has exactly 8 cells.
+    assert (
+        len(light[1]) == 8
+    ), f"kloop k=1 at an interior quadbin cell must have 8 cells; got {len(light[1])}"
+    # Rings at different k values are pairwise disjoint (hollow-ring contract).
+    assert not (
+        set(light[0]) & set(light[1])
+    ), f"k=0 and k=1 rings must be disjoint: overlap={set(light[0]) & set(light[1])}"
+    assert not (
+        set(light[1]) & set(light[2])
+    ), f"k=1 and k=2 rings must be disjoint: overlap={set(light[1]) & set(light[2])}"

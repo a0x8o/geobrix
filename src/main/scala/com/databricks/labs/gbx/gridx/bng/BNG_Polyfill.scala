@@ -58,13 +58,13 @@ object BNG_Polyfill extends WithExpressionInfo {
         }
 
     def execute(geom: Geometry, resolution: Int): Iterator[String] = {
-        BNG.polyfill(geom, resolution)
+        BNG.polyfillIter(geom, resolution)
             .map(BNG.format)
     }
 
     def execute(geom: Geometry, resolution: String): Iterator[String] = {
         val res = BNG.resolutionMap(resolution)
-        BNG.polyfill(geom, res)
+        BNG.polyfillIter(geom, res)
             .map(BNG.format)
     }
 

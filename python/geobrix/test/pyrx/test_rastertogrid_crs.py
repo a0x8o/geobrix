@@ -43,7 +43,14 @@ def _cells_of(out):
 def test_h3_rastertogrid_utm_reprojects_not_silently_wrong():
     b = _utm33n_raster_bytes()
     with MemoryFile(b) as mf, mf.open() as ds:
-        out = gridagg.raster_to_grid(ds, resolution=6, grid="h3", agg="count")
+        out = gridagg.raster_to_grid(
+            ds,
+            resolution=6,
+            grid="h3",
+            agg="count",
+            coverage="sparse",
+            assignment="centroid",
+        )
     cells = _cells_of(out)
     assert cells, "expected non-empty grid"
     # Decoded cell centroids must land in zone-33 lon range (~9-21E), NOT at a
@@ -55,7 +62,14 @@ def test_h3_rastertogrid_utm_reprojects_not_silently_wrong():
 def test_quadbin_rastertogrid_utm_reprojects():
     b = _utm33n_raster_bytes()
     with MemoryFile(b) as mf, mf.open() as ds:
-        out = gridagg.raster_to_grid(ds, resolution=10, grid="quadbin", agg="count")
+        out = gridagg.raster_to_grid(
+            ds,
+            resolution=10,
+            grid="quadbin",
+            agg="count",
+            coverage="sparse",
+            assignment="centroid",
+        )
     assert _cells_of(out), "expected non-empty quadbin grid after reprojection"
 
 
@@ -77,7 +91,14 @@ def test_h3_rastertogrid_crsless_assumes_4326_no_error():
             ds.write(np.ones((1, 4, 4), dtype="float32"))
         b = mf.read()
     with MemoryFile(b) as mf, mf.open() as ds:
-        out = gridagg.raster_to_grid(ds, resolution=6, grid="h3", agg="count")
+        out = gridagg.raster_to_grid(
+            ds,
+            resolution=6,
+            grid="h3",
+            agg="count",
+            coverage="sparse",
+            assignment="centroid",
+        )
     assert out is not None  # no exception; assumed grid-native
 
 
@@ -86,7 +107,13 @@ def test_h3_rastertogrid_crs_override_for_crsless():
     b = _utm33n_raster_bytes(crs=None)
     with MemoryFile(b) as mf, mf.open() as ds:
         out = gridagg.raster_to_grid(
-            ds, resolution=6, grid="h3", agg="count", crs="EPSG:32633"
+            ds,
+            resolution=6,
+            grid="h3",
+            agg="count",
+            crs="EPSG:32633",
+            coverage="sparse",
+            assignment="centroid",
         )
     cells = _cells_of(out)
     assert cells, "expected non-empty grid with crs override"
@@ -112,5 +139,12 @@ def test_h3_rastertogrid_already_4326_unchanged():
             ds.write(np.ones((1, 4, 4), dtype="float32"))
         b = mf.read()
     with MemoryFile(b) as mf, mf.open() as ds:
-        out = gridagg.raster_to_grid(ds, resolution=6, grid="h3", agg="count")
+        out = gridagg.raster_to_grid(
+            ds,
+            resolution=6,
+            grid="h3",
+            agg="count",
+            coverage="sparse",
+            assignment="centroid",
+        )
     assert _cells_of(out)

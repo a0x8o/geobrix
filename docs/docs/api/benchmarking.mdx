@@ -24,6 +24,7 @@ GeoBrix is [supported on DBR 17.3 LTS, 18 LTS, and — for the lightweight tier 
 - **[FILE-on ≈ FILE-off on dedicated clusters](#file-capability-cog-multiwindow)** — FILE is governed file access, not a per-tile read optimization. Grouping (open amortization) is the performance lever. Serverless: the FILE-column Delta-table read path is **~16–17× faster** than a directory scan (~2 s vs. ~30 s per 1,000 tiles, verified on environment v6); the directory `raster_gbx` DataSource path is slower there — see [capability tiers](../readers-writers#capability-tiers) and [Serverless & Memory](../serverless-and-memory).
 - **[Band math: 60–130× lightweight win](#pure-core)** — spectral indices run 60–130× faster on the lightweight tier (NumPy in-process vs. heavyweight subprocess `gdal_calc` per call). This is the single largest advantage and sustains at scale.
 - **[Lightweight at parity for aggregators and geometry](#results)** — `st_asmvt` MVT encoding (~6% gap), `pmtiles_agg` archive folding (~7% gap), and quadbin/BNG grid math (±20% variance) all run within or very near parity on a cluster, with decoded output matching exactly.
+- **[Geometry-aware expansion scales linearly](#results)** — `geomkring`/`geomkloop` grow grid rings from a geometry: on Serverless, 10,000 notional building footprints expand to h3 res-10 rings (`k=10`) in ~7.9 s (~1,260 buildings/s), and 100,000 footprints reach 35.7M cells in ~72 s. h3 leads the four grids; see the Grid tab.
 
 ## Measurement modes
 
@@ -151,18 +152,13 @@ The individual stages are also available as standalone commands — `gbx:bench:g
 
 ## Reading the output
 
-The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table. For a spark-path run it looks like:
-
-```text
-Consistency (7 compared cells): exact 0 - within-tol 7 - divergent 0
-
-Tile scale: 1000 tiles/iteration (spark-path) — every tile processed each timed iteration.
+The comparison `summary.md` opens with **insights** — the biggest wins and a consistency tally (e.g. *7 compared cells: 0 exact, 7 within-tol, 0 divergent*) and the tile scale (*1,000 tiles/iteration, spark-path — every tile processed each timed iteration*) — followed by a per-function table. For a spark-path run it looks like:
 
 | fn | hw_iter_s | lw_iter_s | hw_per_tile_s | lw_per_tile_s | speedup | consistency |
-| rst_dtmfromgeoms_agg | 175.10 | 9.94 | 0.17510 | 0.00994 | 17.61 | within_tol |
-| rst_slope | 7.31 | 7.57 | 0.00731 | 0.00757 | 0.97 | timing-only |
-| rst_proximity | 0.52 | 8.12 | 0.00052 | 0.00812 | 0.06 | timing-only |
-```
+|---|---|---|---|---|---|---|
+| `rst_dtmfromgeoms_agg` | 175.10 | 9.94 | 0.17510 | 0.00994 | 17.61 | within_tol |
+| `rst_slope` | 7.31 | 7.57 | 0.00731 | 0.00757 | 0.97 | timing-only |
+| `rst_proximity` | 0.52 | 8.12 | 0.00052 | 0.00812 | 0.06 | timing-only |
 
 - **`hw_iter_s` / `lw_iter_s`** are the median wall-clock of **one full iteration over all *N* tiles** (the whole distributed job). **`hw_per_tile_s` / `lw_per_tile_s`** are that ÷ *N* — the amortized per-tile cost. (A pure-core summary uses `hw_ms` / `lw_ms` and `hw_mpix/s` / `lw_mpix/s` for the single-tile algorithm cost instead.)
 - **`speedup`** is `heavy / light` — greater than 1 means the lightweight tier is faster.
@@ -797,6 +793,29 @@ Pure-core measures the algorithm; **spark-path measures the job**. Each function
 
 The raster→grid family (`rst_{h3,quadbin,bng}_rastertogrid*`, the three tessellation generators, and the three grid rasterize aggregators) is measured in its [own subsection below](#raster-grid-family-at-scale) — it ran on a separate cluster configuration (20 workers, 512² 4-band tiles), and the lightweight tier invokes those functions as **table functions via SQL `LATERAL`**, not scalar columns, so a like-for-like comparison belongs in a dedicated table.
 
+#### Combine family (`rst_combinemin`, `rst_combinemax`, `rst_combinemedian`, `rst_combinesum`, `rst_combinestddev`, `rst_combinecount`)
+
+The six raster-reduction functions that reduce an aligned stack of tiles to a single output tile (min/max/median/sum/stddev/count across the stack) ran in a separate cluster run alongside `rst_align_to`:
+
+> **Environment:** Databricks · DBR 18.x · 20 workers · 1,000 tiles per iteration · lightweight tier with ZSTD-L6 default.
+
+**Consistency:** All compared cells were **exact or within tolerance (0 divergent)**.
+
+The combine family's ~9–12× light gap is dominated by per-tile Python GDAL decode and encode; the ZSTD-L6 default reduced it from the previous ~15–18× by cutting encode time. Setting `GBX_ZSTD_LEVEL=fast` (L1) trades a ~1–2% size increase for additional encode speed.
+
+| Function | Heavy/tile (ms) | Light/tile (ms) | Speedup | Consistency |
+|---|---|---|---|---|
+| `rst_combinemin` | 3.10 | 34.0 | 0.09× | within_tol† |
+| `rst_combinemax` | 3.47 | 30.1 | 0.12× | within_tol† |
+| `rst_combinemedian` | 3.74 | 44.5 | 0.08× | within_tol† |
+| `rst_combinesum` | 3.25 | 28.3 | 0.11× | within_tol† |
+| `rst_combinestddev` | 3.01 | 33.1 | 0.09× | within_tol† |
+| `rst_combinecount` | 2.76 | 24.3 | 0.11× | within_tol† |
+
+<sub>† Aggregate result — 0 divergent across the six functions; per-function exact-vs-within-tolerance breakdown not available for this run.</sub>
+
+`rst_align_to` was benchmarked in the same run (timing-only; no cross-tier output fingerprint — the output geometry varies by reference tile and CRS).
+
 #### Repartition strategy
 
 The spark-path numbers above are wall-clock for a whole distributed job, so they're sensitive to how evenly the 1,000 tiles spread across the cluster's task slots. The benchmark harness tunes the partitioning so the comparison reflects the engines, not a straggler tail:
@@ -877,7 +896,7 @@ Across the converted fan-out functions, light runs **at parity or faster** than 
 
 > **`rst_h3_tessellate` numbers are pending a cluster re-bench.** The covering/centroid `mode` work has
 > landed — light and heavy now agree on cell assignment for both modes (test-enforced cross-tier parity;
-> see the [H3 tessellation explainer](./h3-raster-tessellation)) — and timings will be added on the next
+> see the [grid raster tessellation explainer](./grid-raster-tessellation)) — and timings will be added on the next
 > cluster run.
 
 </TabItem>
@@ -1007,7 +1026,7 @@ benchmark aggregates a coverage of overlapping polygons and times it per group, 
 
 <TabItem value="grid" label="Grid">
 
-### Quadbin (`quadbin_pointascell`, `quadbin_polyfill`, `quadbin_tessellate`, `quadbin_cellunion_agg`)
+### Quadbin
 
 The quadbin grid functions are benchmarked light (pygx) vs heavy (gridx.quadbin) with exact-output
 parity across four representative shapes: a scalar encode (`quadbin_pointascell`, lon/lat → cell),
@@ -1019,13 +1038,13 @@ equality** for `pointascell` and `polyfill`, **exact cells with centroid match w
 `tessellate`, and **decoded union-geometry equality (1e-6)** per group for `cellunion_agg`. Run it
 with `gbx:bench:cluster --grid-quadbin-only`.
 
-**All 10 quadbin functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path, 1,000
-tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set parity holds for all 10**
+**The quadbin cell-math functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path, 1,000
+tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set parity holds across the suite**
 (test-enforced — in-cell and by the `test_parity_quadbin` cross-tier suite).
 
 On *timing*, these are **sub-millisecond cell-math** operations, so the spark-path wall-clock is
 dominated by per-row JVM↔Python dispatch, not by the work itself. The 5-measured-iteration medians put
-the lightweight `pygx` tier **roughly at parity** with the heavyweight JVM tier across all 10
+the lightweight `pygx` tier **roughly at parity** with the heavyweight JVM tier across the suite
 (0.89×–1.33×): the small gaps are fixed UDF-boundary/dispatch cost on top of very cheap per-row cell
 math, not an algorithmic deficiency. (One honest caveat: at sub-millisecond per-tile work, these
 numbers still carry some run-to-run variance, so read the relative ordering rather than the last digit.)
@@ -1056,7 +1075,9 @@ batch never buffers many large variable-length outputs (a memory-safety choice f
 geometries/zoom levels). The lightweight `pygx` tier's decisive advantage here is **Serverless/ARM
 reach and no-JVM/JAR install**, with timing competitive with the heavyweight tier.
 
-### BNG (all 23 `bng_*` functions)
+> Geometry-aware `quadbin_geomkring`/`geomkloop`(+explode) are benchmarked separately in [Geometry-aware expansion at scale](#geomk-at-scale).
+
+### BNG
 
 The British National Grid functions are available in both tiers — light (pygx, a pure-Python
 codec port of `BNG.scala`) vs heavy (gridx.bng) — with the same exact-output parity contract as
@@ -1069,15 +1090,15 @@ timing expectation is the same: sub-millisecond STRING cell-id math dominated by
 JVM↔Python boundary, with WKB-geometry ops additionally carrying the geometry-bytes serialization
 cost. Run the BNG legs with `gbx:bench:cluster --grid-bng-only`.
 
-**All 23 `bng_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, spark-path, 1,000
+**The `bng_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, spark-path, 1,000
 tiles/iteration, 5 measured iterations, both tiers). **Exact cell-set / decoded-geometry parity
-holds for all 23** — light output equals heavy output, enforced by the in-cell parity gate and the
-`test_parity_bng` cross-tier suite (all 23 parity gates passed; 0 errors).
+holds across the suite** — light output equals heavy output, enforced by the in-cell parity gate and the
+`test_parity_bng` cross-tier suite (all parity gates passed; 0 errors).
 
 On *timing*, the pure-Python `pygx` BNG tier runs at **near-parity** with the heavyweight JVM tier:
-across all 23 functions the lightweight tier is within **~±20% of heavy (0.82×–1.18×)**, all
-sub-millisecond per tile at 1,000 tiles/iteration. 7/23 are light-faster (best `bng_kring` 1.18×);
-16/23 are marginally heavy-faster (most `bng_cellintersection` 0.82×). These deltas sit within the
+across the suite the lightweight tier is within **~±20% of heavy (0.82×–1.18×)**, all
+sub-millisecond per tile at 1,000 tiles/iteration. roughly a third are light-faster (best `bng_kring` 1.18×);
+the rest are marginally heavy-faster (most `bng_cellintersection` 0.82×). These deltas sit within the
 run-to-run noise band for sub-second distributed jobs at this scale — effectively at parity. (Note
 BNG WKB carries no SRID for EPSG:27700, unlike quadbin's EWKB.)
 
@@ -1110,7 +1131,9 @@ speedup = heavy ÷ light, ≥1.0 → light faster):
 | `bng_distance` | 0.13 | 0.16 | 0.86× |
 | `bng_cellintersection` | 0.14 | 0.17 | 0.82× |
 
-### Custom grid (all 7 `custom_*` functions)
+> Geometry-aware `bng_geomkring`/`geomkloop`(+explode) appear in the table above (cluster parity); their geometry-throughput/scaling numbers are in [Geometry-aware expansion at scale](#geomk-at-scale).
+
+### Custom grid
 
 The custom equal-area grid functions are available in both tiers — light (pygx) vs heavy
 (gridx.custom) — with the same exact-output parity contract as quadbin and BNG: **exact cell-id /
@@ -1123,14 +1146,13 @@ same: sub-millisecond cell math dominated by the per-row JVM↔Python boundary, 
 ops additionally carrying the geometry-bytes serialization cost. Run the custom legs with
 `gbx:bench:cluster --grid-custom-only`.
 
-**All 7 `custom_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path,
-1,000 tiles/iteration, 5 measured iterations, both tiers). **Exact cell-id/cell-set parity holds for
-all 7** — light output equals heavy output (cell ids/sets exact; geometry within 1e-6; grid struct
+**The `custom_*` functions were benchmarked on a cluster** (DBR 17.3 LTS, x86, spark-path,
+1,000 tiles/iteration, 5 measured iterations, both tiers). **Exact cell-id/cell-set parity holds across the suite** — light output equals heavy output (cell ids/sets exact; geometry within 1e-6; grid struct
 identical), enforced by the JAR-gated cross-tier parity suite and the in-cell hard-assert gates on the
 cluster run.
 
 On *timing*, the 5-measured-iteration medians put the pure-Python `pygx` custom-grid tier **roughly at
-parity** with the heavyweight Scala tier across all 7 (0.87×–1.34×): it is faster on the cheapest ops
+parity** with the heavyweight Scala tier across the suite (0.87×–1.34×): it is faster on the cheapest ops
 (`custom_centroid` 1.34×, `custom_kring` 1.33×) and marginally slower on a few. Absolute times are all
 sub-second at 1,000 tiles (sub-millisecond per tile), so the gaps are the fixed Python UDF-boundary /
 Arrow serialization cost on top of very cheap per-row grid math, not an algorithmic deficiency.
@@ -1147,6 +1169,69 @@ speedup = heavy ÷ light, ≥1.0 → light faster):
 | `custom_pointascell` | 0.16 | 0.18 | 0.89× |
 | `custom_cellaswkb` | 0.14 | 0.16 | 0.89× |
 | `custom_polyfill` | 0.13 | 0.15 | 0.87× |
+
+> Geometry-aware `custom_geomkring`/`geomkloop`(+explode) are benchmarked separately in [Geometry-aware expansion at scale](#geomk-at-scale).
+
+### Cellfill (`bng_cellfill`, `quadbin_cellfill`, `h3_cellfill`, `custom_cellfill`)
+
+The cellfill functions are grouped aggregators that fill cells whose value is `NULL` by interpolating from their neighbours in the same group — an unweighted mean or inverse-distance weighting over k-ring neighbours — as a `GROUP BY` aggregate over `(cellid, value)` rows. Because the work is cell-space math — no raster tile bytes cross the JVM↔Python boundary — the lightweight tier runs at or near parity with the heavyweight tier.
+
+> **Environment:** Databricks · DBR 18.x · 20 workers · 1,000 cell groups per iteration. `gbx_custom_cellfill` is **lightweight-only** (the heavyweight tier does not have a streamable grid-struct path for this function, so no cross-tier ratio is available).
+
+**Consistency:** All compared cells were **exact or within tolerance (0 divergent)**.
+
+Speedup = heavy ÷ light, ≥ 1× → light faster:
+
+| Function | Heavy (s) | Light (s) | Light speedup |
+|---|---|---|---|
+| `gbx_quadbin_cellfill` | 2.12 | 1.58 | 1.34× |
+| `gbx_bng_cellfill` | 1.70 | 1.65 | 1.03× |
+| `gbx_h3_cellfill` | 2.02 | 3.56 | 0.57× |
+| `gbx_custom_cellfill` | — (heavy N/A) | 1.95 | — |
+
+The quadbin and BNG functions run at or faster than parity: cell-space geometry is cheap and there are no tile bytes to move across the Python boundary. The H3 gap (0.57×) reflects H3's already-fast C-backed encoder, which leaves less room for the Python advantage. All three comparable pairs are within tolerance or exact.
+
+### Geometry-aware expansion at scale (`geomkring` / `geomkloop`) {#geomk-at-scale}
+
+The geometry-aware expansion functions grow grid rings outward from a *geometry's* covering set (not a single cell). This is a **throughput/scaling** benchmark — how expansion cost grows with the number of input geometries `N` and the ring distance `k` — rather than a light-vs-heavy parity table. Inputs are synthetic **notional building footprints** across five shapes (rectangle, L, U, courtyard-with-hole, irregular) and three sizes (~15 / 50 / 200 m), scattered over a city-scale extent so each building lands on a distinct cell set.
+
+> **Environment:** Databricks **Serverless** (environment 6) · `light_env6` wheel · `geomkring`/`geomkloop`, `boundary-out` · best-of-3 warm timing of a full distributed aggregate (`sum(size(cells))` over all rows). Target cell size ≈ 65 m: **h3** res 10, **quadbin** res 19, **custom** 65 m root cell, **BNG** res 4 (100 m — the nearest discrete BNG step). h3 and quadbin run on WGS84; custom and BNG on EPSG:27700. Footprints come from the `bench/buildings.py` generator. Cell counts are the total emitted across all input geometries. (Serverless wall-clock carries run-to-run variance from autoscaling — read the ordering and magnitudes, not the last digit.)
+
+**Headline** — 10,000 building footprints, h3 res 10, `geomkring` `boundary-out`, `k=10`: **≈ 7.9 s** producing **3,573,051 cells** — about **1,260 buildings/s** and **450k cells/s** on Serverless.
+
+**Across grids** (10,000 buildings, `k=10`, `geomkring`):
+
+| Grid | Resolution (≈65 m cell) | Wall (s) | Cells | Buildings/s | Cells/s |
+|---|---|---|---|---|---|
+| h3 | res 10 | **7.9** | 3,573,051 | 1,264 | 452k |
+| custom | 65 m root (EPSG:27700) | 14.6 | 3,651,174 | 685 | 250k |
+| quadbin | res 19 | 41.5 | 4,951,123 | 241 | 119k |
+| bng | res 4 (100 m) | 52.3 | 4,762,643 | 191 | 91k |
+
+h3 is fastest — its polyfill uses the h3 library's performant `polygon_to_cells_experimental` (C-backed) and its neighbour step is pure integer index math (`grid_disk`). custom is next (a pure-Python lattice walk). quadbin (web-mercator `(z,x,y)` math + EWKB) and BNG (STRING cell ids + chip geometry) carry more per-cell work; BNG's res 4 also emits coarser 100 m cells. Cell sizes and CRS differ per grid, so read the ordering rather than a direct cell-for-cell comparison.
+
+**Ring distance `k`** (h3, 10,000 buildings; `geomkring` filled disk vs `geomkloop` hollow shell):
+
+| k | `geomkring` (s) | Ring cells | `geomkloop` (s) | Loop cells |
+|---|---|---|---|---|
+| 1 | 3.03 | 113,181 | 3.02 | 84,430 |
+| 5 | 4.25 | 1,050,901 | 4.48 | 324,430 |
+| 10 | 7.9 | 3,573,051 | 7.88 | 624,430 |
+
+The filled ring's cell count grows ~`k²` (disk area) while the hollow loop grows ~`k` (perimeter), so at `k=10` the loop emits ~6× fewer cells. Wall-clock tracks the covering-set frontier work (similar for ring and loop) plus a per-building polyfill cost that dominates at small `k` — hence `k=1` and `k=5` are closer together than the cell counts suggest.
+
+**Number of geometries `N`** (h3 res 10, `geomkring` `boundary-out`, `k=10`):
+
+| Buildings (N) | Wall (s) | Cells | Buildings/s |
+|---|---|---|---|
+| 100 | 0.94 | 35,774 | 106 |
+| 1,000 | 2.63 | 357,031 | 380 |
+| 10,000 | 7.9 | 3,573,051 | 1,264 |
+| 100,000 | 71.5 | 35,733,305 | 1,400 |
+
+Throughput scales ~linearly at volume: **100,000 building footprints expand to 35.7M cells in ≈ 72 s**. Buildings/s climbs with `N` as the fixed job overhead amortizes, plateauing around 1,400 buildings/s.
+
+**Hole modes at scale** — on courtyard footprints (buildings with an interior hole), `hole-in` `k=5` over 1,000 buildings emits 1,796 cells, expanding inward from each hole's edge — the hole-fill traversals work on holed geometries at scale, not just in unit tests.
 
 </TabItem>
 
@@ -1278,18 +1363,13 @@ The individual stages are also available as standalone commands — `gbx:bench:g
 
 ### Reading the output
 
-The comparison `summary.md` opens with **insights** (biggest wins, the consistency tally) followed by a per-function table. For a spark-path run it looks like:
-
-```text
-Consistency (7 compared cells): exact 0 - within-tol 7 - divergent 0
-
-Tile scale: 1000 tiles/iteration (spark-path) — every tile processed each timed iteration.
+The comparison `summary.md` opens with **insights** — the biggest wins and a consistency tally (e.g. *7 compared cells: 0 exact, 7 within-tol, 0 divergent*) and the tile scale (*1,000 tiles/iteration, spark-path — every tile processed each timed iteration*) — followed by a per-function table. For a spark-path run it looks like:
 
 | fn | hw_iter_s | lw_iter_s | hw_per_tile_s | lw_per_tile_s | speedup | consistency |
-| rst_dtmfromgeoms_agg | 175.10 | 9.94 | 0.17510 | 0.00994 | 17.61 | within_tol |
-| rst_slope | 7.31 | 7.57 | 0.00731 | 0.00757 | 0.97 | timing-only |
-| rst_proximity | 0.52 | 8.12 | 0.00052 | 0.00812 | 0.06 | timing-only |
-```
+|---|---|---|---|---|---|---|
+| `rst_dtmfromgeoms_agg` | 175.10 | 9.94 | 0.17510 | 0.00994 | 17.61 | within_tol |
+| `rst_slope` | 7.31 | 7.57 | 0.00731 | 0.00757 | 0.97 | timing-only |
+| `rst_proximity` | 0.52 | 8.12 | 0.00052 | 0.00812 | 0.06 | timing-only |
 
 - **`hw_iter_s` / `lw_iter_s`** are the median wall-clock of **one full iteration over all *N* tiles** (the whole distributed job). **`hw_per_tile_s` / `lw_per_tile_s`** are that ÷ *N* — the amortized per-tile cost. (A pure-core summary uses `hw_ms` / `lw_ms` and `hw_mpix/s` / `lw_mpix/s` for the single-tile algorithm cost instead.)
 - **`speedup`** is `heavy / light` — greater than 1 means the lightweight tier is faster.

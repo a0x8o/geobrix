@@ -27,6 +27,10 @@ PARITY_FILES=(
     "python/geobrix/test/pyvx/test_parity_legacy.py"
     "python/geobrix/test/pyvx/test_parity_h3_tessellate.py"
     "python/geobrix/test/pygx/test_gridx_error_parity.py"
+    "python/geobrix/test/pygx/test_parity_bng.py"
+    "python/geobrix/test/pygx/test_parity_quadbin.py"
+    "python/geobrix/test/pygx/test_parity_custom.py"
+    "python/geobrix/test/pyrx/test_parity_custom_raster.py"
 )
 
 show_help() {

@@ -185,4 +185,23 @@ class H3Test extends AnyFunSuite {
         ext.getEnvelopeInternal.getMinY shouldBe -90.0
         ext.getEnvelopeInternal.getMaxY shouldBe 90.0
     }
+
+    // -------- GridSystem conformance --------
+    test("H3 conforms to GridSystem — name, crsSrid, round-trip, coveringCandidateCells") {
+        val g: GridSystem = H3
+        g.name shouldBe "H3"
+        g.crsSrid shouldBe 4326
+        val cell = g.pointToCellID(-0.1276, 51.5074, 9)
+        g.cellIdToGeometry(cell).getSRID shouldBe 4326
+        g.renderCellId(cell) shouldBe cell // default: Long, not string
+        // coveringCandidateCells: small bbox around central London at res 5
+        val bbox = JTS.polygonFromXYs(
+          Array((-0.15, 51.49), (-0.10, 51.49), (-0.10, 51.52), (-0.15, 51.52), (-0.15, 51.49))
+        )
+        bbox.setSRID(4326)
+        val candidates = g.coveringCandidateCells(bbox, 5)
+        candidates should not be empty
+        val centerCell = g.pointToCellID(-0.125, 51.505, 5)
+        candidates should contain(centerCell)
+    }
 }

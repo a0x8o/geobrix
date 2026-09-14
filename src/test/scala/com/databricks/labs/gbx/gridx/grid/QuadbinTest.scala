@@ -1,0 +1,45 @@
+package com.databricks.labs.gbx.gridx.grid
+
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+
+/** Tests for Quadbin grid system, focusing on GridSystem conformance. */
+class QuadbinTest extends AnyFunSuite {
+
+    test("Quadbin conforms to GridSystem; cellIdToGeometry matches cellBbox") {
+        val g: GridSystem = Quadbin
+        g.name shouldBe "QUADBIN"
+        g.crsSrid shouldBe 4326
+        val cell = g.pointToCellID(-0.1276, 51.5074, 10)   // delegates to pointToCell
+        val (xmin, ymin, xmax, ymax) = Quadbin.cellBbox(cell)
+        val env = g.cellIdToGeometry(cell).getEnvelopeInternal
+        env.getMinX shouldBe (xmin +- 1e-9)
+        env.getMaxX shouldBe (xmax +- 1e-9)
+        env.getMinY shouldBe (ymin +- 1e-9)
+        env.getMaxY shouldBe (ymax +- 1e-9)
+    }
+
+    test("Quadbin.polyfill returns cells intersecting the input geometry") {
+        val g: GridSystem = Quadbin
+        val poly = g.cellIdToGeometry(g.pointToCellID(-0.13, 51.5, 12))
+        g.polyfill(poly, 12) should contain (g.pointToCellID(-0.13, 51.5, 12))
+    }
+
+    test("Quadbin.coveringCandidateCells returns non-empty set containing the cell for a small bbox") {
+        val g: GridSystem = Quadbin
+        val center = g.pointToCellID(-0.13, 51.5, 10)
+        val bbox = g.cellIdToGeometry(center)
+        val covering = g.coveringCandidateCells(bbox, 10)
+        covering should not be empty
+        covering should contain (center)
+    }
+
+    test("Quadbin.resolutions spans 0..MAX_RESOLUTION") {
+        Quadbin.resolutions shouldBe (0 to Quadbin.MAX_RESOLUTION).toSet
+    }
+
+    test("Quadbin.renderCellId returns the Long (default)") {
+        val cell = Quadbin.pointToCell(-0.13, 51.5, 10)
+        Quadbin.renderCellId(cell) shouldBe cell
+    }
+}

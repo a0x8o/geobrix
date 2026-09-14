@@ -71,6 +71,7 @@ const config = {
       {
         redirects: [
           { from: '/docs/beta-release-notes', to: '/docs/release-notes' },
+          { from: '/docs/api/h3-raster-tessellation', to: '/docs/api/grid-raster-tessellation' },
         ],
       },
     ],

@@ -63,7 +63,9 @@ def test_h3_rasterize_roundtrip_unchanged():
 
     with _serde.open_tile(raster) as ds:
         assert ds.nodata == -9999.0
-        recovered = gridagg.raster_to_grid(ds, res, "h3", "avg")[0]
+        recovered = gridagg.raster_to_grid(
+            ds, res, "h3", "avg", coverage="sparse", assignment="centroid"
+        )[0]
 
     got = {int(r["cellID"]): r["measure"] for r in recovered}
     for c, v in cell_values.items():
@@ -86,7 +88,9 @@ def test_quadbin_rasterize_roundtrip_and_nodata():
 
     with _serde.open_tile(raster) as ds:
         assert ds.nodata == -9999.0, "band NoData must be -9999 (§2.6)"
-        recovered = gridagg.raster_to_grid(ds, res, "quadbin", "avg")[0]
+        recovered = gridagg.raster_to_grid(
+            ds, res, "quadbin", "avg", coverage="sparse", assignment="centroid"
+        )[0]
 
     got = {int(r["cellID"]): r["measure"] for r in recovered}
     for c, v in cell_values.items():
@@ -127,7 +131,9 @@ def test_bng_rasterize_roundtrip_and_nodata():
     with _serde.open_tile(raster) as ds:
         assert ds.nodata == -9999.0, "band NoData must be -9999 (§2.6)"
         assert ds.crs.to_epsg() == 27700, "BNG raster CRS must be EPSG:27700"
-        recovered = gridagg.raster_to_grid(ds, res, "bng", "avg")[0]
+        recovered = gridagg.raster_to_grid(
+            ds, res, "bng", "avg", coverage="sparse", assignment="centroid"
+        )[0]
 
     # raster_to_grid renders BNG ids to the public STRING form.
     got = {r["cellID"]: r["measure"] for r in recovered}

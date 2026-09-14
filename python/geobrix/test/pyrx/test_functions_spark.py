@@ -1576,22 +1576,23 @@ def test_h3_tessellate_mode_sql(spark):
     df = _tile_df(spark, width=8, height=8, epsg=4326)
     prx.register(spark)
     df.createOrReplaceTempView("_ras_tessellate_mode")
-    # 2-arg (default mode) — must still work for backward compat.
+    # 2-arg (default assignment=centroid) — must still work.
     n_default = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4) t"
     ).count()
-    # explicit covering — same result as default.
+    # explicit covering — non-zero, may differ from default (centroid).
     n_cover = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4, 'covering') t"
     ).count()
-    # centroid — non-zero, may differ from covering.
+    # explicit centroid — same result as default.
     n_centroid = spark.sql(
         "SELECT t.* FROM _ras_tessellate_mode, "
         "LATERAL gbx_rst_h3_tessellate(tile, 4, 'centroid') t"
     ).count()
-    assert n_default == n_cover and n_cover > 0 and n_centroid > 0
+    # Default is centroid: n_default == n_centroid; covering may differ.
+    assert n_default == n_centroid and n_centroid > 0 and n_cover > 0
     # bad mode must raise.
     with pytest.raises(Exception):
         spark.sql(
@@ -1708,3 +1709,89 @@ def test_rst_viewshed_column_api(spark):
     # Byte output, single band.
     assert out.select(prx.rst_type("t").alias("ty")).first()["ty"][0] == "Byte"
     assert out.select(prx.rst_numbands("t").alias("n")).first()["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 Task 8: coverage/assignment on rastertogrid + tessellate surface
+# ---------------------------------------------------------------------------
+
+
+def test_light_rastertogrid_coverage_assignment_4arg_sql(spark):
+    """4-arg rastertogrid SQL call: (tile, resolution, coverage, assignment).
+
+    complete+centroid at fine resolution (7): the covering set has more cells
+    than the 12 pixel-centroids, so complete mode emits NULL-measure rows for
+    covered-but-empty cells.
+    """
+    from pyspark.sql.types import DoubleType
+
+    # 4x3 pixels at 0.5 deg each; at H3 res=7 (edge ~1.2 km) the covering set
+    # has many more cells than the 12 pixel centroids -> NULL-measure rows appear.
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_t8_cov")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.* FROM _ras_t8_cov, "
+        "LATERAL gbx_rst_h3_rastertogridavg(tile, 7, 'complete', 'centroid') t"
+    ).collect()
+    # complete mode must emit covered-but-empty cells (NULL measure).
+    assert any(
+        r["measure"] is None for r in rows
+    ), "complete coverage must yield at least one NULL-measure row"
+    # measure column must be DoubleType even under complete mode.
+    schema = spark.sql(
+        "SELECT t.* FROM _ras_t8_cov, "
+        "LATERAL gbx_rst_h3_rastertogridavg(tile, 7, 'complete', 'centroid') t"
+    ).schema
+    measure_field = next(fld for fld in schema.fields if fld.name == "measure")
+    assert isinstance(
+        measure_field.dataType, DoubleType
+    ), f"measure must be DoubleType; got {measure_field.dataType}"
+
+
+def test_light_rastertogrid_count_schema_is_double(spark):
+    """After Task 8, rastertogridcount measure column must be DoubleType (not Int/Long)."""
+    from pyspark.sql.types import DoubleType
+
+    df = _tile_df(spark, width=4, height=3, count=1)
+    df.createOrReplaceTempView("_ras_t8_cnt_schema")
+    prx.register(spark)
+    for name, res in [
+        ("gbx_rst_h3_rastertogridcount", 6),
+        ("gbx_rst_quadbin_rastertogridcount", 10),
+        ("gbx_rst_bng_rastertogridcount", 3),
+    ]:
+        schema = spark.sql(
+            f"SELECT t.* FROM _ras_t8_cnt_schema, LATERAL {name}(tile, {res}) t"
+        ).schema
+        measure_field = next(fld for fld in schema.fields if fld.name == "measure")
+        assert isinstance(
+            measure_field.dataType, DoubleType
+        ), f"{name}: measure must be DoubleType after Task 8; got {measure_field.dataType}"
+
+
+def test_light_tessellate_assignment_coverage_4arg_sql(spark):
+    """4-arg tessellate SQL: (tile, resolution, assignment, coverage).
+
+    assignment=centroid, coverage=complete should return rows (non-zero).
+    """
+    df = _tile_df(spark, width=8, height=8, epsg=4326)
+    df.createOrReplaceTempView("_ras_t8_tess")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.* FROM _ras_t8_tess, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'centroid', 'complete') t"
+    ).collect()
+    assert len(rows) > 0, "centroid+complete tessellate must emit rows"
+
+
+def test_light_tessellate_assignment_coverage_sparse(spark):
+    """assignment=covering, coverage=sparse should return rows (non-zero)."""
+    df = _tile_df(spark, width=8, height=8, epsg=4326)
+    df.createOrReplaceTempView("_ras_t8_tess_sparse")
+    prx.register(spark)
+    rows = spark.sql(
+        "SELECT t.* FROM _ras_t8_tess_sparse, "
+        "LATERAL gbx_rst_h3_tessellate(tile, 4, 'covering', 'sparse') t"
+    ).collect()
+    assert len(rows) > 0, "covering+sparse tessellate must emit rows"

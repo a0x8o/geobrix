@@ -34,7 +34,7 @@ class RST_Quadbin_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         val ds = london4326Ds
         // zoom 12 -> quadbin tiles ~0.088 deg wide near this latitude; the ~0.04 deg raster
         // overlaps at least one tile.
-        val it = RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, mode = "covering")
+        val it = RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, assignment = "covering")
         var count = 0
         while (it.hasNext) {
             val (cell, chip, _) = it.next()
@@ -50,14 +50,14 @@ class RST_Quadbin_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
         assert(count >= 1, "covering tessellation must yield at least one chip")
     }
 
-    test("quadbin tessellate centroid: yields >=1 chip with nonzero cell ids, ids distinct, pixel count bounded") {
+    test("quadbin tessellate centroid+sparse: yields >=1 chip with nonzero cell ids, ids distinct, pixel count bounded") {
         val ds = london4326Ds
         // zoom 12: the 4x4 (~0.04 deg) raster spans multiple quadbin tiles at this zoom,
         // so centroid mode assigns each pixel to exactly one cell -> multiple chips expected.
         val srcXSize = ds.getRasterXSize
         val srcYSize = ds.getRasterYSize
         val totalSourcePixels = srcXSize * srcYSize // 16 pixels total in fixture
-        val it = RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, mode = "centroid")
+        val it = RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, assignment = "centroid", coverage = "sparse")
         var count = 0
         var totalAssigned = 0
         val seenIds = scala.collection.mutable.Set[Long]()
@@ -90,21 +90,33 @@ class RST_Quadbin_TessellateTest extends AnyFunSuite with BeforeAndAfterAll {
             s"total assigned pixels across centroid chips ($totalAssigned) must not exceed source pixel count ($totalSourcePixels)")
     }
 
-    test("quadbin tessellate: unknown mode throws IllegalArgumentException mentioning 'mode'") {
+    test("quadbin tessellate: unknown assignment throws IllegalArgumentException mentioning 'assignment'") {
         val ds = london4326Ds
         val ex = intercept[IllegalArgumentException] {
-            RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, mode = "bogus")
+            RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, assignment = "bogus")
         }
-        assert(ex.getMessage.contains("mode"))
+        assert(ex.getMessage.contains("assignment"))
         RasterDriver.releaseDataset(ds)
     }
 
-    test("generator names + default mode arity") {
+    test("quadbin tessellate: unknown coverage throws IllegalArgumentException mentioning 'coverage'") {
+        val ds = london4326Ds
+        val ex = intercept[IllegalArgumentException] {
+            RasterTessellate.tessellateQuadbinIter(ds, Map.empty[String, String], resolution = 12, assignment = "covering", coverage = "bogus")
+        }
+        assert(ex.getMessage.contains("coverage"))
+        RasterDriver.releaseDataset(ds)
+    }
+
+    test("generator names + default assignment arity") {
         assert(RST_Quadbin_Tessellate.name == "gbx_rst_quadbin_tessellate")
         assert(RST_BNG_Tessellate.name == "gbx_rst_bng_tessellate")
-        // 2-arg builder defaults mode to "covering"
+        // 2-arg builder defaults assignment to "centroid", coverage to "complete"
         import org.apache.spark.sql.catalyst.expressions.Literal
         val e = RST_Quadbin_Tessellate.builder()(Seq(Literal("t"), Literal(10)))
         assert(e.isInstanceOf[RST_Quadbin_Tessellate])
+        val cast = e.asInstanceOf[RST_Quadbin_Tessellate]
+        assert(cast.assignmentExpr == Literal("centroid"), "2-arg default assignment must be 'centroid'")
+        assert(cast.coverageExpr == Literal("complete"), "2-arg default coverage must be 'complete'")
     }
 }

@@ -167,32 +167,60 @@ def bng_euclideandistance(cellid1: ColLike, cellid2: ColLike) -> Column:
     return f.call_function("gbx_bng_euclideandistance", _col(cellid1), _col(cellid2))
 
 
-def bng_geomkloop(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """Return the k-ring of cells around the geometry (as array of cell IDs).
+def bng_geomkloop(
+    geom: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Return the k-loop (hollow ring at exactly k) of cells around the geometry.
 
     Args:
         geom: Geometry column (WKT or WKB).
         resolution: BNG resolution — integer index ±1..±6 or string key.
-        k: Ring distance (0 = cell(s) covering geometry only).
+        k: Loop distance — only the shell at exactly k is returned.
+        mode: Dilation mode (default ``"boundary-out"``). One of:
+            ``"boundary-out"``, ``"boundary-in"``,
+            ``"boundary-in-ignore-holes"``, ``"hole-in"``, ``"hole-out"``,
+            ``"hole-out-ignore-geom"``. Use ``f.lit("boundary-in")`` or pass
+            a bare string (auto-promoted to a literal).
 
     Returns:
-        Column of array of BNG cell identifiers.
+        Column of array of BNG cell identifiers (hollow ring).
     """
-    return f.call_function("gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k))
+    # mode is a VALUE (never a column name); promote bare strings to literals.
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_bng_geomkloop", _col(geom), _col(resolution), _col(k), mode_arg
+    )
 
 
-def bng_geomkring(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """Return the k-loop (hollow ring) of cells around the geometry.
+def bng_geomkring(
+    geom: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Return the k-ring (filled disk through k) of cells around the geometry.
 
     Args:
         geom: Geometry column (WKT or WKB).
         resolution: BNG resolution — integer index ±1..±6 or string key.
-        k: Ring distance.
+        k: Ring distance — all cells from 0..k are included.
+        mode: Dilation mode (default ``"boundary-out"``). One of:
+            ``"boundary-out"``, ``"boundary-in"``,
+            ``"boundary-in-ignore-holes"``, ``"hole-in"``, ``"hole-out"``,
+            ``"hole-out-ignore-geom"``. Use ``f.lit("boundary-in")`` or pass
+            a bare string (auto-promoted to a literal).
 
     Returns:
-        Column of array of BNG cell identifiers.
+        Column of array of BNG cell identifiers (filled disk).
     """
-    return f.call_function("gbx_bng_geomkring", _col(geom), _col(resolution), _col(k))
+    # mode is a VALUE (never a column name); promote bare strings to literals.
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
+    return f.call_function(
+        "gbx_bng_geomkring", _col(geom), _col(resolution), _col(k), mode_arg
+    )
 
 
 def bng_kloop(cellid: ColLike, k: ColLike) -> Column:
@@ -307,38 +335,54 @@ def bng_cellunion_agg(input_chip: ColLike) -> Column:
 # Generators
 
 
-def bng_geomkloopexplode(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """Explode the k-ring of cells around the geometry into one row per cell.
+def bng_geomkloopexplode(
+    geom: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Explode the k-loop (hollow ring at exactly k) around the geometry into one row per cell.
 
     Args:
         geom: Geometry column (WKT or WKB).
         resolution: BNG resolution — integer index ±1..±6 or string key.
-        k: Ring distance.
+        k: Loop distance — only the shell at exactly k is returned.
+        mode: Dilation mode (default ``"boundary-out"``). Bare strings are
+            auto-promoted to literals.
 
     Returns:
-        Column of exploded BNG cell identifiers (use with explode).
+        Column of exploded BNG cell identifiers.
     """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     return f.explode(
         f.call_function(
-            "gbx_bng_geomkloopexplode", _col(geom), _col(resolution), _col(k)
+            "gbx_bng_geomkloopexplode", _col(geom), _col(resolution), _col(k), mode_arg
         )
     )
 
 
-def bng_geomkringexplode(geom: ColLike, resolution: ColLike, k: ColLike) -> Column:
-    """Explode the k-loop (hollow ring) around the geometry into one row per cell.
+def bng_geomkringexplode(
+    geom: ColLike,
+    resolution: ColLike,
+    k: ColLike,
+    mode: ColLike = "boundary-out",
+) -> Column:
+    """Explode the k-ring (filled disk through k) around the geometry into one row per cell.
 
     Args:
         geom: Geometry column (WKT or WKB).
         resolution: BNG resolution — integer index ±1..±6 or string key.
-        k: Ring distance.
+        k: Ring distance — all cells from 0..k are included.
+        mode: Dilation mode (default ``"boundary-out"``). Bare strings are
+            auto-promoted to literals.
 
     Returns:
-        Column of exploded BNG cell identifiers (use with explode).
+        Column of exploded BNG cell identifiers.
     """
+    mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     return f.explode(
         f.call_function(
-            "gbx_bng_geomkringexplode", _col(geom), _col(resolution), _col(k)
+            "gbx_bng_geomkringexplode", _col(geom), _col(resolution), _col(k), mode_arg
         )
     )
 

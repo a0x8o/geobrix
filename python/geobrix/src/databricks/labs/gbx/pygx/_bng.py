@@ -29,6 +29,7 @@ from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
 from shapely.geometry import mapping as _mapping
 
+from . import _dilate
 from ._geom import parse_geom
 
 CRS_ID = 27700
@@ -859,45 +860,86 @@ def _line_decompose(line, resolution: int) -> list:
     return chips
 
 
-def geometry_k_ring(geometry, resolution: int, k: int) -> set:
+def _bng_cell_geom(cellid):
+    """Shapely polygon of a BNG cell — adapts :func:`cell_id_to_geometry` for the
+    dilation engine's ``cell_geom_fn`` interface."""
+    return cell_id_to_geometry(cellid)
+
+
+def classify_bng(geometry, resolution):
+    """Classify geometry against BNG cells using the shared dilation engine.
+
+    Wraps :func:`_dilate.classify` with BNG's centroid-membership polyfill and
+    cell-square geometry builder.
+    """
+    return _dilate.classify(
+        geometry,
+        resolution,
+        polyfill_fn=lambda g, r: polyfill(g, r),
+        cell_geom_fn=_bng_cell_geom,
+    )
+
+
+def geometry_k_ring(
+    geometry, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+) -> set:
     """k-ring of cell ids covering ``geometry`` (BNG.geometryKRing, BNG.scala L639).
 
-    Core (interior) cells are kept; border cells are each expanded by
-    ``k_ring(.,k)``. The union is filtered by ``is_valid``.
+    ``mode="boundary-out"`` (default) uses the existing ``get_chips`` path
+    (byte-identical with the heavy tier). The 5 other dilation modes route through
+    the shared :mod:`_dilate` engine.
     """
-    chips = get_chips(geometry, resolution, keep_core_geom=False)
-    core_ids = {c for (c, core, _) in chips if core}
-    border = [c for (c, core, _) in chips if not core]
-    border_kring = {x for c in border for x in k_ring(c, k)}
-    return {c for c in (core_ids | border_kring) if is_valid(c)}
+    if mode == _dilate.DEFAULT_MODE:
+        # Existing behavior — unchanged; keep on the get_chips path for
+        # byte-identical results with the heavy tier.
+        chips = get_chips(geometry, resolution, keep_core_geom=False)
+        core_ids = {c for (c, core, _) in chips if core}
+        border = [c for (c, core, _) in chips if not core]
+        border_kring = {x for c in border for x in k_ring(c, k)}
+        return {c for c in (core_ids | border_kring) if is_valid(c)}
+    cls = classify_bng(geometry, resolution)
+    return {
+        c
+        for c in _dilate.geom_expand("ring", int(k), mode, cls, lambda c: k_loop(c, 1))
+        if is_valid(c)
+    }
 
 
-def geometry_k_loop(geometry, resolution: int, k: int) -> set:
+def geometry_k_loop(
+    geometry, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+) -> set:
     """Hollow k-loop of cell ids around ``geometry`` (BNG.geometryKLoop, L619).
 
-    Subtracts the inner n-ring (n = k-1: core ids + border ``k_ring(.,n)``) from
-    the border ``k_loop(.,k)``, then filters by ``is_valid``.
+    ``mode="boundary-out"`` (default) uses the existing ``get_chips`` path.
+    The 5 other modes route through the shared :mod:`_dilate` engine.
     """
-    n = k - 1
-    chips = get_chips(geometry, resolution, keep_core_geom=False)
-    core_ids = {c for (c, core, _) in chips if core}
-    border = [c for (c, core, _) in chips if not core]
-    border_nring = {x for c in border for x in k_ring(c, n)}
-    n_ring = core_ids | border_nring
-    border_kloop = {x for c in border for x in k_loop(c, k)}
-    return {c for c in (border_kloop - n_ring) if is_valid(c)}
+    if mode == _dilate.DEFAULT_MODE:
+        # Existing behavior — unchanged.
+        n = k - 1
+        chips = get_chips(geometry, resolution, keep_core_geom=False)
+        core_ids = {c for (c, core, _) in chips if core}
+        border = [c for (c, core, _) in chips if not core]
+        n_ring = core_ids | {x for c in border for x in k_ring(c, n)}
+        border_kloop = {x for c in border for x in k_loop(c, k)}
+        return {c for c in (border_kloop - n_ring) if is_valid(c)}
+    cls = classify_bng(geometry, resolution)
+    return {
+        c
+        for c in _dilate.geom_expand("loop", int(k), mode, cls, lambda c: k_loop(c, 1))
+        if is_valid(c)
+    }
 
 
-def geometry_k_ring_str(geom, resolution, k) -> list:
+def geometry_k_ring_str(geom, resolution, k, mode: str = _dilate.DEFAULT_MODE) -> list:
     """String-id wrapper over :func:`geometry_k_ring` (parse geom -> walk -> format)."""
     res = get_resolution(resolution)
-    return [format(c) for c in geometry_k_ring(parse_geom(geom), res, int(k))]
+    return [format(c) for c in geometry_k_ring(parse_geom(geom), res, int(k), mode)]
 
 
-def geometry_k_loop_str(geom, resolution, k) -> list:
+def geometry_k_loop_str(geom, resolution, k, mode: str = _dilate.DEFAULT_MODE) -> list:
     """String-id wrapper over :func:`geometry_k_loop` (parse geom -> walk -> format)."""
     res = get_resolution(resolution)
-    return [format(c) for c in geometry_k_loop(parse_geom(geom), res, int(k))]
+    return [format(c) for c in geometry_k_loop(parse_geom(geom), res, int(k), mode)]
 
 
 # ---------------------------------------------------------------------------

@@ -1464,3 +1464,420 @@ custom_kring_python_light_example_output = """
 +-------------------------------------------+
 ... (9 BIGINT cell IDs — the 3×3 neighbourhood including center cell at resolution 5)
 """
+
+
+# ---------------------------------------------------------------------------
+# Quadbin geometry-aware kring/kloop (light pygx tier)
+#
+# Fixtures:
+#   quadbin_polygons — 1 row: geom STRING (WGS84 polygon near origin)
+#                      gbx_quadbin_polyfill(geom, 12) → cover/core cell arrays
+#
+# Geometry: POLYGON((-1 -1, 1 -1, 1 1, -1 1, -1 -1)) near (0°,0°).
+# At zoom 12 the polyfill covers ~12–16 cells; k=1 expands by one ring.
+# All four tabs share ONE example per function (AGREE — no tier divergence).
+# ---------------------------------------------------------------------------
+
+
+def quadbin_geomkring_python_light_example(spark):
+    """Geometry-aware quadbin k-ring: all cells within k steps of the geometry's covering set (light pygx tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    At zoom 12, k=1: all cells within one ring of the polyfill.
+    Returns ``ARRAY<BIGINT>``.  Identical to the heavyweight output (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    df = _get_quadbin_polygons_df(spark)
+    result = df.select(
+        gx.quadbin_geomkring(f.col("geom"), f.lit(12), f.lit(1)).alias("kring")
+    ).first()
+    return result["kring"]
+
+
+quadbin_geomkring_python_light_example_output = """
++-------------------------------------+
+|kring                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — covering cells of WGS84 polygon at z12 expanded by k=1 ring)
+"""
+
+
+def quadbin_geomkloop_python_light_example(spark):
+    """Geometry-aware quadbin k-loop: hollow ring at exactly k steps from the geometry (light pygx tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    At zoom 12, k=1: the outer shell cells at exactly one step from the polyfill.
+    Returns ``ARRAY<BIGINT>``.  Identical to the heavyweight output (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    df = _get_quadbin_polygons_df(spark)
+    result = df.select(
+        gx.quadbin_geomkloop(f.col("geom"), f.lit(12), f.lit(1)).alias("kloop")
+    ).first()
+    return result["kloop"]
+
+
+quadbin_geomkloop_python_light_example_output = """
++-------------------------------------+
+|kloop                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — outer ring at k=1, interior polyfill cells excluded)
+"""
+
+
+def quadbin_geomkringexplode_python_light_example(spark):
+    """Geometry-aware quadbin k-ring explode: one row per cell via SQL LATERAL (light pygx tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
+    """
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    _get_quadbin_polygons_df(spark).createOrReplaceTempView("_qb_geomk_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _qb_geomk_src src, "
+        "LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_qb_geomk_src")
+    return result
+
+
+quadbin_geomkringexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the WGS84 polygon polyfill at z12)
+"""
+
+
+def quadbin_geomkloopexplode_python_light_example(spark):
+    """Geometry-aware quadbin k-loop explode: one row per outer-ring cell via SQL LATERAL (light pygx tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
+    """
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    _get_quadbin_polygons_df(spark).createOrReplaceTempView("_qb_geomk_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _qb_geomk_src src, "
+        "LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_qb_geomk_src")
+    return result
+
+
+quadbin_geomkloopexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the polygon polyfill at z12)
+"""
+
+
+# ---------------------------------------------------------------------------
+# Custom-grid geometry-aware kring/kloop (light pygx tier)
+#
+# Fixtures:
+#   custom_grids — grid struct + cell + point; uses the BNG-like 1km grid.
+#
+# Geometry: 3km × 3km BNG polygon centred on London (EPSG:27700 coordinates).
+# At resolution 3 (1km cells), the polyfill covers 9 cells; k=1 expands to 25.
+# All four tabs share ONE example per function (AGREE — no tier divergence).
+# ---------------------------------------------------------------------------
+
+
+
+# Offset polygon avoids exact cell-boundary alignment at all power-of-2 resolutions.
+# (The grid root is 1km; coordinates divisible by 1000 align at every resolution.)
+_CUSTOM_GEOMK_OFFSET_WKT = (
+    "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+)
+
+
+def custom_geomkring_python_light_example(spark):
+    """Geometry-aware custom-grid k-ring: all cells within k steps of the geometry's covering set (light pygx tier).
+
+    Reads the ``custom_grids`` setup view.  Uses an offset 3km × 3km BNG polygon
+    (not aligned with cell boundaries) at resolution 1 (500m cells).  At k=1,
+    the k-ring is larger than the polyfill.  Returns ``ARRAY<BIGINT>``.
+    Identical to heavyweight (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    df = _get_custom_grid_df(spark)
+    result = df.select(
+        gx.custom_geomkring(f.lit(_CUSTOM_GEOMK_OFFSET_WKT), f.col("grid"), f.lit(1), f.lit(1)).alias("kring")
+    ).first()
+    return result["kring"]
+
+
+custom_geomkring_python_light_example_output = """
++-------------------------------------------+
+|kring                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (55 cells at k=1)]|
++-------------------------------------------+
+... (55 BIGINT cell IDs — covering cells of the offset 3km polygon at res=1 (500m) expanded by k=1 ring)
+"""
+
+
+def custom_geomkloop_python_light_example(spark):
+    """Geometry-aware custom-grid k-loop: hollow outer ring at exactly k steps (light pygx tier).
+
+    Reads the ``custom_grids`` setup view.  Uses an offset 3km × 3km BNG polygon
+    (not aligned with cell boundaries) at resolution 1 (500m cells).  At k=1,
+    returns the outer ring cells.  Returns ``ARRAY<BIGINT>``.
+    Identical to heavyweight (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    df = _get_custom_grid_df(spark)
+    result = df.select(
+        gx.custom_geomkloop(f.lit(_CUSTOM_GEOMK_OFFSET_WKT), f.col("grid"), f.lit(1), f.lit(1)).alias("kloop")
+    ).first()
+    return result["kloop"]
+
+
+custom_geomkloop_python_light_example_output = """
++-------------------------------------------+
+|kloop                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (19 cells at k=1)]|
++-------------------------------------------+
+... (19 BIGINT cell IDs — outer ring at k=1 around the offset polygon at res=1 (500m))
+"""
+
+
+def custom_geomkringexplode_python_light_example(spark):
+    """Geometry-aware custom-grid k-ring explode: one row per cell via SQL LATERAL (light pygx tier).
+
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
+    """
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    grid_col = _get_custom_grid_df(spark).select("grid").first()["grid"]
+    df = spark.createDataFrame([(grid_col,)], ["grid"])
+    df.createOrReplaceTempView("_cx_geomk_src")
+    result = spark.sql(
+        f"SELECT t.cellid FROM _cx_geomk_src src, "
+        f"LATERAL gbx_custom_geomkringexplode('{_CUSTOM_GEOMK_OFFSET_WKT}', src.grid, 1, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_cx_geomk_src")
+    return result
+
+
+custom_geomkringexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the offset 3km polygon at res=1 (500m))
+"""
+
+
+def custom_geomkloopexplode_python_light_example(spark):
+    """Geometry-aware custom-grid k-loop explode: one row per outer-ring cell via SQL LATERAL (light pygx tier).
+
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
+    """
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    grid_col = _get_custom_grid_df(spark).select("grid").first()["grid"]
+    df = spark.createDataFrame([(grid_col,)], ["grid"])
+    df.createOrReplaceTempView("_cx_geomk_src")
+    result = spark.sql(
+        f"SELECT t.cellid FROM _cx_geomk_src src, "
+        f"LATERAL gbx_custom_geomkloopexplode('{_CUSTOM_GEOMK_OFFSET_WKT}', src.grid, 1, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_cx_geomk_src")
+    return result
+
+
+custom_geomkloopexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the offset 3km polygon at res=1 (500m))
+"""
+
+
+# ---------------------------------------------------------------------------
+# H3 geometry-aware kring/kloop (light-only — no Scala/heavy equivalent)
+#
+# H3 geomk functions are geom-taking: the geometry-to-cell decomposition and
+# the dilation walk both use the h3 library (polygon_to_cells_experimental +
+# grid_disk), so they run anywhere (local + Databricks) with no dependency on
+# product h3_* functions.
+#
+# The Python Column wrappers (gx.h3_geomkring / gx.h3_geomkloop) call the
+# registered gbx_h3_geomkring / gbx_h3_geomkloop UDFs with a geom column
+# exactly like the other grids.
+#
+# These examples pass a WKB geometry column built with shapely.
+# ---------------------------------------------------------------------------
+
+# NYC area box used as the example geometry for H3 geomk examples.
+_NYC_WKT_FOR_H3 = (
+    "POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))"
+)
+
+
+def h3_geomkring_python_light_example(spark):
+    """Geometry-aware H3 k-ring from a WKB geometry column (light pygx tier).
+
+    Creates a single-row DataFrame with the NYC box as WKB, then calls
+    ``gx.h3_geomkring`` to return the k=1 covering ring at H3 resolution 9.
+    Self-contained: no Databricks product functions required.
+    Returns ``ARRAY<BIGINT>``.
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    result = df.select(
+        gx.h3_geomkring(f.col("geom"), 9, 1).alias("kring")
+    ).first()
+    return result["kring"]
+
+
+h3_geomkring_python_light_example_output = """
++------------------------------------+
+|kring                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — H3 res-9 k=1 covering ring of the NYC WKB geometry)
+"""
+
+
+def h3_geomkloop_python_light_example(spark):
+    """Geometry-aware H3 k-loop (hollow shell) from a WKB geometry column (light pygx tier).
+
+    At k=1 returns only the outer shell cells at exactly one step from the
+    geometry's covering set.  Returns ``ARRAY<BIGINT>``.
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    result = df.select(
+        gx.h3_geomkloop(f.col("geom"), 9, 1).alias("kloop")
+    ).first()
+    return result["kloop"]
+
+
+h3_geomkloop_python_light_example_output = """
++------------------------------------+
+|kloop                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — hollow outer ring at k=1, interior covering cells excluded)
+"""
+
+
+def h3_geomkringexplode_python_light_example(spark):
+    """Geometry-aware H3 k-ring explode: one row per cell via SQL LATERAL (light pygx tier).
+
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.  Self-contained: no Databricks product
+    functions required.
+    """
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    df.createOrReplaceTempView("_h3_geomk_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _h3_geomk_src src, "
+        "LATERAL gbx_h3_geomkringexplode(src.geom, 9, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_h3_geomk_src")
+    return result
+
+
+h3_geomkringexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one BIGINT row per H3 cell in the k=1 ring around the NYC geometry at res 9)
+"""
+
+
+def h3_geomkloopexplode_python_light_example(spark):
+    """Geometry-aware H3 k-loop explode: one row per outer-ring cell via SQL LATERAL (light pygx tier).
+
+    SQL LATERAL is the canonical invocation for this streaming UDTF — there is
+    no Python DataFrame Column form.
+    """
+    from shapely import to_wkb  # noqa: PLC0415
+    from shapely.geometry import box  # noqa: PLC0415
+
+    from databricks.labs.gbx.pygx import functions as gx  # noqa: PLC0415
+
+    gx.register(spark)
+    geom_wkb = to_wkb(box(-73.99, 40.71, -73.95, 40.75))
+    df = spark.createDataFrame([(bytearray(geom_wkb),)], ["geom"])
+    df.createOrReplaceTempView("_h3_geomk_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _h3_geomk_src src, "
+        "LATERAL gbx_h3_geomkloopexplode(src.geom, 9, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_h3_geomk_src")
+    return result
+
+
+h3_geomkloopexplode_python_light_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one BIGINT row per H3 cell in the outer ring at k=1, interior cells excluded)
+"""

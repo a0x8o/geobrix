@@ -1,0 +1,22 @@
+package com.databricks.labs.gbx.gridx.grid
+
+import org.locationtech.jts.geom.Geometry
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+
+class GridSystemTest extends AnyFunSuite {
+  test("GridSystem exposes the members the raster refactor needs") {
+    val members = classOf[GridSystem].getMethods.map(_.getName).toSet
+    Set("name", "crsSrid", "resolutions", "pointToCellID", "cellIdToGeometry",
+        "polyfill", "renderCellId").subsetOf(members) shouldBe true
+  }
+
+  test("GridSystem.forName resolves the four grids") {
+    GridSystem.forName("H3").name shouldBe "H3"
+    GridSystem.forName("BNG").name shouldBe "BNG"
+    GridSystem.forName("QUADBIN").name shouldBe "QUADBIN"
+    GridSystem.forName("CUSTOM", Some(GridConf(0, 100, 0, 100, 2, 10, 10, Some(27700)))).name shouldBe "CUSTOM"
+    an [IllegalArgumentException] should be thrownBy GridSystem.forName("NOPE")
+    an [IllegalArgumentException] should be thrownBy GridSystem.forName("CUSTOM", None)
+  }
+}

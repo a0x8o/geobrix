@@ -156,6 +156,19 @@ docker exec -it geobrix-dev bash -lc \
        --output-file requirements-ci.txt requirements-ci.in'
 ```
 
+> **Mirror caveat (confirmed 2026-09-11).** `uv` does not read `pip.conf`; the dev
+> container now sets `UV_INDEX_URL` alongside `PIP_INDEX_URL` so both use the corp
+> proxy (takes effect on image rebuild). BUT the dev proxy
+> (`pypi-proxy.dev.databricks.com`) is a **rolling-recent mirror that prunes old
+> releases** — it cannot reproduce runtime-matched locks. Example: the light-CI locks
+> (`requirements-light-env{5,6}-ci.txt`) pin `botocore==1.40.70` to match the Serverless
+> base image, but the dev proxy only serves `botocore>=1.42.91`, so an in-container
+> recompile fails to resolve / would shift the pin off the runtime. CI installs those
+> locks fine because it uses the **full-retention JFrog mirror (`db-pypi`)** via
+> `jfrog-pip-bootstrap`/`jfrog-auth`. **Recompile runtime-matched locks against the
+> JFrog mirror (as CI does), not the dev proxy and not public PyPI.** Wiring the dev
+> container to JFrog (with credentials) is the only way to recompile those in-container.
+
 Re-run whenever:
 - A pin in `requirements-ci.in` changes (DBR version bump, security
   patch, new dev tool).

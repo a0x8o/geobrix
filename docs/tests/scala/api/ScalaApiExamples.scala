@@ -3940,4 +3940,192 @@ result.show(truncate = false)
 +-------------------------------------------+
 ... (9 BIGINT cell IDs — the 3×3 neighbourhood including center cell at resolution 5)""".trim
 
+  // -------------------------------------------------------------------------
+  // Quadbin geometry-aware kring/kloop
+  // -------------------------------------------------------------------------
+
+  val quadbin_geomkring_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.quadbin.{functions => qx}
+import org.apache.spark.sql.functions._
+
+// Reads the quadbin_polygons view (WGS84 polygon near origin)
+// At zoom 12, k=1: all cells within one ring of the geometry's covering set
+val df = spark.table("quadbin_polygons")
+val result = df.select(qx.quadbin_geomkring(col("geom"), lit(12), lit(1)).alias("kring"))
+result.show(truncate = false)
+""".trim
+
+  val quadbin_geomkring_scala_example_output: String =
+    """
++-------------------------------------+
+|kring                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — covering cells of WGS84 polygon at z12 expanded by k=1 ring)""".trim
+
+  val quadbin_geomkloop_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.quadbin.{functions => qx}
+import org.apache.spark.sql.functions._
+
+// Reads the quadbin_polygons view (WGS84 polygon near origin)
+// At zoom 12, k=1: outer shell cells at exactly one step from the polyfill
+val df = spark.table("quadbin_polygons")
+val result = df.select(qx.quadbin_geomkloop(col("geom"), lit(12), lit(1)).alias("kloop"))
+result.show(truncate = false)
+""".trim
+
+  val quadbin_geomkloop_scala_example_output: String =
+    """
++-------------------------------------+
+|kloop                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — outer ring at k=1, interior polyfill cells excluded)""".trim
+
+  val quadbin_geomkringexplode_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.quadbin.{functions => qx}
+import org.apache.spark.sql.functions._
+
+// Reads the quadbin_polygons view (WGS84 polygon near origin)
+// SQL LATERAL is the canonical invocation for this table function
+spark.sql(
+  "SELECT t.cellid FROM quadbin_polygons src, " +
+  "LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1, 'boundary-out') t"
+).show(truncate = false)
+""".trim
+
+  val quadbin_geomkringexplode_scala_example_output: String =
+    """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the WGS84 polygon polyfill at z12)""".trim
+
+  val quadbin_geomkloopexplode_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.quadbin.{functions => qx}
+import org.apache.spark.sql.functions._
+
+// Reads the quadbin_polygons view (WGS84 polygon near origin)
+// SQL LATERAL is the canonical invocation for this table function
+spark.sql(
+  "SELECT t.cellid FROM quadbin_polygons src, " +
+  "LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1, 'boundary-out') t"
+).show(truncate = false)
+""".trim
+
+  val quadbin_geomkloopexplode_scala_example_output: String =
+    """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the polygon polyfill)""".trim
+
+  // -------------------------------------------------------------------------
+  // Custom-grid geometry-aware kring/kloop
+  // -------------------------------------------------------------------------
+
+  val custom_geomkring_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.custom.{functions => cx}
+import org.apache.spark.sql.functions._
+
+// Reads the custom_grids view (grid struct + BNG-like 1km grid descriptor)
+// Offset 3km × 3km BNG London polygon at res=1 (500m cells); k=1 → 55 cells
+val poly = "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+val df = spark.table("custom_grids")
+val result = df.select(cx.custom_geomkring(lit(poly), col("grid"), lit(1), lit(1)).alias("kring"))
+result.show(truncate = false)
+""".trim
+
+  val custom_geomkring_scala_example_output: String =
+    """
++-------------------------------------------+
+|kring                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (55 cells at k=1)]|
++-------------------------------------------+
+... (55 BIGINT cell IDs — covering cells of offset 3km polygon at res=1 (500m) expanded by k=1 ring)""".trim
+
+  val custom_geomkloop_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.custom.{functions => cx}
+import org.apache.spark.sql.functions._
+
+// Reads the custom_grids view (grid struct + BNG-like 1km grid descriptor)
+// Offset 3km × 3km BNG London polygon at res=1 (500m cells); k=1 outer ring → 19 cells
+val poly = "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+val df = spark.table("custom_grids")
+val result = df.select(cx.custom_geomkloop(lit(poly), col("grid"), lit(1), lit(1)).alias("kloop"))
+result.show(truncate = false)
+""".trim
+
+  val custom_geomkloop_scala_example_output: String =
+    """
++-------------------------------------------+
+|kloop                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (19 cells at k=1)]|
++-------------------------------------------+
+... (19 BIGINT cell IDs — outer ring at k=1 around the offset 3km polygon at res=1 (500m))""".trim
+
+  val custom_geomkringexplode_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.custom.{functions => cx}
+import org.apache.spark.sql.functions._
+
+// Reads the custom_grids view (grid struct)
+// SQL LATERAL is the canonical invocation for this table function
+val poly = "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+spark.sql(
+  "SELECT t.cellid FROM custom_grids src, " +
+  s"LATERAL gbx_custom_geomkringexplode('$poly', src.grid, 1, 1, 'boundary-out') t"
+).show(truncate = false)
+""".trim
+
+  val custom_geomkringexplode_scala_example_output: String =
+    """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the offset 3km polygon at res=1 (500m))""".trim
+
+  val custom_geomkloopexplode_scala_example: String =
+    """
+import com.databricks.labs.gbx.gridx.custom.{functions => cx}
+import org.apache.spark.sql.functions._
+
+// Reads the custom_grids view (grid struct)
+// SQL LATERAL is the canonical invocation for this table function
+val poly = "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+spark.sql(
+  "SELECT t.cellid FROM custom_grids src, " +
+  s"LATERAL gbx_custom_geomkloopexplode('$poly', src.grid, 1, 1, 'boundary-out') t"
+).show(truncate = false)
+""".trim
+
+  val custom_geomkloopexplode_scala_example_output: String =
+    """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the offset 3km polygon; 19 cells)""".trim
+
 }

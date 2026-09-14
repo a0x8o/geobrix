@@ -225,6 +225,15 @@ RUN mkdir -p /etc/pip /root/.pip && \
     printf '[global]\ntimeout = 60\nindex-url = %s\n' "$PIP_INDEX_URL" \
       | tee /etc/pip.conf /root/.pip/pip.conf >/dev/null
 ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+# uv does NOT read pip.conf; it needs its own index env var. Mirror PIP_INDEX_URL
+# into UV_INDEX_URL so `uv pip compile`/`uv pip install` use the same corp proxy pip
+# does instead of hitting the blocked public pypi.org (Connection refused). Takes
+# effect on the next image rebuild. CAVEAT for lock recompiles: the dev proxy
+# (pypi-proxy.dev.databricks.com) is a ROLLING-RECENT mirror that prunes old releases,
+# so it cannot reproduce runtime-matched locks (e.g. botocore 1.40.x). Authoritative
+# recompiles must run against CI's full-retention JFrog mirror (db-pypi) — see the
+# note in scripts/security/README.md; the dev proxy and public PyPI are both unsuitable.
+ENV UV_INDEX_URL=${PIP_INDEX_URL}
 
 # --- Hash-pinned Python install (Labs lockdown — supply chain) ---
 #

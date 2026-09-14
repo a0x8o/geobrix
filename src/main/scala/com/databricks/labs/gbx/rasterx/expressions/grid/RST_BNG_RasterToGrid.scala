@@ -2,57 +2,66 @@ package com.databricks.labs.gbx.rasterx.expressions.grid
 
 import com.databricks.labs.gbx.expressions.ExpressionConfig
 import com.databricks.labs.gbx.gridx.grid.BNG
-import com.databricks.labs.gbx.rasterx.gdal.{GDAL, RasterDriver}
-import com.databricks.labs.gbx.rasterx.operator.GDALWarp
+import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
 import com.databricks.labs.gbx.rasterx.util.{RST_ExpressionUtil, RasterSerializationUtil}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.UTF8String
 import org.gdal.gdal.Dataset
-import org.gdal.osr.SpatialReference
 
 import scala.collection.mutable
 
-/** Shared helper for `RST_BNG_RasterToGrid*` expressions — mirrors `RST_Quadbin_RasterToGrid`
-  * but delegates per-pixel cell math to [[BNG.pointToCellID]] (EPSG:27700 eastings/northings).
+/** Shared helper for `RST_BNG_RasterToGrid*` expressions.
   *
-  * Unlike the H3/quadbin families (whose input contract is EPSG:4326 lon/lat), BNG has no lon/lat
-  * input path, so the raster is reprojected to EPSG:27700 up front using nearest-neighbour
-  * resampling (`gdalwarp -t_srs EPSG:27700 -r near`). Cell ids are `Long` internally and rendered
-  * to the user-facing BNG `String` via [[BNG.format]] at the output boundary. Pixels outside the
-  * GB extent are silently discarded via [[BNG.isValid]] (coordinate bounds + letter-index check).
+  * Delegates the pixel-accumulation loop to [[RasterToGridGeneric]], which reprojects the
+  * raster to EPSG:27700 (nearest-neighbour) before binning. Two BNG-specific guards are
+  * applied here, before the generic path:
   *
-  * Resampling is hard-coded to `near` because raster→grid aggregation is a pixel-counting
-  * operation — any interpolating kernel would fabricate pixel values and corrupt statistics.
+  *  1. Resolution validation — must be a member of [[BNG.resolutions]].
+  *  2. Per-pixel cell validity — [[BNG.isValid]] rejects pixels whose projected centroid
+  *     falls outside the British National Grid coordinate extent; those pixels are silently
+  *     discarded (same behaviour as before the generic refactor).
+  *
+  * Cell ids are Long internally; [[BNG.renderCellId]] converts them to the user-facing
+  * formatted String (e.g. "TL3098") at the output boundary.
   */
 object RST_BNG_RasterToGrid {
 
-    /** Compute the BNG cell id for the centroid of pixel (x, y) under geotransform `gt` (EPSG:27700). */
-    def cellPixel(gt: Array[Double], x: Int, y: Int, resolution: Int): Long = {
-        val offset = 0.5
-        val xOffset = offset + x
-        val yOffset = offset + y
-        val eGeo = gt(0) + xOffset * gt(1) + yOffset * gt(2)
-        val nGeo = gt(3) + xOffset * gt(4) + yOffset * gt(5)
-        BNG.pointToCellID(eGeo, nGeo, resolution)
-    }
-
-    /** Reproject `ds` to EPSG:27700 using nearest-neighbour resampling. Caller must release the returned Dataset. */
-    private def warpToBNG(ds: Dataset): Dataset = {
-        val uuid = java.util.UUID.randomUUID().toString.replace("-", "")
-        val driver = ds.GetDriver()
-        val extension = GDAL.getExtension(driver.getShortName)
-        val resultPath = s"/vsimem/raster_bng_$uuid.$extension"
-        val (result, _) = GDALWarp.executeWarp(
-          resultPath,
-          Array(ds),
-          Map.empty[String, String],
-          command = "gdalwarp -t_srs EPSG:27700 -r near"
+    /** Stage-2 path: coverage/assignment-aware, nullable-measure output.
+      * Passes [[BNG.isValid]] as the per-cell validity predicate.
+      *
+      * @param coverage   `"sparse"` (only cells with pixels) or `"complete"` (also emit
+      *                   covered-but-empty cells carrying `emptyValue`)
+      * @param assignment `"centroid"` (bin each pixel by its centroid, `fAgg`) or
+      *                   `"covering"` (area-weighted distribution, `fAggW`)
+      * @param emptyValue measure for covered-but-empty cells added by `complete`
+      *
+      * `fAgg`/`fAggW` are only ever called on NON-EMPTY buffers — a cell with no pixels never
+      * reaches a reducer; it is materialised (under `complete`) as `emptyValue`/`None` instead.
+      * Reducers may therefore assume at least one element. Copy-forward note for Quadbin.
+      * @return per-band `(cellId: String, Option[T])` — `None` marks a covered-but-empty cell
+      */
+    def execute[T](
+        ds: Dataset,
+        resolution: Int,
+        coverage: String,
+        assignment: String,
+        fAgg: mutable.ArrayBuffer[Double] => T,
+        fAggW: mutable.ArrayBuffer[(Double, Double)] => T,
+        emptyValue: Option[T]
+    ): Array[Array[(String, Option[T])]] = {
+        require(
+          BNG.resolutions.contains(resolution),
+          s"raster→bng: resolution must be one of ${BNG.resolutions.toSeq.sorted.mkString(", ")}; got $resolution"
         )
-        result
+        RasterToGridGeneric.execute(BNG, ds, resolution, coverage, assignment, fAgg, fAggW, emptyValue, BNG.isValid)
+            .map(_.map { case (c, v) => (c.asInstanceOf[String], v) })
     }
 
+    /** Legacy Stage-1 path: sparse+centroid only, non-Option output.
+      * Retained for direct callers (GridRasterParityBaseline, RST_BNG_RasterToGridTest, bench).
+      */
     def execute[T](
         ds: Dataset,
         resolution: Int,
@@ -62,89 +71,39 @@ object RST_BNG_RasterToGrid {
           BNG.resolutions.contains(resolution),
           s"raster→bng: resolution must be one of ${BNG.resolutions.toSeq.sorted.mkString(", ")}; got $resolution"
         )
-
-        // Reproject to EPSG:27700 (nearest-neighbour) unless already there.
-        val dstSR = new SpatialReference(); dstSR.ImportFromEPSG(27700)
-        val srcWkt = ds.GetProjection()
-        val alreadyBNG = srcWkt != null && srcWkt.nonEmpty && {
-            val s = new SpatialReference()
-            s.ImportFromWkt(srcWkt)
-            val same = s.IsSame(dstSR) == 1
-            s.delete()
-            same
-        }
-        dstSR.delete()
-
-        val (workDs, reprojected) =
-            if (alreadyBNG) (ds, false)
-            else (warpToBNG(ds), true)
-
-        try {
-            val gt = workDs.GetGeoTransform
-            val xSize = workDs.getRasterXSize
-            val ySize = workDs.getRasterYSize
-            val nPix = xSize * ySize
-            val bands = workDs.getRasterCount
-
-            val bandBuf = new Array[Double](nPix)
-            val maskBuf = new Array[Byte](nPix)
-
-            (1 to bands).iterator.map { bi =>
-                val b = workDs.GetRasterBand(bi)
-                val m = b.GetMaskBand()
-                b.ReadRaster(0, 0, xSize, ySize, bandBuf)
-                m.ReadRaster(0, 0, xSize, ySize, maskBuf)
-
-                var valid = 0; var i = 0
-                while (i < nPix) { if (maskBuf(i) != 0) valid += 1; i += 1 }
-
-                val acc = new mutable.LongMap[mutable.ArrayBuffer[Double]](valid)
-                var y = 0; var idx = 0
-                while (y < ySize) {
-                    var x = 0
-                    while (x < xSize) {
-                        if (maskBuf(idx) != 0) {
-                            val cell = cellPixel(gt, x, y, resolution) // Long id
-                            if (BNG.isValid(cell)) {
-                                val buf = acc.getOrElseUpdate(cell, new mutable.ArrayBuffer)
-                                buf += bandBuf(idx)
-                            }
-                        }
-                        idx += 1; x += 1
-                    }
-                    y += 1
-                }
-
-                val out = new Array[(String, T)](acc.size)
-                var j = 0
-                acc.foreach { case (cell, buf) => out(j) = (BNG.format(cell), fAgg(buf)); j += 1 }
-                out
-            }.toArray
-        } finally {
-            if (reprojected) RasterDriver.releaseDataset(workDs)
-        }
+        RasterToGridGeneric.execute(BNG, ds, resolution, fAgg, BNG.isValid)
+            .map(_.map { case (c, v) => (c.asInstanceOf[String], v) })
     }
 
+    /** Stage-2 eval: coverage/assignment-aware, unwraps `Option[T]` → `Some(v)=>v`, `None=>null`
+      * into the nullable measure StructField. */
     def eval[T](
         row: InternalRow,
         resolution: Int,
+        coverage: String,
+        assignment: String,
         conf: UTF8String,
         rdt: DataType,
-        execute: (Dataset, Int) => Array[Array[(String, T)]]
+        execute: (Dataset, Int, String, String) => Array[Array[(String, Option[T])]]
     ): ArrayData = {
         val exprConf = ExpressionConfig.fromB64(conf.toString)
         RST_ExpressionUtil.init(exprConf)
         val ds = RasterSerializationUtil.rowToDS(row, rdt)
-        val result = execute(ds, resolution)
+        val result = execute(ds, resolution, coverage, assignment)
         RasterDriver.releaseDataset(ds)
         ArrayData.toArrayData(
           result.map(band =>
               ArrayData.toArrayData(
                 band.map { case (cellId, measure) =>
-                    InternalRow.fromSeq(Seq(UTF8String.fromString(cellId), measure))
+                    val m: Any = measure match {
+                        case Some(v) => v
+                        case None    => null
+                    }
+                    InternalRow.fromSeq(Seq(UTF8String.fromString(cellId), m))
                 }
               )
           )
         )
     }
+
 }

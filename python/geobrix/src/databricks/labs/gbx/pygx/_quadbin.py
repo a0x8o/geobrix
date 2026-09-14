@@ -15,9 +15,11 @@ import math
 
 import numpy as np
 import quadbin
+from shapely import from_wkb as _shp_from_wkb
 from shapely import set_srid, to_wkb, union_all
 from shapely.geometry import Point, box
 
+from . import _dilate
 from ._geom import parse_geom
 
 _MAX_RES = 26
@@ -65,6 +67,21 @@ def k_ring(cell: int, k: int) -> list:
     if int(k) < 0:
         raise ValueError(f"k must be >= 0; got {k}")
     return list(quadbin.k_ring(int(cell), int(k)))
+
+
+def k_loop(cell: int, k: int) -> list:
+    """Hollow ring of quadbin cells at EXACTLY Chebyshev distance k.
+
+    k=0 returns [cell] (center only).  k<0 raises ValueError.  For k>=1,
+    computed as sorted(k_ring(k) - k_ring(k-1)), mirroring heavy
+    Quadbin.kLoop semantics exactly.
+    """
+    k = int(k)
+    if k < 0:
+        raise ValueError(f"k_loop: k must be >= 0; got {k}")
+    if k == 0:
+        return [int(cell)]
+    return sorted(set(k_ring(cell, k)) - set(k_ring(cell, k - 1)))
 
 
 def distance(cell_a: int, cell_b: int) -> int:
@@ -240,3 +257,56 @@ def tessellate(geom, resolution: int) -> list:
             continue
         chips.append((int(cell), _ewkb(inter)))
     return chips
+
+
+# ---- geometry-aware kring/kloop (shared dilation engine) --------------------
+
+
+def _cell_geom(cell):
+    """Quadbin cell polygon (WGS84) from its EWKB bytes."""
+    return _shp_from_wkb(as_wkb(cell))
+
+
+def classify(geom, resolution):
+    """Classify polyfill candidates vs P / S / H using the shared dilation engine.
+
+    geom must already be a Shapely geometry (call parse_geom first if raw bytes/str).
+    """
+    return _dilate.classify(
+        geom,
+        int(resolution),
+        polyfill_fn=lambda g, r: polyfill(g, r),
+        cell_geom_fn=_cell_geom,
+    )
+
+
+def geometry_k_ring(
+    geom, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+) -> list:
+    """Geometry-aware k-ring for quadbin: cells reachable from the covering set in k steps.
+
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("ring", int(k), mode, cls, lambda c: k_loop(c, 1))
+    )
+
+
+def geometry_k_loop(
+    geom, resolution: int, k: int, mode: str = _dilate.DEFAULT_MODE
+) -> list:
+    """Geometry-aware k-loop for quadbin: hollow shell at exactly k steps.
+
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("loop", int(k), mode, cls, lambda c: k_loop(c, 1))
+    )

@@ -93,4 +93,36 @@ class CustomGridSystemTest extends AnyFunSuite with Matchers {
         ex.getMessage should include("NaN coordinates are not supported")
     }
 
+    // --- GridSystem conformance ---
+
+    test("CustomGridSystem conforms to GridSystem trait") {
+        val gTrait: GridSystem = CustomGridSystem(GridConf(
+            boundXMin    = 0,
+            boundXMax    = 100,
+            boundYMin    = 0,
+            boundYMax    = 100,
+            cellSplits   = 2,
+            rootCellSizeX = 10,
+            rootCellSizeY = 10,
+            crsID        = Some(27700)
+        ))
+        gTrait.name shouldBe "CUSTOM"
+        gTrait.crsSrid shouldBe 27700
+        val cell = gTrait.pointToCellID(50.0, 50.0, 0)
+        gTrait.cellIdToGeometry(cell).getEnvelopeInternal.getMinX should be <= 50.0
+    }
+
+    test("coveringCandidateCells includes all cells whose square overlaps the bbox") {
+        // resolution 0: cell size 10x10; bbox straddles four cell corners at (10,10)
+        val bbox = JTS.fromWKT("POLYGON ((8 8, 12 8, 12 12, 8 12, 8 8))")
+        val candidates = g.coveringCandidateCells(bbox, 0)
+        candidates should not be empty
+        // each of the four cells that the bbox overlaps must be in the candidate set;
+        // identify each cell by a point clearly inside it
+        Seq((5.0, 5.0), (15.0, 5.0), (5.0, 15.0), (15.0, 15.0)).foreach { case (px, py) =>
+            val cellId = g.pointToCellID(px, py, 0)
+            candidates should contain(cellId)
+        }
+    }
+
 }

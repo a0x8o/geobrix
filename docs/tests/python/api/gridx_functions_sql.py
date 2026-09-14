@@ -138,11 +138,13 @@ def bng_geomkring_sql_example():
     Returns ARRAY<STRING> — all cells within Chebyshev distance k of the polyfill.
     Geometry must be in EPSG:27700 (BNG eastings/northings); WGS84 yields empty arrays.
     At res=3 (1km), k=1: polyfill 9 cells + 16 outer cells → 25 cells.
+    The optional mode parameter controls how boundary cells are classified;
+    'boundary-out' (default) expands outward from the geometry edge.
     """
     return """
 SELECT gbx_bng_geomkring(
   'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))',
-  3, 1
+  3, 1, 'boundary-out'
 ) AS kring;
 """
 
@@ -152,11 +154,12 @@ def bng_geomkloop_sql_example():
     Returns ARRAY<STRING> — cells at exactly ring distance k (hollow shell).
     Geometry must be in EPSG:27700 (BNG eastings/northings); WGS84 yields empty arrays.
     At res=3 (1km), k=1: the 16 outer cells surrounding the 9-cell polyfill.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT gbx_bng_geomkloop(
   'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))',
-  3, 1
+  3, 1, 'boundary-out'
 ) AS kloop;
 """
 
@@ -168,11 +171,12 @@ def bng_geomkringexplode_sql_example():
     MUST be in EPSG:27700 (BNG eastings/northings) — WGS84 lon/lat yields
     empty results.  At res=3 (1km) with k=1, the 9-cell polyfill of the
     3km × 3km polygon expands to 25 cells.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src,
-LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1) t;
+LATERAL gbx_bng_geomkringexplode(src.geom, 3, 1, 'boundary-out') t;
 """
 
 
@@ -183,11 +187,12 @@ def bng_geomkloopexplode_sql_example():
     MUST be in EPSG:27700 (BNG eastings/northings) — WGS84 lon/lat yields
     empty results.  At res=3 (1km) with k=1, the outer hollow ring
     of the 3km × 3km polygon polyfill contains 16 cells.
+    The optional mode parameter controls boundary classification (default 'boundary-out').
     """
     return """
 SELECT t.*
 FROM (SELECT 'POLYGON((529000 179000, 529000 182000, 532000 182000, 532000 179000, 529000 179000))' AS geom) src,
-LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1) t;
+LATERAL gbx_bng_geomkloopexplode(src.geom, 3, 1, 'boundary-out') t;
 """
 
 
@@ -585,6 +590,73 @@ SELECT gbx_quadbin_kring(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS 
 """
 
 
+def quadbin_kloop_sql_example():
+    """Return the hollow ring of quadbin cells at EXACTLY Chebyshev distance k.
+
+    Uses the canonical SF z10 fixture cell (lon=-122.4194, lat=37.7749, zoom=10
+    → cell 5233961839712272383) — same input as the Python and Scala tabs.
+    At k=1, returns the 8-cell ring (center excluded); at k=0, returns [seed].
+    """
+    return """
+SELECT gbx_quadbin_kloop(gbx_quadbin_pointascell(-122.4194, 37.7749, 10), 1) AS kloop;
+"""
+
+
+def quadbin_geomkring_sql_example():
+    """Polyfill a WGS84 geometry at given zoom then expand by k ring steps.
+
+    Returns ARRAY<BIGINT> — all quadbin cells within Chebyshev distance k
+    of the geometry's covering set. At zoom=12, k=1, the small NYC box
+    (~0.04° × 0.04°) polyfill cells plus one outer ring are returned.
+    """
+    return """
+SELECT gbx_quadbin_geomkring(
+  'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
+  12, 1, 'boundary-out'
+) AS kring;
+"""
+
+
+def quadbin_geomkloop_sql_example():
+    """Polyfill a WGS84 geometry at given zoom then return only the outer ring.
+
+    Returns ARRAY<BIGINT> — cells at exactly ring distance k (hollow shell).
+    At zoom=12, k=1, returns the outer ring cells surrounding the polyfill.
+    """
+    return """
+SELECT gbx_quadbin_geomkloop(
+  'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))',
+  12, 1, 'boundary-out'
+) AS kloop;
+"""
+
+
+def quadbin_geomkringexplode_sql_example():
+    """Explode geometry k-ring into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation. At zoom=12 with k=1, the
+    covering polyfill of the NYC box expands outward by one ring.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
+LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1, 'boundary-out') t;
+"""
+
+
+def quadbin_geomkloopexplode_sql_example():
+    """Explode geometry k-loop (hollow ring) into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation. At zoom=12 with k=1, returns
+    the hollow outer ring cells of the NYC box polyfill.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.95 40.71, -73.95 40.75, -73.99 40.75, -73.99 40.71))' AS geom) src,
+LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1, 'boundary-out') t;
+"""
+
+
 def quadbin_tessellate_sql_example():
     """Tessellate a geometry into quadbin cells; returns array of struct(cell, geom).
 
@@ -707,6 +779,15 @@ quadbin_kring_sql_example_output = """
 ... (9 cells: SF z10 center plus 8 surrounding cells at k=1)
 """
 
+quadbin_kloop_sql_example_output = """
++----------------+
+|kloop           |
++----------------+
+|[..., (8 cells)]|
++----------------+
+... (8 cells: hollow ring at k=1, SF z10 center excluded)
+"""
+
 quadbin_polyfill_sql_example_output = """
 +--------------------------+
 |cells                     |
@@ -789,6 +870,34 @@ SELECT gbx_custom_kring(360287970373976640, gbx_custom_grid(0, 1000000, 0, 10000
 """
 
 
+def custom_kloop_sql_example():
+    """Return the hollow ring of custom grid cells at EXACTLY k steps from the center cell.
+
+    Uses the canonical res-5 cell 360287970373976640 and the same 1 km grid from the
+    other custom-grid examples.  At k=1, returns the 8-cell ring (center excluded);
+    k=0 returns [center].
+    """
+    return """
+SELECT gbx_custom_kloop(360287970373976640, gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 1) AS kloop;
+"""
+
+
+def custom_distance_sql_example():
+    """Chebyshev distance (in grid steps) between two custom grid cells.
+
+    Uses gbx_custom_pointascell to obtain two adjacent cells at resolution 0
+    (cell_size=1000, so a 1000-unit step in X separates them by exactly 1 grid step).
+    The first gbx_custom_distance token is the example captured by DESCRIBE FUNCTION.
+    """
+    return """
+SELECT gbx_custom_distance(
+    gbx_custom_pointascell('POINT(530000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0),
+    gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+    gbx_custom_pointascell('POINT(531000 180000)', gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700), 0)
+) AS dist;
+"""
+
+
 custom_grid_sql_example_output = """
 +----------------------------------------------+
 |grid                                          |
@@ -847,4 +956,390 @@ custom_kring_sql_example_output = """
 |[360287970373976640, ..., (9 cells at k=1)]|
 +-------------------------------------------+
 ... (9 BIGINT cell IDs — the 3×3 neighbourhood including center cell at resolution 5)
+"""
+
+custom_kloop_sql_example_output = """
++-----------------------+
+|kloop                  |
++-----------------------+
+|[..., (8 cells at k=1)]|
++-----------------------+
+... (8 BIGINT cell IDs — hollow ring at k=1, center cell excluded)
+"""
+
+custom_distance_sql_example_output = """
++----+
+|dist|
++----+
+|1   |
++----+
+... (Chebyshev grid distance between two cells 1 step apart in X at resolution 0)
+"""
+
+
+def custom_geomkring_sql_example():
+    """Polyfill a geometry in the custom grid CRS then expand by k ring steps.
+
+    Returns ARRAY<BIGINT> — all custom grid cells within Chebyshev distance k
+    of the geometry's covering set.  Uses the canonical 1 km grid from the
+    other custom-grid examples; the 4 600-unit box covers ~25 cells at res 0,
+    and k=1 adds the surrounding outer ring.
+    """
+    return """
+SELECT gbx_custom_geomkring(
+  'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
+  gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+  0, 1, 'boundary-out'
+) AS kring;
+"""
+
+
+def custom_geomkloop_sql_example():
+    """Polyfill a geometry in the custom grid CRS then return only the outer ring.
+
+    Returns ARRAY<BIGINT> — cells at exactly ring distance k (hollow shell).
+    At res=0, k=1, returns the outer ring cells surrounding the polyfill.
+    """
+    return """
+SELECT gbx_custom_geomkloop(
+  'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))',
+  gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700),
+  0, 1, 'boundary-out'
+) AS kloop;
+"""
+
+
+def custom_geomkringexplode_sql_example():
+    """Explode geometry k-ring (custom grid) into one row per BIGINT cell via SQL LATERAL.
+
+    SQL LATERAL is the canonical invocation.  At res=0 with k=1, the covering
+    polyfill of the box expands outward by one ring; each cell emitted as a row.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
+             gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
+LATERAL gbx_custom_geomkringexplode(src.geom, src.grid, 0, 1, 'boundary-out') t;
+"""
+
+
+def custom_geomkloopexplode_sql_example():
+    """Explode geometry k-loop (custom grid hollow ring) into one row per BIGINT cell.
+
+    SQL LATERAL is the canonical invocation.  At res=0, k=1, returns the hollow
+    outer ring cells surrounding the geometry's polyfill.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((530200 180200, 534800 180200, 534800 184800, 530200 184800, 530200 180200))' AS geom,
+             gbx_custom_grid(0, 1000000, 0, 1000000, 2, 1000, 1000, 27700) AS grid) src,
+LATERAL gbx_custom_geomkloopexplode(src.geom, src.grid, 0, 1, 'boundary-out') t;
+"""
+
+
+custom_geomkring_sql_example_output = """
++--------------------------------------------+
+|kring                                       |
++--------------------------------------------+
+|[..., (cells within k=1 ring of 4.6 km box)]|
++--------------------------------------------+
+... (ARRAY<BIGINT> — polyfill covering set plus one outer ring at resolution 0)
+"""
+
+custom_geomkloop_sql_example_output = """
++--------------------------------------------+
+|kloop                                       |
++--------------------------------------------+
+|[..., (outer ring cells, polyfill excluded)]|
++--------------------------------------------+
+... (ARRAY<BIGINT> — hollow outer ring at k=1, polyfill cells excluded)
+"""
+
+custom_geomkringexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 ring of the geometry)
+"""
+
+custom_geomkloopexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 hollow outer ring)
+"""
+
+
+# ============================================================================
+# Cell-fill grouped aggregators — fill NULL (covered-but-missing) cells from
+# valid neighbours in the same group.  All four grids.
+# ============================================================================
+
+
+def bng_cellfill_sql_example():
+    """Fill NULL BNG cells from valid ring-1 neighbours using mean interpolation.
+
+    Inline grid: London 100 m cell TQ300800 (NULL, to be filled) surrounded by
+    four ring-1 neighbours each with value 5.0.  With k=1 and method='mean' the
+    NULL center is filled with the unweighted mean of its neighbours (5.0).
+
+    ``gbx_bng_cellfill`` is a grouped aggregator: the call must appear inside a
+    GROUP BY query.  BNG cell IDs are STRING.  The function returns BINARY on the
+    light tier and ARRAY<STRUCT<cellid STRING, value DOUBLE>> on the heavy tier.
+    """
+    return """
+SELECT region,
+       gbx_bng_cellfill(cellid, value, 1, 'mean', 2.0) AS filled
+FROM (
+  VALUES
+    (1, 'TQ300800', CAST(NULL AS DOUBLE)),
+    (1, 'TQ299800', 5.0),
+    (1, 'TQ301800', 5.0),
+    (1, 'TQ300799', 5.0),
+    (1, 'TQ300801', 5.0)
+) AS t(region, cellid, value)
+GROUP BY region;
+"""
+
+
+bng_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: TQ300800 filled to 5.0; ring-1 neighbours unchanged)
+"""
+
+
+def quadbin_cellfill_sql_example():
+    """Fill NULL Quadbin cells from valid ring-1 neighbours using mean interpolation.
+
+    The first sub-select contributes the London z=10 center cell with value NULL;
+    the UNION adds its ring-1 neighbours (via ``gbx_quadbin_kring``) with value 5.0.
+    With k=1 and method='mean' the NULL center is filled with 5.0.
+
+    ``gbx_quadbin_cellfill`` is a grouped aggregator: the call must appear inside a
+    GROUP BY query.  Cell IDs are BIGINT.  Returns BINARY (light) or
+    ARRAY<STRUCT<cellid BIGINT, value DOUBLE>> (heavy).
+    """
+    return """
+SELECT region,
+       gbx_quadbin_cellfill(cellid, value, 1, 'mean', 2.0) AS filled
+FROM (
+  SELECT 1 AS region,
+         gbx_quadbin_pointascell(-0.1, 51.5, 10) AS cellid,
+         CAST(NULL AS DOUBLE) AS value
+  UNION ALL
+  SELECT 1 AS region, cell AS cellid, 5.0 AS value
+  FROM (
+    SELECT explode(gbx_quadbin_kring(gbx_quadbin_pointascell(-0.1, 51.5, 10), 1)) AS cell
+  )
+) t
+GROUP BY region;
+"""
+
+
+quadbin_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: London z10 center cell filled to 5.0; ring-1 neighbours unchanged)
+"""
+
+
+def custom_cellfill_sql_example():
+    """Fill NULL custom-grid cells from valid ring-1 neighbours using mean interpolation.
+
+    Inline grid: center cell 216172782113787048 (res=3, 500km×500km block in a
+    0..1e6 × 0..1e6 grid) with value NULL, surrounded by two ring-1 neighbours
+    with value 5.0.  With k=1 and method='mean' the NULL center is filled to 5.0.
+
+    ``gbx_custom_cellfill`` is a grouped aggregator; the grid spec (third arg) must
+    be supplied as a ``gbx_custom_grid(...)`` struct.  Returns BINARY (light) or
+    ARRAY<STRUCT<cellid BIGINT, value DOUBLE>> (heavy).
+    """
+    return """
+SELECT region,
+       gbx_custom_cellfill(cellid, value,
+         gbx_custom_grid(0, 1000000, 0, 1000000, 2, 100000, 100000, 27700),
+         1, 'mean', 2.0) AS filled
+FROM (
+  VALUES
+    (1, 216172782113787048L, CAST(NULL AS DOUBLE)),
+    (1, 216172782113786967L, 5.0),
+    (1, 216172782113787127L, 5.0)
+) AS t(region, cellid, value)
+GROUP BY region;
+"""
+
+
+custom_cellfill_sql_example_output = """
++------+--------+
+|region|filled  |
++------+--------+
+|1     |[binary]|
++------+--------+
+... (BINARY — decoded: center cell 216172782113787048 filled to 5.0; neighbours unchanged)
+"""
+
+
+# ============================================================================
+# H3 Geometry-Aware K-Ring/K-Loop Functions (light-only)
+#
+# gbx_h3_geomkring / gbx_h3_geomkloop take a geometry directly (WKB BINARY
+# or WKT STRING) and compute the polyfill + dilation entirely via the h3
+# library (polygon_to_cells_experimental + grid_disk).  No Databricks product
+# functions are required — these run locally and on any Databricks cluster.
+# ============================================================================
+
+
+def h3_geomkring_sql_example():
+    """Geometry-aware H3 k-ring from a geometry (WKB BINARY or WKT STRING).
+
+    Returns ARRAY<BIGINT> — all H3 cells within k dilation steps of the geometry's
+    covering set.  Self-contained: the h3 library performs both the polyfill
+    (polygon_to_cells_experimental) and the neighbour walk (grid_disk), so no
+    Databricks product functions are required.  mode controls boundary classification.
+    """
+    return """
+SELECT gbx_h3_geomkring(
+  'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))',
+  9, 1, 'boundary-out'
+) AS kring;
+"""
+
+
+def h3_geomkloop_sql_example():
+    """Geometry-aware H3 k-loop (hollow shell) from a geometry (WKB BINARY or WKT STRING).
+
+    Returns ARRAY<BIGINT> — H3 cells at exactly k dilation steps from the geometry's
+    covering set (hollow ring, no interior cells).  Self-contained via the h3 library.
+    """
+    return """
+SELECT gbx_h3_geomkloop(
+  'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))',
+  9, 1, 'boundary-out'
+) AS kloop;
+"""
+
+
+def h3_geomkringexplode_sql_example():
+    """Explode geometry-aware H3 k-ring into one row per cell via SQL LATERAL.
+
+    Each row yields one BIGINT H3 cell id.  SQL LATERAL is the only invocation
+    path for this streaming UDTF (no Python Column form).  Self-contained:
+    no Databricks product functions required.
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))' AS geom) src,
+LATERAL gbx_h3_geomkringexplode(src.geom, 9, 1, 'boundary-out') t;
+"""
+
+
+def h3_geomkloopexplode_sql_example():
+    """Explode geometry-aware H3 k-loop (hollow ring) into one row per cell via SQL LATERAL.
+
+    Each row yields one BIGINT H3 cell id at exactly k steps.  SQL LATERAL is the
+    only invocation path for this streaming UDTF (no Python Column form).
+    """
+    return """
+SELECT t.*
+FROM (SELECT 'POLYGON((-73.99 40.71, -73.99 40.75, -73.95 40.75, -73.95 40.71, -73.99 40.71))' AS geom) src,
+LATERAL gbx_h3_geomkloopexplode(src.geom, 9, 1, 'boundary-out') t;
+"""
+
+
+# ---------------------------------------------------------------------------
+# Expected-output panels for the geometry-aware explode + quadbin/h3 ring/loop
+# examples (illustrative; product h3_*/quadbin cell math is data-dependent).
+# ---------------------------------------------------------------------------
+quadbin_geomkring_sql_example_output = """
++----------------------------------------+
+|kring                                   |
++----------------------------------------+
+|[..., (cells within k=1 ring at res 12)]|
++----------------------------------------+
+... (ARRAY<BIGINT> — quadbin covering set plus one outer ring)
+"""
+quadbin_geomkloop_sql_example_output = """
++--------------------------------------------+
+|kloop                                       |
++--------------------------------------------+
+|[..., (outer ring cells, polyfill excluded)]|
++--------------------------------------------+
+... (ARRAY<BIGINT> — hollow quadbin outer ring at k=1)
+"""
+h3_geomkring_sql_example_output = """
++------------------------------------+
+|kring                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — H3 res-9 covering cells of NYC box expanded by k=1 ring)
+"""
+h3_geomkloop_sql_example_output = """
++------------------------------------+
+|kloop                               |
++------------------------------------+
+|[617733151020810239, ..., (n cells)]|
++------------------------------------+
+... (ARRAY<BIGINT> — outer hollow ring at k=1, interior covering cells excluded)
+"""
+quadbin_geomkringexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 ring of the geometry)
+"""
+quadbin_geomkloopexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(BIGINT)|
++-----------+
+... (one row per BIGINT cell ID in the k=1 hollow outer ring)
+"""
+h3_geomkringexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one row per BIGINT H3 cell ID in the k=1 ring around the NYC polygon at res 9)
+"""
+h3_geomkloopexplode_sql_example_output = """
++------------------+
+|cellid            |
++------------------+
+|617733151020810239|
+|...               |
++------------------+
+... (one row per BIGINT H3 cell ID in the k=1 hollow outer ring around the NYC polygon)
+"""
+bng_geomkringexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(STRING)|
++-----------+
+... (one row per STRING BNG cell ID in the k=1 ring of the geometry)
+"""
+bng_geomkloopexplode_sql_example_output = """
++-----------+
+|cellid     |
++-----------+
+|...(STRING)|
++-----------+
+... (one row per STRING BNG cell ID in the k=1 hollow outer ring)
 """

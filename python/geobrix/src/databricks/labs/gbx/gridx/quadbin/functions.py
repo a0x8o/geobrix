@@ -174,3 +174,69 @@ def quadbin_cellunion_agg(cellid: ColLike) -> Column:
         Column of BINARY (EWKB Polygon or MultiPolygon, SRID 4326).
     """
     return f.call_function("gbx_quadbin_cellunion_agg", _col(cellid))
+
+
+def quadbin_geomkring(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """Geometry-aware k-ring for quadbin: cells reachable in k steps from the covering set.
+
+    Args:
+        geom: Geometry column (WKT or WKB).
+        resolution: Quadbin zoom level, integer in ``[0, 20]``.
+        k: Ring distance (0 = covering set only).
+        mode: Dilation mode (default ``"boundary-out"``). One of the 6 modes.
+
+    Returns:
+        Column of ``ARRAY<BIGINT>`` quadbin cell ids.
+    """
+    # mode is always a string VALUE (never a column name); use f.lit so Spark
+    # does not misinterpret it as an unresolved column reference.
+    return f.call_function(
+        "gbx_quadbin_geomkring",
+        _col(geom),
+        _col(resolution),
+        _col(k),
+        mode if isinstance(mode, Column) else f.lit(mode),
+    )
+
+
+def quadbin_geomkloop(
+    geom: ColLike, resolution: ColLike, k: ColLike, mode: ColLike = "boundary-out"
+) -> Column:
+    """Geometry-aware k-loop (hollow ring) for quadbin.
+
+    Args:
+        geom: Geometry column (WKT or WKB).
+        resolution: Quadbin zoom level, integer in ``[0, 20]``.
+        k: Ring distance (0 = covering set only).
+        mode: Dilation mode (default ``"boundary-out"``). See :func:`quadbin_geomkring`.
+
+    Returns:
+        Column of ``ARRAY<BIGINT>`` quadbin cell ids.
+    """
+    return f.call_function(
+        "gbx_quadbin_geomkloop",
+        _col(geom),
+        _col(resolution),
+        _col(k),
+        mode if isinstance(mode, Column) else f.lit(mode),
+    )
+
+
+def quadbin_geomkringexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkringexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light quadbin_geomkringexplode is a streaming table function (registered UDTF "
+        "gbx_quadbin_geomkringexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_quadbin_geomkringexplode(...) t."
+    )
+
+
+def quadbin_geomkloopexplode(*args, **kwargs) -> Column:
+    """Streaming UDTF (SQL-LATERAL): SELECT cellid FROM gbx_quadbin_geomkloopexplode(geom, res, k). No Column form."""
+    raise NotImplementedError(
+        "Light quadbin_geomkloopexplode is a streaming table function (registered UDTF "
+        "gbx_quadbin_geomkloopexplode): invoke via SQL LATERAL, e.g. "
+        "SELECT t.* FROM <df>, LATERAL gbx_quadbin_geomkloopexplode(...) t."
+    )

@@ -27,7 +27,7 @@ import scala.util.{Success, Try}
   *   [[https://en.wikipedia.org/wiki/Ordnance_Survey_National_Grid]]
   */
 //noinspection ScalaWeakerAccess
-object BNG extends Serializable {
+object BNG extends GridSystem {
 
     /** StructType for a BNG cell: cellid (idType), core (Boolean), chip (Binary). */
     def cellType(idType: DataType): StructType =
@@ -42,7 +42,14 @@ object BNG extends Serializable {
     /** CRS for BNG (EPSG:27700). */
     def crsID: Int = 27700
 
+    /** [[GridSystem.crsSrid]] — EPSG:27700 (British National Grid). */
+    def crsSrid: Int = crsID
+
     val name = "BNG"
+
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same square `cellIdToGeometry`
+      * draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
 
     /**
       * Quadrant encodings. The order is determined in a way that preserves
@@ -203,9 +210,9 @@ object BNG extends Serializable {
       * @param resolution
       *   A resolution of the indices.
       * @return
-      *   A set of indices representing the input geometry.
+      *   A lazy iterator of indices representing the input geometry.
       */
-    def polyfill(geometry: Geometry, resolution: Int): Iterator[Long] = {
+    def polyfillIter(geometry: Geometry, resolution: Int): Iterator[Long] = {
         if (geometry.isEmpty) return Iterator.empty
 
         val startPoints = geometry.getCoordinates ++ geometry.getCentroid.getCoordinates
@@ -251,6 +258,46 @@ object BNG extends Serializable {
     }
 
     /**
+      * [[GridSystem.polyfill]] — adapts [[polyfillIter]] to the `Seq[Long]` contract required by the
+      * trait. Callers that need lazy streaming should use [[polyfillIter]] directly.
+      *
+      * @param geometry
+      *   Input geometry to be represented.
+      * @param resolution
+      *   A resolution of the indices.
+      * @return
+      *   A sequence of cell IDs representing the input geometry.
+      */
+    override def polyfill(geometry: Geometry, resolution: Int): Seq[Long] =
+        polyfillIter(geometry, resolution).toSeq
+
+    /**
+      * [[GridSystem.renderCellId]] — renders a BNG cell id as its user-facing formatted string
+      * (e.g. "TL3098"), unlike H3/quadbin which emit the raw Long.
+      */
+    override def renderCellId(cellID: Long): Any = format(cellID)
+
+    /**
+      * [[GridSystem.coveringCandidateCells]] — candidate cells for covering tessellation of a raster
+      * bbox in EPSG:27700. The bbox is buffered by the cell half-diagonal before polyfill because
+      * [[polyfillIter]] is a centroid flood-fill: a cell whose square overlaps the bbox but whose
+      * centroid sits just outside would be missed without the buffer. The positive-area keep-test
+      * applied downstream drops any buffered-but-non-overlapping fringe cell. Returns internal Long
+      * cell ids; call [[renderCellId]] to convert to the user-facing BNG string.
+      *
+      * @param bbox
+      *   Raster bounding-box polygon in EPSG:27700.
+      * @param resolution
+      *   BNG resolution index.
+      * @return
+      *   Candidate cell ids (Long) for the covering set.
+      */
+    override def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufR = getBufferRadius(bbox, resolution)
+        polyfill(bbox.buffer(bufR), resolution)
+    }
+
+    /**
       * Get the k ring of indices around the provided cell id.
       *
       * @param cellID
@@ -260,9 +307,10 @@ object BNG extends Serializable {
       * @return
       *   A collection of cell IDs forming a k ring.
       */
-    def kRing(cellID: Long, n: Int): Iterator[Long] = {
-        if (n == 1) Iterator.single(cellID) ++ kLoop(cellID, 1)
-        else Iterator.single(cellID) ++ (1 to n).iterator.flatMap(k => kLoop(cellID, k))
+    override def kRing(cellID: Long, n: Int): Seq[Long] = {
+        if (n == 0) return Seq(cellID)
+        if (n == 1) (Iterator.single(cellID) ++ kLoop(cellID, 1)).toSeq
+        else (Iterator.single(cellID) ++ (1 to n).iterator.flatMap(k => kLoop(cellID, k))).toSeq
     }
 
     /**
@@ -275,7 +323,8 @@ object BNG extends Serializable {
       * @return
       *   A collection of cell IDs forming a k disk.
       */
-    def kLoop(cellID: Long, k: Int): Iterator[Long] = {
+    override def kLoop(cellID: Long, k: Int): Seq[Long] = {
+        if (k == 0) return Seq(cellID)
         val digits = cellDigits(cellID)
         val resolution = getResolution(digits)
         val edgeSize = getEdgeSize(resolution)
@@ -293,7 +342,7 @@ object BNG extends Serializable {
         val right = (ymin + edgeSize until ymax by edgeSize).iterator.map(y => (xmax, y))
         val down = (xmin + edgeSize until xmax by edgeSize).iterator.map(x => (x, ymin))
 
-        (corners ++ left ++ right ++ up ++ down).map { case (x, y) => pointToCellID(x, y, resolution) }
+        (corners ++ left ++ right ++ up ++ down).map { case (x, y) => pointToCellID(x, y, resolution) }.toSeq
     }
 
     /**
@@ -629,6 +678,20 @@ object BNG extends Serializable {
         id.toLong
     }
 
+    /** Set of cell IDs forming the k-ring around the geometry at the given resolution,
+      * using the given dilation mode. boundary-out delegates to the proven flatMap
+      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
+    override def geometryKRing(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        if (mode == GeomDilation.DEFAULT_MODE) geometryKRing(geometry, resolution, k)
+        else GeomDilation.expand("ring", k, mode, BNG, geometry, resolution)
+
+    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution,
+      * using the given dilation mode. boundary-out delegates to the proven flatMap
+      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
+    override def geometryKLoop(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        if (mode == GeomDilation.DEFAULT_MODE) geometryKLoop(geometry, resolution, k)
+        else GeomDilation.expand("loop", k, mode, BNG, geometry, resolution)
+
     /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution. */
     def geometryKLoop(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
         // TODO: MOVE TO ITERATOR
@@ -747,7 +810,7 @@ object BNG extends Serializable {
                     // In theory getting the next from Iterator that is not empty should be safe, but we
                     // will enqueue all the kRing cells anyway.
                     val toQueue = kRing.filterNot(newTraversed.contains)
-                    (toQueue, accumulator._2)
+                    (toQueue.iterator, accumulator._2)
                 } else {
                     accumulator
                 }

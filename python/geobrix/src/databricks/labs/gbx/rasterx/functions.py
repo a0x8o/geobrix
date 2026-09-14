@@ -715,25 +715,40 @@ def rst_frombands(bands: ColLike) -> Column:
 
 
 def rst_h3_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into H3 cells at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
-        mode: ``"covering"`` (default) keeps every cell whose hexagon overlaps
-            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
-            each valid pixel to the one cell whose hexagon contains its centroid
-            (chips partition the valid pixels). String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell whose hexagon contains its centroid (chips partition the
+            valid pixels); ``"covering"`` keeps every cell whose hexagon overlaps
+            the raster bbox (chips may share pixels). String literals are
+            auto-wrapped in ``f.lit``; pass a ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell,
+            including synthetic all-NoData chips for covered cells with no
+            assigned pixels (centroid) or all-NoData clipped chips (covering);
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (H3 index, tile) or similar.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_h3_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_h3_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 
@@ -804,237 +819,494 @@ def rst_tooverlappingtiles(
 # Grid
 
 
-def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute average pixel value per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"`` — whether to emit
+            cells with no valid pixels.
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            one cell; ``"covering"`` distributes pixels to all overlapping cells.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and avg).
     """
-    return f.call_function("gbx_rst_h3_rastertogridavg", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_h3_rastertogridavg",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute pixel count per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
-        Column of grid values (e.g. struct with H3 index and count).
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
-    return f.call_function("gbx_rst_h3_rastertogridcount", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_h3_rastertogridcount",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute maximum pixel value per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and max).
     """
-    return f.call_function("gbx_rst_h3_rastertogridmax", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_h3_rastertogridmax",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute minimum pixel value per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and min).
     """
-    return f.call_function("gbx_rst_h3_rastertogridmin", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_h3_rastertogridmin",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute median pixel value per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and median).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_h3_rastertogridmedian", _col(tile), _col(resolution)
+        "gbx_rst_h3_rastertogridmedian",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_h3_rastertogridsum(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the sum of pixel values per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and sum).
     """
-    return f.call_function("gbx_rst_h3_rastertogridsum", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_h3_rastertogridsum",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_h3_rastertogridvariance(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population variance of pixel values per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and variance).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_h3_rastertogridvariance", _col(tile), _col(resolution)
+        "gbx_rst_h3_rastertogridvariance",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_h3_rastertogridstddev(tile: ColLike, resolution: ColLike) -> Column:
+def rst_h3_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population standard deviation of pixel values per H3 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: H3 resolution (0–15).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column of grid values (e.g. struct with H3 index and stddev).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_h3_rastertogridstddev", _col(tile), _col(resolution)
+        "gbx_rst_h3_rastertogridstddev",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute average pixel value per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridavg", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridavg",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute pixel count per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
-        Column ARRAY<ARRAY<struct(cellID BIGINT, measure BIGINT)>>.
+        Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridcount", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridcount",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute maximum pixel value per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridmax", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridmax",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute minimum pixel value per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridmin", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridmin",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute median pixel value per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridmedian", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridmedian",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridsum(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the sum of pixel values per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridsum", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridsum",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridvariance(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population variance of pixel values per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridvariance", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridvariance",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_quadbin_rastertogridstddev(tile: ColLike, resolution: ColLike) -> Column:
+def rst_quadbin_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population standard deviation of pixel values per CARTO quadbin v0 cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID BIGINT, measure DOUBLE)>>.
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_quadbin_rastertogridstddev", _col(tile), _col(resolution)
+        "gbx_rst_quadbin_rastertogridstddev",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_bng_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute average pixel value per BNG grid cell at the given resolution.
 
     Args:
@@ -1042,79 +1314,160 @@ def rst_bng_rastertogridavg(tile: ColLike, resolution: ColLike) -> Column:
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
-    return f.call_function("gbx_rst_bng_rastertogridavg", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_bng_rastertogridavg",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_bng_rastertogridcount(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute pixel count per BNG grid cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: BNG resolution — integer index ±1..±6 or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
-        Column ARRAY<ARRAY<struct(cellID STRING, measure BIGINT)>>.
+        Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_bng_rastertogridcount", _col(tile), _col(resolution)
+        "gbx_rst_bng_rastertogridcount",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_bng_rastertogridmax(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute maximum pixel value per BNG grid cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: BNG resolution — integer index ±1..±6 or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
-    return f.call_function("gbx_rst_bng_rastertogridmax", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_bng_rastertogridmax",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_bng_rastertogridmin(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute minimum pixel value per BNG grid cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: BNG resolution — integer index ±1..±6 or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
-    return f.call_function("gbx_rst_bng_rastertogridmin", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_bng_rastertogridmin",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_bng_rastertogridmedian(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute median pixel value per BNG grid cell at the given resolution.
 
     Args:
         tile: Raster tile column.
         resolution: BNG resolution — integer index ±1..±6 or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_bng_rastertogridmedian", _col(tile), _col(resolution)
+        "gbx_rst_bng_rastertogridmedian",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_bng_rastertogridsum(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the sum of pixel values per BNG grid cell at the given resolution.
 
     Args:
@@ -1122,15 +1475,32 @@ def rst_bng_rastertogridsum(tile: ColLike, resolution: ColLike) -> Column:
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
-    return f.call_function("gbx_rst_bng_rastertogridsum", _col(tile), _col(resolution))
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    return f.call_function(
+        "gbx_rst_bng_rastertogridsum",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
+    )
 
 
-def rst_bng_rastertogridvariance(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population variance of pixel values per BNG grid cell at the given resolution.
 
     Args:
@@ -1138,17 +1508,32 @@ def rst_bng_rastertogridvariance(tile: ColLike, resolution: ColLike) -> Column:
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_bng_rastertogridvariance", _col(tile), _col(resolution)
+        "gbx_rst_bng_rastertogridvariance",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
-def rst_bng_rastertogridstddev(tile: ColLike, resolution: ColLike) -> Column:
+def rst_bng_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = "complete",
+    assignment: ColLike = "centroid",
+) -> Column:
     """Compute the population standard deviation of pixel values per BNG grid cell at the given resolution.
 
     Args:
@@ -1156,41 +1541,67 @@ def rst_bng_rastertogridstddev(tile: ColLike, resolution: ColLike) -> Column:
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
+        coverage: ``"complete"`` (default) or ``"sparse"``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
 
     Returns:
         Column ARRAY<ARRAY<struct(cellID STRING, measure DOUBLE)>>.
         Output cell ids are BNG grid-square strings (e.g. ``"TQ3080"``).
     """
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
     return f.call_function(
-        "gbx_rst_bng_rastertogridstddev", _col(tile), _col(resolution)
+        "gbx_rst_bng_rastertogridstddev",
+        _col(tile),
+        _col(resolution),
+        coverage_col,
+        assignment_col,
     )
 
 
 def rst_quadbin_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into CARTO quadbin v0 cells at the given zoom level.
 
     Args:
         tile: Raster tile column.
         resolution: Quadbin resolution / zoom (0–20).
-        mode: ``"covering"`` (default) keeps every cell whose tile overlaps
-            the raster bbox (chips may share pixels); ``"centroid"`` single-assigns
-            each valid pixel to the one cell containing its centroid (chips
-            partition the valid pixels). String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell containing its centroid (chips partition the valid
+            pixels); ``"covering"`` keeps every cell whose tile overlaps the
+            raster bbox. String literals are auto-wrapped in ``f.lit``; pass a
+            ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell;
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (quadbin cell id BIGINT, tile) pairs.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_quadbin_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_quadbin_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 
 def rst_bng_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ) -> Column:
     """Tessellate the raster into BNG grid cells at the given resolution.
 
@@ -1199,17 +1610,27 @@ def rst_bng_tessellate(
         resolution: BNG resolution — integer index ±1..±6 (1=100km … 6=1m;
             negative indices select quadrant subdivisions) or a resolution
             string such as ``"1km"`` or ``"100m"``.
-        mode: ``"covering"`` (default) keeps every cell whose grid square overlaps
-            the raster bbox; ``"centroid"`` single-assigns each valid pixel to
-            the one cell containing its centroid. String literals are auto-wrapped
+        assignment: ``"centroid"`` (default) single-assigns each valid pixel to
+            the one cell containing its centroid; ``"covering"`` keeps every cell
+            whose grid square overlaps the raster bbox. String literals are
+            auto-wrapped in ``f.lit``; pass a ``Column`` to defer.
+        coverage: ``"complete"`` (default) emits a chip for every candidate cell;
+            ``"sparse"`` omits all-NoData chips. String literals are auto-wrapped
             in ``f.lit``; pass a ``Column`` to defer.
 
     Returns:
         Column of array of (BNG cell id STRING, tile) pairs.
     """
-    mode_col = f.lit(mode) if isinstance(mode, str) else _col(mode)
+    assignment_col = (
+        f.lit(assignment) if isinstance(assignment, str) else _col(assignment)
+    )
+    coverage_col = f.lit(coverage) if isinstance(coverage, str) else _col(coverage)
     return f.call_function(
-        "gbx_rst_bng_tessellate", _col(tile), _col(resolution), mode_col
+        "gbx_rst_bng_tessellate",
+        _col(tile),
+        _col(resolution),
+        assignment_col,
+        coverage_col,
     )
 
 

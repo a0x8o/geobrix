@@ -44,12 +44,14 @@ def _custom_raster(data, nodata=-9999.0, epsg=4326, origin=(10.0, 50.0), px=0.5)
 def test_count_total_equals_valid_pixels(grid):
     raster = make_geotiff_bytes(width=4, height=3, count=1)  # all 12 valid
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 6, grid, "count")
+        result = gridagg.raster_to_grid(
+            ds, 6, grid, "count", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 1
     band = result[0]
     total = sum(c["measure"] for c in band)
     assert total == 12
-    assert all(isinstance(c["measure"], int) for c in band)
+    assert all(isinstance(c["measure"], float) for c in band)  # count is now float
     assert all(isinstance(c["cellID"], int) for c in band)
 
 
@@ -59,7 +61,9 @@ def test_count_excludes_nodata(grid):
     data[0, 0] = -9999.0  # one invalid pixel
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 7, grid, "count")
+        result = gridagg.raster_to_grid(
+            ds, 7, grid, "count", coverage="sparse", assignment="centroid"
+        )
     total = sum(c["measure"] for c in result[0])
     assert total == 11
 
@@ -72,7 +76,9 @@ def test_agg_within_band_range(grid, agg):
     raster = _custom_raster(data)
     lo, hi = float(data.min()), float(data.max())
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 5, grid, agg)
+        result = gridagg.raster_to_grid(
+            ds, 5, grid, agg, coverage="sparse", assignment="centroid"
+        )
     for c in result[0]:
         assert lo <= c["measure"] <= hi
         assert isinstance(c["measure"], float)
@@ -84,7 +90,9 @@ def test_avg_is_mean_of_cell_pixels(grid):
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "avg")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "avg", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(5.0)
@@ -96,7 +104,9 @@ def test_sum_is_total_of_cell_pixels(grid):
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "sum")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "sum", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(20.0)
@@ -109,7 +119,9 @@ def test_sum_excludes_nodata(grid):
     data = np.array([[2.0, -9999.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "sum")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "sum", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(16.0)
@@ -122,7 +134,9 @@ def test_variance_is_population_variance_of_cell_pixels(grid):
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "variance")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "variance", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(5.0)
@@ -135,7 +149,9 @@ def test_stddev_is_sqrt_of_population_variance(grid):
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "stddev")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "stddev", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(np.sqrt(5.0))
@@ -148,11 +164,14 @@ def test_single_pixel_cell_variance_stddev_zero(grid, agg):
     # A cell covering exactly one valid pixel has zero spread -> variance 0,
     # stddev 0 (clean under population semantics; no divide-by-(n-1)).
     # Fine resolution so each pixel occupies its own cell.
+    # Uses sparse to avoid empty cells from complete default polluting the check.
     data = np.array([[2.0, 4.0], [6.0, 8.0]], dtype="float32")
     raster = _custom_raster(data)
     res = 12 if grid == "quadbin" else 9
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, res, grid, agg)
+        result = gridagg.raster_to_grid(
+            ds, res, grid, agg, coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 4  # one cell per pixel
     for cell in band:
@@ -166,7 +185,9 @@ def test_median_even_count(grid):
     data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "median")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "median", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(2.5)
@@ -178,7 +199,9 @@ def test_median_odd_count(grid):
     data = np.array([[1.0, 3.0], [5.0, -9999.0]], dtype="float32")
     raster = _custom_raster(data)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 0, grid, "median")
+        result = gridagg.raster_to_grid(
+            ds, 0, grid, "median", coverage="sparse", assignment="centroid"
+        )
     band = result[0]
     assert len(band) == 1
     assert band[0]["measure"] == pytest.approx(3.0)
@@ -189,7 +212,9 @@ def test_median_odd_count(grid):
 def test_multiband_outer_length(grid):
     raster = make_geotiff_bytes(width=4, height=3, count=2)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 6, grid, "count")
+        result = gridagg.raster_to_grid(
+            ds, 6, grid, "count", coverage="sparse", assignment="centroid"
+        )
     assert len(result) == 2
     for band in result:
         assert sum(c["measure"] for c in band) == 12
@@ -199,7 +224,9 @@ def test_multiband_outer_length(grid):
 def test_h3_cell_ids_are_valid():
     raster = make_geotiff_bytes(width=4, height=3, count=1)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 7, "h3", "count")
+        result = gridagg.raster_to_grid(
+            ds, 7, "h3", "count", coverage="sparse", assignment="centroid"
+        )
     for c in result[0]:
         cid = c["cellID"]
         assert 0 < cid < 2**63
@@ -209,7 +236,9 @@ def test_h3_cell_ids_are_valid():
 def test_quadbin_cell_ids_are_valid():
     raster = make_geotiff_bytes(width=4, height=3, count=1)
     with _open(raster) as ds:
-        result = gridagg.raster_to_grid(ds, 10, "quadbin", "count")
+        result = gridagg.raster_to_grid(
+            ds, 10, "quadbin", "count", coverage="sparse", assignment="centroid"
+        )
     for c in result[0]:
         cid = c["cellID"]
         assert 0 < cid < 2**63

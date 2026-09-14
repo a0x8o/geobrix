@@ -80,6 +80,15 @@ def _registrar_groups() -> List[_register.Group]:
         ("gbx_rst_bng_rastertogridsum", _RstBngRasterToGridSumUDTF),
         ("gbx_rst_bng_rastertogridvariance", _RstBngRasterToGridVarianceUDTF),
         ("gbx_rst_bng_rastertogridstddev", _RstBngRasterToGridStddevUDTF),
+        ("gbx_rst_custom_rastertogridavg", _RstCustomRasterToGridAvgUDTF),
+        ("gbx_rst_custom_rastertogridcount", _RstCustomRasterToGridCountUDTF),
+        ("gbx_rst_custom_rastertogridmax", _RstCustomRasterToGridMaxUDTF),
+        ("gbx_rst_custom_rastertogridmin", _RstCustomRasterToGridMinUDTF),
+        ("gbx_rst_custom_rastertogridmedian", _RstCustomRasterToGridMedianUDTF),
+        ("gbx_rst_custom_rastertogridsum", _RstCustomRasterToGridSumUDTF),
+        ("gbx_rst_custom_rastertogridvariance", _RstCustomRasterToGridVarianceUDTF),
+        ("gbx_rst_custom_rastertogridstddev", _RstCustomRasterToGridStddevUDTF),
+        ("gbx_rst_custom_tessellate", _RstCustomTessellateUDTF),
         ("gbx_rst_separatebands", _RstSeparateBandsUDTF),
         ("gbx_rst_retile", _RstRetileUDTF),
         ("gbx_rst_tooverlappingtiles", _RstToOverlappingTilesUDTF),
@@ -1288,6 +1297,299 @@ def rst_combineavg(
         )
         return _uf_combineavg(tc, file_refs_col)
     return _combineavg_udf(tc)
+
+
+# ---------------------------------------------------------------------------
+# rst_combine{min,max,sum,count,median,stddev}: ARRAY<tile struct> -> tile.
+# Mirrors gbx_rst_combine{min,max,median,sum,stddev,count}: per-pixel statistic
+# across a stack of aligned tiles, NoData-aware (reuses agg_core.combine_*_tiles).
+# Structure mirrors rst_combineavg: shared _bytes body + UDF wrappers + public API.
+# ---------------------------------------------------------------------------
+
+
+def _combine_stat_bytes(tiles, stat: str):
+    """Shared body for the combine-family stats (mirrors _combineavg_bytes).
+
+    Collects GTiff bytes from each non-empty, non-corrupt input tile, resolves
+    cellid (shared if all match, else -1), then calls the stat-specific reducer.
+    Returns ``(new_bytes, cellid, dropped)`` or ``None`` when all inputs are
+    empty/corrupt.
+    """
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    elems = [t for t in tiles if t is not None and not _tile_is_empty(t)]
+    if not elems:
+        return None
+    rasters = []
+    good_elems = []
+    dropped = 0
+    for t in elems:
+        try:
+            vt = ot._to_virtual_tile(t)
+            if vt.is_virtual():
+                candidate = ot.materialize_to_bytes(vt).raster
+            else:
+                candidate = bytes(vt.raster)
+            with _serde.open_tile(candidate):
+                pass
+            rasters.append(candidate)
+            good_elems.append(t)
+        except Exception:  # noqa: BLE001
+            dropped += 1
+            continue
+    if not rasters:
+        return None
+    cellids = {_tile_cellid(t) for t in good_elems}
+    cellid = _tile_cellid(good_elems[0]) if len(cellids) == 1 else -1
+    _reducer = {
+        "min": agg_core.combine_min_tiles,
+        "max": agg_core.combine_max_tiles,
+        "sum": agg_core.combine_sum_tiles,
+        "count": agg_core.combine_count_tiles,
+        "median": agg_core.combine_median_tiles,
+        "stddev": agg_core.combine_stddev_tiles,
+    }[stat]
+    new_bytes = _reducer(rasters)
+    return new_bytes, cellid, dropped
+
+
+def _make_combine_stat_udf(stat: str):
+    """Factory that produces a ``@f.udf(V2_TILE_SCHEMA)`` for the given stat."""
+    _stat_cap = stat.capitalize()
+
+    def _udf(tiles):
+        if not tiles:
+            return None
+        result = _combine_stat_bytes(tiles, stat)
+        if result is None:
+            return None
+        new_bytes, cellid, dropped = result
+        tile = _serde.build_tile(new_bytes, "GTiff", cellid)
+        if dropped:
+            tile["metadata"][
+                "last_error"
+            ] = f"RST_Combine{_stat_cap}: skipped {dropped} corrupt input tile(s)"
+        return tile
+
+    _udf.__name__ = f"_combine{stat}_udf"
+    return f.udf(V2_TILE_SCHEMA)(_udf)
+
+
+def _make_combine_stat_v2_udf(stat: str):
+    """Factory for the force-output (v2) variant of a combine-stat UDF."""
+    _stat_cap = stat.capitalize()
+
+    def _v2_udf(tiles, virtualize_dir, virtualize_prefix, materialize):
+        if not tiles:
+            return None
+        result = _combine_stat_bytes(tiles, stat)
+        if result is None:
+            return None
+        new_bytes, cellid, dropped = result
+        row = _shaped_result_row(
+            new_bytes, cellid, virtualize_dir, virtualize_prefix, materialize
+        )
+        if row is not None and dropped:
+            row["metadata"][
+                "last_error"
+            ] = f"RST_Combine{_stat_cap}: skipped {dropped} corrupt input tile(s)"
+        return row
+
+    _v2_udf.__name__ = f"_combine{stat}_v2_udf"
+    return f.udf(V2_TILE_SCHEMA)(_v2_udf)
+
+
+# Module-level UDF objects for each stat (registered in _sql_tile_ops below).
+_combinemin_udf = _make_combine_stat_udf("min")
+_combinemax_udf = _make_combine_stat_udf("max")
+_combinesum_udf = _make_combine_stat_udf("sum")
+_combinecount_udf = _make_combine_stat_udf("count")
+_combinemedian_udf = _make_combine_stat_udf("median")
+_combinestddev_udf = _make_combine_stat_udf("stddev")
+
+_combinemin_v2_udf = _make_combine_stat_v2_udf("min")
+_combinemax_v2_udf = _make_combine_stat_v2_udf("max")
+_combinesum_v2_udf = _make_combine_stat_v2_udf("sum")
+_combinecount_v2_udf = _make_combine_stat_v2_udf("count")
+_combinemedian_v2_udf = _make_combine_stat_v2_udf("median")
+_combinestddev_v2_udf = _make_combine_stat_v2_udf("stddev")
+
+
+_COMBINE_STAT_DOC = """\
+NoData-aware per-pixel {doc_stat} across an ARRAY of aligned tiles.
+
+    Mirrors ``gbx_rst_{sql_name}``: ``tiles`` is a single column of
+    ARRAY<tile struct>; each declared NoData is excluded from the statistic,
+    and a pixel that is NoData in ALL inputs produces NoData in the output
+    (never 0 for count). Output ``cellid`` is the shared input cellid when
+    every element matches, else -1.
+
+    PARITY DIVERGENCE: assumes the tiles are ALREADY aligned (same
+    shape/extent/CRS) and raises ``ValueError`` on misaligned inputs rather
+    than resampling. Align first with ``rst_align_to``.
+
+    Args:
+        tiles: Column of ARRAY<tile struct> (same-grid, aligned).
+        virtualize_dir:    Force-output: write result to a durable path.
+        virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
+        materialize:       Force-output: ``True`` ensures raster bytes.
+
+    Returns:
+        Tile struct of per-pixel {doc_stat}, or NULL on an empty array.
+"""
+
+
+def _make_rst_combine_stat(
+    stat: str,
+    sql_name: str,
+    doc_stat: str,
+):
+    """Factory for the public ``rst_combine{stat}`` Column API function."""
+
+    def rst_combine_stat(
+        tiles: ColLike,
+        virtualize_dir: Optional[str] = None,
+        virtualize_prefix: Optional[str] = None,
+        materialize: Optional[bool] = None,
+    ) -> Column:
+        _v2 = {
+            "min": _combinemin_v2_udf,
+            "max": _combinemax_v2_udf,
+            "sum": _combinesum_v2_udf,
+            "count": _combinecount_v2_udf,
+            "median": _combinemedian_v2_udf,
+            "stddev": _combinestddev_v2_udf,
+        }[stat]
+        _plain = {
+            "min": _combinemin_udf,
+            "max": _combinemax_udf,
+            "sum": _combinesum_udf,
+            "count": _combinecount_udf,
+            "median": _combinemedian_udf,
+            "stddev": _combinestddev_udf,
+        }[stat]
+        if _force_output_requested(virtualize_dir, virtualize_prefix, materialize):
+            _validate_force_output(virtualize_dir, materialize)
+            return _v2(
+                _col(tiles),
+                *_force_output_lits(virtualize_dir, virtualize_prefix, materialize),
+            )
+        return _plain(_col(tiles))
+
+    rst_combine_stat.__name__ = f"rst_combine{stat}"
+    rst_combine_stat.__qualname__ = f"rst_combine{stat}"
+    # Assign __doc__ explicitly: an f-string expression is discarded by Python
+    # (only a plain string *literal* at the top of a function becomes __doc__).
+    rst_combine_stat.__doc__ = _COMBINE_STAT_DOC.format(
+        doc_stat=doc_stat, sql_name=sql_name
+    )
+    return rst_combine_stat
+
+
+rst_combinemin = _make_rst_combine_stat("min", "combinemin", "minimum")
+rst_combinemax = _make_rst_combine_stat("max", "combinemax", "maximum")
+rst_combinesum = _make_rst_combine_stat("sum", "combinesum", "sum")
+rst_combinecount = _make_rst_combine_stat(
+    "count", "combinecount", "count of valid inputs"
+)
+rst_combinemedian = _make_rst_combine_stat("median", "combinemedian", "median")
+rst_combinestddev = _make_rst_combine_stat(
+    "stddev", "combinestddev", "population standard deviation"
+)
+
+
+# ---------------------------------------------------------------------------
+# rst_align_to: warp a tile to match a reference tile's grid.
+# Mirrors gbx_rst_align_to: nearest-neighbour resampling, output has exactly
+# the same CRS, width, height, and geotransform as the reference tile.
+# ---------------------------------------------------------------------------
+
+
+def _align_to_bytes(tile, reference):
+    """Shared align_to body: open both tiles and warp tile to reference grid.
+
+    Returns new GTiff bytes or None if either input is empty/corrupt.
+    """
+    from databricks.labs.gbx.pyrx import _env
+
+    _env.configure_gdal_env()
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    try:
+        vt = ot._to_virtual_tile(tile)
+        if vt.is_virtual():
+            tile_bytes = ot.materialize_to_bytes(vt).raster
+        else:
+            tile_bytes = bytes(vt.raster)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        rv = ot._to_virtual_tile(reference)
+        if rv.is_virtual():
+            ref_bytes = ot.materialize_to_bytes(rv).raster
+        else:
+            ref_bytes = bytes(rv.raster)
+    except Exception:  # noqa: BLE001
+        return None
+    return agg_core.align_to_tiles(tile_bytes, ref_bytes)
+
+
+@f.udf(V2_TILE_SCHEMA)
+def _align_to_udf(tile, reference):
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    new_bytes = _align_to_bytes(tile, reference)
+    if new_bytes is None:
+        return None
+    return _serde.build_tile(new_bytes, "GTiff", _tile_cellid(tile))
+
+
+@f.udf(V2_TILE_SCHEMA)
+def _align_to_v2_udf(tile, reference, virtualize_dir, virtualize_prefix, materialize):
+    if _tile_is_empty(tile) or _tile_is_empty(reference):
+        return None
+    new_bytes = _align_to_bytes(tile, reference)
+    return _shaped_result_row(
+        new_bytes, _tile_cellid(tile), virtualize_dir, virtualize_prefix, materialize
+    )
+
+
+def rst_align_to(
+    tile: ColLike,
+    reference: ColLike,
+    virtualize_dir: Optional[str] = None,
+    virtualize_prefix: Optional[str] = None,
+    materialize: Optional[bool] = None,
+) -> Column:
+    """Warp ``tile`` to match ``reference``'s CRS, extent, and pixel dimensions.
+
+    Mirrors the heavyweight ``gbx_rst_align_to``: nearest-neighbour resampling
+    (``-r near``) so the output pixel values are not interpolated. The output tile
+    has exactly the same width, height, geotransform, and CRS as the reference.
+
+    This is the explicit fix for the alignment precondition of the cross-raster
+    combine family (``rst_combine{min,max,sum,count,median,stddev}``): align each
+    tile to a common reference before combining.
+
+    Args:
+        tile:       The tile to warp.
+        reference:  The reference tile whose grid defines the output grid.
+        virtualize_dir:    Force-output (light-tier, Python API only).
+        virtualize_prefix: Optional filename prefix for ``virtualize_dir``.
+        materialize:       Force-output: ``True`` ensures raster bytes.
+
+    Returns:
+        Tile struct aligned to the reference grid, or NULL if either input is NULL.
+    """
+    if _force_output_requested(virtualize_dir, virtualize_prefix, materialize):
+        _validate_force_output(virtualize_dir, materialize)
+        return _align_to_v2_udf(
+            _col(tile),
+            _col(reference),
+            *_force_output_lits(virtualize_dir, virtualize_prefix, materialize),
+        )
+    return _align_to_udf(_col(tile), _col(reference))
 
 
 # rst_frombands: single ARRAY<single-band tile> arg -> multi-band tile.
@@ -4540,15 +4842,21 @@ class _RstMakeTilesUDTF:
 class _RstH3TessellateUDTF:
     """Streaming UDTF: yield one clipped tile struct per overlapping H3 cell."""
 
-    def eval(self, tile, resolution, mode=None, file_ref=None):
+    def eval(self, tile, resolution, assignment=None, coverage=None, file_ref=None):
         if _tile_is_empty(tile) or resolution is None:
             yield _serde.build_error_tile("RST_H3_Tessellate: empty or unreadable tile")
             return
-        effective_mode = mode if mode is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
-                f"rst_h3_tessellate: mode must be one of covering, centroid; "
+                f"rst_h3_tessellate: assignment must be one of covering, centroid; "
                 f"got '{effective_mode}'"
+            )
+        effective_coverage = coverage if coverage is not None else "complete"
+        if effective_coverage not in {"sparse", "complete"}:
+            raise ValueError(
+                f"rst_h3_tessellate: coverage must be one of sparse, complete; "
+                f"got '{effective_coverage}'"
             )
         from databricks.labs.gbx.pyrx import _env
 
@@ -4556,8 +4864,12 @@ class _RstH3TessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid, raster in tessellate_core.iter_tessellate_h3(
-                    ds, int(resolution), mode=effective_mode
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds,
+                    int(resolution),
+                    "h3",
+                    mode=effective_mode,
+                    coverage=effective_coverage,
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
@@ -4630,53 +4942,70 @@ def rst_tooverlappingtiles(
     )
 
 
-def rst_h3_tessellate(tile: ColLike, resolution: ColLike, mode: ColLike = "covering"):
+def rst_h3_tessellate(
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
+):
     """Tessellate a raster into H3 cells (mirrors ``gbx_rst_h3_tessellate``).
 
     For every H3 cell overlapping the raster's extent at *resolution*, the
     raster is clipped to that cell's hexagon and one tile is produced, carrying
     the H3 cell id as its ``cellid``. A cell is skipped only when its hexagon
     does not geometrically overlap the raster; a cell that overlaps but clips to
-    entirely NoData is still emitted, and its value reducers
-    (``gbx_rst_max``/``min``/``avg``/``median``) return SQL ``NULL`` for it.
+    entirely NoData is still emitted in complete coverage mode, and its value
+    reducers (``gbx_rst_max``/``min``/``avg``/``median``) return SQL ``NULL``
+    for it.
 
     Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
 
         SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution) t
         SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution, 'centroid') t
+        SELECT t.* FROM <df>, LATERAL gbx_rst_h3_tessellate(tile, resolution, 'centroid', 'complete') t
 
     Each output row is a tile struct; one row per overlapping H3 cell.
 
     Args:
         tile:       Tile struct column.
         resolution: H3 resolution in ``[0, 15]``.
-        mode:       Tessellation mode: ``"covering"`` (default) — each H3 cell
-                    that overlaps the raster extent is clipped to its hexagon
-                    boundary; ``"centroid"`` — each valid pixel is assigned to
-                    exactly one cell by its centroid (strict partition, no
-                    overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each H3
+                    cell that overlaps the raster extent is clipped to its
+                    hexagon boundary.
+        coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
+                    ``"sparse"`` — skip all-NoData chips.
     """
     from databricks.labs.gbx.pyrx._file_ref import file_ref_arg
 
     tc = _col(tile)
-    return _RstH3TessellateUDTF(tc, _col(resolution), _col(mode), file_ref_arg(tc))
+    return _RstH3TessellateUDTF(
+        tc, _col(resolution), _col(assignment), _col(coverage), file_ref_arg(tc)
+    )
 
 
 @udtf(returnType=V2_TILE_SCHEMA)
 class _RstQuadbinTessellateUDTF:
     """Streaming UDTF: yield one clipped tile struct per overlapping quadbin cell."""
 
-    def eval(self, tile, resolution, mode=None, file_ref=None):
+    def eval(self, tile, resolution, assignment=None, coverage=None, file_ref=None):
         if _tile_is_empty(tile) or resolution is None:
             yield _serde.build_error_tile(
                 "RST_Quadbin_Tessellate: empty or unreadable tile"
             )
             return
-        effective_mode = mode if mode is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
-                f"rst_quadbin_tessellate: mode must be one of covering, centroid; "
+                f"rst_quadbin_tessellate: assignment must be one of covering, centroid; "
                 f"got '{effective_mode}'"
+            )
+        effective_coverage = coverage if coverage is not None else "complete"
+        if effective_coverage not in {"sparse", "complete"}:
+            raise ValueError(
+                f"rst_quadbin_tessellate: coverage must be one of sparse, complete; "
+                f"got '{effective_coverage}'"
             )
         from databricks.labs.gbx.pyrx import _env
 
@@ -4684,8 +5013,12 @@ class _RstQuadbinTessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid, raster in tessellate_core.iter_tessellate_quadbin(
-                    ds, int(resolution), mode=effective_mode
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds,
+                    int(resolution),
+                    "quadbin",
+                    mode=effective_mode,
+                    coverage=effective_coverage,
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
@@ -4709,17 +5042,23 @@ class _RstBngTessellateUDTF:
     NOT the metadata map.
     """
 
-    def eval(self, tile, resolution, mode=None, file_ref=None):
+    def eval(self, tile, resolution, assignment=None, coverage=None, file_ref=None):
         if _tile_is_empty(tile) or resolution is None:
             yield _serde.build_error_tile(
                 "RST_BNG_Tessellate: empty or unreadable tile"
             )
             return
-        effective_mode = mode if mode is not None else "covering"
+        effective_mode = assignment if assignment is not None else "centroid"
         if effective_mode not in {"covering", "centroid"}:
             raise ValueError(
-                f"rst_bng_tessellate: mode must be one of covering, centroid; "
+                f"rst_bng_tessellate: assignment must be one of covering, centroid; "
                 f"got '{effective_mode}'"
+            )
+        effective_coverage = coverage if coverage is not None else "complete"
+        if effective_coverage not in {"sparse", "complete"}:
+            raise ValueError(
+                f"rst_bng_tessellate: coverage must be one of sparse, complete; "
+                f"got '{effective_coverage}'"
             )
         from databricks.labs.gbx.pygx import _bng
         from databricks.labs.gbx.pyrx import _env
@@ -4728,8 +5067,12 @@ class _RstBngTessellateUDTF:
         # NOTE: mid-iteration failure yields already-emitted good rows + one error row.
         try:
             with ot._open(tile, file_ref=file_ref) as ds:
-                for cellid_str, raster in tessellate_core.iter_tessellate_bng(
-                    ds, resolution, mode=effective_mode
+                for cellid_str, raster in tessellate_core.iter_tessellate(
+                    ds,
+                    resolution,
+                    "bng",
+                    mode=effective_mode,
+                    coverage=effective_coverage,
                 ):
                     if raster is None:  # defensive: never emit a null-raster tile row
                         continue
@@ -4742,7 +5085,12 @@ class _RstBngTessellateUDTF:
             return
 
 
-def rst_bng_tessellate(tile: ColLike, resolution: ColLike, mode: ColLike = "covering"):
+def rst_bng_tessellate(
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
+):
     """Tessellate a raster into BNG cells (mirrors ``gbx_rst_bng_tessellate``).
 
     The raster is reprojected to EPSG:27700 (British National Grid) first
@@ -4750,15 +5098,16 @@ def rst_bng_tessellate(tile: ColLike, resolution: ColLike, mode: ColLike = "cove
     extent at *resolution*, the raster is clipped to that cell's square and one
     tile is produced; the BNG cell id (e.g. ``"TQ38SW"``) is carried in the
     tile's ``cellid`` struct field (matching heavy tier behaviour). Cell
-    enumeration is
-    boundary-complete: the bbox is buffered by the cell half-diagonal before
-    polyfill so cells whose square overlaps the raster but whose centroid sits
-    just outside the bbox are still emitted; out-of-GB cells are dropped.
+    enumeration is boundary-complete: the bbox is buffered by the cell
+    half-diagonal before polyfill so cells whose square overlaps the raster but
+    whose centroid sits just outside the bbox are still emitted; out-of-GB cells
+    are dropped.
 
     Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
 
         SELECT t.* FROM <df>, LATERAL gbx_rst_bng_tessellate(tile, resolution) t
         SELECT t.* FROM <df>, LATERAL gbx_rst_bng_tessellate(tile, resolution, 'centroid') t
+        SELECT t.* FROM <df>, LATERAL gbx_rst_bng_tessellate(tile, resolution, 'centroid', 'complete') t
 
     Each output row is a tile struct; one row per overlapping BNG cell.
 
@@ -4767,19 +5116,120 @@ def rst_bng_tessellate(tile: ColLike, resolution: ColLike, mode: ColLike = "cove
         resolution: BNG resolution — an Int index (``±1..±6``: 1=100km .. 6=1m,
                     negatives=quadrants) or a resolutionMap string key
                     (e.g. ``"1km"``, ``"100m"``).
-        mode:       Tessellation mode: ``"covering"`` (default) — each BNG cell
-                    overlapping the raster extent is clipped to its square;
-                    ``"centroid"`` — each valid pixel is assigned to exactly one
-                    cell by its centroid (strict partition, no overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each BNG
+                    cell overlapping the raster extent is clipped to its
+                    square.
+        coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
+                    ``"sparse"`` — skip all-NoData chips.
     """
     from databricks.labs.gbx.pyrx._file_ref import file_ref_arg
 
     tc = _col(tile)
-    return _RstBngTessellateUDTF(tc, _col(resolution), _col(mode), file_ref_arg(tc))
+    return _RstBngTessellateUDTF(
+        tc, _col(resolution), _col(assignment), _col(coverage), file_ref_arg(tc)
+    )
+
+
+# --- Custom-grid tessellate UDTF -------------------------------------------
+# SQL arg order: (tile, grid, resolution, [assignment], [coverage])
+# grid is the custom-grid struct (produced by gbx_custom_grid(...)).
+# cellID is LONG (custom cell IDs are signed int64 by construction).
+
+
+@udtf(returnType=V2_TILE_SCHEMA)
+class _RstCustomTessellateUDTF:
+    """Streaming UDTF: yield one clipped tile struct per overlapping custom-grid cell."""
+
+    def eval(
+        self,
+        tile,
+        grid_struct,
+        resolution,
+        assignment=None,
+        coverage=None,
+        file_ref=None,
+    ):
+        if _tile_is_empty(tile) or resolution is None or grid_struct is None:
+            yield _serde.build_error_tile(
+                "RST_Custom_Tessellate: empty tile or missing grid/resolution"
+            )
+            return
+        effective_mode = assignment if assignment is not None else "centroid"
+        if effective_mode not in {"covering", "centroid"}:
+            raise ValueError(
+                f"rst_custom_tessellate: assignment must be one of covering, centroid; "
+                f"got '{effective_mode}'"
+            )
+        effective_coverage = coverage if coverage is not None else "complete"
+        if effective_coverage not in {"sparse", "complete"}:
+            raise ValueError(
+                f"rst_custom_tessellate: coverage must be one of sparse, complete; "
+                f"got '{effective_coverage}'"
+            )
+        from databricks.labs.gbx.pygx import _custom as _custom_mod
+        from databricks.labs.gbx.pyrx import _env
+
+        _env.configure_gdal_env()
+        try:
+            conf = _custom_mod.conf_from_row(grid_struct)
+            with ot._open(tile, file_ref=file_ref) as ds:
+                for cellid, raster in tessellate_core.iter_tessellate(
+                    ds,
+                    int(resolution),
+                    "custom",
+                    mode=effective_mode,
+                    coverage=effective_coverage,
+                    conf=conf,
+                ):
+                    if raster is None:
+                        continue
+                    yield _serde.build_tile(
+                        raster, "GTiff", cellid, grid_system="custom"
+                    )
+        except Exception as e:  # noqa: BLE001
+            yield _serde.build_error_tile(f"RST_Custom_Tessellate: {e}")
+            return
+
+
+def rst_custom_tessellate(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
+):
+    """Tessellate a raster into custom-grid cells (mirrors ``gbx_rst_custom_tessellate``).
+
+    Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
+
+        SELECT t.* FROM <df>,
+        LATERAL gbx_rst_custom_tessellate(tile, grid, resolution) t
+        SELECT t.* FROM <df>,
+        LATERAL gbx_rst_custom_tessellate(tile, grid, resolution, 'centroid') t
+
+    SQL arg order: ``(tile, grid, resolution, [assignment], [coverage])``.
+
+    Args:
+        tile:       Tile struct column.
+        grid:       Custom-grid spec struct (from ``gbx_custom_grid(...)``).
+        resolution: Custom-grid resolution int ``[0, conf.max_resolution]``.
+        assignment: ``"centroid"`` (default) or ``"covering"``.
+        coverage:   ``"complete"`` (default) or ``"sparse"``.
+    """
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_tessellate(tile, grid, resolution"
+        " [, assignment [, coverage]]) t"
+    )
 
 
 def rst_quadbin_tessellate(
-    tile: ColLike, resolution: ColLike, mode: ColLike = "covering"
+    tile: ColLike,
+    resolution: ColLike,
+    assignment: ColLike = "centroid",
+    coverage: ColLike = "complete",
 ):
     """Tessellate a raster into quadbin cells (mirrors ``gbx_rst_quadbin_tessellate``).
 
@@ -4787,28 +5237,34 @@ def rst_quadbin_tessellate(
     raster is clipped to that cell's bounding-box polygon and one tile is
     produced, carrying the quadbin cell id as its ``cellid``. A cell is skipped
     only when its bbox does not geometrically overlap the raster; a cell that
-    overlaps but clips to entirely NoData is still emitted, and its value
-    reducers return SQL ``NULL`` for it.
+    overlaps but clips to entirely NoData is still emitted in complete coverage
+    mode, and its value reducers return SQL ``NULL`` for it.
 
     Light tier is a Python UDTF — invoke as a SQL LATERAL table function::
 
         SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_tessellate(tile, resolution) t
         SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_tessellate(tile, resolution, 'centroid') t
+        SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_tessellate(tile, resolution, 'centroid', 'complete') t
 
     Each output row is a tile struct; one row per overlapping quadbin cell.
 
     Args:
         tile:       Tile struct column.
         resolution: Quadbin resolution in ``[0, 20]`` (polyfill limit).
-        mode:       Tessellation mode: ``"covering"`` (default) — each quadbin
-                    cell overlapping the raster extent is clipped to its bbox;
-                    ``"centroid"`` — each valid pixel is assigned to exactly one
-                    cell by its centroid (strict partition, no overlap).
+        assignment: Tessellation mode: ``"centroid"`` (default) — each valid
+                    pixel is assigned to exactly one cell by its centroid
+                    (strict partition, no overlap); ``"covering"`` — each
+                    quadbin cell overlapping the raster extent is clipped to
+                    its bbox.
+        coverage:   ``"complete"`` (default) — emit covered-but-empty cells;
+                    ``"sparse"`` — skip all-NoData chips.
     """
     from databricks.labs.gbx.pyrx._file_ref import file_ref_arg
 
     tc = _col(tile)
-    return _RstQuadbinTessellateUDTF(tc, _col(resolution), _col(mode), file_ref_arg(tc))
+    return _RstQuadbinTessellateUDTF(
+        tc, _col(resolution), _col(assignment), _col(coverage), file_ref_arg(tc)
+    )
 
 
 def rst_maketiles(tile: ColLike, size_in_mb: ColLike):
@@ -6435,33 +6891,75 @@ def _grid_flat_schema(measure_type, cellid_type=LongType()):
 
 
 _GRID_FLAT_DOUBLE_SCHEMA = _grid_flat_schema(DoubleType())
-_GRID_FLAT_INT_SCHEMA = _grid_flat_schema(IntegerType())  # h3 count
-_GRID_FLAT_LONG_SCHEMA = _grid_flat_schema(LongType())  # quadbin count
 # BNG renders a formatted BNG string (e.g. "TQ3080") as cellID, matching heavy
-# RST_BNG_RasterToGrid* (StringType cellID). avg/max/min/median -> DOUBLE; count
-# -> INTEGER (heavy RST_BNG_RasterToGridCount measure is IntegerType).
+# RST_BNG_RasterToGrid* (StringType cellID). All measures -> DOUBLE (count
+# changed from INT to DOUBLE in Stage 2 Task 8 for heavy-tier parity).
 _GRID_FLAT_STRING_SCHEMA = _grid_flat_schema(DoubleType(), StringType())
-_GRID_FLAT_STRING_INT_SCHEMA = _grid_flat_schema(IntegerType(), StringType())
 
 
 def _make_rastertogrid_udtf(grid, agg, flat_schema, cellid_is_str=False):
+    """Factory for raster->grid aggregation UDTFs.
+
+    For ``grid="custom"`` the UDTF eval signature includes a ``grid`` struct arg
+    immediately after ``tile`` (SQL arg order: tile, grid, resolution, [coverage],
+    [assignment]) — matching the pinned heavy arg order.  All other grids have
+    the standard signature (tile, resolution, [coverage], [assignment]).
+    """
+    if grid == "custom":
+
+        @udtf(returnType=flat_schema)
+        class _CustomRasterToGridUDTF:
+            def eval(
+                self, tile, grid_struct, resolution, coverage=None, assignment=None
+            ):
+                if _tile_is_empty(tile):
+                    return
+                from databricks.labs.gbx.pyrx import _env
+
+                _env.configure_gdal_env()
+                with ot._open(tile) as ds:
+                    bands_data = gridagg.raster_to_grid(
+                        ds,
+                        resolution,
+                        "custom",
+                        agg,
+                        coverage=coverage or "complete",
+                        assignment=assignment or "centroid",
+                        grid_conf=grid_struct,
+                    )
+                for band_idx, cells in enumerate(bands_data, start=1):
+                    for cell in cells:
+                        cid = int(cell["cellID"])  # custom ids are Long ints
+                        m = cell["measure"]
+                        yield (band_idx, cid, m)
+
+        return _CustomRasterToGridUDTF
+
     @udtf(returnType=flat_schema)
     class _RasterToGridUDTF:
-        def eval(self, tile, resolution):
+        def eval(self, tile, resolution, coverage=None, assignment=None):
             if _tile_is_empty(tile):
                 return
             from databricks.labs.gbx.pyrx import _env
 
             _env.configure_gdal_env()
             with ot._open(tile) as ds:
-                bands_data = gridagg.raster_to_grid(ds, resolution, grid, agg)
+                bands_data = gridagg.raster_to_grid(
+                    ds,
+                    resolution,
+                    grid,
+                    agg,
+                    coverage=coverage or "complete",
+                    assignment=assignment or "centroid",
+                )
             # Yield flat rows (band, cellID, measure) — never buffer full nested list.
             # BNG cellIDs are already formatted strings from gridagg; H3/quadbin
             # cellIDs are Long ints (int() coerce numpy scalars).
             for band_idx, cells in enumerate(bands_data, start=1):
                 for cell in cells:
                     cid = cell["cellID"] if cellid_is_str else int(cell["cellID"])
-                    yield (band_idx, cid, cell["measure"])
+                    m = cell["measure"]
+                    yield (band_idx, cid, m)
 
     return _RasterToGridUDTF
 
@@ -6470,7 +6968,7 @@ _RstH3RasterToGridAvgUDTF = _make_rastertogrid_udtf(
     "h3", "avg", _GRID_FLAT_DOUBLE_SCHEMA
 )
 _RstH3RasterToGridCountUDTF = _make_rastertogrid_udtf(
-    "h3", "count", _GRID_FLAT_INT_SCHEMA
+    "h3", "count", _GRID_FLAT_DOUBLE_SCHEMA
 )
 _RstH3RasterToGridMaxUDTF = _make_rastertogrid_udtf(
     "h3", "max", _GRID_FLAT_DOUBLE_SCHEMA
@@ -6494,7 +6992,7 @@ _RstQuadbinRasterToGridAvgUDTF = _make_rastertogrid_udtf(
     "quadbin", "avg", _GRID_FLAT_DOUBLE_SCHEMA
 )
 _RstQuadbinRasterToGridCountUDTF = _make_rastertogrid_udtf(
-    "quadbin", "count", _GRID_FLAT_LONG_SCHEMA
+    "quadbin", "count", _GRID_FLAT_DOUBLE_SCHEMA
 )
 _RstQuadbinRasterToGridMaxUDTF = _make_rastertogrid_udtf(
     "quadbin", "max", _GRID_FLAT_DOUBLE_SCHEMA
@@ -6518,7 +7016,7 @@ _RstBngRasterToGridAvgUDTF = _make_rastertogrid_udtf(
     "bng", "avg", _GRID_FLAT_STRING_SCHEMA, cellid_is_str=True
 )
 _RstBngRasterToGridCountUDTF = _make_rastertogrid_udtf(
-    "bng", "count", _GRID_FLAT_STRING_INT_SCHEMA, cellid_is_str=True
+    "bng", "count", _GRID_FLAT_STRING_SCHEMA, cellid_is_str=True
 )
 _RstBngRasterToGridMaxUDTF = _make_rastertogrid_udtf(
     "bng", "max", _GRID_FLAT_STRING_SCHEMA, cellid_is_str=True
@@ -6537,6 +7035,35 @@ _RstBngRasterToGridVarianceUDTF = _make_rastertogrid_udtf(
 )
 _RstBngRasterToGridStddevUDTF = _make_rastertogrid_udtf(
     "bng", "stddev", _GRID_FLAT_STRING_SCHEMA, cellid_is_str=True
+)
+
+# --- Tier 1i: custom-grid rastertogrid UDTFs --------------------------------
+# SQL arg order: (tile, grid, resolution, [coverage], [assignment])
+# grid is a custom-grid struct (produced by gbx_custom_grid(...)).
+# cellID is LONG (custom cell ids are always signed int64).
+_RstCustomRasterToGridAvgUDTF = _make_rastertogrid_udtf(
+    "custom", "avg", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridCountUDTF = _make_rastertogrid_udtf(
+    "custom", "count", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMaxUDTF = _make_rastertogrid_udtf(
+    "custom", "max", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMinUDTF = _make_rastertogrid_udtf(
+    "custom", "min", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridMedianUDTF = _make_rastertogrid_udtf(
+    "custom", "median", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridSumUDTF = _make_rastertogrid_udtf(
+    "custom", "sum", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridVarianceUDTF = _make_rastertogrid_udtf(
+    "custom", "variance", _GRID_FLAT_DOUBLE_SCHEMA
+)
+_RstCustomRasterToGridStddevUDTF = _make_rastertogrid_udtf(
+    "custom", "stddev", _GRID_FLAT_DOUBLE_SCHEMA
 )
 
 _RASTERTOGRID_DOC = """{summary}
@@ -6561,195 +7088,433 @@ _RASTERTOGRID_DOC = """{summary}
     """
 
 
-def rst_h3_rastertogridavg(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by mean, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridavg(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridavg(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridcount(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Count raster pixels falling in each H3 cell, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridcount(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridcount(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridmax(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by maximum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmax(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmax(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridmin(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by minimum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmin(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmin(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridmedian(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by median, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmedian(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridmedian(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridsum(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by sum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridsum(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridsum(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridvariance(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by population variance, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridvariance(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridvariance(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_h3_rastertogridstddev(tile: ColLike, resolution: ColLike) -> None:
+def rst_h3_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into H3 cells by population stddev, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridstddev(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_h3_rastertogridstddev(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridavg(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by mean, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridavg(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridavg(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridcount(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Count raster pixels falling in each quadbin cell, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridcount(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridcount(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridmax(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by maximum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmax(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmax(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridmin(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by minimum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmin(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmin(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridmedian(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by median, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmedian(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridmedian(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridsum(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by sum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridsum(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridsum(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridvariance(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by population variance, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridvariance(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridvariance(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_quadbin_rastertogridstddev(tile: ColLike, resolution: ColLike) -> None:
+def rst_quadbin_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into quadbin cells by population stddev, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridstddev(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_quadbin_rastertogridstddev(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridavg(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridavg(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by mean, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridavg(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridavg(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridcount(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridcount(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Count raster pixels falling in each BNG cell, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridcount(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridcount(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridmax(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridmax(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by maximum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmax(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmax(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridmin(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridmin(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by minimum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmin(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmin(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridmedian(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridmedian(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by median, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmedian(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridmedian(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridsum(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridsum(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by sum, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridsum(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridsum(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridvariance(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridvariance(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by population variance, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridvariance(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridvariance(tile, resolution [, coverage [, assignment]]) t"
     )
 
 
-def rst_bng_rastertogridstddev(tile: ColLike, resolution: ColLike) -> None:
+def rst_bng_rastertogridstddev(
+    tile: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
     """Aggregate raster pixel values into BNG cells by population stddev, per band."""
     raise NotImplementedError(
         "Invoke the registered UDTF as a SQL LATERAL table function: "
-        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridstddev(tile, resolution) t"
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_bng_rastertogridstddev(tile, resolution [, coverage [, assignment]]) t"
+    )
+
+
+# --- Custom-grid rastertogrid Python API stubs ------------------------------
+# SQL arg order: (tile, grid, resolution, [coverage], [assignment])
+# These stubs document the LATERAL table function interface; the actual work
+# is done by the registered UDTFs (_RstCustomRasterToGrid*UDTF).
+
+
+def rst_custom_rastertogridavg(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by mean, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridavg(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridcount(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Count raster pixels falling in each custom-grid cell, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridcount(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmax(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by maximum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmax(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmin(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by minimum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmin(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridmedian(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by median, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridmedian(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridsum(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by sum, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridsum(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridvariance(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by population variance, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridvariance(tile, grid, resolution [, coverage [, assignment]]) t"
+    )
+
+
+def rst_custom_rastertogridstddev(
+    tile: ColLike,
+    grid: ColLike,
+    resolution: ColLike,
+    coverage: ColLike = None,
+    assignment: ColLike = None,
+) -> None:
+    """Aggregate raster pixel values into custom-grid cells by population stddev, per band."""
+    raise NotImplementedError(
+        "Invoke the registered UDTF as a SQL LATERAL table function: "
+        "SELECT t.* FROM <df>, LATERAL gbx_rst_custom_rastertogridstddev(tile, grid, resolution [, coverage [, assignment]]) t"
     )
 
 
@@ -7340,6 +8105,79 @@ def _dtmfromgeoms_agg_udf(
     )
 
 
+def _rasterize_agg_body(
+    cell_values,
+    cells,
+    _ad,
+    grid_name,
+    _srid,
+    pixel_size_s,
+    xmin_s,
+    ymin_s,
+    xmax_s,
+    ymax_s,
+    width_s,
+    height_s,
+    mode_s,
+    kring_pad_s,
+):
+    """Shared gridspec + burn body for per-grid rasterize_agg UDFs.
+
+    ``cell_values``: {raw_id: float} — raw ids as the UDF received them.
+    ``cells``:       [raw_id, ...] — same raw ids (for resolution + gridspec).
+    ``_ad``:         per-grid adapter (``_CustomAdapter`` or a singleton from
+                     ``cellraster._ADAPTERS``).
+    ``grid_name``:   "h3" | "quadbin" | "bng" | "custom" — forwarded to
+                     ``compute_gridspec`` and ``cells_to_raster`` as context.
+    ``_srid``:       already-resolved output CRS (int SRID or CRS string).
+    *_s params:      pandas Series from the UDF (may be None -> use default).
+
+    Returns raw GTiff bytes or None.
+    """
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    _mode = (
+        mode_s.iloc[0]
+        if mode_s is not None and mode_s.iloc[0] is not None
+        else "centroids"
+    )
+    _kp = (
+        int(kring_pad_s.iloc[0])
+        if kring_pad_s is not None and kring_pad_s.iloc[0] is not None
+        else 1
+    )
+
+    def _has(s):
+        return s is not None and s.iloc[0] is not None
+
+    if _has(xmin_s) and _has(width_s):
+        _gs = (
+            float(xmin_s.iloc[0]),
+            float(ymin_s.iloc[0]),
+            float(xmax_s.iloc[0]),
+            float(ymax_s.iloc[0]),
+            (float(xmax_s.iloc[0]) - float(xmin_s.iloc[0])) / int(width_s.iloc[0]),
+            int(width_s.iloc[0]),
+            int(height_s.iloc[0]),
+            _srid,
+        )
+    else:
+        _ps = float(pixel_size_s.iloc[0]) if _has(pixel_size_s) else None
+        _gs = cr.compute_gridspec(
+            cells,
+            srid=_srid,
+            pixel_size=_ps,
+            mode=_mode,
+            kring_pad=_kp,
+            grid=grid_name,
+            _ad=_ad,
+        )
+    return cr.cells_to_raster(
+        cell_values, *_gs, resolution=res, grid=grid_name, _ad=_ad
+    )
+
+
 @pandas_udf(BinaryType())
 def _rst_h3_rasterize_agg_udf(
     cellid: pd.Series,
@@ -7388,11 +8226,7 @@ def _rst_h3_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    res = cr._resolution([cr._h3_str(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # Output CRS spec: out_crs (string) wins over the int srid; else grid-native
     # 4326. cellraster accepts an int SRID or a CRS string interchangeably.
     if out_crs is not None and out_crs.iloc[0] is not None:
@@ -7401,35 +8235,22 @@ def _rst_h3_rasterize_agg_udf(
         _srid = int(srid.iloc[0])
     else:
         _srid = 4326
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("h3"),
+        "h3",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
-    )
-
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
-
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
-        )
-    else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp
-        )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res)
 
 
 @pandas_udf(BinaryType())
@@ -7480,12 +8301,7 @@ def _rst_quadbin_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    _ad = cr._adapter("quadbin")
-    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # Output CRS spec: out_crs (string) wins over the int srid; else grid-native
     # 4326. cellraster accepts an int SRID or a CRS string interchangeably.
     if out_crs is not None and out_crs.iloc[0] is not None:
@@ -7494,35 +8310,22 @@ def _rst_quadbin_rasterize_agg_udf(
         _srid = int(srid.iloc[0])
     else:
         _srid = 4326
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("quadbin"),
+        "quadbin",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
-    )
-
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
-
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
-        )
-    else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp, grid="quadbin"
-        )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res, grid="quadbin")
 
 
 @pandas_udf(BinaryType())
@@ -7558,44 +8361,123 @@ def _rst_bng_rasterize_agg_udf(
     # Null value -> presence mask (1.0). A null in a typed (Double) value column
     # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
     vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
-    cell_values = {}
-    for c, v in zip(cells, vals):
-        cell_values[c] = v  # last-wins (cells of one res don't overlap)
-
-    _ad = cr._adapter("bng")
-    res = _ad.resolution([_ad.to_key(c) for c in cells])
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
     # BNG is EPSG:27700-native; the srid arg is a no-op (forced 27700). The sample
     # points and output raster are both 27700 -- NO WGS84 hop.
-    _srid = 27700
-    _mode = (
-        mode.iloc[0] if mode is not None and mode.iloc[0] is not None else "centroids"
-    )
-    _kp = (
-        int(kring_pad.iloc[0])
-        if kring_pad is not None and kring_pad.iloc[0] is not None
-        else 1
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        cr._adapter("bng"),
+        "bng",
+        27700,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
     )
 
-    def _has(s):
-        return s is not None and s.iloc[0] is not None
 
-    if _has(xmin) and _has(width):
-        grid = (
-            float(xmin.iloc[0]),
-            float(ymin.iloc[0]),
-            float(xmax.iloc[0]),
-            float(ymax.iloc[0]),
-            (float(xmax.iloc[0]) - float(xmin.iloc[0])) / int(width.iloc[0]),
-            int(width.iloc[0]),
-            int(height.iloc[0]),
-            _srid,
+# --- custom rasterize_agg (13-arg: cellid, value, grid struct, then options) ---
+
+
+@pandas_udf(BinaryType())
+def _rst_custom_rasterize_agg_udf(
+    cellid: pd.Series,
+    value: pd.Series,
+    grid: pd.Series,
+    out_srid: pd.Series,
+    pixel_size: pd.Series,
+    xmin: pd.Series,
+    ymin: pd.Series,
+    xmax: pd.Series,
+    ymax: pd.Series,
+    width: pd.Series,
+    height: pd.Series,
+    mode: pd.Series,
+    kring_pad: pd.Series,
+) -> bytes:
+    """Rasterize custom-grid cells onto a regular pixel grid (centroid burn).
+
+    Arg order (pinned, must match heavy RST_Custom_RasterizeAgg):
+        cellid, value, grid, out_srid, pixel_size,
+        xmin, ymin, xmax, ymax, width, height, mode, kring_pad  -- 13 args.
+
+    ``grid`` is a CUSTOM_GRID_SCHEMA struct column (produced by
+    ``gbx_custom_grid(...)``).  All rows in a group carry the same grid conf;
+    only the first row is read.  ``out_srid`` defaults to the grid's ``srid``
+    when null; if both are absent (grid.srid==-1 and out_srid is null),
+    raises ValueError.
+    """
+    from databricks.labs.gbx.pygx._custom import conf_from_row
+    from databricks.labs.gbx.pyrx import _env
+    from databricks.labs.gbx.pyrx.core import cellraster as cr
+
+    _env.configure_gdal_env()
+    # Zip cellid and value TOGETHER first so each value stays paired with its own
+    # cellid, then drop pairs whose cellid is null.
+    # pd.notna guards both Python None and float NaN (PySpark delivers a null Long
+    # as float('nan') inside the pandas Series, so `c is not None` is insufficient).
+    pairs = [(c, v) for c, v in zip(cellid, value) if pd.notna(c)]
+    if not pairs:
+        return None
+    # Guard: if cellid arrived as float64 (a null-containing BIGINT column causes
+    # PySpark/Arrow to upcast the Series), any custom id > 2**53 has already been
+    # silently rounded.  The Python wrapper (rst_custom_rasterize_agg) casts to
+    # STRING before calling this UDF, so it never triggers.  SQL callers that pass
+    # a BIGINT column with nulls should use CAST(cellid AS STRING).
+    if pd.api.types.is_float_dtype(cellid) and any(
+        abs(float(c)) > 2**53 for c, _ in pairs
+    ):
+        raise ValueError(
+            "rst_custom_rasterize_agg: cellid column contains large custom ids "
+            "(> 2**53) but arrived as float64 — a null in a BIGINT cellid column "
+            "caused PySpark/Arrow to upcast the Series, silently rounding cell ids.  "
+            "Pass CAST(cellid AS STRING) to the SQL UDF, or use the Python "
+            "rst_custom_rasterize_agg() wrapper which applies this cast automatically."
         )
+    cells = [int(c) for c, _ in pairs]
+    # Null value -> presence mask (1.0). A null in a typed (Double) value column
+    # arrives as np.nan, not None, so guard with pd.isna (np.nan is not None).
+    vals = [1.0 if v is None or pd.isna(v) else float(v) for _, v in pairs]
+    cell_values = {c: v for c, v in zip(cells, vals)}  # last-wins
+
+    # Extract the grid conf from the first row (per-group constant).
+    conf = conf_from_row(grid.iloc[0])
+
+    # Resolve output CRS: out_srid arg wins; else grid's srid; else error.
+    if out_srid is not None and out_srid.iloc[0] is not None:
+        _srid = int(out_srid.iloc[0])
+    elif conf.srid != -1:
+        _srid = conf.srid
     else:
-        _ps = float(pixel_size.iloc[0]) if _has(pixel_size) else None
-        grid = cr.compute_gridspec(
-            cells, srid=_srid, pixel_size=_ps, mode=_mode, kring_pad=_kp, grid="bng"
+        raise ValueError(
+            "rst_custom_rasterize_agg: grid has no CRS (srid=-1); "
+            "supply out_srid explicitly."
         )
-    return cr.cells_to_raster(cell_values, *grid, resolution=res, grid="bng")
+    # Build a per-call custom adapter; fallback_srid makes _reproject a no-op
+    # when the grid has srid==-1 and out_srid was supplied.
+    _ad = cr._CustomAdapter(conf, fallback_srid=_srid)
+    return _rasterize_agg_body(
+        cell_values,
+        cells,
+        _ad,
+        "custom",
+        _srid,
+        pixel_size,
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        width,
+        height,
+        mode,
+        kring_pad,
+    )
 
 
 # --- public Column wrappers (compose grouped-agg BINARY + scalar as_tile) ----
@@ -7974,6 +8856,61 @@ def rst_bng_rasterize_agg(
     )
 
 
+def rst_custom_rasterize_agg(
+    cellid: ColLike,
+    grid: ColLike,
+    value: ColLike = None,
+    out_srid: ColLike = None,
+    pixel_size: ColLike = None,
+    xmin: ColLike = None,
+    ymin: ColLike = None,
+    xmax: ColLike = None,
+    ymax: ColLike = None,
+    width: ColLike = None,
+    height: ColLike = None,
+    mode: ColLike = None,
+    kring_pad: ColLike = None,
+) -> Column:
+    """Rasterize a group's custom-grid cells into one tile (pixel-centroid burn).
+
+    ``grid`` is a CUSTOM_GRID_SCHEMA struct column (produced by
+    ``gbx_custom_grid(...)``).  ``value`` omitted -> presence mask
+    (1.0/NoData).  Supply an explicit extent (``xmin`` .. ``height``) for
+    aligned band stacking; else the grid is auto-derived per
+    ``mode``/``kring_pad``.  Output CRS: ``out_srid`` wins; falls back to the
+    grid's own ``srid`` when not supplied.  Use inside ``.agg()``::
+
+        df.groupBy(k).agg(prx.rst_custom_rasterize_agg("cellid", "grid").alias("tile"))
+
+    SQL returns BINARY (the raw grouped-agg UDF); Python returns a tile struct
+    (wrapped by ``_as_tile_udf``).
+    """
+
+    def _c(x, default):
+        return _col(x) if x is not None else f.lit(default)
+
+    _cellid_col = _col(cellid)
+    if isinstance(_cellid_col, str):
+        _cellid_col = f.col(_cellid_col)
+    return _as_tile_udf(
+        _rst_custom_rasterize_agg_udf(
+            _cellid_col.cast("string"),
+            _c(value, None),
+            _col(grid),
+            _c(out_srid, None),
+            _c(pixel_size, None),
+            _c(xmin, None),
+            _c(ymin, None),
+            _c(xmax, None),
+            _c(ymax, None),
+            _c(width, None),
+            _c(height, None),
+            _c(mode, "centroids"),
+            _c(kring_pad, 1),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # H3 cell bbox + gridspec helpers
 # ---------------------------------------------------------------------------
@@ -8242,6 +9179,13 @@ _sql_tile_ops = {
     "gbx_rst_fromfile": _fromfile_sql_udf,
     "gbx_rst_merge": _merge_udf,
     "gbx_rst_combineavg": _combineavg_udf,
+    "gbx_rst_combinemin": _combinemin_udf,
+    "gbx_rst_combinemax": _combinemax_udf,
+    "gbx_rst_combinesum": _combinesum_udf,
+    "gbx_rst_combinecount": _combinecount_udf,
+    "gbx_rst_combinemedian": _combinemedian_udf,
+    "gbx_rst_combinestddev": _combinestddev_udf,
+    "gbx_rst_align_to": _align_to_udf,
     "gbx_rst_frombands": _frombands_udf,
     "gbx_rst_transform": _transform_udf,
     "gbx_rst_to_webmercator": _to_webmercator_udf,
@@ -8311,6 +9255,7 @@ _sql_aggregators = {
     "gbx_rst_h3_rasterize_agg": _rst_h3_rasterize_agg_udf,
     "gbx_rst_quadbin_rasterize_agg": _rst_quadbin_rasterize_agg_udf,
     "gbx_rst_bng_rasterize_agg": _rst_bng_rasterize_agg_udf,
+    "gbx_rst_custom_rasterize_agg": _rst_custom_rasterize_agg_udf,
 }
 
 SQL_REGISTRY = {**_sql_accessors, **_sql_tile_ops, **_sql_aggregators}

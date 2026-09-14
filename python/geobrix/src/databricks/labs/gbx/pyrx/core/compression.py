@@ -4,24 +4,50 @@ Every light-tier write site routes profile-building through creation_opts so the
 materialize story is consistent. Mirrors heavy OperatorOptions.appendOptions.
 """
 
+import os
 import warnings
 
 _FLOAT = {"float32", "float64"}
 _SMALL_INT = {"uint8", "int8"}
 
-# Grounded by bench/compression_sweep.py (see .superpowers/sdd/compression-benchmark.md).
-# Breakpoints 1–128 MiB data-confirmed (Darwin arm64, rasterio 1.5.0/GDAL 3.12).
-# Breakpoints 256 MiB–inf extrapolated from 128 MiB trend + guidance; NEEDS
-# Serverless confirmation at 256/512/1024 MiB.
+# Grounded by .superpowers/sdd/2026-09-10-grid-fidelity-stage3/followup-compression-matrix-report.md
+# (full ZSTD level sweep across 11 tile types, rasterio 1.5.0/GDAL 3.12, Darwin arm64).
+#
+# Key finding: L6 is the universal knee.
+#   - L9 and L12 add nothing over L6 on output size for any tile type tested.
+#   - L16 frequently REGRESSES (e.g. +150 KB on 4-band 1024² float32).
+#   - Read time is level-independent: decompress throughput depends on output bytes,
+#     not on the level used to produce them.
+#   - Peak RAM tracks output size (not level), so higher levels waste CPU with no
+#     memory, size, or read benefit on GeoBrix tiles.
+#   - Prior ladder (L16/L12/L9) was wrong at both ends; L6 is the correct ceiling.
+#
+# Serverless confirmation (2026-09-11, env v6, oauth-fe): level selection verified for
+# 256/512/1024 MiB and >1 GiB via auto_level assertions (all PASS). Runtime: 256 MiB ok
+# (L3, 2.33x, lossless); 512 MiB OOMs the ~1 GiB task. A follow-up write-buffer spike
+# corrected the peak model: peak ≈ decoded array + the COMPRESSED OUTPUT bytes (+ ~5 MiB
+# GDAL) — NOT a GDAL strip buffer sized to the decode. So the OOM point tracks
+# COMPRESSIBILITY: near-incompressible data (output ≈ decoded) OOMs ~256 MiB decoded (worst
+# case tested); typical geospatial data (4–20x) pushes the effective ceiling to ~400–700 MiB
+# decoded. No write-path lever (tiling / windowed / tempfile / level) reduces this peak — the
+# compressed output IS the deliverable. So the >128 MiB rungs (L3/L1) are DEFENSIVE on
+# Serverless: the connect-aware stream cap (64 MiB on Serverless — materialize_decision — well
+# below the OOM ceiling) means a stream-read tile never reaches them; they apply only to
+# operation-produced large tiles or classic compute (256 MiB read cap), where L3 stays correct
+# (lower working-set than L6). materialize_decision remains the upstream memory guard.
+#
 # (decoded_bytes_ceiling, zstd_level) ascending; last entry ceiling = float('inf').
 _AUTO_LADDER = [
-    (4 * 1024**2, 16),  # <=4 MiB   -> L16
-    (128 * 1024**2, 12),  # <=128 MiB -> L12
-    (1 * 1024**3, 9),  # <=1 GiB   -> L9
-    (float("inf"), 6),  # >1 GiB    -> L6 (OOM guard)
+    (128 * 1024**2, 6),  # <=128 MiB -> L6 (knee level)
+    (1 * 1024**3, 3),  # <=1 GiB   -> L3 (balanced for large tiles)
+    (float("inf"), 1),  # >1 GiB    -> L1 (OOM guard)
 ]
-_AUTO_DEFAULT_LEVEL = 9  # used when decoded size is unknown (balanced default)
+_AUTO_DEFAULT_LEVEL = 6  # used when decoded size is unknown (L6 knee; was 9)
 DEFAULT_COMPRESS = "auto"
+
+# ZSTD valid level range (rfc 8878 / zstd 1.5.x).
+_ZSTD_MIN_LEVEL = 1
+_ZSTD_MAX_LEVEL = 22
 
 
 def predictor_for(dtype: str) -> int:
@@ -42,10 +68,57 @@ def predictor_for(dtype: str) -> int:
 def auto_level(decoded_bytes) -> int:
     """Return the ZSTD level appropriate for the given decoded payload size.
 
-    None -> _AUTO_DEFAULT_LEVEL (balanced, used when size is unknown).
+    The ``GBX_ZSTD_LEVEL`` environment variable provides an opt-in override for
+    the auto-compression path only (``compress='auto'`` call sites).  It is read
+    per-call so executors in Serverless / distributed workers pick it up at runtime.
+
+    Knob semantics (``GBX_ZSTD_LEVEL``):
+    - Unset or ``default`` (case-insensitive): use the size-adaptive ladder (default).
+    - ``fast``: fixed L1 — highest throughput, ~5–13 % larger output vs L6.
+    - ``max``: fixed L9 — heavy-parity ceiling; same output size as L6 on all tile
+      types tested; use only when heavy-tier parity is a hard requirement.
+    - An integer string in [1, 22] (e.g. ``"3"``): that fixed level, size-independent.
+    - Any other value: emits a ``UserWarning`` and falls back to the ladder.
+
+    The knob does **not** affect ``compress='zstd', level=N`` or any other explicit
+    codec call site — those already carry an explicit level.
+
+    None → _AUTO_DEFAULT_LEVEL (balanced, used when size is unknown).
     Otherwise returns the first ladder entry whose ceiling >= decoded_bytes,
     guaranteeing monotonic non-increasing levels as size grows.
     """
+    # Read env var per-call (propagates to Serverless/executor workers via os.environ).
+    # HARD REQ (pyrx-serverless-no-spark-config): never use spark.conf; use os.environ.
+    raw = os.environ.get("GBX_ZSTD_LEVEL")
+    if raw is not None:
+        key = raw.strip().lower()
+        if key in ("", "default"):
+            pass  # fall through to size-adaptive ladder
+        elif key == "fast":
+            return 1
+        elif key == "max":
+            return 9
+        else:
+            try:
+                lvl = int(key)
+                if _ZSTD_MIN_LEVEL <= lvl <= _ZSTD_MAX_LEVEL:
+                    return lvl
+                warnings.warn(
+                    f"GBX_ZSTD_LEVEL={raw!r} is out of range "
+                    f"[{_ZSTD_MIN_LEVEL}, {_ZSTD_MAX_LEVEL}]; "
+                    "falling back to size-adaptive ladder.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            except ValueError:
+                warnings.warn(
+                    f"GBX_ZSTD_LEVEL={raw!r} is not a recognised value "
+                    "(expected 'default', 'fast', 'max', or an integer 1–22); "
+                    "falling back to size-adaptive ladder.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+    # Size-adaptive ladder (default path, or fallback after bad knob value).
     if decoded_bytes is None:
         return _AUTO_DEFAULT_LEVEL
     for ceiling, level in _AUTO_LADDER:
@@ -74,6 +147,10 @@ def creation_opts(
         default (_AUTO_DEFAULT_LEVEL).
     compress:
         'auto' — size-adaptive ZSTD + dtype-derived predictor (recommended).
+        Level is chosen by ``auto_level``; the ``GBX_ZSTD_LEVEL`` env var
+        provides an opt-in override (values: ``default``/unset, ``fast``→L1,
+        ``max``→L9, or an integer string 1–22). Default behaviour preserves the
+        memory-efficient size-adaptive ladder. The knob is an opt-in only.
         'zstd' — explicit ZSTD; level defaults to _AUTO_DEFAULT_LEVEL.
         'deflate' — DEFLATE; level (zlevel) defaults to 6.
         'lzw' — LZW; predictor derived from dtype.

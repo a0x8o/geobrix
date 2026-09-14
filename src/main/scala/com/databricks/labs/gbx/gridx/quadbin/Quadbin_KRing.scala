@@ -26,7 +26,7 @@ case class Quadbin_KRing(
 /** Companion: SQL name gbx_quadbin_kring, builder. */
 object Quadbin_KRing extends WithExpressionInfo {
 
-    def execute(cell: Long, k: Int): Array[Long] = Quadbin.kRing(cell, k)
+    def execute(cell: Long, k: Int): Array[Long] = Quadbin.kRing(cell, k).toArray
 
     def eval(cell: Long, k: Int): ArrayData = ArrayData.toArrayData(execute(cell, k))
     def eval(cell: Long, k: Long): ArrayData = eval(cell, k.toInt)

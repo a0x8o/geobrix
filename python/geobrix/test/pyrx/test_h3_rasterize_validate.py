@@ -54,11 +54,12 @@ def test_roundtrip_rastertogrid_then_rasterize(spark):
     df.createOrReplaceTempView("_t5_dem")
 
     # gbx_rst_h3_rastertogridavg is a UDTF that yields flat (band, cellID, measure) rows.
-    # Filter to band 1 only.
+    # Filter to band 1 only; exclude covered-but-empty cells (NULL measure) added
+    # by complete coverage mode -- the round-trip only needs cells with pixel data.
     cells_df = spark.sql(
         "SELECT t.cellID AS cellid, t.measure AS measure "
         "FROM _t5_dem, LATERAL gbx_rst_h3_rastertogridavg(tile, %d) t "
-        "WHERE t.band = 1" % res
+        "WHERE t.band = 1 AND t.measure IS NOT NULL" % res
     )
     cellrows = cells_df.collect()
     assert len(cellrows) > 0, "rastertogridavg returned no cells for band 1"

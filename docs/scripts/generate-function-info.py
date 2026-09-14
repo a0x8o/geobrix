@@ -38,6 +38,11 @@ MODULES = [
     ("tests.python.api.gridx_functions_sql", "bng_", "gbx_bng_"),
     ("tests.python.api.gridx_functions_sql", "quadbin_", "gbx_quadbin_"),
     ("tests.python.api.gridx_functions_sql", "custom_", "gbx_custom_"),
+    # H3 geomk functions are light-only (no Scala); their SQL examples live in
+    # gridx_functions_sql.py under the h3_ prefix -> gbx_h3_ SQL names.
+    # This entry must come AFTER rasterx h3_ so rasterx gbx_h3_* examples take
+    # priority and gridx-only h3 geomk examples fill in the rest.
+    ("tests.python.api.gridx_functions_sql", "h3_", "gbx_h3_"),
 ]
 # VectorX: optional module (st_*_sql_example -> gbx_st_*)
 VECTORX_MODULE = ("tests.python.api.vectorx_functions_sql", "st_", "gbx_st_")

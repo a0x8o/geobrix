@@ -45,6 +45,7 @@ object functions extends Serializable {
         // Aggregators
         rd.register(BNG_CellIntersectionAgg)
         rd.register(BNG_CellUnionAgg)
+        rd.register(BNG_CellFill)
 
         // Generators
         rd.register(BNG_GeometryKLoopExplode)
@@ -67,7 +68,9 @@ object functions extends Serializable {
         ColumnAdapter(BNG_EastNorthAsBNG.name, Seq(east, north, resolution))
     def bng_euclideandistance(c1: Column, c2: Column): Column = ColumnAdapter(BNG_EuclideanDistance.name, Seq(c1, c2))
     def bng_geomkloop(geom: Column, resolution: Column, k: Column): Column = ColumnAdapter(BNG_GeometryKLoop.name, Seq(geom, resolution, k))
+    def bng_geomkloop(geom: Column, resolution: Column, k: Column, mode: Column): Column = ColumnAdapter(BNG_GeometryKLoop.name, Seq(geom, resolution, k, mode))
     def bng_geomkring(geom: Column, resolution: Column, k: Column): Column = ColumnAdapter(BNG_GeometryKRing.name, Seq(geom, resolution, k))
+    def bng_geomkring(geom: Column, resolution: Column, k: Column, mode: Column): Column = ColumnAdapter(BNG_GeometryKRing.name, Seq(geom, resolution, k, mode))
     def bng_kloop(cellId: Column, k: Column): Column = ColumnAdapter(BNG_KLoop.name, Seq(cellId, k))
     def bng_kring(cellId: Column, k: Column): Column = ColumnAdapter(BNG_KRing.name, Seq(cellId, k))
     def bng_pointascell(point: Column, resolution: Column): Column = ColumnAdapter(BNG_PointAsCell.name, Seq(point, resolution))
@@ -77,12 +80,24 @@ object functions extends Serializable {
     // Aggregators
     def bng_cellintersection_agg(c1: Column): Column = ColumnAdapter(BNG_CellIntersectionAgg.name, Seq(c1))
     def bng_cellunion_agg(c1: Column): Column = ColumnAdapter(BNG_CellUnionAgg.name, Seq(c1))
+    def bng_cellfill(cellid: Column, value: Column): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value))
+    def bng_cellfill(cellid: Column, value: Column, k: Int): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k)))
+    def bng_cellfill(cellid: Column, value: Column, k: Int, method: String): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k), lit(method)))
+    def bng_cellfill(cellid: Column, value: Column, k: Int, method: String, power: Double): Column =
+        ColumnAdapter(BNG_CellFill.name, Seq(cellid, value, lit(k), lit(method), lit(power)))
 
     // Generators
     def bng_geomkloopexplode(geom: Column, resolution: Column, k: Column): Column =
         ColumnAdapter(BNG_GeometryKLoopExplode.name, Seq(geom, resolution, k))
+    def bng_geomkloopexplode(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(BNG_GeometryKLoopExplode.name, Seq(geom, resolution, k, mode))
     def bng_geomkringexplode(geom: Column, resolution: Column, k: Column): Column =
         ColumnAdapter(BNG_GeometryKRingExplode.name, Seq(geom, resolution, k))
+    def bng_geomkringexplode(geom: Column, resolution: Column, k: Column, mode: Column): Column =
+        ColumnAdapter(BNG_GeometryKRingExplode.name, Seq(geom, resolution, k, mode))
     def bng_kloopexplode(cellId: Column, k: Column): Column = ColumnAdapter(BNG_KLoopExplode.name, Seq(cellId, k))
     def bng_kringexplode(cellId: Column, k: Column): Column = ColumnAdapter(BNG_KRingExplode.name, Seq(cellId, k))
     def bng_tessellateexplode(geom: Column, resolution: Column): Column = ColumnAdapter(BNG_TessellateExplode.name, Seq(geom, resolution, lit(true)))
@@ -95,8 +110,12 @@ object functions extends Serializable {
         bng_eastnorthasbng(east, north, lit(resolution))
     def bng_geomkloop(geom: Column, resolution: Int, k: Int): Column = bng_geomkloop(geom, lit(resolution), lit(k))
     def bng_geomkloop(geom: Column, resolution: String, k: Int): Column = bng_geomkloop(geom, lit(resolution), lit(k))
+    def bng_geomkloop(geom: Column, resolution: Int, k: Int, mode: String): Column = bng_geomkloop(geom, lit(resolution), lit(k), lit(mode))
+    def bng_geomkloop(geom: Column, resolution: String, k: Int, mode: String): Column = bng_geomkloop(geom, lit(resolution), lit(k), lit(mode))
     def bng_geomkring(geom: Column, resolution: Int, k: Int): Column = bng_geomkring(geom, lit(resolution), lit(k))
     def bng_geomkring(geom: Column, resolution: String, k: Int): Column = bng_geomkring(geom, lit(resolution), lit(k))
+    def bng_geomkring(geom: Column, resolution: Int, k: Int, mode: String): Column = bng_geomkring(geom, lit(resolution), lit(k), lit(mode))
+    def bng_geomkring(geom: Column, resolution: String, k: Int, mode: String): Column = bng_geomkring(geom, lit(resolution), lit(k), lit(mode))
     def bng_kloop(cellId: Column, k: Int): Column = bng_kloop(cellId, lit(k))
     def bng_kring(cellId: Column, k: Int): Column = bng_kring(cellId, lit(k))
     def bng_pointascell(point: Column, resolution: Int): Column = bng_pointascell(point, lit(resolution))
@@ -107,8 +126,12 @@ object functions extends Serializable {
     def bng_tessellate(geom: Column, resolution: String): Column = bng_tessellate(geom, lit(resolution))
     def bng_geomkloopexplode(geom: Column, resolution: Int, k: Int): Column = bng_geomkloopexplode(geom, lit(resolution), lit(k))
     def bng_geomkloopexplode(geom: Column, resolution: String, k: Int): Column = bng_geomkloopexplode(geom, lit(resolution), lit(k))
+    def bng_geomkloopexplode(geom: Column, resolution: Int, k: Int, mode: String): Column = bng_geomkloopexplode(geom, lit(resolution), lit(k), lit(mode))
+    def bng_geomkloopexplode(geom: Column, resolution: String, k: Int, mode: String): Column = bng_geomkloopexplode(geom, lit(resolution), lit(k), lit(mode))
     def bng_geomkringexplode(geom: Column, resolution: Int, k: Int): Column = bng_geomkringexplode(geom, lit(resolution), lit(k))
     def bng_geomkringexplode(geom: Column, resolution: String, k: Int): Column = bng_geomkringexplode(geom, lit(resolution), lit(k))
+    def bng_geomkringexplode(geom: Column, resolution: Int, k: Int, mode: String): Column = bng_geomkringexplode(geom, lit(resolution), lit(k), lit(mode))
+    def bng_geomkringexplode(geom: Column, resolution: String, k: Int, mode: String): Column = bng_geomkringexplode(geom, lit(resolution), lit(k), lit(mode))
     def bng_kloopexplode(cellId: Column, k: Int): Column = bng_kloopexplode(cellId, lit(k))
     def bng_kringexplode(cellId: Column, k: Int): Column = bng_kringexplode(cellId, lit(k))
     def bng_tessellateexplode(geom: Column, resolution: Int): Column = bng_tessellateexplode(geom, lit(resolution))

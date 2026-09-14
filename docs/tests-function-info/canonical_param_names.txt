@@ -60,40 +60,40 @@ gbx_rst_frombands_agg	tile, band_index
 gbx_rst_frombands	bands
 gbx_rst_fromcontent	content, driver
 gbx_rst_fromfile	path, [driver]
-gbx_rst_h3_tessellate	tile, resolution, [mode]
+gbx_rst_h3_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_maketiles	tile, size_in_mb
 gbx_rst_retile	tile, tile_width, tile_height
 gbx_rst_separatebands	tile
 gbx_rst_tooverlappingtiles	tile, tile_width, tile_height, overlap
 gbx_rst_h3_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_h3_rastertogridavg	tile, resolution
-gbx_rst_h3_rastertogridcount	tile, resolution
-gbx_rst_h3_rastertogridmax	tile, resolution
-gbx_rst_h3_rastertogridmin	tile, resolution
-gbx_rst_h3_rastertogridmedian	tile, resolution
-gbx_rst_h3_rastertogridsum	tile, resolution
-gbx_rst_h3_rastertogridvariance	tile, resolution
-gbx_rst_h3_rastertogridstddev	tile, resolution
-gbx_rst_quadbin_rastertogridavg	tile, resolution
-gbx_rst_quadbin_rastertogridcount	tile, resolution
-gbx_rst_quadbin_rastertogridmax	tile, resolution
-gbx_rst_quadbin_rastertogridmin	tile, resolution
-gbx_rst_quadbin_rastertogridmedian	tile, resolution
-gbx_rst_quadbin_rastertogridsum	tile, resolution
-gbx_rst_quadbin_rastertogridvariance	tile, resolution
-gbx_rst_quadbin_rastertogridstddev	tile, resolution
-gbx_rst_bng_rastertogridavg	tile, resolution
-gbx_rst_bng_rastertogridcount	tile, resolution
-gbx_rst_bng_rastertogridmax	tile, resolution
-gbx_rst_bng_rastertogridmedian	tile, resolution
-gbx_rst_bng_rastertogridmin	tile, resolution
-gbx_rst_bng_rastertogridsum	tile, resolution
-gbx_rst_bng_rastertogridvariance	tile, resolution
-gbx_rst_bng_rastertogridstddev	tile, resolution
+gbx_rst_h3_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_h3_rastertogridstddev	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_quadbin_rastertogridstddev	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridavg	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridcount	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmax	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmedian	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridmin	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridsum	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridvariance	tile, resolution, [coverage], [assignment]
+gbx_rst_bng_rastertogridstddev	tile, resolution, [coverage], [assignment]
 gbx_rst_bng_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_bng_tessellate	tile, resolution, [mode]
+gbx_rst_bng_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_quadbin_rasterize_agg	cellid, value, out_srid, pixel_size, xmin, ymin, xmax, ymax, width, height, mode, kring_pad
-gbx_rst_quadbin_tessellate	tile, resolution, [mode]
+gbx_rst_quadbin_tessellate	tile, resolution, [assignment], [coverage]
 gbx_rst_asformat	tile, new_format
 gbx_rst_clip	tile, geom, cutline_all_touched, [clip_crs]
 gbx_rst_combineavg	tiles
@@ -161,8 +161,8 @@ gbx_bng_centroid	cellid
 gbx_bng_distance	cellid1, cellid2
 gbx_bng_eastnorthasbng	easting, northing, resolution
 gbx_bng_euclideandistance	cellid1, cellid2
-gbx_bng_geomkloop	geom, resolution, k
-gbx_bng_geomkring	geom, resolution, k
+gbx_bng_geomkloop	geom, resolution, k, [mode]
+gbx_bng_geomkring	geom, resolution, k, [mode]
 gbx_bng_kloop	cellid, k
 gbx_bng_kring	cellid, k
 gbx_bng_pointascell	geom, resolution
@@ -170,8 +170,8 @@ gbx_bng_polyfill	geom, resolution
 gbx_bng_tessellate	geom, resolution, [keep_core_geom]
 gbx_bng_cellintersection_agg	input_chip
 gbx_bng_cellunion_agg	input_chip
-gbx_bng_geomkloopexplode	geom, resolution, k
-gbx_bng_geomkringexplode	geom, resolution, k
+gbx_bng_geomkloopexplode	geom, resolution, k, [mode]
+gbx_bng_geomkringexplode	geom, resolution, k, [mode]
 gbx_bng_kloopexplode	cellid, k
 gbx_bng_kringexplode	cellid, k
 gbx_bng_tessellateexplode	geom, resolution, keep_core_geom
@@ -186,6 +186,10 @@ gbx_quadbin_pointascell	longitude, latitude, resolution
 gbx_quadbin_polyfill	geom, resolution
 gbx_quadbin_resolution	cell
 gbx_quadbin_tessellate	geom, resolution
+gbx_quadbin_geomkring	geom, resolution, k, [mode]
+gbx_quadbin_geomkloop	geom, resolution, k, [mode]
+gbx_quadbin_geomkringexplode	geom, resolution, k, [mode]
+gbx_quadbin_geomkloopexplode	geom, resolution, k, [mode]
 gbx_custom_grid	bound_x_min, bound_x_max, bound_y_min, bound_y_max, cell_splits, root_cell_size_x, root_cell_size_y, srid
 gbx_custom_pointascell	point, grid, resolution
 gbx_custom_cellaswkb	cell, grid
@@ -193,6 +197,14 @@ gbx_custom_cellaswkt	cell, grid
 gbx_custom_centroid	cell, grid
 gbx_custom_polyfill	geom, grid, resolution
 gbx_custom_kring	cell, grid, k
+gbx_custom_geomkring	geom, grid, resolution, k, [mode]
+gbx_custom_geomkloop	geom, grid, resolution, k, [mode]
+gbx_custom_geomkringexplode	geom, grid, resolution, k, [mode]
+gbx_custom_geomkloopexplode	geom, grid, resolution, k, [mode]
+gbx_h3_geomkring	geom, resolution, k, [mode]
+gbx_h3_geomkloop	geom, resolution, k, [mode]
+gbx_h3_geomkringexplode	geom, resolution, k, [mode]
+gbx_h3_geomkloopexplode	geom, resolution, k, [mode]
 gbx_st_asmvt	geom, attrs, layer_name
 gbx_st_asmvt_pyramid	geom, attrs, min_z, max_z, layer_name, [extent]
 gbx_st_legacyaswkb	geom

@@ -1,5 +1,8 @@
 package com.databricks.labs.gbx.gridx.grid
 
+import com.databricks.labs.gbx.vectorx.jts.JTS
+import org.locationtech.jts.geom.Geometry
+
 /** CARTO quadbin v0 cell-math. Pure functions; no Spark / no GDAL dependency.
   *
   * Layout (64-bit Long) — matches the canonical
@@ -13,7 +16,7 @@ package com.databricks.labs.gbx.gridx.grid
   * internally. The grid is the standard XYZ "slippy map" tile grid (x increases east,
   * y increases south).
   */
-object Quadbin extends Serializable {
+object Quadbin extends GridSystem {
 
     /** Header constant: bit 62 set. */
     private[gbx] val HEADER: Long = 0x4000000000000000L
@@ -140,6 +143,59 @@ object Quadbin extends Serializable {
         math.atan(0.5 * (math.exp(nRad) - math.exp(-nRad))) * 180.0 / math.Pi
     }
 
+    // ---- GridSystem implementation ----
+
+    /** Stable grid name. */
+    def name: String = "QUADBIN"
+
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same lon/lat rectangle
+      * `cellIdToGeometry` draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
+
+    /** SRID for quadbin cell geometries (WGS84 lon/lat). */
+    def crsSrid: Int = 4326
+
+    /** Valid resolutions for quadbin (0..MAX_RESOLUTION). */
+    def resolutions: Set[Int] = (0 to MAX_RESOLUTION).toSet
+
+    /** GridSystem: index a (lon, lat) point to the quadbin cell at resolution. */
+    def pointToCellID(x: Double, y: Double, resolution: Int): Long = pointToCell(x, y, resolution)
+
+    /** GridSystem: quadbin cell -> its axis-aligned bounding-box polygon in EPSG:4326. */
+    def cellIdToGeometry(cellID: Long): Geometry = {
+        val (lonMin, latMin, lonMax, latMax) = cellBbox(cellID)
+        val geom = JTS.polygonFromXYs(
+            Array((lonMin, latMin), (lonMax, latMin), (lonMax, latMax), (lonMin, latMax), (lonMin, latMin))
+        )
+        geom.setSRID(4326)
+        geom
+    }
+
+    /** GridSystem: cells whose geometry intersects the input geometry at resolution. */
+    def polyfill(geometry: Geometry, resolution: Int): Seq[Long] = {
+        val e = geometry.getEnvelopeInternal
+        polyfillBbox((e.getMinX, e.getMinY, e.getMaxX, e.getMaxY), resolution)
+            .filter(c => cellIdToGeometry(c).intersects(geometry))
+            .toSeq
+    }
+
+    /**
+      * GridSystem: candidate cells for COVERING tessellation of a raster bbox.
+      *
+      * Raw polyfill of the bbox envelope, without a buffer — axis-aligned tiles
+      * already include every overlapping cell via the two-corner tile lookup that
+      * polyfillBbox performs. A centroid-blind-spot buffer is not needed because
+      * quadbin tiles are rectangles (unlike H3 hexagons or BNG squares, whose
+      * polyfill is centroid-based and requires a bbox buffer to capture edge cells).
+      *
+      *   val env = bbox.getEnvelopeInternal
+      *   val cells = Quadbin.polyfillBbox((env.getMinX, env.getMinY, env.getMaxX, env.getMaxY), resolution)
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val env = bbox.getEnvelopeInternal
+        polyfillBbox((env.getMinX, env.getMinY, env.getMaxX, env.getMaxY), resolution).toSeq
+    }
+
     /** Centroid of cell in EPSG:4326 (lon, lat). */
     def cellCenter(cell: Long): (Double, Double) = {
         val (xmin, ymin, xmax, ymax) = cellBbox(cell)
@@ -155,7 +211,7 @@ object Quadbin extends Serializable {
     }
 
     /** k-ring (Chebyshev distance ≤ k, inclusive) around `cell`. World-edge cells clip. */
-    def kRing(cell: Long, k: Int): Array[Long] = {
+    override def kRing(cell: Long, k: Int): Seq[Long] = {
         require(k >= 0, s"k must be >= 0; got $k")
         val z = resolution(cell)
         val n: Long = if (z == 0) 1L else 1L << z
@@ -172,7 +228,15 @@ object Quadbin extends Serializable {
             }
             dx += 1
         }
-        buf.toArray
+        buf.toSeq
+    }
+
+    /** k-loop (hollow ring at EXACTLY Chebyshev distance k) around `cell`. k=0 → Seq(cell). */
+    override def kLoop(cell: Long, k: Int): Seq[Long] = {
+        require(k >= 0, s"k must be >= 0; got $k")
+        if (k == 0) return Seq(cell)
+        val inner = kRing(cell, k - 1).toSet
+        kRing(cell, k).filterNot(inner.contains)
     }
 
     /** Polyfill an axis-aligned lon/lat bbox with cells at zoom `z` (cell-count guarded). */

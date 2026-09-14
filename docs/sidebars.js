@@ -121,7 +121,7 @@ const sidebars = {
             'api/virtual-tiles',
             'api/vrt-mosaic',
             'api/materialized-compression',
-            'api/h3-raster-tessellation',
+            'api/grid-raster-tessellation',
             'api/raster-sampling',
           ],
         },

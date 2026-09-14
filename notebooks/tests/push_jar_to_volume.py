@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Build the GeoBrix JAR (mvn clean package -DskipTests) and upload *-jar-with-dependencies.jar
-to GBX_ARTIFACT_VOLUME/<jar_filename>. Set GBX_BUNDLE_SKIP_JAR_UPLOAD=1 to skip build/upload.
-Loads config from notebooks/tests/databricks_cluster_config.env. Overwrites if file already exists.
+to GBX_ARTIFACT_VOLUME/<jar_filename>. Set GBX_BUNDLE_SKIP_JAR_UPLOAD=1 to build the JAR
+locally but skip the Databricks upload. Loads config from notebooks/tests/databricks_cluster_config.env.
+Overwrites if file already exists.
 """
 from __future__ import annotations
 
@@ -25,29 +26,30 @@ if _env_file.exists():
 
 
 def main() -> int:
-    if os.environ.get("GBX_BUNDLE_SKIP_JAR_UPLOAD", "").strip().lower() in ("1", "true", "yes"):
-        print("GBX_BUNDLE_SKIP_JAR_UPLOAD=1: skipping JAR build/upload.")
-        return 0
-
-    artifact_volume = (os.environ.get("GBX_ARTIFACT_VOLUME") or "").strip().rstrip("/")
-    if not artifact_volume:
-        print("Set GBX_ARTIFACT_VOLUME (e.g. /Volumes/catalog/schema/volume/artifacts)", file=sys.stderr)
-        return 2
-
-    host = os.environ.get("DATABRICKS_HOST")
-    token = os.environ.get("DATABRICKS_TOKEN")
-    profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
-    if not (host and token) and not profile:
-        print("Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE", file=sys.stderr)
-        return 2
-
-    try:
-        from databricks.sdk import WorkspaceClient
-    except ImportError:
-        print("Install databricks-sdk: pip install databricks-sdk", file=sys.stderr)
-        return 2
+    skip_jar_upload = os.environ.get("GBX_BUNDLE_SKIP_JAR_UPLOAD", "").strip().lower() in ("1", "true", "yes")
 
     project_root = TESTS_DIR.parent.parent
+
+    # Auth/volume checks: only required when uploading
+    if not skip_jar_upload:
+        artifact_volume = (os.environ.get("GBX_ARTIFACT_VOLUME") or "").strip().rstrip("/")
+        if not artifact_volume:
+            print("Set GBX_ARTIFACT_VOLUME (e.g. /Volumes/catalog/schema/volume/artifacts)", file=sys.stderr)
+            return 2
+
+        host = os.environ.get("DATABRICKS_HOST")
+        token = os.environ.get("DATABRICKS_TOKEN")
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+        if not (host and token) and not profile:
+            print("Set DATABRICKS_HOST and DATABRICKS_TOKEN, or DATABRICKS_CONFIG_PROFILE", file=sys.stderr)
+            return 2
+
+        try:
+            from databricks.sdk import WorkspaceClient
+        except ImportError:
+            print("Install databricks-sdk: pip install databricks-sdk", file=sys.stderr)
+            return 2
+
     # Corp firewall blocks repo.maven.apache.org on the host; the geobrix-dev container
     # has the db-maven-proxy mirror wired up via scripts/docker/m2/settings.xml.
     mvn_cmd = (
@@ -71,6 +73,11 @@ def main() -> int:
         print("No *-jar-with-dependencies.jar found in target/", file=sys.stderr)
         return 1
     jar_path = jars[0]
+
+    if skip_jar_upload:
+        print("GBX_BUNDLE_SKIP_JAR_UPLOAD=1: JAR built locally; skipping Databricks upload.")
+        return 0
+
     volume_path = f"{artifact_volume}/{jar_path.name}"
 
     w = WorkspaceClient(profile=profile) if profile else WorkspaceClient(host=host, token=token)

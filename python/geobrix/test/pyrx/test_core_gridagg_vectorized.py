@@ -47,7 +47,7 @@ def _reduce_ref(values, agg):
     if agg == "avg":
         return float(arr.mean())
     if agg == "count":
-        return int(arr.size)
+        return float(arr.size)  # float for heavy-tier parity (count is now Double)
     if agg == "min":
         return float(arr.min())
     if agg == "max":
@@ -156,7 +156,9 @@ def test_raster_to_grid_identity_synthetic(grid, agg):
     raster = _custom_raster(data, px=0.25)
     for res in (3, 6, 9):
         with _open(raster) as ds:
-            new = gridagg.raster_to_grid(ds, res, grid, agg)
+            new = gridagg.raster_to_grid(
+                ds, res, grid, agg, coverage="sparse", assignment="centroid"
+            )
         with _open(raster) as ds:
             old = _raster_to_grid_ref(ds, res, grid, agg)
         assert len(new) == len(old) == 1
@@ -186,7 +188,9 @@ def test_raster_to_grid_identity_multiband(grid, agg):
             dst.write(b2, 2)
         raster = mf.read()
     with _open(raster) as ds:
-        new = gridagg.raster_to_grid(ds, 7, grid, agg)
+        new = gridagg.raster_to_grid(
+            ds, 7, grid, agg, coverage="sparse", assignment="centroid"
+        )
     with _open(raster) as ds:
         old = _raster_to_grid_ref(ds, 7, grid, agg)
     assert len(new) == len(old) == 2

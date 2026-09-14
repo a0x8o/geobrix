@@ -154,12 +154,32 @@ def extract_builder_arities(scala_content: str, function_name: str) -> Optional[
 
     # Pattern 3: single fixed form, `=> new X(c(0), c(1))` / `=> X(c.head)`. Arity is the
     # highest c(i) index + 1, or 1 for the c.head/c(0)-only shape.
+    # The negative lookbehind `(?<![a-zA-Z_])` prevents matching `nc(0)`, `xc(1)` etc. that
+    # appear in `withNewChildrenInternal(nc: IndexedSeq[Expression]) = copy(nc(0), nc(1), ...)`
+    # — those are Spark internal plumbing and are NOT builder arity indicators.
     if not arities:
-        idxs = [int(i) for i in re.findall(r'c\((\d+)\)', builder_body)]
+        idxs = [int(i) for i in re.findall(r'(?<![a-zA-Z_])c\((\d+)\)', builder_body)]
         if idxs:
             arities = [max(idxs) + 1]
         elif re.search(r'c\.head', builder_body):
             arities = [1]
+
+    # Pattern 4: fallback for the delegate-to-factory shape.
+    # Some companions delegate their builder() to a shared FunctionBuilder factory defined
+    # elsewhere in the same file under a different method signature (e.g.
+    # `def builder(name: String)(make: ...)` in RST_Custom_RasterToGridBase). The factory
+    # still uses the canonical `(c: Seq[Expression]) => c.length match { case N => ... }`
+    # idiom, but it appears BEFORE the first `def builder(): FunctionBuilder =` anchor, so
+    # patterns 1-3 (which scan only from that anchor forward) cannot reach it.
+    # Scan the entire file for the idiom, which is always arity-dispatch code in this codebase.
+    if not arities:
+        factory_m = re.search(
+            r'\(c\s*:\s*Seq\[Expression\]\)\s*=>\s*c\.length\s+match\s*\{',
+            scala_content
+        )
+        if factory_m:
+            factory_body = scala_content[factory_m.end():]
+            arities = sorted({int(a) for a in re.findall(r'case\s+(\d+)\s*=>', factory_body)})
 
     if not arities:
         return None
@@ -201,48 +221,56 @@ def build_usage_args(
     return (", ".join(all_parts), min_arity)
 
 
-def parse_expression_file(filepath: str) -> Optional[Dict]:
+def parse_expression_file(filepath: str) -> List[Dict]:
     """
-    Parse a single Scala expression file and extract metadata.
+    Parse a Scala expression file and return metadata for ALL registered functions in it.
 
-    Returns:
+    Most files hold exactly one case class + companion, so the list has one entry. Some
+    files pack multiple stat variants together (e.g. RST_Custom_RasterToGrid.scala holds
+    all 8 custom rastertogrid stats), in which case the list has one entry per variant.
+    A file where multiple companions share ONE SQL name (e.g. ST_TransformCrs and
+    ST_TransformCrs3 both register gbx_st_transformcrs) is still treated as one logical
+    function, described by the widest case class.
+
+    Each entry is a dict:
       {
         "function_name": "gbx_st_triangulate",
         "class_name": "ST_Triangulate",
-        "usage_args": "points_geom, breaklines_geom, merge_tolerance, snap_tolerance, split_point_finder, [mode]",
+        "usage_args": "points_geom, ..., [mode]",
         "optional_from": 6,
-        "field_count": 6
+        "field_count": 6,
+        "arities": (5, 6)
       }
-      or None if parsing fails.
     """
     try:
         with open(filepath, 'r') as f:
             content = f.read()
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
-        return None
+        return []
 
-    # Extract class name from "case class ClassName"
-    class_match = re.search(r'case\s+class\s+(\w+)', content)
-    if not class_match:
-        return None
-    class_name = class_match.group(1)
+    # Collect all SQL names and all case class positions in the file.
+    all_name_matches = list(re.finditer(
+        r'override\s+def\s+name\s*:\s*String\s*=\s*["\']([^"\']+)["\']', content
+    ))
+    if not all_name_matches:
+        return []
 
-    # Extract function name from companion object's override def name
-    name_match = re.search(r'override\s+def\s+name\s*:\s*String\s*=\s*["\']([^"\']+)["\']', content)
-    if not name_match:
-        return None
-    function_name = name_match.group(1)
+    all_class_matches = list(re.finditer(r'case\s+(?:final\s+)?class\s+(\w+)', content))
+    if not all_class_matches:
+        return []
 
-    # A file may hold SEVERAL companions sharing ONE registered SQL name, each fronting a
-    # different-arity case class (ST_TransformCrs / ST_TransformCrs3 both register
-    # gbx_st_transformcrs with 2 and 3 fields). Taking the first `case class` then describes
-    # only the narrowest overload: that is how `[source_crs]` was dropped from
-    # gbx_st_transformcrs. When it happens, prefer the WIDEST case class so the optional
-    # trailing args are visible, and report it so the ambiguity stays auditable.
-    sql_names = set(re.findall(r'override\s+def\s+name\s*:\s*String\s*=\s*["\']([^"\']+)["\']', content))
-    if len(sql_names) == 1:
-        candidates = re.findall(r'case\s+class\s+(\w+)', content)
+    unique_sql_names = {m.group(1) for m in all_name_matches}
+
+    results: List[Dict] = []
+
+    if len(unique_sql_names) == 1:
+        # Single SQL name — possibly backed by multiple case classes (multi-companion pattern,
+        # e.g. ST_TransformCrs + ST_TransformCrs3 both register gbx_st_transformcrs).
+        # Use the widest case class so optional trailing args are visible.
+        function_name = all_name_matches[0].group(1)
+        class_name = all_class_matches[0].group(1)
+        candidates = [m.group(1) for m in all_class_matches]
         if len(candidates) > 1:
             widest, widest_n = class_name, len(extract_case_class_fields(content, class_name) or [])
             for cand in candidates:
@@ -256,28 +284,59 @@ def parse_expression_file(filepath: str) -> Optional[Dict]:
                 )
                 class_name = widest
 
-    # Extract case class fields
-    fields = extract_case_class_fields(content, class_name)
-    if not fields:
-        return None
+        fields = extract_case_class_fields(content, class_name)
+        if not fields:
+            return []
 
-    # Extract builder arities
-    arities = extract_builder_arities(content, function_name)
-    if not arities:
-        # If we can't parse builder, use field count as exact arity
-        arities = (len(fields), None)
+        arities = extract_builder_arities(content, function_name)
+        if not arities:
+            arities = (len(fields), None)
 
-    min_arity, max_arity = arities
-    usage_args, optional_from = build_usage_args(fields, min_arity, max_arity or min_arity)
+        min_arity, max_arity = arities
+        usage_args, optional_from = build_usage_args(fields, min_arity, max_arity or min_arity)
+        results.append({
+            "function_name": function_name,
+            "class_name": class_name,
+            "usage_args": usage_args,
+            "optional_from": optional_from,
+            "field_count": len(fields),
+            "arities": arities,
+        })
 
-    return {
-        "function_name": function_name,
-        "class_name": class_name,
-        "usage_args": usage_args,
-        "optional_from": optional_from,
-        "field_count": len(fields),
-        "arities": arities
-    }
+    else:
+        # Multiple distinct SQL names in one file — e.g. RST_Custom_RasterToGrid.scala
+        # holds RST_Custom_RasterToGridAvg, ...Count, ...Max, etc., each with its own name.
+        # Pair each SQL name with the nearest preceding case class.
+        class_positions = [(m.start(), m.group(1)) for m in all_class_matches]
+        for name_m in all_name_matches:
+            function_name = name_m.group(1)
+            pos = name_m.start()
+            # Find the last case class that starts before this name declaration.
+            preceding = [(cp, cn) for cp, cn in class_positions if cp < pos]
+            if not preceding:
+                continue
+            class_name = preceding[-1][1]
+
+            fields = extract_case_class_fields(content, class_name)
+            if not fields:
+                continue
+
+            arities = extract_builder_arities(content, function_name)
+            if not arities:
+                arities = (len(fields), None)
+
+            min_arity, max_arity = arities
+            usage_args, optional_from = build_usage_args(fields, min_arity, max_arity or min_arity)
+            results.append({
+                "function_name": function_name,
+                "class_name": class_name,
+                "usage_args": usage_args,
+                "optional_from": optional_from,
+                "field_count": len(fields),
+                "arities": arities,
+            })
+
+    return results
 
 
 def scan_expressions_directory(expressions_dir: str) -> Dict[str, Dict]:
@@ -297,8 +356,8 @@ def scan_expressions_directory(expressions_dir: str) -> Dict[str, Dict]:
         if any(skip in scala_file.name for skip in ["Util", "Config", "Test", "Mock"]):
             continue
 
-        parsed = parse_expression_file(str(scala_file))
-        if parsed:
+        parsed_list = parse_expression_file(str(scala_file))
+        for parsed in parsed_list:
             result[parsed["function_name"]] = {
                 "usage_args": parsed["usage_args"],
                 "optional_from": parsed["optional_from"],

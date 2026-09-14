@@ -30,6 +30,9 @@ from shapely import to_wkb as _to_wkb
 from shapely.geometry import Point as _Point
 from shapely.geometry import box as _box
 
+from . import _dilate
+from ._geom import parse_geom
+
 ID_BITS = 56  # GridConf.idBits — low 56 bits hold the cell position
 RES_BITS = 8  # GridConf.resBits — top 8 bits hold the resolution
 _POSITION_MASK = 0x00FFFFFFFFFFFFFF
@@ -315,8 +318,55 @@ def polyfill(conf: CustomGridConf, geometry, resolution: int) -> List[int]:
             cx = get_cell_center_x(conf, x, resolution)
             cy = get_cell_center_y(conf, y, resolution)
             if geometry.contains(_Point(cx, cy)):
-                out.append(point_to_cell_id(conf, cx, cy, resolution))
+                # The over-scan (and ceil-rounded grid extent) can produce an
+                # edge cell whose CENTER lies just past bound_x/y_max — not a
+                # real grid cell. Use the _or_none form so such a center is
+                # skipped rather than raising a data-context ValueError that
+                # would surface as a task failure (a geometry straddling the
+                # upper grid boundary). Bad resolution still raises (param).
+                cid = point_to_cell_id_or_none(conf, cx, cy, resolution)
+                if cid is not None:
+                    out.append(cid)
     return out
+
+
+def covering_candidate_cells(
+    conf: CustomGridConf, geometry, resolution: int
+) -> List[int]:
+    """Candidate cell IDs for COVERING tessellation of a raster bbox / pixel rect.
+
+    Port of ``CustomGridSystem.coveringCandidateCells`` (CustomGridSystem.scala:197-200).
+    Custom ``polyfill`` is CENTROID-containment, so a geometry SMALLER than a cell
+    — the normal raster→grid regime (a sub-cell pixel, or a small raster bbox) —
+    contains NO cell centre and ``polyfill`` alone returns ZERO cells, silently
+    dropping that pixel's mass.  Buffering the geometry by one cell dimension
+    (``max(cell_width, cell_height)``) before the centroid-containment scan
+    guarantees the containing cell — whose centre is within half a cell of any
+    interior point — is enumerated.  The caller's positive-area / intersection-area
+    keep-test discards the extra ring the buffer adds, so over-scanning is safe;
+    UNDER-scanning was the bug (light custom covering dropped sub-cell pixels,
+    unlike heavy, which buffers here).
+
+    The buffer ring legitimately reaches past the grid extent for a geometry near
+    the grid edge, so the buffered geometry is CLIPPED to the grid extent before
+    ``polyfill`` — no candidate centre then falls outside the grid bounds (which
+    would make ``polyfill``'s ``point_to_cell_id`` raise, exactly as heavy
+    ``pointToCellID`` does on an out-of-bounds centre).  This is the exact analog
+    of the BNG covering path (buffer, then drop out-of-GB cells): the clip removes
+    only candidates the covering keep-test would drop anyway, so the covered cell
+    set is unchanged for the interior rasters both tiers actually process, while a
+    raster reaching the grid edge degrades gracefully instead of raising.
+    """
+    if geometry is None or geometry.is_empty:
+        return []
+    buf = max(cell_width(conf, resolution), cell_height(conf, resolution))
+    grid_extent = _box(
+        conf.bound_x_min, conf.bound_y_min, conf.bound_x_max, conf.bound_y_max
+    )
+    clipped = geometry.buffer(buf).intersection(grid_extent)
+    if clipped.is_empty:
+        return []
+    return polyfill(conf, clipped, resolution)
 
 
 # --- k_ring (CustomGridSystem.kRing) ------------------------------------------
@@ -356,3 +406,109 @@ def k_ring(conf: CustomGridConf, cell_id: int, k: int) -> List[int]:
             pos = get_cell_position_from_positions(conf, x, y, res)
             out.append(get_cell_id(pos, res))
     return out
+
+
+def k_loop(conf: CustomGridConf, cell_id: int, k: int) -> List[int]:
+    """Hollow ring of custom-grid cells at EXACTLY Chebyshev distance k.
+
+    k=0 returns [cell_id] (center only).  k<0 raises ValueError.  For k>=1,
+    computed as sorted(k_ring(k) - k_ring(k-1)), mirroring heavy
+    CustomGridSystem.kLoop semantics exactly (set-difference of clamped rings).
+    """
+    if k < 0:
+        raise ValueError(f"gbx_custom: k_loop k must be >= 0; got {k}")
+    if k == 0:
+        return [int(cell_id)]
+    return sorted(set(k_ring(conf, cell_id, k)) - set(k_ring(conf, cell_id, k - 1)))
+
+
+def distance(conf: CustomGridConf, cell_a: int, cell_b: int) -> int:
+    """Chebyshev grid-ring distance between two custom-grid cells.
+
+    Distance = max(|dx|, |dy|) in cell-position units, consistent with
+    CustomGridSystem.distance (heavy).  This is the minimum k such that
+    cell_b appears in k_ring(cell_a, k).
+
+    Both cells are decoded to their (x, y) grid positions at their
+    respective resolutions; positions are in separate resolution spaces
+    when resolutions differ (caller's responsibility to pass same-resolution
+    cells for meaningful results, matching heavy behavior).
+    """
+    res_a = get_cell_resolution(cell_a)
+    pos_a = get_cell_position(cell_a)
+    ax = get_cell_position_x(conf, pos_a, res_a)
+    ay = get_cell_position_y(conf, pos_a, res_a)
+
+    res_b = get_cell_resolution(cell_b)
+    pos_b = get_cell_position(cell_b)
+    bx = get_cell_position_x(conf, pos_b, res_b)
+    by = get_cell_position_y(conf, pos_b, res_b)
+
+    return max(abs(ax - bx), abs(ay - by))
+
+
+# --- geometry-aware kring/kloop (shared dilation engine) ----------------------
+
+
+def _cell_geom(conf: CustomGridConf, cell_id: int):
+    """Shapely polygon for a custom-grid cell (reuses cell_id_to_polygon)."""
+    return cell_id_to_polygon(conf, cell_id)
+
+
+def classify(conf: CustomGridConf, geom, resolution: int):
+    """Classify polyfill candidates vs P (geom), S (solid), H (holes).
+
+    geom must already be a Shapely geometry; call parse_geom first if raw
+    bytes/str.  Closures capture `conf` so callers need not thread it into
+    the engine internals.
+    """
+    return _dilate.classify(
+        geom,
+        int(resolution),
+        polyfill_fn=lambda g, r: polyfill(conf, g, r),
+        cell_geom_fn=lambda c: _cell_geom(conf, c),
+    )
+
+
+def geometry_k_ring(
+    conf: CustomGridConf,
+    geom,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+) -> List[int]:
+    """Geometry-aware k-ring for a custom grid.
+
+    Mirrors ``_quadbin.geometry_k_ring`` with the leading ``conf`` argument
+    that all custom-grid functions require.
+
+    geom: WKB bytes, WKT string, or Shapely geometry.
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(conf, parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("ring", int(k), mode, cls, lambda c: k_loop(conf, c, 1))
+    )
+
+
+def geometry_k_loop(
+    conf: CustomGridConf,
+    geom,
+    resolution: int,
+    k: int,
+    mode: str = _dilate.DEFAULT_MODE,
+) -> List[int]:
+    """Geometry-aware k-loop (hollow ring) for a custom grid.
+
+    Returns a sorted list of int (BIGINT) cell ids.
+    """
+    parsed = parse_geom(geom)
+    if parsed is None or parsed.is_empty:
+        return []
+    cls = classify(conf, parsed, int(resolution))
+    return sorted(
+        _dilate.geom_expand("loop", int(k), mode, cls, lambda c: k_loop(conf, c, 1))
+    )

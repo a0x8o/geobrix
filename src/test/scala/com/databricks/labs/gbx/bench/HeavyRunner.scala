@@ -2,6 +2,7 @@ package com.databricks.labs.gbx.bench
 
 import com.databricks.labs.gbx.rasterx.functions
 import com.databricks.labs.gbx.rasterx.gdal.RasterDriver
+import com.databricks.labs.gbx.gridx.{h3 => h3fns, quadbin => qbfns, bng => bngfns}
 import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.gdal.gdal.{Dataset, gdal}
@@ -222,6 +223,11 @@ object HeavyRunner {
                    argsByFn: Map[String, Map[String, String]],
                    sink: BenchRow => Unit = _ => ()): Seq[BenchRow] = {
     functions.register(spark)
+    // Register GridX function packages so cellfill (and any other GridX fn) SQL names
+    // resolve in expr() calls inside aggregateColumn. Registration is idempotent.
+    h3fns.functions.register(spark)
+    qbfns.functions.register(spark)
+    bngfns.functions.register(spark)
     // The *_agg aggregators hold whole rasters in memory while aggregating: the
     // ObjectHash aggregate map buffers per-group state and the raster UDAFs decode
     // every input tile (a 1024x1024x4 float32 tile is ~16MB, plus GDAL dataset
@@ -391,6 +397,11 @@ object HeavyRunner {
     val savedShuffle = spark.conf.get("spark.sql.shuffle.partitions")
     try {
       val kind = BenchDispatch.inputKind(fn)
+      // cellfill grid aggregators ride the grid_aggregate branch but RETURN the
+      // filled cell set (ARRAY<STRUCT<cellid,value>>), so both the group-df build
+      // (NULL-containing corpus) and the fingerprint (dggs cell-set, not raster)
+      // branch on this. Hoisted here so it is visible to both.
+      val isCellFill = BenchDispatch.cellFill.contains(fn)
       // Build the fixed group DataFrame + (for geometry aggregators) extent.
       var ext: (Double, Double, Double, Double, Int, Int, Int) = (0, 0, 0, 0, 0, 0, 0)
       val groupDf: org.apache.spark.sql.DataFrame = if (kind == "tile_aggregate") {
@@ -420,22 +431,34 @@ object HeavyRunner {
         // H3 + quadbin cellids are LONG; BNG cellids are OS grid reference STRINGS.
         import org.apache.spark.sql.Row
         import org.apache.spark.sql.types.{DoubleType, LongType, StringType, StructField, StructType}
+        // cellfill REUSES each grid's rasterize cell set but NULLs a deterministic
+        // value subset (cellFillValues) so the fill does real work; rasterize_agg
+        // streams value=NULL on every row (presence-mask burn). Both mirror the pyrx
+        // spec.*_cellfill_cells / *_rasterize_cells recipes exactly.
         fn match {
-          case "rst_bng_rasterize_agg" =>
+          case "rst_bng_rasterize_agg" | "bng_cellfill" =>
             val schema = StructType(Seq(
               StructField("cellid", StringType, nullable = false),
               StructField("value", DoubleType, nullable = true)))
-            val rows = BenchDispatch.bngRasterizeCells().map(c => Row(c, null))
+            val cells = BenchDispatch.bngRasterizeCells()
+            val vals: Seq[Any] =
+              if (isCellFill) BenchDispatch.cellFillValues(cells.length)
+              else Seq.fill(cells.length)(null)
+            val rows = cells.zip(vals).map { case (c, v) => Row(c, v) }
             spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
           case _ =>
-            // rst_h3_rasterize_agg / rst_quadbin_rasterize_agg: LONG cell ids.
+            // rst_h3/quadbin_rasterize_agg + h3/quadbin_cellfill: LONG cell ids.
             val schema = StructType(Seq(
               StructField("cellid", LongType, nullable = false),
               StructField("value", DoubleType, nullable = true)))
             val cells: Seq[Long] =
-              if (fn == "rst_quadbin_rasterize_agg") BenchDispatch.quadbinRasterizeCells()
+              if (isCellFill) BenchDispatch.cellFillLongCells(fn)
+              else if (fn == "rst_quadbin_rasterize_agg") BenchDispatch.quadbinRasterizeCells()
               else BenchDispatch.h3RasterizeCells()
-            val rows = cells.map(c => Row(c, null))
+            val vals: Seq[Any] =
+              if (isCellFill) BenchDispatch.cellFillValues(cells.length)
+              else Seq.fill(cells.length)(null)
+            val rows = cells.zip(vals).map { case (c, v) => Row(c, v) }
             spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
         }
       } else {
@@ -464,7 +487,22 @@ object HeavyRunner {
         val collected = one.groupBy("key").agg(aggCol.alias("out")).collect()
         if (collected.isEmpty || collected(0).isNullAt(collected(0).fieldIndex("out")))
           BenchFingerprint.empty
-        else {
+        else if (isCellFill) {
+          // cellfill returns ARRAY<STRUCT<cellid, value>> (the NULL-filled cell set),
+          // NOT a tile. Fingerprint the cell set the SAME way the light tier does
+          // (decode -> dggs): cell COUNT over ALL ids, agg over PRESENT (non-null)
+          // values only. BNG cell ids are STRINGS; h3/quadbin are LONGs.
+          val arr = collected(0).getSeq[org.apache.spark.sql.Row](collected(0).fieldIndex("out"))
+          if (fn == "bng_cellfill") {
+            val ids  = arr.map(_.getString(0))
+            val vals = arr.filter(r => !r.isNullAt(1)).map(_.getDouble(1))
+            BenchFingerprint.ofCellFillStr(ids, vals)
+          } else {
+            val ids  = arr.map(_.getLong(0))
+            val vals = arr.filter(r => !r.isNullAt(1)).map(_.getDouble(1))
+            BenchFingerprint.ofCellFill(ids, vals)
+          }
+        } else {
           val tile = collected(0).getStruct(collected(0).fieldIndex("out"))
           val rasterBytes = tile.getAs[Array[Byte]]("raster")
           if (rasterBytes == null || rasterBytes.isEmpty) BenchFingerprint.empty

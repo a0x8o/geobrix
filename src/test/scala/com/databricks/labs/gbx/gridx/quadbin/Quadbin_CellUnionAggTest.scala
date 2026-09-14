@@ -16,7 +16,7 @@ class Quadbin_CellUnionAggTest extends AnyFunSuite {
     private val baseCell: Long = Quadbin.pointToCell(0.0, 0.0, 8)
     private val testCells: Array[Long] = {
         val ring = Quadbin.kRing(baseCell, 1)
-        ring.take(4)
+        ring.take(4).toArray
     }
 
     private def freshAgg(): Quadbin_CellUnionAgg = {

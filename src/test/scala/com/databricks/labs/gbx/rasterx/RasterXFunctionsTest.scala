@@ -248,6 +248,16 @@ class RasterXFunctionsTest extends AnyFunSuite {
         result should not be null
     }
 
+    test("rst_h3_rastertogridavg has 3-arg (coverage) and 4-arg (coverage, assignment) overloads") {
+        val result3 = functions.rst_h3_rastertogridavg(col("tile"), col("res"), "complete")
+        result3 should not be null
+        val result4 = functions.rst_h3_rastertogridavg(col("tile"), col("res"), "complete", "covering")
+        result4 should not be null
+        // Positional contract: coverage precedes assignment in expression string (fails on transpose)
+        val s = result4.toString
+        s.indexOf("complete") should be < s.indexOf("covering")
+    }
+
     // ====== Operation Functions ======
 
     test("rst_asformat should accept tile and format") {

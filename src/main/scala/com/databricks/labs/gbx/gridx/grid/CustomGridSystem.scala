@@ -9,15 +9,20 @@ import org.locationtech.jts.geom.{Coordinate, Geometry}
 import scala.util.{Success, Try}
 
 //noinspection ScalaWeakerAccess
-case class CustomGridSystem(conf: GridConf) extends Serializable {
+case class CustomGridSystem(conf: GridConf) extends GridSystem {
 
     def crsID: Int =
         conf.crsID.getOrElse(
           throw new Error("CRS ID is not defined for this grid system")
         )
 
-    val name =
-        f"CUSTOM(${conf.boundXMin}, ${conf.boundXMax}, ${conf.boundYMin}, ${conf.boundYMax}, ${conf.cellSplits}, ${conf.rootCellSizeX}, ${conf.rootCellSizeY})"
+    val name: String = "CUSTOM"
+
+    def crsSrid: Int = crsID
+
+    /** Analytic-square cells: `pointToCellID` floor-bins to the same square `cellIdToGeometry`
+      * draws, so the covering interior fast-path is bit-exact. */
+    override def coveringFastPathExact: Boolean = true
 
     def getResolutionStr(resolution: Int): String = resolution.toString
 
@@ -36,8 +41,8 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
       *   A collection of cell IDs forming a k ring.
       */
 
-    def kRing(cellID: Long, k: Int): Seq[Long] = {
-        assert(k >= 0, "k must be at least 0")
+    override def kRing(cellID: Long, k: Int): Seq[Long] = {
+        if (k < 0) throw new IllegalArgumentException(s"k must be >= 0; got $k")
 
         val res = getCellResolution(cellID)
 
@@ -70,8 +75,9 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
       * @return
       *   A collection of cell IDs forming a k loop.
       */
-    def kLoop(cellID: Long, k: Int): Seq[Long] = {
-        assert(k >= 1, "k must be at least 1")
+    override def kLoop(cellID: Long, k: Int): Seq[Long] = {
+        if (k == 0) return Seq(cellID)
+        if (k < 0) throw new IllegalArgumentException(s"k must be >= 0; got $k")
         val ring = kRing(cellID, k)
         val innerRing = kRing(cellID, k - 1)
         ring.diff(innerRing)
@@ -172,10 +178,35 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
             // Select only cells which center falls within the geometry
             .filter(cell => geometry.contains(JTS.point(cell._1, cell._2)))
 
-            // Extract cellIDs only
-            .map(cell => pointToCellID(cell._1, cell._2, resolution))
+            // Extract cellIDs. The over-scan (and ceil-rounded grid extent) can
+            // yield an edge cell whose CENTER lies just past boundX/YMax — not a
+            // real grid cell. pointToCellIdOrNull returns null for such an
+            // out-of-bounds center (a geometry straddling the upper boundary)
+            // instead of throwing, and we drop it — keeping polyfill/tessellate/
+            // geometryKRing robust and matching the light tier. Bad resolution
+            // still throws (a parameter error).
+            .flatMap(cell => Option(pointToCellIdOrNull(cell._1, cell._2, resolution)).map(_.longValue))
 
         result
+    }
+
+    /**
+      * Candidate cells for covering tessellation of a raster bounding box.
+      *
+      * Custom polyfill is centroid-based, so covering enumeration buffers by one cell
+      * dimension to include cells that overlap the bbox but whose centroid lies outside;
+      * the covering keep-test removes any non-overlapping extras.
+      *
+      * @param bbox
+      *   Raster bounding-box polygon in the grid's native CRS.
+      * @param resolution
+      *   Grid resolution at which to enumerate candidate cells.
+      * @return
+      *   Candidate cell ids (Long) for the covering set.
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufferDist = math.max(getCellWidth(resolution), getCellHeight(resolution))
+        polyfill(bbox.buffer(bufferDist), resolution)
     }
 
     def getCellResolution(cellId: Long): Int = {
@@ -289,6 +320,9 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
         conf.rootCellCountY * Math.pow(conf.cellSplits, resolution).toLong
     }
 
+    /** Chebyshev grid distance between two cells: min k such that b ∈ kRing(a, k), i.e.
+      * max(|dx|, |dy|) in cell-position units. Consistent with the kRing/kLoop ring definition.
+      */
     def distance(cellId: Long, cellId2: Long): Long = {
         val resolution1 = getCellResolution(cellId)
         val resolution2 = getCellResolution(cellId2)
@@ -298,9 +332,10 @@ case class CustomGridSystem(conf: GridConf) extends Serializable {
         val x2 = getCellCenterX(getCellPositionX(cellId2, resolution2), resolution2)
         val y1 = getCellCenterY(getCellPositionY(cellId, resolution1), resolution1)
         val y2 = getCellCenterY(getCellPositionY(cellId2, resolution2), resolution2)
-        // Manhattan distance with edge size precision
-        val distance = math.abs((x1 - x2) / edgeSizeX) + math.abs((y1 - y2) / edgeSizeY)
-        distance.toLong
+        // Chebyshev (grid-ring) distance: max of absolute axis deltas in cell-position units
+        val dx = math.abs((x1 - x2) / edgeSizeX)
+        val dy = math.abs((y1 - y2) / edgeSizeY)
+        math.max(dx, dy).toLong
     }
 
     private def getCellCenterX(cellPositionX: Long, resolution: Int) = {

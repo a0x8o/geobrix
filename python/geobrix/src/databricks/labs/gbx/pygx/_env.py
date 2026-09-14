@@ -48,3 +48,18 @@ def assert_custom_available() -> None:
             "pygx custom gridding requires a light-tier extra (shapely). "
             "Install with: pip install 'geobrix[light_env6]'"
         )
+
+
+def assert_h3_available() -> None:
+    """Raise a clear ImportError if the h3 library is missing.
+
+    The pygx h3 cellfill aggregator needs only the h3 library (cell-ID
+    conversion and grid_ring neighbour lookup); no native GDAL or shapely.
+    """
+    try:
+        import h3  # noqa: F401
+    except Exception:  # noqa: BLE001
+        raise ImportError(
+            "pygx h3 cellfill requires the h3 library. "
+            "Install with: pip install 'geobrix[light_env6]'"
+        )

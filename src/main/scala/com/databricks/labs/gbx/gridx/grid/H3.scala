@@ -16,7 +16,7 @@ import scala.util.{Success, Try}
   *
   * @see [[https://github.com/uber/h3-java]]
   */
-object H3 extends Serializable {
+object H3 extends GridSystem {
 
     /** Edge length in km for the given resolution. */
     def edgeLength(res: Int): Double = h3.edgeLength(res, LengthUnit.km)
@@ -24,7 +24,14 @@ object H3 extends Serializable {
     /** CRS for H3 (WGS84). */
     def crsID: Int = 4326
 
+    /** GridSystem: SRID the grid's cell geometries are expressed in (WGS84). */
+    def crsSrid: Int = 4326
+
     val name = "H3"
+
+    /** H3's `geoToH3` partition differs from its `h3ToGeoBoundary` chord polygon, so the covering
+      * interior fast-path would shift edge-sliver weights; keep the exact intersection path. */
+    override def coveringFastPathExact: Boolean = false
 
     val extent: Polygon =
         JTS.polygonFromXYs(
@@ -204,26 +211,54 @@ object H3 extends Serializable {
         h3.geoToH3(lat, lon, resolution)
     }
 
+    /**
+      * Covering-tessellation candidate cells: verbatim replication of the buffered-polyfill
+      * enumeration used for H3 covering (buffer the bbox by the resolution's buffer radius,
+      * then polyfill). H3 must buffer because hex centroids can fall outside a tight bbox
+      * while the hex still overlaps.
+      */
+    def coveringCandidateCells(bbox: Geometry, resolution: Int): Seq[Long] = {
+        val bufR = getBufferRadius(bbox, resolution)
+        polyfill(bbox.buffer(bufR), resolution)
+    }
+
     /** All cell IDs within k rings of center cellID (distance <= n). */
-    def kRing(cellID: Long, n: Int): mutable.Seq[Long] = {
-        h3.kRing(cellID, n).asScala.map(_.toLong)
+    override def kRing(cellID: Long, n: Int): Seq[Long] = {
+        h3.kRing(cellID, n).asScala.map(_.toLong).toSeq
     }
 
     /** Cell IDs at exactly distance n from cellID (hexRing); falls back to kRing+filter for pentagons. */
-    def kLoop(cellID: Long, n: Int): mutable.Seq[Long] = {
+    override def kLoop(cellID: Long, n: Int): Seq[Long] = {
+        if (n == 0) return Seq(cellID)
         // HexRing crashes in case of pentagons.
         // Ensure a KRing fallback in said case.
         require(cellID >= 0L)
         Try(
-          h3.hexRing(cellID, n).asScala.map(_.toLong)
+          h3.hexRing(cellID, n).asScala.map(_.toLong).toSeq
         ).getOrElse(
           // TODO: this should be improveable
           // 2 runs of kring at n and n-1 seem redundant
           // just kring n and filter via distance should be better
           // h3.kRing(cellID, n).asScala.toSet.diff(h3.kRing(cellID, n - 1).asScala.toSet).map(_.toLong).toSeq
-          h3.kRing(cellID, n).asScala.filter(cell => h3.h3Distance(cellID, cell) == n).map(_.toLong)
+          h3.kRing(cellID, n).asScala.filter(cell => h3.h3Distance(cellID, cell) == n).map(_.toLong).toSeq
         )
     }
+
+    /** H3 geometry-aware kring is light-tier only (never registered as a Scala SQL expression).
+      * Callers should use the gbx_h3_geomkring SQL function or the Python API from
+      * databricks.labs.gbx.gridx.h3.functions. This override prevents the generic
+      * GridSystem default from silently running against H3 topology.
+      */
+    override def geometryKRing(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        throw new UnsupportedOperationException(
+            "h3 geometry-aware kring/kloop is light-tier only; use the gbx_h3_geomkring/geomkloop SQL/Python functions"
+        )
+
+    /** H3 geometry-aware kloop is light-tier only. See geometryKRing for details. */
+    override def geometryKLoop(geom: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
+        throw new UnsupportedOperationException(
+            "h3 geometry-aware kring/kloop is light-tier only; use the gbx_h3_geomkring/geomkloop SQL/Python functions"
+        )
 
     /** Supported H3 resolutions 0-15 (0 = coarsest, 122 hexagons; 15 = finest). */
     def resolutions: Set[Int] = (0 to 15).toSet

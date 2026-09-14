@@ -240,6 +240,66 @@ class _BngAdapter:
         return float(self._b.get_edge_size(res))
 
 
+class _CustomAdapter:
+    """Binds ``pygx._custom`` -- the single source of truth for custom-grid cell math.
+
+    Unlike the H3/quadbin/BNG adapters, this is NOT a singleton: it must be
+    instantiated with the ``CustomGridConf`` for each unique grid definition.
+    ``src_crs`` is the grid's native CRS (``conf.srid``); when the grid has no
+    CRS (``srid == -1``) a caller-supplied ``fallback_srid`` is used so that
+    ``_reproject`` remains a valid identity no-op when ``src_crs == out_srid``.
+    """
+
+    def __init__(self, conf, fallback_srid=None):
+        from databricks.labs.gbx.pygx import _custom as _c
+
+        self._c = _c
+        self._conf = conf
+        # srid==-1 means the grid has no CRS; use fallback (typically out_srid)
+        # so _reproject(src=src_crs, dst=out_srid) is the identity no-op.
+        self.src_crs = conf.srid if conf.srid != -1 else (fallback_srid or 4326)
+
+    def to_key(self, cellid):
+        # Custom cell IDs are BIGINT ints; store as-is.
+        return int(cellid)
+
+    def resolution(self, keys) -> int:
+        keys = list(keys)
+        res = self._c.get_cell_resolution(keys[0])
+        for k in keys[1:]:
+            if self._c.get_cell_resolution(k) != res:
+                raise ValueError("custom cell set has mixed resolutions")
+        return res
+
+    def k_ring(self, key, k):
+        return self._c.k_ring(self._conf, key, k)
+
+    def cell_center(self, key):
+        # Returns (x, y) in the grid's native CRS (conf.srid).
+        centroid = self._c.cell_id_to_centroid(self._conf, key)
+        return centroid.x, centroid.y
+
+    def cell_boundary(self, key):
+        poly = self._c.cell_id_to_polygon(self._conf, key)
+        return list(poly.exterior.coords)
+
+    def pixel_key(self, x, y, res):
+        # x, y are in the grid's native CRS (src_crs == conf.srid usually).
+        # Use point_to_cell_id_or_none so pixels that fall outside the custom
+        # grid's declared bounds return None (-> NoData) instead of raising
+        # ValueError (the snap_bounds gridspec can extend slightly past the
+        # k-ring boundary, producing a few off-grid pixel centroids).
+        return self._c.point_to_cell_id_or_none(self._conf, float(x), float(y), res)
+
+    def default_pixel_size(self, keys, res, srid, bymin, bymax):
+        # Default pixel = min(cell_width, cell_height) at this resolution.
+        # Cell dimensions are in the grid's native unit (conf.srid), and since
+        # the output srid defaults to conf.srid, no conversion is needed.
+        w = self._c.cell_width(self._conf, res)
+        h = self._c.cell_height(self._conf, res)
+        return min(w, h)
+
+
 _ADAPTERS = {"h3": _H3Adapter(), "quadbin": _QuadbinAdapter(), "bng": _BngAdapter()}
 
 
@@ -290,13 +350,22 @@ def snap_bounds(bxmin, bymin, bxmax, bymax, pixel_size):
 
 
 def compute_gridspec(
-    cellids, srid=4326, pixel_size=None, mode="centroids", kring_pad=1, grid="h3"
+    cellids,
+    srid=4326,
+    pixel_size=None,
+    mode="centroids",
+    kring_pad=1,
+    grid="h3",
+    _ad=None,
 ):
     """Snapped, lattice-aligned grid spec for a cell set.
 
     Returns (xmin, ymin, xmax, ymax, pixel_size, width, height, srid).
+
+    ``_ad`` may be a pre-built adapter instance (e.g. ``_CustomAdapter``).
+    When provided it takes precedence over the ``grid`` name lookup.
     """
-    ad = _adapter(grid)
+    ad = _ad if _ad is not None else _adapter(grid)
     cells = {ad.to_key(c) for c in cellids}
     if not cells:
         raise ValueError("empty cell set")
@@ -345,6 +414,7 @@ def cells_to_raster(
     srid,
     resolution,
     grid="h3",
+    _ad=None,
 ):
     """Burn {cellid:int -> value:float} onto a width x height grid (centroid burn).
 
@@ -352,8 +422,11 @@ def cells_to_raster(
     `cells_to_raster(cell_values, *gridspec, resolution=res)`). The snapped grid has
     square pixels of `pixel_size`. Returns single-band float64 GTiff bytes; NoData
     where no cell covers a pixel.
+
+    ``_ad`` may be a pre-built adapter instance (e.g. ``_CustomAdapter``).
+    When provided it takes precedence over the ``grid`` name lookup.
     """
-    ad = _adapter(grid)
+    ad = _ad if _ad is not None else _adapter(grid)
     lut = {ad.to_key(c): float(v) for c, v in cell_values.items()}
     transform = Affine(pixel_size, 0.0, xmin, 0.0, -pixel_size, ymax)
 

@@ -79,8 +79,9 @@ def test_rst_quadbin_rastertogridcount(spark):
     cell, _ = _collect_first(spark, rx.rst_quadbin_rastertogridcount)
     assert cell["cellID"] is not None
     assert isinstance(cell["cellID"], int)
-    # count is LongType so it round-trips to Python int
-    assert isinstance(cell["measure"], int)
+    # count widened to Double in 0.5.1 (covering count = Σ area-weights is fractional),
+    # so it round-trips to Python float in both tiers.
+    assert isinstance(cell["measure"], float)
     assert cell["measure"] > 0
 
 

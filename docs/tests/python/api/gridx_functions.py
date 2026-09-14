@@ -1449,3 +1449,238 @@ custom_kring_python_heavy_example_output = """
 +-------------------------------------------+
 ... (9 BIGINT cell IDs — the 3×3 neighbourhood including center cell at resolution 5)
 """
+
+
+# ---------------------------------------------------------------------------
+# Quadbin geometry-aware kring/kloop (heavy gridx.quadbin tier)
+# ---------------------------------------------------------------------------
+
+
+def quadbin_geomkring_python_heavy_example(spark):
+    """Geometry-aware quadbin k-ring (heavy gridx.quadbin tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    At zoom 12, k=1: all cells within one ring of the polyfill.
+    Returns ARRAY<BIGINT>.  Identical to the lightweight output (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.gridx.quadbin import functions as qx  # noqa: PLC0415
+
+    df = spark.table("quadbin_polygons")
+    result = df.select(
+        qx.quadbin_geomkring(f.col("geom"), f.lit(12), f.lit(1)).alias("kring")
+    ).first()
+    return result["kring"]
+
+
+quadbin_geomkring_python_heavy_example_output = """
++-------------------------------------+
+|kring                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — covering cells of WGS84 polygon at z12 expanded by k=1 ring)
+"""
+
+
+def quadbin_geomkloop_python_heavy_example(spark):
+    """Geometry-aware quadbin k-loop (hollow ring) (heavy gridx.quadbin tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    At zoom 12, k=1: the outer shell cells at exactly one step from the polyfill.
+    Returns ARRAY<BIGINT>.  Identical to the lightweight output (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.gridx.quadbin import functions as qx  # noqa: PLC0415
+
+    df = spark.table("quadbin_polygons")
+    result = df.select(
+        qx.quadbin_geomkloop(f.col("geom"), f.lit(12), f.lit(1)).alias("kloop")
+    ).first()
+    return result["kloop"]
+
+
+quadbin_geomkloop_python_heavy_example_output = """
++-------------------------------------+
+|kloop                                |
++-------------------------------------+
+|[5211790602025803775, ..., (n cells)]|
++-------------------------------------+
+... (ARRAY<BIGINT> — outer ring at k=1, interior polyfill cells excluded)
+"""
+
+
+def quadbin_geomkringexplode_python_heavy_example(spark):
+    """Geometry-aware quadbin k-ring explode: one row per cell via SQL LATERAL (heavy gridx.quadbin tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    SQL LATERAL is the canonical invocation for this table function.
+    """
+    df = spark.table("quadbin_polygons")
+    df.createOrReplaceTempView("_qb_geomk_heavy_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _qb_geomk_heavy_src src, "
+        "LATERAL gbx_quadbin_geomkringexplode(src.geom, 12, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_qb_geomk_heavy_src")
+    return result
+
+
+quadbin_geomkringexplode_python_heavy_example_output = """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the WGS84 polygon polyfill at z12)
+"""
+
+
+def quadbin_geomkloopexplode_python_heavy_example(spark):
+    """Geometry-aware quadbin k-loop explode: one row per outer-ring cell via SQL LATERAL (heavy gridx.quadbin tier).
+
+    Reads the ``quadbin_polygons`` setup view (WGS84 polygon near origin).
+    SQL LATERAL is the canonical invocation for this table function.
+    """
+    df = spark.table("quadbin_polygons")
+    df.createOrReplaceTempView("_qb_geomk_heavy_src")
+    result = spark.sql(
+        "SELECT t.cellid FROM _qb_geomk_heavy_src src, "
+        "LATERAL gbx_quadbin_geomkloopexplode(src.geom, 12, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_qb_geomk_heavy_src")
+    return result
+
+
+quadbin_geomkloopexplode_python_heavy_example_output = """
++------------------+
+|cellid            |
++------------------+
+|5211790602025803775|
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the WGS84 polygon polyfill at z12)
+"""
+
+
+# ---------------------------------------------------------------------------
+# Custom-grid geometry-aware kring/kloop (heavy gridx.custom tier)
+# ---------------------------------------------------------------------------
+
+
+# Offset polygon avoids exact cell-boundary alignment at all power-of-2 resolutions.
+# (The grid root is 1km; coordinates divisible by 1000 align at every resolution.)
+_CUSTOM_GEOMK_WKT = (
+    "POLYGON((529100 179100,529100 182100,532100 182100,532100 179100,529100 179100))"
+)
+
+
+def custom_geomkring_python_heavy_example(spark):
+    """Geometry-aware custom-grid k-ring (heavy gridx.custom tier).
+
+    Reads the ``custom_grids`` setup view.  Uses an offset 3km × 3km BNG polygon
+    (not aligned with cell boundaries) at resolution 1 (500m cells).  At k=1,
+    the k-ring is larger than the polyfill.  Returns ARRAY<BIGINT>.
+    Identical to lightweight (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.gridx.custom import functions as cx  # noqa: PLC0415
+
+    df = spark.table("custom_grids")
+    result = df.select(
+        cx.custom_geomkring(f.lit(_CUSTOM_GEOMK_WKT), f.col("grid"), f.lit(1), f.lit(1)).alias("kring")
+    ).first()
+    return result["kring"]
+
+
+custom_geomkring_python_heavy_example_output = """
++-------------------------------------------+
+|kring                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (55 cells at k=1)]|
++-------------------------------------------+
+... (55 BIGINT cell IDs — covering cells of the offset 3km polygon at res=1 (500m) expanded by k=1 ring)
+"""
+
+
+def custom_geomkloop_python_heavy_example(spark):
+    """Geometry-aware custom-grid k-loop (hollow ring) (heavy gridx.custom tier).
+
+    Reads the ``custom_grids`` setup view.  Uses an offset 3km × 3km BNG polygon
+    (not aligned with cell boundaries) at resolution 1 (500m cells).  At k=1,
+    returns the outer ring cells.  Returns ARRAY<BIGINT>.
+    Identical to lightweight (AGREE).
+    """
+    from pyspark.sql import functions as f  # noqa: PLC0415
+    from databricks.labs.gbx.gridx.custom import functions as cx  # noqa: PLC0415
+
+    df = spark.table("custom_grids")
+    result = df.select(
+        cx.custom_geomkloop(f.lit(_CUSTOM_GEOMK_WKT), f.col("grid"), f.lit(1), f.lit(1)).alias("kloop")
+    ).first()
+    return result["kloop"]
+
+
+custom_geomkloop_python_heavy_example_output = """
++-------------------------------------------+
+|kloop                                      |
++-------------------------------------------+
+|[72057594038779906, ..., (19 cells at k=1)]|
++-------------------------------------------+
+... (19 BIGINT cell IDs — outer ring at k=1 around the offset polygon at res=1 (500m))
+"""
+
+
+def custom_geomkringexplode_python_heavy_example(spark):
+    """Geometry-aware custom-grid k-ring explode: one row per cell via SQL LATERAL (heavy gridx.custom tier).
+
+    Reads the ``custom_grids`` setup view (grid struct).
+    SQL LATERAL is the canonical invocation for this table function.
+    """
+    df = spark.table("custom_grids")
+    df.createOrReplaceTempView("_cx_geomk_heavy_src")
+    result = spark.sql(
+        f"SELECT t.cellid FROM _cx_geomk_heavy_src src, "
+        f"LATERAL gbx_custom_geomkringexplode('{_CUSTOM_GEOMK_WKT}', src.grid, 1, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_cx_geomk_heavy_src")
+    return result
+
+
+custom_geomkringexplode_python_heavy_example_output = """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the k=1 ring around the offset 3km polygon at res=1 (500m))
+"""
+
+
+def custom_geomkloopexplode_python_heavy_example(spark):
+    """Geometry-aware custom-grid k-loop explode: one row per outer-ring cell via SQL LATERAL (heavy gridx.custom tier).
+
+    Reads the ``custom_grids`` setup view (grid struct).
+    SQL LATERAL is the canonical invocation for this table function.
+    """
+    df = spark.table("custom_grids")
+    df.createOrReplaceTempView("_cx_geomk_heavy_src")
+    result = spark.sql(
+        f"SELECT t.cellid FROM _cx_geomk_heavy_src src, "
+        f"LATERAL gbx_custom_geomkloopexplode('{_CUSTOM_GEOMK_WKT}', src.grid, 1, 1, 'boundary-out') t"
+    ).collect()
+    spark.catalog.dropTempView("_cx_geomk_heavy_src")
+    return result
+
+
+custom_geomkloopexplode_python_heavy_example_output = """
++------------------+
+|cellid            |
++------------------+
+|72057594038779906 |
+|...               |
++------------------+
+... (one BIGINT row per cell in the hollow outer ring at k=1 around the offset 3km polygon at res=1 (500m))
+"""
