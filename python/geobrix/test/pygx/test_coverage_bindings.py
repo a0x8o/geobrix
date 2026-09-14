@@ -29,12 +29,22 @@ from databricks.labs.gbx.pygx import functions as gx  # noqa: E402
 # Shared holed polygon fixtures
 # ---------------------------------------------------------------------------
 
-# Quadbin / H3 — WGS84 box with interior hole; res chosen so ~6x9 cells span hole.
+# Quadbin — WGS84 box with interior hole; res chosen so ~6x9 cells span hole.
 _HOLED_OUTER_QB = [(-76.0, 38.0), (-72.0, 38.0), (-72.0, 43.0), (-76.0, 43.0)]
 _HOLED_HOLE_QB = [(-75.0, 39.0), (-73.0, 39.0), (-73.0, 42.0), (-75.0, 42.0)]
 _HOLED_POLY_QB = Polygon(_HOLED_OUTER_QB, [_HOLED_HOLE_QB])
 _HOLED_WKB_QB = bytes(to_wkb(_HOLED_POLY_QB))
-_RES_QB = 10  # quadbin / h3 resolution
+_RES_QB = 10  # quadbin resolution (h3 uses _H3_COARSE_RES_DONUT for hole tests)
+
+# H3 donut for hole-out disjoint-loop and coverage-difference tests.
+# Outer 8°×8°, hole 4°×4° centred around NYC; at res-5 (edge ~61 km ≈ 0.55°)
+# the 4°×4° hole spans ~7 cells wide × ~7 cells tall — h_core is non-empty and
+# h_cover ≠ h_core (hexagonal cells don't align with degree boundaries).
+_H3_OUTER_DONUT = Polygon([(-78, 36), (-70, 36), (-70, 44), (-78, 44), (-78, 36)])
+_H3_HOLE_DONUT = Polygon([(-76, 38), (-72, 38), (-72, 42), (-76, 42), (-76, 38)])
+_H3_DONUT = _H3_OUTER_DONUT.difference(_H3_HOLE_DONUT)
+_H3_DONUT_WKB = bytes(to_wkb(_H3_DONUT))
+_H3_COARSE_RES_DONUT = 5  # edge ~61 km; hole diameter ~7 cells → h_core non-empty
 
 # BNG — EPSG:27700 box with interior hole; res=3 → 1 km cells
 _HOLED_OUTER_BNG = [
@@ -128,23 +138,39 @@ def test_hole_out_loop_k1_disjoint_from_k0_bng(mode):
     )
 
 
+@pytest.mark.parametrize("mode", ["hole-out", "hole-out-ignore-geom"])
+def test_hole_out_loop_k1_disjoint_from_k0_h3(mode):
+    """geomkloop(k=1) must be disjoint from geomkloop(k=0) for hole-out modes (H3).
+
+    Uses the 8°×8° / 4°×4° donut at res-5 (edge ~61 km); visited0 fix applies
+    to H3 via the shared _dilate engine — this is the regression guard.
+    """
+    h3 = pytest.importorskip("h3")  # noqa: F841
+    k0 = _h3mod.geom_expand("loop", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, mode)
+    k1 = _h3mod.geom_expand("loop", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 1, mode)
+    if not k0:
+        pytest.skip(
+            f"h3 hole-out k0 empty at res {_H3_COARSE_RES_DONUT} — no hole cells to test"
+        )
+    assert k0.isdisjoint(k1), (
+        f"h3 {mode}: geomkloop(k=1) re-emits seed cells "
+        f"(overlap={sorted(k0 & k1)[:3]}). visited0 fix not applied."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Part A: coverage param reaches engine through UDF impls
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("coverage", ["polyfill", "core"])
-def test_quadbin_geomkring_coverage_differs_from_default(coverage):
-    """Explicit coverage changes the result vs the default (coveras) on a holed polygon."""
-    default = set(_quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 1))
+def test_quadbin_geomkring_coverage_param_accepted(coverage):
+    """Explicit coverage param is accepted and returns typed results (quadbin)."""
+    default = set(_quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 1))  # noqa: F841
     explicit = set(
         _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 1, coverage=coverage)
     )
-    # polyfill ⊆ coveras and core ⊆ coveras (nested bases); result may shrink.
-    # At minimum the explicit call must succeed and return a set.
     assert isinstance(explicit, set)
-    # For a large enough geometry, polyfill and core should produce a subset of coveras.
-    # We just check the call succeeds and returns consistent types.
     assert all(isinstance(c, int) for c in explicit)
 
 
@@ -184,6 +210,98 @@ def test_custom_geomkloop_coverage_param_accepted(coverage):
         _CUSTOM_CONF, _HOLED_WKB_CU, _RES_CU, 1, coverage=coverage
     )
     assert all(isinstance(c, int) for c in result)
+
+
+# ---------------------------------------------------------------------------
+# Coverage-difference asserts (engine-level): coveras vs core produce distinct
+# hole-in seeds on a holed polygon where the three bases are strictly nested.
+# Uses non-grid-aligned fixtures for BNG and custom (500m offset from 1 km /
+# 1 000-unit cell boundaries) so that h_cover != h_core.
+# ---------------------------------------------------------------------------
+
+
+def test_quadbin_geomkring_coveras_vs_core_differ():
+    """coveras and core produce distinct hole-in seeds on the quadbin holed polygon.
+
+    Quadbin cells are not aligned with degree boundaries → h_cover != h_core →
+    hole-in k=0 (= outer_perimeter(h_{basis})) differs between the two coverages.
+    """
+    k0_coveras = set(
+        _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="coveras")
+    )
+    k0_core = set(
+        _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="core")
+    )
+    assert k0_coveras, "quadbin coveras hole-in k=0 must be non-empty on a holed polygon"
+    assert k0_core, "quadbin core hole-in k=0 must be non-empty on a holed polygon"
+    assert k0_coveras != k0_core, (
+        "quadbin coveras and core must produce distinct hole-in seeds "
+        "(h_cover != h_core for non-grid-aligned hole)"
+    )
+
+
+def test_bng_geomkring_coveras_vs_core_differ():
+    """coveras and core produce distinct hole-in seeds for a non-grid-aligned BNG holed polygon.
+
+    Outer (530 500,180 500)→(539 500,189 500) with hole (533 500,183 500)→(536 500,186 500)
+    at res=3 (1 km cells).  The 500 m inset from the 1 km cell grid ensures cells
+    straddle both the outer and hole boundaries → h_cover ≠ h_core.
+    """
+    outer = [(530500, 180500), (539500, 180500), (539500, 189500), (530500, 189500)]
+    hole = [(533500, 183500), (536500, 183500), (536500, 186500), (533500, 186500)]
+    poly = Polygon(outer, [hole])
+    wkb = bytes(to_wkb(poly))
+    res = 3  # 1 km cells
+    k0_coveras = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="coveras"))
+    k0_core = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="core"))
+    assert k0_coveras, "bng coveras hole-in k=0 must be non-empty"
+    assert k0_core, "bng core hole-in k=0 must be non-empty"
+    assert k0_coveras != k0_core, (
+        "bng coveras and core must produce distinct hole-in seeds "
+        "for a non-grid-aligned holed polygon"
+    )
+
+
+def test_custom_geomkring_coveras_vs_core_differ():
+    """coveras and core produce distinct hole-in seeds for a non-grid-aligned custom holed polygon.
+
+    Outer (530 500,180 500)→(539 500,189 500) with hole (533 500,183 500)→(536 500,186 500)
+    at res=0 (1 000-unit cells).  The 500-unit inset ensures cells straddle boundaries
+    → h_cover ≠ h_core.
+    """
+    outer = [(530500, 180500), (539500, 180500), (539500, 189500), (530500, 189500)]
+    hole = [(533500, 183500), (536500, 183500), (536500, 186500), (533500, 186500)]
+    poly = Polygon(outer, [hole])
+    wkb = bytes(to_wkb(poly))
+    k0_coveras = set(
+        _custom.geometry_k_ring(_CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="coveras")
+    )
+    k0_core = set(
+        _custom.geometry_k_ring(_CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="core")
+    )
+    assert k0_coveras, "custom coveras hole-in k=0 must be non-empty"
+    assert k0_core, "custom core hole-in k=0 must be non-empty"
+    assert k0_coveras != k0_core, (
+        "custom coveras and core must produce distinct hole-in seeds "
+        "for a non-grid-aligned holed polygon"
+    )
+
+
+def test_h3_geomkring_coveras_vs_core_differ():
+    """coveras and core produce distinct hole-in seeds on the H3 donut polygon (engine-level).
+
+    H3 hexagonal cells never align with degree boundaries → h_cover != h_core for the
+    4°×4° hole at res-5 → hole-in k=0 (= outer_perimeter(h_{basis})) differs.
+    """
+    h3 = pytest.importorskip("h3")  # noqa: F841
+    k0_coveras = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "coveras")
+    k0_core = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "core")
+    assert k0_coveras, "h3 coveras hole-in k=0 must be non-empty on the donut polygon"
+    assert k0_core, "h3 core hole-in k=0 must be non-empty on the donut polygon"
+    assert k0_coveras != k0_core, (
+        "h3 coveras and core must produce distinct hole-in seeds "
+        "(hexagonal cells don't align with degree boundaries → h_cover != h_core)"
+    )
 
 
 _H3_COARSE_RES = 5  # H3 res-5 edge ~61 km; small NYC box (~4 km) at res-9 is fine for ring
