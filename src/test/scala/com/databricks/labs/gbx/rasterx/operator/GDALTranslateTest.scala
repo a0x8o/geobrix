@@ -286,6 +286,25 @@ class GDALTranslateTest extends AnyFunSuite with BeforeAndAfterAll {
         gdal.Unlink("/vsimem/float_to_byte.tif")
     }
 
+    test("appendOptions derives predictor from the --type=<X> equals form (gdal_calc) (#82)") {
+        // The repo's gdal_calc callers (SpectralIndexSpec, RST_Threshold) emit the equals
+        // form "--type=Float32", not the space form. Exact-token matching missed it, so the
+        // gdal_calc path fell back to the input band types. Here a Byte output on a Float
+        // input must still yield PREDICTOR=1 (not 3) via the "--type=Byte" token.
+        val driver = gdal.GetDriverByName("MEM")
+        val floatDs = driver.Create("", 10, 10, 1, gdalconstConstants.GDT_Float32)
+
+        val out = OperatorOptions.appendOptions("gdal_calc --calc=A --type=Byte", Map.empty, floatDs)
+        out should include("PREDICTOR=1")
+        out should not include ("PREDICTOR=3")
+
+        // Float output (the actual SpectralIndex case) resolves to PREDICTOR=3.
+        val outFloat = OperatorOptions.appendOptions("gdal_calc --calc=A --type=Float32", Map.empty, floatDs)
+        outFloat should include("PREDICTOR=3")
+
+        floatDs.delete()
+    }
+
     test("GDALTranslate should handle PNM format with scaling") {
         val outputPath = "/vsimem/translated.pnm"
         val command = "gdal_translate"

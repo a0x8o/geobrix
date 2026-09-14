@@ -30,28 +30,33 @@ object OperatorOptions {
         //
         // GDAL applies the TIFF predictor to the OUTPUT raster, so it must match the
         // output datatype (PREDICTOR=3 is Float32/Float64-only). When the command sets an
-        // explicit output type — gdal_translate "-ot <Type>", gdal_calc "--type <Type>" —
-        // derive the predictor from that type; otherwise fall back to the input band types.
-        // Without this, converting a Float raster to Byte (RST_UpdateType) derived
-        // PREDICTOR=3 from the float input and gdal_translate rejected the Byte output. (#82)
+        // explicit output type — gdal_translate "-ot <Type>", gdal_calc "--type <Type>" or
+        // "--type=<Type>" — derive the predictor from that type; otherwise fall back to the
+        // input band types. Without this, converting a Float raster to Byte (RST_UpdateType)
+        // derived PREDICTOR=3 from the float input and gdal_translate rejected the Byte
+        // output. Both the space and equals forms are accepted because the repo's gdal_calc
+        // callers emit "--type=Float32" while gdal_translate emits "-ot Byte". (#82)
         def predictorForType(dt: Int): String =
             if (dt == GDT_Float32 || dt == GDT_Float64) "3"
             else if (dt == GDT_Byte || dt == GDT_Int8) "1"
             else "2"
-        val outputType: Int = {
-            val toks = command.split(" ")
-            val idx = toks.indexWhere(t => t == "-ot" || t == "--type")
-            if (idx >= 0 && idx + 1 < toks.length) gdal.GetDataTypeByName(toks(idx + 1))
-            else GDT_Unknown
+        val outputTypeName: Option[String] = {
+            val toks = command.split(" ").toSeq
+            toks.zipWithIndex.collectFirst {
+                case (t, i) if (t == "-ot" || t == "--type") && i + 1 < toks.length => toks(i + 1)
+                case (t, _) if t.startsWith("-ot=")   => t.substring(4)
+                case (t, _) if t.startsWith("--type=") => t.substring(7)
+            }
         }
+        val outputType: Int = outputTypeName.map(gdal.GetDataTypeByName).getOrElse(GDT_Unknown)
         val predictor =
             if (outputType != GDT_Unknown) {
                 predictorForType(outputType)
             } else {
-                val bandTypes = (1 to ds.GetRasterCount).map(i => ds.GetRasterBand(i).GetRasterDataType)
-                if (bandTypes.exists(dt => dt == GDT_Float32 || dt == GDT_Float64)) "3"
-                else if (bandTypes.exists(dt => dt == GDT_Byte || dt == GDT_Int8)) "1"
-                else "2"
+                // No explicit output type -> derive from input bands, reusing the single
+                // dtype->predictor mapping above (float wins, then Byte/Int8, else 2).
+                val perBand = (1 to ds.GetRasterCount).map(i => predictorForType(ds.GetRasterBand(i).GetRasterDataType))
+                if (perBand.contains("3")) "3" else if (perBand.contains("1")) "1" else "2"
             }
 
         val w = ds.GetRasterXSize; val h = ds.GetRasterYSize
