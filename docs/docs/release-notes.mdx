@@ -92,6 +92,13 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
   ```
   All six dilation modes work, including the hole-mode variants (`'hole-in'`, `'hole-out'`, `'hole-out-ignore-geom'`). Geometry input is WKB `BINARY` or WKT `STRING`. Cell IDs are `BIGINT` (H3 format). See [GridX Functions](./api/gridx-functions).
 
+### Geometry-aware kring/kloop — corrections and behavior changes (re-cut)
+
+- **`boundary-out` and `boundary-in` modes no longer treat polygon holes as boundaries.** In the initial v0.5.1 release, the `boundary-*` mode seed was derived from cells that straddled the geometry outline — a set that included cells along hole rims. As a result, holes were incorrectly treated as inner boundaries: `boundary-out` expanded outward from hole edges, and `boundary-in` ringed the hole interior. The seed is now the **outer perimeter of the covering set** — cells whose neighborhood includes at least one cell outside the cover — which excludes hole-rim cells by construction. Holes are unaffected by `boundary-*` modes; use `hole-in` / `hole-out` to work with holes explicitly. This fix applies to all four grid systems (BNG, quadbin, custom, H3) and both tiers (heavyweight and lightweight), which now agree.
+
+- **`boundary-out` and `boundary-in` now produce correct results for grid-aligned geometries.** The initial v0.5.1 implementation produced an empty expansion for polygons whose edges fall exactly on cell boundaries (no straddling cells → empty seed → no outward ring). This no longer occurs: the covering-set perimeter is non-empty for any non-empty cover, aligned or not.
+
+
 ### Covering assignment performance improvement
 
 - **Covering assignment is now computed over cell boundaries only.** The `covering` assignment mode (available on all `gbx_rst_{h3,quadbin,bng,custom}_rastertogrid*` and `*_tessellate` functions) previously computed area fractions by evaluating overlap for every pixel in the raster extent. It now uses a boundary-driven algorithm that processes only cells that intersect the raster perimeter, reducing computation proportionally to the boundary-to-interior ratio. For rasters with large solid interiors — where most cells are fully covered — this is significantly faster. Results are numerically identical; this is a performance improvement only.

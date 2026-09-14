@@ -518,15 +518,15 @@ Powered by the **pure-Python quadbin interpolation port**. Cell-set and value pa
 
 ### Geometry-Aware Expansion (Quadbin)
 
-Geometry-aware functions polyfill a geometry into the grid and then expand outward (or inward at holes) using the dilation engine. They generalise the cell-centric `quadbin_kring` / `quadbin_kloop` to operate on arbitrary geometry shapes. The optional `mode` parameter controls how cells that touch the geometry boundary are classified; `'boundary-out'` (the default) keeps the covering boundary cells and expands outward.
+Geometry-aware functions polyfill a geometry into the grid and then expand outward (or inward at holes) using the dilation engine. They generalise the cell-centric `quadbin_kring` / `quadbin_kloop` to operate on arbitrary geometry shapes. The optional `mode` parameter selects the expansion direction and controls how polygon holes are handled; `'boundary-out'` (the default) expands outward from the covering set and works correctly on aligned and non-aligned geometries alike.
 
 **Dilation modes** (exact hyphenated values):
 
 | Mode | Behaviour |
 |------|-----------|
-| `'boundary-out'` | Default. Boundary cells included; expansion grows outward from the edge. |
-| `'boundary-in'` | Boundary cells included; expansion grows inward into the geometry. |
-| `'boundary-in-ignore-holes'` | Like `'boundary-in'` but hole boundaries are not subtracted. |
+| `'boundary-out'` | Default. Expands outward from the geometry's covering set. Polygon holes do not act as boundaries. |
+| `'boundary-in'` | Expands inward from the outer edge of the covering set, stopping at holes. |
+| `'boundary-in-ignore-holes'` | Like `'boundary-in'` but treats the polygon as solid — expands inward across holes. |
 | `'hole-in'` | Expands inward from the interior edge of holes only. |
 | `'hole-out'` | Expands outward from hole boundaries into the surrounding geometry. |
 | `'hole-out-ignore-geom'` | Expands outward from holes ignoring the outer geometry boundary. |
@@ -1716,10 +1716,6 @@ Return the hollow ring of custom grid cells at exactly `k` steps from the center
 ### Geometry-Aware Expansion (Custom Grid)
 
 Geometry-aware functions polyfill a geometry into the custom grid and then expand using the shared dilation engine. The `mode` parameter behaves the same as for `bng_geomkring` / `quadbin_geomkring` (see the Quadbin section for the full mode table). The grid descriptor is supplied as an additional `grid` argument (unlike the BNG and quadbin variants where the grid identity is implicit in the system).
-
-:::note Boundary alignment
-When the geometry edges fall exactly on cell boundaries, all cells in the polyfill may be classified as interior (no boundary cells), making the `boundary-out` frontier empty and the k=1 ring identical to the k=0 covering set. This occurs for polygons whose coordinates are exact multiples of the grid's cell size at the requested resolution. Use geometries with sub-cell offsets, or a finer resolution, to get outward expansion.
-:::
 
 ### custom_geomkring
 
