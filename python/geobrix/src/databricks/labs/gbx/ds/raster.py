@@ -451,6 +451,52 @@ def _plan_partitions_for_file(
                 file_path, clip_polygons, clip_crs, emit_virtual=True
             )
 
+        # Budget-aware virtual split (issue #84): when a positive decoded-byte
+        # budget is set (splitStrategy=serverless|classic or sizeInMB>0), bound
+        # each virtual tile's decoded footprint exactly as the materialized path
+        # does, so splitStrategy/sizeInMB behave identically regardless of
+        # virtualTiles. Planning windows needs the header dims, so this opens the
+        # file once — but only on this opt-in path; the no-split default below
+        # keeps its lazy, header-free fast path.
+        if budget_bytes > 0:
+            with rasterio.open(file_path) as ds:
+                width, height = ds.width, ds.height
+                bands = ds.count
+                itemsize = _numpy_itemsize(ds.dtypes[0])
+                tiled = bool(ds.profile.get("tiled", False))
+                blockxsize = ds.profile.get("blockxsize")
+                blockysize = ds.profile.get("blockysize")
+            # Only split when the whole raster actually exceeds the budget;
+            # otherwise fall through to the single whole-file virtual partition.
+            if width * height * bands * itemsize > budget_bytes:
+                plan = budget.plan_layout(
+                    width,
+                    height,
+                    bands,
+                    itemsize,
+                    tiled,
+                    blockxsize,
+                    blockysize,
+                    budget_bytes,
+                )
+                if plan.degraded:
+                    logger.warning(
+                        "raster %s: layout plan hit the 512-tile cap; some "
+                        "tiles may exceed the decoded-memory budget.",
+                        file_path,
+                    )
+                return [
+                    _TilePartition(
+                        file_path=file_path,
+                        window=(col, row, w, h),
+                        is_passthrough=False,
+                        is_whole=False,
+                        emit_fmt="gtiff",
+                        emit_virtual=True,
+                    )
+                    for col, row, w, h in plan.tiles
+                ]
+
         # Approach 3 — lazy planning: skip the header open at plan time.
         # Reuses the existing null-window slot (window=None already means
         # "passthrough GTiff fast path" for materialized tiles), gated by
