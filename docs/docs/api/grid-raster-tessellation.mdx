@@ -225,6 +225,29 @@ Rule of thumb: *sample* reads, *resample* changes resolution, *fill* replaces on
 
 ---
 
+## Geometry-aware expansion (`geomkring` / `geomkloop`) {#geometry-aware-expansion}
+
+The model above maps a **raster** onto grid cells. The geometry-aware ring functions do the complementary **vector** operation: they expand grid cells **outward from a vector geometry**, so you can grow a buffer band, an inward setback, or a hole fill entirely in cell space. `k=0` is the geometry's covering set — the same polyfill this page describes — and each step dilates that set by one ring of grid-topology neighbours (a Minkowski sum of the covering set with a `k`-disk, not `N` independent single-cell rings).
+
+- **`gbx_<grid>_geomkring(geom, resolution, k [, mode])`** — the **filled** disk: the covering set plus every cell within `k` steps.
+- **`gbx_<grid>_geomkloop(geom, resolution, k [, mode])`** — the **hollow** shell: only the cells at exactly `k` steps.
+- **`*explode` variants** stream one row per cell via SQL `LATERAL`.
+
+A single trailing-optional **`mode`** enum selects how the walk treats the geometry's outer boundary and its holes (default `'boundary-out'`, backward-compatible):
+
+| `mode` | Seed → walk | Use |
+|---|---|---|
+| `'boundary-out'` *(default)* | outer boundary → outward | outward buffer band on/outside the edge |
+| `'boundary-in'` | outer boundary → inward, respecting holes | inner setback |
+| `'boundary-in-ignore-holes'` | outer boundary → inward, polygon treated as solid | inner setback, holes ignored |
+| `'hole-in'` | hole boundary → inward | fill each hole from its edge |
+| `'hole-out'` | hole boundary → outward into the solid | band around each hole |
+| `'hole-out-ignore-geom'` | hole boundary → outward, unbounded by the outer ring | outward buffer from each hole |
+
+All four grids ride **one shared dilation engine**, so the modes and semantics are identical across H3, quadbin, BNG, and custom. **BNG, quadbin, and custom run on both tiers; H3 is light-tier only** (geometry-taking, via the `h3` library). Cell IDs are `BIGINT` (H3/quadbin/custom) or `STRING` (BNG); the custom variants take the `grid` struct as their second argument. See [GridX Functions](./gridx-functions) for the per-grid signatures and [Benchmarking § Geometry-aware expansion at scale](./benchmarking#geomk-at-scale) for throughput/scaling.
+
+---
+
 ## Cross-tier parity
 
 For **coverage/assignment cell-set semantics and computed values**, behavior is **identical across the heavyweight (`rasterx` / Scala JAR) and lightweight (`pyrx` / pure Python) tiers** for all grids:
