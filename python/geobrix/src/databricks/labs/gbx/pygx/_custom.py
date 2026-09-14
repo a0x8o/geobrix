@@ -461,12 +461,20 @@ def classify(conf: CustomGridConf, geom, resolution: int):
     geom must already be a Shapely geometry; call parse_geom first if raw
     bytes/str.  Closures capture `conf` so callers need not thread it into
     the engine internals.
+
+    For non-polygon geometries (points, lines), the custom grid's centroid-
+    containment polyfill returns nothing.  The ``point_to_cell_fn`` hook is
+    passed so that the engine can fall back to coordinate sampling and per-grid
+    point-to-cell lookup, enabling dimension-aware coverage classification for
+    all geometry types.
     """
+    res = int(resolution)
     return _dilate.classify(
         geom,
-        int(resolution),
+        res,
         polyfill_fn=lambda g, r: polyfill(conf, g, r),
         cell_geom_fn=lambda c: _cell_geom(conf, c),
+        point_to_cell_fn=lambda x, y: point_to_cell_id_or_none(conf, x, y, res),
     )
 
 

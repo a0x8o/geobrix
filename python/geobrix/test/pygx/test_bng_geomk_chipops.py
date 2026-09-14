@@ -93,14 +93,23 @@ def test_geomk_str_emit_canonical_string_ids():
 
 
 def test_geomkring_covers_point():
-    # Point geometry: the classify-based path filters cells by 2D intersection area
-    # (area > 0), which is zero for any point/cell intersection, so pCover and sCover
-    # are both empty -> k-ring returns the empty set.  This matches heavy's behaviour
-    # (GeomDilation.classify applies the same getArea > 0 filter in Scala).
+    # Point geometry: the classify engine now uses a dimension-aware coverage
+    # test (dim=0: intersects, not area>0) and a point_to_cell_fn fallback when
+    # polyfill returns nothing for non-polygon inputs.  boundary-out k=1 returns
+    # the containing cell + its k-ring neighbours (a non-empty outward expansion).
+    #
+    # REVERSED from the 6dc1efe8 "empty" assertion: point support is now required.
     pt = _towkb(shapely.geometry.Point(530000.0, 180000.0))
     res = _bng.get_resolution("1km")
     gkr = _bng.geometry_k_ring_str(pt, res, 1)
-    assert gkr == []
+    assert gkr, (
+        "boundary-out k=1 on a BNG point must return the surrounding k-ring; "
+        "FAILS before dimension-aware classify + point_to_cell_fn fallback; "
+        "PASSES after the fix"
+    )
+    # All returned IDs must be valid BNG string cell IDs.
+    for cid in gkr:
+        assert _bng.format(_bng.parse(cid)) == cid, f"invalid cell id: {cid!r}"
 
 
 def test_cell_union_core_chip_wins():
@@ -199,16 +208,29 @@ def test_chipop_both_noncore_same_cell_intersection_clips():
 
 
 def test_line_fill_chips_follow_line():
-    # Line geometry: the classify-based path requires 2D intersection (area > 0) to
-    # populate pCover/sCover.  A line's intersection with any cell polygon is a
-    # 1D segment (area == 0), so both pCover and sCover remain empty -> k=0 ring is
-    # the empty set.  This matches heavy's GeomDilation.classify behaviour (same filter).
+    # Line geometry: the classify engine now uses intersection.length > 0 for
+    # dim=1 geometries (not area > 0), and a point_to_cell_fn fallback to
+    # generate candidates when polyfill returns nothing.  k=0 (the covering set,
+    # boundary-out default mode) now returns the cells the line crosses.
+    #
+    # REVERSED from the 6dc1efe8 "empty" assertion: line support is now required.
     line = _towkb(
         shapely.geometry.LineString([(530100.0, 180500.0), (532900.0, 180500.0)])
     )
     res = _bng.get_resolution("1km")
     gkr = _bng.geometry_k_ring_str(line, res, 0)
-    assert gkr == []
+    assert gkr, (
+        "boundary-out k=0 (covering set) on a BNG line must be non-empty; "
+        "FAILS before dimension-aware classify + point_to_cell_fn fallback; "
+        "PASSES after the fix"
+    )
+    # The 2.8 km horizontal line at 1km resolution must cover at least 2 cells.
+    assert (
+        len(gkr) >= 2
+    ), f"a 2.8 km line at 1km resolution must cover at least 2 cells; got {len(gkr)}"
+    # All returned IDs must be valid BNG string cell IDs.
+    for cid in gkr:
+        assert _bng.format(_bng.parse(cid)) == cid
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +251,7 @@ def test_geomkring_boundary_out_grid_aligned_expands_outward():
     # Grid-aligned 3x3 km box (corners on exact 1km boundaries).
     geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
     res = _bng.get_resolution("1km")
-    cover = set(_bng.polyfill_str(geom, res))          # 9 covering cells
+    cover = set(_bng.polyfill_str(geom, res))  # 9 covering cells
     gkr_1 = set(_bng.geometry_k_ring_str(geom, res, 1))  # should expand outward
 
     # The covering set is a subset of the k=1 ring.

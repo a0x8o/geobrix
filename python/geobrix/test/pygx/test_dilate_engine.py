@@ -2,7 +2,7 @@
 import itertools
 
 import pytest
-from shapely.geometry import Polygon, box
+from shapely.geometry import LineString, Point, Polygon, box
 
 from databricks.labs.gbx.pygx import _dilate as D
 
@@ -355,3 +355,340 @@ def test_classify_filtering_polyfill_finds_hcore():
     r = D.geom_expand("ring", 5, "hole-in", cls, _neighbors)
     assert cls.h_core <= r  # hole filled inward
     assert r.isdisjoint(cls.p_core)  # never enters the solid
+
+
+# ===========================================================================
+# PART A — point/line support (dimension-aware candidate generation + coverage)
+# ===========================================================================
+
+
+@pytest.fixture
+def point_cls_candidates():
+    """A point geometry where polyfill_fn already returns the containing cell.
+
+    Exercises the dimension-aware COVERAGE FILTER only (not the fallback):
+    with the old area>0 check, the point/cell intersection has area=0 and the
+    cell is dropped from p_cover; with the new dim=0 intersects-only check the
+    cell is kept.  polyfill_fn behaviour is the same before and after; only the
+    filter changes.
+    """
+    geom = Point(5.5, 5.5)  # strictly inside cell (5,5) = box(5,5,6,6)
+
+    def polyfill_fn(g, res):
+        # Return the single containing cell (as a quadbin bbox-polyfill would for a point).
+        return [_cid(5, 5)]
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    return D.classify(geom, 1, polyfill_fn, cell_geom_fn)
+
+
+@pytest.fixture
+def line_cls_candidates():
+    """A horizontal line where polyfill_fn returns cells in the line's bbox.
+
+    Exercises the dimension-aware COVERAGE FILTER (not the fallback): the old
+    area>0 check drops all cells (line∩cell area=0); the new length>0 check
+    keeps only the cells the line actually crosses.
+    """
+    geom = LineString([(2.5, 5.5), (5.5, 5.5)])  # crosses cells (2,5),(3,5),(4,5),(5,5)
+
+    def polyfill_fn(g, res):
+        # Cells in the bounding box of the line (mimics quadbin bbox-polyfill).
+        minx, miny, maxx, maxy = g.bounds
+        return [
+            _cid(x, y)
+            for x in range(int(minx), int(maxx) + 1)
+            for y in range(int(miny), int(maxy) + 1)
+        ]
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    return D.classify(geom, 1, polyfill_fn, cell_geom_fn)
+
+
+@pytest.fixture
+def point_cls_fallback():
+    """A point geometry with an empty polyfill_fn (BNG centroid-BFS style).
+
+    Exercises the FALLBACK path: polyfill returns nothing for a point input;
+    classify must use point_to_cell_fn to obtain the single containing cell.
+    RED until point_to_cell_fn parameter is both accepted and acted on.
+    """
+    geom = Point(5.5, 5.5)
+
+    def polyfill_fn(g, res):
+        return []  # centroid-BFS returns nothing for a point geometry
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    def point_to_cell_fn(x, y):
+        return _cid(int(x), int(y))  # floor(x), floor(y) = containing cell
+
+    return D.classify(geom, 1, polyfill_fn, cell_geom_fn, point_to_cell_fn)
+
+
+@pytest.fixture
+def line_cls_fallback():
+    """A horizontal line with an empty polyfill_fn.
+
+    Exercises the FALLBACK path: polyfill returns nothing; classify must sample
+    points along the line and map each via point_to_cell_fn to candidate cells,
+    then apply the length>0 coverage filter to keep only cells the line crosses.
+    """
+    geom = LineString([(2.5, 5.5), (5.5, 5.5)])
+
+    def polyfill_fn(g, res):
+        return []  # empty — forces fallback path
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    def point_to_cell_fn(x, y):
+        return _cid(int(x), int(y))
+
+    return D.classify(geom, 1, polyfill_fn, cell_geom_fn, point_to_cell_fn)
+
+
+# --------------------------------------------------------------------------
+# Filter-fix tests (RED: area>0 drops everything; GREEN: dim-aware filter)
+# --------------------------------------------------------------------------
+
+
+def test_classify_point_filter_fix_cover_nonempty(point_cls_candidates):
+    """Part A filter fix: p_cover must be non-empty for a point (was empty with area>0).
+
+    RED on current code: classify uses area>0 → point/cell intersection area=0 → dropped.
+    GREEN after dim-aware fix: dim=0 uses intersects → the containing cell is kept.
+    """
+    cls = point_cls_candidates
+    assert cls.p_cover, (
+        "p_cover empty for a point geometry with a valid candidate cell; "
+        "FIX: classify must use intersects (not area>0) for dim=0 geometries"
+    )
+    assert len(cls.p_cover) == 1, "point must cover exactly one cell"
+    assert not cls.p_core, "point has no 2D interior → p_core must be empty"
+    assert cls.s_cover == cls.p_cover, "s_cover must equal p_cover for a holeless point"
+
+
+def test_classify_line_filter_fix_cover_crossing_cells(line_cls_candidates):
+    """Part A filter fix: p_cover contains the cells the line crosses (was empty with area>0).
+
+    RED on current code: line∩cell intersection area=0 → all dropped from p_cover.
+    GREEN after dim-aware fix: dim=1 uses length>0 → cells the line crosses are kept.
+    """
+    cls = line_cls_candidates
+    assert cls.p_cover, (
+        "p_cover empty for a line geometry with valid candidate cells; "
+        "FIX: classify must use intersection.length>0 (not area>0) for dim=1"
+    )
+    # The line from (2.5, 5.5) to (5.5, 5.5) crosses 4 cells at y=5:
+    # cell(2,5), cell(3,5), cell(4,5), cell(5,5)
+    assert len(cls.p_cover) == 4, f"expected 4 crossing cells; got {len(cls.p_cover)}"
+    assert not cls.p_core, "line has no 2D interior → p_core must be empty"
+
+
+# --------------------------------------------------------------------------
+# Fallback-path tests (RED: old classify() has no point_to_cell_fn param)
+# --------------------------------------------------------------------------
+
+
+def test_classify_point_fallback_cover_nonempty(point_cls_fallback):
+    """Part A fallback: p_cover non-empty when polyfill returns empty but point_to_cell_fn given.
+
+    RED on current code: classify() has no point_to_cell_fn parameter
+    (TypeError) — or, if param is added but not acted on, p_cover stays empty.
+    GREEN after full fix: point_to_cell_fn maps (5.5, 5.5) → cell(5,5), which
+    passes the intersects filter → p_cover = {cell(5,5)}.
+    """
+    cls = point_cls_fallback
+    assert cls.p_cover, (
+        "p_cover empty even though point_to_cell_fn was provided; "
+        "FIX: classify must use point_to_cell_fn fallback when polyfill returns nothing"
+    )
+    assert len(cls.p_cover) == 1
+    assert not cls.p_core
+
+
+def test_classify_line_fallback_cover_crossing_cells(line_cls_fallback):
+    """Part A fallback: line cover non-empty via point_to_cell_fn sampling + length>0 filter.
+
+    RED on current code: no point_to_cell_fn param → TypeError or empty result.
+    GREEN: sampled points along the line map to 4 distinct cells; all pass length>0.
+    """
+    cls = line_cls_fallback
+    assert cls.p_cover, "p_cover empty for line with point_to_cell_fn fallback"
+    # The line (2.5,5.5)→(5.5,5.5) must yield cells (2,5),(3,5),(4,5),(5,5)
+    # (floor of sampled x-coords 2.5..5.5 at y=5.5, all land at y-cell 5).
+    assert (
+        len(cls.p_cover) >= 3
+    ), f"expected at least 3 line-crossing cells via fallback; got {len(cls.p_cover)}"
+    assert not cls.p_core
+
+
+# --------------------------------------------------------------------------
+# Expansion behaviour for point/line (uses filter-fixed coverage)
+# --------------------------------------------------------------------------
+
+
+def test_point_boundary_out_expands_outward(point_cls_candidates):
+    """boundary-out k=1 on a point = the k-ring around the containing cell."""
+    r1 = D.geom_expand("ring", 1, "boundary-out", point_cls_candidates, _neighbors)
+    assert r1, "boundary-out k=1 on a point must be non-empty"
+    # The containing cell is in r0 = p_cover
+    assert point_cls_candidates.p_cover <= r1, "p_cover must be in k=1 ring"
+    # k=1 must be strictly larger: the 8 neighbours of the single cell were added
+    assert len(r1) > len(
+        point_cls_candidates.p_cover
+    ), "boundary-out must expand beyond p_cover for a single-cell covering set"
+
+
+def test_point_boundary_in_stays_within_cover(point_cls_candidates):
+    """boundary-in on a point stays within p_cover (empty p_core → no inward expansion)."""
+    r = D.geom_expand("ring", 1, "boundary-in", point_cls_candidates, _neighbors)
+    assert (
+        r <= point_cls_candidates.p_cover
+    ), "boundary-in on a point must not expand beyond p_cover (no 2D interior)"
+
+
+def test_line_boundary_out_covers_and_expands(line_cls_candidates):
+    """boundary-out k=1 on a line = the line's cells plus one outward band."""
+    r1 = D.geom_expand("ring", 1, "boundary-out", line_cls_candidates, _neighbors)
+    assert r1
+    assert (
+        line_cls_candidates.p_cover <= r1
+    ), "all line-crossing cells must be in k=1 ring"
+    assert len(r1) > len(
+        line_cls_candidates.p_cover
+    ), "boundary-out k=1 on a line must add cells beyond the line-crossing cells"
+
+
+def test_line_boundary_in_stays_within_cover(line_cls_candidates):
+    """boundary-in on a line stays within p_cover (empty p_core → no inward expansion)."""
+    r = D.geom_expand("ring", 1, "boundary-in", line_cls_candidates, _neighbors)
+    assert r <= line_cls_candidates.p_cover
+
+
+# ===========================================================================
+# PART B — hole-* alignment robustness (perimeter seed replaces h_border seed)
+# ===========================================================================
+
+
+@pytest.fixture
+def aligned_hole_cls():
+    """Grid-aligned 10x10 solid with a 4x4 grid-ALIGNED hole: h_border is empty.
+
+    outer = box(1,1,11,11); hole = box(3,3,7,7) — corners sit exactly on unit-cell
+    boundaries.  Every cell inside the hole range is FULLY inside the hole polygon
+    (no straddling) → h_cover = h_core → h_border = {}.
+
+    This reproduces the alignment bug: old hole-* modes return empty because
+    frontier0 = h_border = {} → nothing to dilate from.
+    GREEN after the perimeter-seed fix: void_hole_edge and solid_hole_edge are
+    always non-empty for a non-empty hole, regardless of alignment.
+    """
+    outer = box(1, 1, 11, 11)
+    hole_poly = box(3, 3, 7, 7)
+    geom = Polygon(outer.exterior.coords, [list(hole_poly.exterior.coords)])
+
+    def polyfill_fn(g, res):
+        return [_cid(x, y) for x in range(-1, 13) for y in range(-1, 13)]
+
+    def cell_geom_fn(c):
+        x, y = _xy(c)
+        return box(x, y, x + 1, y + 1)
+
+    cls = D.classify(geom, 1, polyfill_fn, cell_geom_fn)
+    assert cls.h_border == set(), "aligned_hole_cls fixture: h_border must be empty"
+    assert cls.h_core, "aligned_hole_cls fixture: h_core must be non-empty"
+    return cls
+
+
+def test_aligned_hole_hole_in_nonempty(aligned_hole_cls):
+    """Part B: hole-in on an ALIGNED hole must be non-empty.
+
+    RED on current code: h_border = empty → frontier = empty → nothing returned.
+    GREEN after void_hole_edge seed: h_cover cells adjacent to non-h_cover cells
+    are always present when h_core is non-empty, regardless of alignment.
+    """
+    r = D.geom_expand("ring", 1, "hole-in", aligned_hole_cls, _neighbors)
+    assert r, (
+        "hole-in k=1 on an aligned hole must be non-empty; "
+        "FAILS with h_border seed (h_border empty for aligned holes); "
+        "PASSES after void_hole_edge perimeter seed"
+    )
+    assert r <= aligned_hole_cls.h_cover, "hole-in must stay within h_cover"
+    assert r.isdisjoint(aligned_hole_cls.p_core), "hole-in must not enter p_core"
+
+
+def test_aligned_hole_hole_in_fills_hcore(aligned_hole_cls):
+    """Part B: hole-in k=large must fill the aligned hole's h_core."""
+    r = D.geom_expand("ring", 10, "hole-in", aligned_hole_cls, _neighbors)
+    assert (
+        aligned_hole_cls.h_core <= r
+    ), "hole-in k=10 must fill the entire h_core of the aligned hole"
+
+
+def test_aligned_hole_hole_out_nonempty(aligned_hole_cls):
+    """Part B: hole-out on an ALIGNED hole must be non-empty.
+
+    RED with h_border seed (empty); GREEN with solid_hole_edge seed (non-empty).
+    """
+    r = D.geom_expand("ring", 1, "hole-out", aligned_hole_cls, _neighbors)
+    assert r, (
+        "hole-out k=1 on an aligned hole must be non-empty; "
+        "FAILS with h_border seed; PASSES after solid_hole_edge perimeter seed"
+    )
+    assert r <= aligned_hole_cls.p_cover, "hole-out must stay within p_cover"
+    assert r.isdisjoint(
+        aligned_hole_cls.h_core
+    ), "hole-out must not include h_core cells"
+
+
+def test_aligned_hole_hole_out_ignore_geom_nonempty(aligned_hole_cls):
+    """Part B: hole-out-ignore-geom on an ALIGNED hole must be non-empty."""
+    r = D.geom_expand("ring", 1, "hole-out-ignore-geom", aligned_hole_cls, _neighbors)
+    assert r, "hole-out-ignore-geom on aligned hole must be non-empty"
+    assert r.isdisjoint(aligned_hole_cls.h_core)
+
+
+def test_aligned_hole_hole_out_reaches_solid(aligned_hole_cls):
+    """Part B: hole-out k=large expands into the solid and stays there."""
+    r = D.geom_expand("ring", 5, "hole-out", aligned_hole_cls, _neighbors)
+    assert r, "hole-out k=5 must be non-empty for an aligned hole"
+    assert r <= aligned_hole_cls.p_cover
+    assert r.isdisjoint(aligned_hole_cls.h_core)
+
+
+def test_aligned_hole_hole_out_ignore_geom_may_exceed_outer(aligned_hole_cls):
+    """Part B: hole-out-ignore-geom can grow past the outer solid boundary."""
+    r = D.geom_expand("ring", 20, "hole-out-ignore-geom", aligned_hole_cls, _neighbors)
+    outside_outer = {c for c in r if c not in aligned_hole_cls.s_cover}
+    assert outside_outer, "hole-out-ignore-geom k=20 must reach cells outside s_cover"
+
+
+# --------------------------------------------------------------------------
+# Part B regression: non-aligned holed polygon hole modes still work
+# --------------------------------------------------------------------------
+
+
+def test_nonaligend_hole_hole_in_still_works(holed_cls):
+    """Part B regression: non-aligned hole hole-in still fills h_core."""
+    r = D.geom_expand("ring", 5, "hole-in", holed_cls, _neighbors)
+    assert holed_cls.h_core <= r
+    assert r.isdisjoint(holed_cls.p_core)
+
+
+def test_nonaligned_hole_hole_out_still_works(holed_cls):
+    """Part B regression: non-aligned hole hole-out still expands into solid."""
+    r = D.geom_expand("ring", 2, "hole-out", holed_cls, _neighbors)
+    assert r
+    assert r.isdisjoint(holed_cls.h_core)
+    assert r <= holed_cls.p_cover

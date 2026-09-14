@@ -871,12 +871,19 @@ def classify_bng(geometry, resolution):
 
     Wraps :func:`_dilate.classify` with BNG's centroid-membership polyfill and
     cell-square geometry builder.
+
+    For non-polygon geometries (points, lines), BNG's centroid-BFS polyfill
+    returns nothing (centroid-containment: a point/line contains no cell centroid
+    in the 2D-area sense).  The ``point_to_cell_fn`` hook is passed so that the
+    engine can fall back to sampling coordinates along the geometry and mapping
+    each to its BNG cell, enabling dimension-aware coverage classification.
     """
     return _dilate.classify(
         geometry,
         resolution,
         polyfill_fn=lambda g, r: polyfill(g, r),
         cell_geom_fn=_bng_cell_geom,
+        point_to_cell_fn=lambda x, y: point_to_cell_id(x, y, resolution),
     )
 
 

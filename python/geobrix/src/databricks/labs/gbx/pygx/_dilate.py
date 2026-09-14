@@ -102,19 +102,126 @@ def _solid_and_holes(geom):
     return S, H
 
 
-def classify(geom, res, polyfill_fn, cell_geom_fn):
-    """Partition polyfill candidate cells vs P (geom), S (solid), H (holes)."""
+def _geom_dimension(geom) -> int:
+    """Topological dimension of a geometry: 0=point, 1=line/ring, 2=surface/other."""
+    t = geom.geom_type
+    if t in ("Point", "MultiPoint"):
+        return 0
+    if t in ("LineString", "LinearRing", "MultiLineString"):
+        return 1
+    return 2  # Polygon, MultiPolygon, GeometryCollection, etc.
+
+
+def _sample_coords(geom, n_samples: int = 16):
+    """Yield (x, y) coordinate pairs sampled from a point or line geometry.
+
+    Used for generating candidate cells from a grid's point_to_cell hook when
+    polyfill_fn returns nothing for non-polygon geometries (e.g. BNG centroid-BFS
+    returns empty for a point or line input).
+
+    - Point / MultiPoint: yield the point coordinate(s).
+    - LineString / LinearRing: yield endpoints + n_samples interior samples + centroid.
+    - Multi-geometries: recurse into each part.
+    """
+    if hasattr(geom, "geoms"):
+        for part in geom.geoms:
+            yield from _sample_coords(part, n_samples)
+        return
+    # Single geometry: centroid first (always available)
+    c = geom.centroid
+    yield (c.x, c.y)
+    # Explicit vertex coordinates (Point has .coords; LineString has .coords)
+    if hasattr(geom, "coords"):
+        for xy in geom.coords:
+            yield (xy[0], xy[1])
+    # Densify lines with n_samples-1 interior fractions
+    if geom.geom_type in ("LineString", "LinearRing") and n_samples > 0:
+        ln = geom.length
+        if ln > 0:
+            for i in range(1, n_samples):
+                pt = geom.interpolate(i / n_samples, normalized=True)
+                yield (pt.x, pt.y)
+
+
+def classify(geom, res, polyfill_fn, cell_geom_fn, point_to_cell_fn=None):
+    """Partition polyfill candidate cells vs P (geom), S (solid), H (holes).
+
+    Parameters
+    ----------
+    geom : shapely geometry
+    res : resolution (grid-specific)
+    polyfill_fn : callable(g, res) -> list[cell_id]
+        Grid's polygon polyfill.  Must be called with the SOLID (hole-filled)
+        geometry so that hole-interior cells become candidates for hole-* modes.
+        For non-polygon geoms (point/line) this may return an empty list (e.g.
+        BNG centroid-BFS, custom centroid-containment).
+    cell_geom_fn : callable(cell_id) -> shapely polygon
+        Inverse map: grid cell → its bounding polygon.
+    point_to_cell_fn : callable(x, y) -> cell_id | None, optional
+        Per-grid hook that returns the cell containing a coordinate pair.
+        Required for grids whose polyfill_fn cannot handle point/line inputs
+        (BNG, custom).  When provided, it is used as a fallback only when
+        polyfill_fn returns an empty candidate set for a non-polygon geometry.
+        Quadbin (bbox-based polyfill) does not need this hook.
+
+    Coverage semantics (dimension-aware, replaces the old uniform area>0 test):
+    - Polygon (dim 2): cell ∈ cover iff intersection area > 0.
+    - Line    (dim 1): cell ∈ cover iff intersection length > 0.
+    - Point   (dim 0): cell ∈ cover iff they intersect (any shared point suffices).
+    Core sets: cell ∈ core iff geom.contains(cell) — always empty for point/line
+    because no polygon cell can be contained by a 0D or 1D geometry.
+    """
     S, H = _solid_and_holes(geom)
-    # polyfill the SOLID so hole-interior cells are classified (hole modes need h_core)
-    cands = set(polyfill_fn(S, res))
+    dim = _geom_dimension(geom)
+
+    if dim == 2:
+        # Polygon path: unchanged.  Polyfill the filled SOLID so hole-interior
+        # cells are candidates for hole-* mode classification.
+        cands = set(polyfill_fn(S, res))
+    else:
+        # Non-polygon (point or line): try polyfill first.
+        # Quadbin uses a bbox-based polyfill that returns cells for any input;
+        # BNG/custom use centroid-containment and return nothing for points/lines.
+        cands = set(polyfill_fn(S, res))
+        if not cands and point_to_cell_fn is not None:
+            # Fallback: sample representative coordinates along the geometry and
+            # map each to its containing cell via the per-grid hook.
+            seen: set = set()
+            for x, y in _sample_coords(geom):
+                if (x, y) in seen:
+                    continue
+                seen.add((x, y))
+                try:
+                    c = point_to_cell_fn(x, y)
+                    if c is not None:
+                        cands.add(c)
+                except Exception:
+                    pass
+
     p_cover, p_core, s_cover, s_core, h_cover, h_core = (set() for _ in range(6))
+
     for c in cands:
         g = cell_geom_fn(c)
-        if geom.intersects(g) and geom.intersection(g).area > 0:
+
+        # Dimension-aware coverage test for P (the original geometry, may have holes)
+        # and S (the hole-filled solid, always a polygon when dim==2).
+        if dim == 0:
+            p_in_cover = geom.intersects(g)
+            s_in_cover = S.intersects(g)  # S == geom for non-polygon
+        elif dim == 1:
+            ix_p = geom.intersection(g)
+            p_in_cover = geom.intersects(g) and ix_p.length > 0
+            ix_s = S.intersection(g)
+            s_in_cover = S.intersects(g) and ix_s.length > 0
+        else:
+            p_in_cover = geom.intersects(g) and geom.intersection(g).area > 0
+            s_in_cover = S.intersects(g) and S.intersection(g).area > 0
+
+        if p_in_cover:
             p_cover.add(c)
             if geom.contains(g):
                 p_core.add(c)
-        if S.intersects(g) and S.intersection(g).area > 0:
+        if s_in_cover:
             s_cover.add(c)
             if S.contains(g):
                 s_core.add(c)
@@ -122,14 +229,16 @@ def classify(geom, res, polyfill_fn, cell_geom_fn):
             h_cover.add(c)
             if H.contains(g):
                 h_core.add(c)
+
     return Classification(p_cover, p_core, s_cover, s_core, h_cover, h_core)
 
 
 def mode_setup(mode, cls, neighbors=None):
     """Return (frontier0, visited0, admit, k0) for a traversal mode.
 
-    For boundary-* modes `neighbors` must be provided so that outer_perimeter can be
-    computed.  hole-* modes do not use `neighbors` and leave it optional.
+    For boundary-* modes `neighbors` must be provided so that outer_perimeter can
+    be computed.  hole-* modes also require `neighbors` for alignment-robust
+    hole-edge perimeter seeds (void_hole_edge / solid_hole_edge).
     """
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
@@ -145,7 +254,6 @@ def mode_setup(mode, cls, neighbors=None):
             )
         op = outer_perimeter(cls.s_cover, neighbors)
 
-    hb = cls.h_border
     if mode == "boundary-out":
         # frontier/k0: op (outer perimeter); visited: p_cover blocks inward path to hole
         # admit: True (expand freely outward)
@@ -156,21 +264,61 @@ def mode_setup(mode, cls, neighbors=None):
     if mode == "boundary-in-ignore-holes":
         # frontier/visited/k0: op; admit: s_core (marches across hole interior)
         return op, op, (lambda n: n in cls.s_core), op
+
+    # ------------------------------------------------------------------
+    # hole-* modes — alignment-robust perimeter seeds
+    #
+    # Old approach (h_border = h_cover - h_core) fails for grid-ALIGNED holes:
+    # when the hole boundary exactly coincides with cell boundaries every cell is
+    # either fully inside or fully outside → h_cover == h_core → h_border empty
+    # → frontier empty → all three hole modes return nothing.
+    #
+    # Fix: replace h_border with topological perimeter seeds derived from
+    # neighbor-adjacency, symmetric to outer_perimeter for boundary-* modes:
+    #
+    #   void_hole_edge  = { c ∈ h_cover : ∃ n ∉ h_cover }
+    #       (hole-side cells adjacent to non-hole-region cells — always non-empty
+    #        when h_core is non-empty, whether or not the hole is grid-aligned)
+    #
+    #   solid_hole_edge = { c ∈ p_core : ∃ n ∈ h_cover }
+    #       (solid cells adjacent to the hole region — always non-empty when h_core
+    #        is non-empty and there is solid material around the hole)
+    #
+    # Direction / admit semantics are UNCHANGED; only the seed changes.
+    # ------------------------------------------------------------------
+    if neighbors is None:
+        raise ValueError(
+            f"mode {mode!r} requires `neighbors` to compute hole-edge perimeters"
+        )
+
+    # Void-side: h_cover cells whose at least one neighbour is outside h_cover.
+    void_edge = frozenset(
+        c for c in cls.h_cover if any(n not in cls.h_cover for n in neighbors(c))
+    )
+    # Solid-side: p_core cells whose at least one neighbour is inside h_cover.
+    solid_edge = frozenset(
+        c for c in cls.p_core if any(n in cls.h_cover for n in neighbors(c))
+    )
+
     if mode == "hole-in":
-        return frozenset(hb), frozenset(hb), (lambda n: n in cls.h_core), frozenset(hb)
+        # Seed from void-side (outer boundary of hole region).
+        # Expand INTO the hole interior (admit h_core); visited = seed (blocks exit).
+        return void_edge, void_edge, (lambda n: n in cls.h_core), void_edge
     if mode == "hole-out":
+        # Seed from solid-side (p_core cells adjacent to hole region).
+        # Expand outward into solid (admit p_core); visited = h_cover (blocks entry).
         return (
-            frozenset(hb),
+            solid_edge,
             frozenset(cls.h_cover),
             (lambda n: n in cls.p_core),
-            frozenset(hb),
+            solid_edge,
         )
-    # hole-out-ignore-geom
+    # hole-out-ignore-geom: solid-side seed, expand unbounded (admit not-in-h_core).
     return (
-        frozenset(hb),
+        solid_edge,
         frozenset(cls.h_cover),
         (lambda n: n not in cls.h_core),
-        frozenset(hb),
+        solid_edge,
     )
 
 
