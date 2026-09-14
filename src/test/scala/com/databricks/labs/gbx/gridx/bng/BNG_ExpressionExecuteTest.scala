@@ -175,9 +175,12 @@ class BNG_ExpressionExecuteTest extends AnyFunSuite {
     test("BNG_GeometryKRing should return the geometry based K-Ring") {
         val triangle = JTS.fromWKT("POLYGON ((10000 10000, 20000 10000, 20000 20000, 10000 10000))")
         val geomKLoop = BNG_GeometryKRing.execute(triangle, 3, 2).toSeq
-        // Perimeter-model expected value (corrected from 151 under the old straddling-cell seed).
-        // The ring includes pCover plus the first two outward shells from the covering-set perimeter.
-        geomKLoop.length shouldBe 133
+        // LOCKED design (0.5.1 re-cut): boundary-out EXCLUDES the covering set (k0 = ∅) and routes
+        // through the shared GeomDilation engine (blocked outward BFS), matching the light tier.
+        // The ring is now ONLY the first two outward shells from the covering-set perimeter — the
+        // geom itself is not returned. 88 = the prior 133 minus the 45-cell covering set (see the
+        // BNG_Polyfill test: polyfill at res 3 is 45 cells).
+        geomKLoop.length shouldBe 88
     }
 
     test("BNG_GeometryKRing/KLoop eval accept a string resolution equal to the int index") {

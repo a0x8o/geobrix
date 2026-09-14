@@ -57,19 +57,22 @@ class Custom_GeometrySuite extends AnyFunSuite {
     // Basic properties on the simple fixture
     // ------------------------------------------------------------------
 
-    test("Custom_GeometryKRing — k=0 == polyfill (execute via sys.geometryKRing)") {
+    test("Custom_GeometryKRing — boundary-out k=0 is empty (LOCKED design: geom excluded, k0 = ∅)") {
+        // Previously boundary-out k=0 returned the covering set (== polyfill). Under the LOCKED
+        // design the geom is EXCLUDED (k0 = ∅), so boundary-out at k=0 yields no cells.
         val geom = JTS.fromWKB(SIMPLE_WKB)
         val k0   = SYS.geometryKRing(geom, SIMPLE_RES, 0, GeomDilation.DEFAULT_MODE)
-        val fill = SYS.polyfill(geom, SIMPLE_RES).toSet
-        k0 shouldBe fill
+        k0 shouldBe empty
     }
 
-    test("Custom_GeometryKRing — filled superset of polyfill") {
+    test("Custom_GeometryKRing — boundary-out k=1 is a non-empty outward band disjoint from the geom") {
+        // boundary-out excludes the covering set (k0 = ∅); the k=1 band is the outward ring only,
+        // so it is disjoint from the covering set (previously fill ⊆ k1 with the geom included).
         val geom = JTS.fromWKB(SIMPLE_WKB)
         val k1   = SYS.geometryKRing(geom, SIMPLE_RES, 1, GeomDilation.DEFAULT_MODE)
-        val fill = SYS.polyfill(geom, SIMPLE_RES).toSet
-        fill.subsetOf(k1) shouldBe true
-        k1.size should be > fill.size
+        val cls  = GeomDilation.classify(SYS, geom, SIMPLE_RES)
+        k1.size should be > 0
+        k1.intersect(cls.pCover) shouldBe empty
     }
 
     test("Custom_GeometryKLoop — loop == ring diff") {
@@ -111,7 +114,8 @@ class Custom_GeometrySuite extends AnyFunSuite {
             Literal.create(gridRow, Custom_GridSpec.gridStructType),
             Literal(SIMPLE_RES, IntegerType),
             Literal(1, IntegerType),
-            Literal(GeomDilation.DEFAULT_MODE)
+            Literal(GeomDilation.DEFAULT_MODE),
+            Literal(GeomDilation.DEFAULT_COVERAGE)
         )
         val result = expr.eval(InternalRow.empty)
         assert(result != null)
@@ -137,14 +141,16 @@ class Custom_GeometrySuite extends AnyFunSuite {
             Literal.create(gridRow, Custom_GridSpec.gridStructType),
             Literal(SIMPLE_RES, IntegerType),
             Literal(1, IntegerType),
-            Literal(GeomDilation.DEFAULT_MODE)
+            Literal(GeomDilation.DEFAULT_MODE),
+            Literal(GeomDilation.DEFAULT_COVERAGE)
         )
         val exprWKB = Custom_GeometryKRing(
             Literal(SIMPLE_WKB, BinaryType),
             Literal.create(gridRow, Custom_GridSpec.gridStructType),
             Literal(SIMPLE_RES, IntegerType),
             Literal(1, IntegerType),
-            Literal(GeomDilation.DEFAULT_MODE)
+            Literal(GeomDilation.DEFAULT_MODE),
+            Literal(GeomDilation.DEFAULT_COVERAGE)
         )
 
         val wktResult = exprWKT.eval(InternalRow.empty).asInstanceOf[ArrayData]
@@ -180,7 +186,8 @@ class Custom_GeometrySuite extends AnyFunSuite {
             Literal.create(gridRow, Custom_GridSpec.gridStructType),
             Literal(SIMPLE_RES, IntegerType),
             Literal(1, IntegerType),
-            Literal(GeomDilation.DEFAULT_MODE)
+            Literal(GeomDilation.DEFAULT_MODE),
+            Literal(GeomDilation.DEFAULT_COVERAGE)
         )
         val result = expr.eval(InternalRow.empty)
         assert(result != null)
@@ -260,7 +267,8 @@ class Custom_GeometrySuite extends AnyFunSuite {
             Literal.create(gridRow, Custom_GridSpec.gridStructType),
             Literal(SIMPLE_RES, IntegerType),
             Literal(1, IntegerType),
-            Literal(GeomDilation.DEFAULT_MODE)
+            Literal(GeomDilation.DEFAULT_MODE),
+            Literal(GeomDilation.DEFAULT_COVERAGE)
         )
         assert(expr.eval(InternalRow.empty) == null)
     }

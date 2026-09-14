@@ -24,25 +24,33 @@ class BNGTest extends AnyFunSuite {
         assert(BNG.geometryKRing(g, 3, 1, "boundary-out") == BNG.geometryKRing(g, 3, 1))
     }
 
-    test("bng geometryKRing boundary-in is a strict inward subset") {
+    test("bng geometryKRing boundary-in stays inside the covering set and is disjoint from boundary-out") {
         val wkt = new WKTReader()
         val g = wkt.read("POLYGON((528000 178000,528000 184000,534000 184000,534000 178000,528000 178000))")
+        val cls = GeomDilation.classify(BNG, g, 3)
         val out = BNG.geometryKRing(g, 3, 1, "boundary-out")
         val inn = BNG.geometryKRing(g, 3, 1, "boundary-in")
-        assert(inn.subsetOf(out) && inn.size < out.size)
+        // LOCKED design: boundary-out returns the OUTWARD band (geom excluded); boundary-in returns
+        // the INWARD band inside the covering set. They are now DISJOINT (previously boundary-out
+        // included the geom, so boundary-in was a subset of it).
+        assert(inn.nonEmpty, "boundary-in must be non-empty")
+        assert(inn.subsetOf(cls.pCover), "boundary-in must stay within the covering set")
+        assert(inn.intersect(out).isEmpty, "inward band must be disjoint from the outward band")
     }
 
     test("bng geometryKRing boundary-out expands outward for aligned geom (alignment-robustness)") {
         val wkt = new WKTReader()
         // 3 km × 3 km box with corners exactly on 1 km BNG grid lines → no straddling cells.
         // The old straddling-cell (pBorder) seed produced no outward expansion for such geoms.
-        // With the perimeter fix, k=1 must be strictly larger than pCover.
+        // With the perimeter fix boundary-out expands; and under the LOCKED design the geom is
+        // EXCLUDED, so the k=1 band is non-empty and disjoint from pCover.
         val g   = wkt.read("POLYGON((529000 179000,529000 182000,532000 182000,532000 179000,529000 179000))")
         val cls = GeomDilation.classify(BNG, g, 3)
         assert(cls.pBorder.isEmpty, "test precondition: aligned polygon must have no straddling cells (pBorder empty)")
         val ring = BNG.geometryKRing(g, 3, 1)
-        assert(ring.size > cls.pCover.size,
-          "boundary-out must expand beyond pCover even when pBorder is empty (alignment-robustness)")
+        assert(ring.nonEmpty,
+          "boundary-out must expand outward even when pBorder is empty (alignment-robustness)")
+        assert(ring.intersect(cls.pCover).isEmpty, "boundary-out outward band must exclude the geom")
     }
 
     test("bng geometryKLoop boundary-out outward shell for aligned geom") {

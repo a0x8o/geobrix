@@ -30,27 +30,22 @@ class Quadbin_GeometrySuite extends AnyFunSuite {
     private val HOLED_WKB = JTS.toWKB(JTS.fromWKT(HOLED_WKT))
     private val HOLED_RES = 10  // cells ≈0.35°; 2°×3° hole spans ~6×9 tiles → hCore non-empty
 
-    test("Quadbin_GeometryKRing — k=0 == polyfill (execute)") {
+    test("Quadbin_GeometryKRing — boundary-out k=0 is empty (LOCKED design: geom excluded, k0 = ∅)") {
+        // Previously boundary-out k=0 returned the covering set (== polyfill). Under the LOCKED
+        // design the geom is EXCLUDED (k0 = ∅), so boundary-out at k=0 yields no cells.
         val geom   = JTS.fromWKB(NYC_WKB)
         val k0     = Quadbin_GeometryKRing.execute(geom, RES, 0, GeomDilation.DEFAULT_MODE)
-        val fill   = Quadbin.polyfillBbox(
-            (geom.getEnvelopeInternal.getMinX, geom.getEnvelopeInternal.getMinY,
-             geom.getEnvelopeInternal.getMaxX, geom.getEnvelopeInternal.getMaxY), RES)
-            .filter(c => Quadbin.cellIdToGeometry(c).intersects(geom))
-            .toSet
-        k0 shouldBe fill
+        k0 shouldBe empty
     }
 
-    test("Quadbin_GeometryKRing — filled superset of polyfill") {
+    test("Quadbin_GeometryKRing — boundary-out k=1 is a non-empty outward band disjoint from the geom") {
+        // boundary-out excludes the covering set (k0 = ∅); the k=1 band is the outward ring only,
+        // so it is disjoint from the covering set (previously fill ⊆ k1 with the geom included).
         val geom = JTS.fromWKB(NYC_WKB)
         val k1   = Quadbin_GeometryKRing.execute(geom, RES, 1, GeomDilation.DEFAULT_MODE)
-        val fill = Quadbin.polyfillBbox(
-            (geom.getEnvelopeInternal.getMinX, geom.getEnvelopeInternal.getMinY,
-             geom.getEnvelopeInternal.getMaxX, geom.getEnvelopeInternal.getMaxY), RES)
-            .filter(c => Quadbin.cellIdToGeometry(c).intersects(geom))
-            .toSet
-        fill.subsetOf(k1) shouldBe true
-        k1.size should be > fill.size
+        val cls  = GeomDilation.classify(Quadbin, geom, RES)
+        k1.size should be > 0
+        k1.intersect(cls.pCover) shouldBe empty
     }
 
     test("Quadbin_GeometryKLoop — loop == ring diff") {

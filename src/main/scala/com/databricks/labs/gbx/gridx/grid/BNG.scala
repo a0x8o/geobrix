@@ -678,48 +678,27 @@ object BNG extends GridSystem {
         id.toLong
     }
 
-    /** Set of cell IDs forming the k-ring around the geometry at the given resolution,
-      * using the given dilation mode. boundary-out delegates to the proven flatMap
-      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
-    override def geometryKRing(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
-        if (mode == GeomDilation.DEFAULT_MODE) geometryKRing(geometry, resolution, k)
-        else GeomDilation.expand("ring", k, mode, BNG, geometry, resolution)
+    /** Set of cell IDs forming the k-ring around the geometry, using the given dilation mode and
+      * coverage basis. ALL modes (including the default boundary-out) route through the shared
+      * [[GeomDilation.expand]] engine, then drop out-of-bounds ids via [[isValid]] — matching the
+      * light tier (`_bng.geometry_k_ring`) exactly. The old boundary-out flatMap fast-path is
+      * retired: it included the covering set (now excluded, k0 = ∅) and could not reproduce the
+      * engine's blocked BFS across a holed solid, so it diverged from light for holes at k ≥ 2. */
+    override def geometryKRing(geometry: Geometry, resolution: Int, k: Int, mode: String, coverage: String): Set[Long] =
+        GeomDilation.expand("ring", k, mode, BNG, geometry, resolution, coverage).filter(BNG.isValid)
 
-    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution,
-      * using the given dilation mode. boundary-out delegates to the proven flatMap
-      * algorithm; the other 5 modes route through [[GeomDilation.expand]]. */
-    override def geometryKLoop(geometry: Geometry, resolution: Int, k: Int, mode: String): Set[Long] =
-        if (mode == GeomDilation.DEFAULT_MODE) geometryKLoop(geometry, resolution, k)
-        else GeomDilation.expand("loop", k, mode, BNG, geometry, resolution)
+    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry, using the given
+      * dilation mode and coverage basis. Routes through the engine (all modes) + [[isValid]]. */
+    override def geometryKLoop(geometry: Geometry, resolution: Int, k: Int, mode: String, coverage: String): Set[Long] =
+        GeomDilation.expand("loop", k, mode, BNG, geometry, resolution, coverage).filter(BNG.isValid)
 
-    /** Set of cell IDs forming the k-loop (hollow ring) around the geometry at the given resolution.
-      * Uses the covering-set outer perimeter as the boundary seed, which is alignment-robust:
-      * any non-empty covering set has a perimeter even when all cells are fully contained (no
-      * straddling cells).  The kLoop is the outermost shell of the k-ring minus the (k-1)-ring. */
-    def geometryKLoop(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
-        val cls = GeomDilation.classify(BNG, geometry, resolution)
-        if (k == 0) return cls.pCover.filter(BNG.isValid)
-        // Outer perimeter of sCover: alignment-robust replacement for straddling borderCells.
-        val op = GeomDilation.outerPerimeter(cls.sCover, BNG)
-        val n: Int = k - 1
-        // nRing = everything in ring(k-1): pCover base + perimeter kRing expanded to n steps
-        val nRing: Set[Long] = cls.pCover ++ op.flatMap(c => kRing(c, n))
-        // Shell at distance k from the perimeter, minus the inner ring
-        val kShell = op.flatMap(c => kLoop(c, k))
-        kShell.diff(nRing).filter(BNG.isValid)
-    }
+    /** Default-path (boundary-out, coveras) k-loop — delegates to the engine via the mode form. */
+    def geometryKLoop(geometry: Geometry, resolution: Int, k: Int): Set[Long] =
+        geometryKLoop(geometry, resolution, k, GeomDilation.DEFAULT_MODE)
 
-    /** Set of cell IDs forming the k-ring around the geometry at the given resolution.
-      * Uses the covering-set outer perimeter as the boundary seed, which is alignment-robust:
-      * any non-empty covering set has a perimeter even when all cells are fully contained (no
-      * straddling cells). */
-    def geometryKRing(geometry: Geometry, resolution: Int, k: Int): Set[Long] = {
-        val cls = GeomDilation.classify(BNG, geometry, resolution)
-        // Outer perimeter of sCover: alignment-robust replacement for straddling borderCells.
-        val op = GeomDilation.outerPerimeter(cls.sCover, BNG)
-        val expansion = op.flatMap(c => kRing(c, k))
-        (cls.pCover ++ expansion).filter(BNG.isValid)
-    }
+    /** Default-path (boundary-out, coveras) k-ring — delegates to the engine via the mode form. */
+    def geometryKRing(geometry: Geometry, resolution: Int, k: Int): Set[Long] =
+        geometryKRing(geometry, resolution, k, GeomDilation.DEFAULT_MODE)
 
     def getChips(
         geometry: Geometry,
