@@ -518,18 +518,28 @@ Powered by the **pure-Python quadbin interpolation port**. Cell-set and value pa
 
 ### Geometry-Aware Expansion (Quadbin)
 
-Geometry-aware functions polyfill a geometry into the grid and then expand outward (or inward at holes) using the dilation engine. They generalise the cell-centric `quadbin_kring` / `quadbin_kloop` to operate on arbitrary geometry shapes. The optional `mode` parameter selects the expansion direction and controls how polygon holes are handled; `'boundary-out'` (the default) expands outward from the covering set and works correctly on aligned and non-aligned geometries alike.
+Geometry-aware functions polyfill a geometry into the grid and then expand outward (or inward at holes) using the dilation engine. They generalise the cell-centric `quadbin_kring` / `quadbin_kloop` to operate on arbitrary geometry shapes — polygons (with holes), lines, and points. The optional `mode` parameter selects the expansion direction and hole handling; the optional `coverage` parameter (after `mode`) selects how a cell is judged to belong to a region. This section is the canonical description; the BNG, custom, and H3 geometry-aware functions share the same `mode`/`coverage` contract.
 
-**Dilation modes** (exact hyphenated values):
+**Dilation modes** (exact hyphenated values) — each produces a `k`-thick band; polygon holes are handled only by the `hole-*` modes, never by `boundary-*`:
 
 | Mode | Behaviour |
 |------|-----------|
-| `'boundary-out'` | Default. Expands outward from the geometry's covering set. Polygon holes do not act as boundaries. |
-| `'boundary-in'` | Expands inward from the outer edge of the covering set, stopping at holes. |
-| `'boundary-in-ignore-holes'` | Like `'boundary-in'` but treats the polygon as solid — expands inward across holes. |
-| `'hole-in'` | Expands inward from the interior edge of holes only. |
-| `'hole-out'` | Expands outward from hole boundaries into the surrounding geometry. |
-| `'hole-out-ignore-geom'` | Expands outward from holes ignoring the outer geometry boundary. |
+| `'boundary-out'` | Default. The outward band only — cells within `k` steps **outside** the geometry; the geometry's own cells (interior + boundary ring) are excluded. Works on aligned and non-aligned geometries alike. |
+| `'boundary-in'` | Inward setback band from the outer boundary, stopping at holes. |
+| `'boundary-in-ignore-holes'` | Like `'boundary-in'` but treats the polygon as solid — the band can cross holes. |
+| `'hole-in'` | Fills each hole inward from its edge. |
+| `'hole-out'` | Band in the solid around each hole, bounded by the outer geometry. |
+| `'hole-out-ignore-geom'` | Band outward from each hole, not bounded by the outer geometry. |
+
+**Coverage** (exact values; `coverage` defaults to `'coveras'`):
+
+| Coverage | A cell belongs to a region if it… |
+|------|-----------|
+| `'coveras'` | **Default.** …*overlaps* the region (inclusive; boundary cells kept — no false negatives). |
+| `'polyfill'` | …has its *centre* inside the region (standard polyfill). |
+| `'core'` | …is *entirely* inside the region (strictest; no false positives). |
+
+Nesting: `coveras ⊇ polyfill ⊇ core`. Point and line geometries are covered only under `'coveras'` (they have no cell whose centre is inside them or that fully contains them, so `'polyfill'`/`'core'` return empty for them).
 
 ### quadbin_geomkring
 

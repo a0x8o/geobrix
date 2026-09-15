@@ -68,18 +68,18 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 ### Geometry-aware kring/kloop across all grid families (new)
 
-- **BNG `gbx_bng_geomkring` / `gbx_bng_geomkloop` (and their `*explode` variants) gain an optional `mode` parameter.** The new `mode` argument controls how cells that touch the geometry boundary are classified. The default (`'boundary-out'`) preserves the existing behavior — boundary cells are included and expansion grows outward — so existing calls with three arguments continue to work unchanged on the JAR-based heavy tier. The lightweight SQL tier now requires an explicit fourth argument if you want non-default behavior; `mode` defaults to `'boundary-out'` if omitted. Available in both the heavyweight and lightweight tiers.
+- **BNG `gbx_bng_geomkring` / `gbx_bng_geomkloop` (and their `*explode` variants) gain an optional `mode` parameter.** The new `mode` argument controls how cells that touch the geometry boundary are classified. The default is `'boundary-out'` (outward band around the geometry; see the corrected semantics below), so existing three-argument calls keep working; `mode` defaults to `'boundary-out'` when omitted. Available in both the heavyweight and lightweight tiers.
 
   The six mode values are:
 
   | Mode | Behaviour |
   |------|-----------|
-  | `'boundary-out'` | Default. Boundary cells included; expansion grows outward from the geometry edge. |
-  | `'boundary-in'` | Boundary cells included; expansion grows inward into the geometry. |
-  | `'boundary-in-ignore-holes'` | Like `'boundary-in'` but hole boundaries are not subtracted from the expansion. |
-  | `'hole-in'` | Expands inward from the interior edge of holes only. |
-  | `'hole-out'` | Expands outward from hole boundaries into the surrounding geometry. |
-  | `'hole-out-ignore-geom'` | Expands outward from holes, ignoring the outer geometry boundary. |
+  | `'boundary-out'` | Default. The outward band only — cells within `k` steps **outside** the geometry's outer boundary. The geometry's own cells (its interior and boundary ring) are **not** in the result. |
+  | `'boundary-in'` | Inward setback band — cells within `k` steps inside the outer boundary, stopping at holes. |
+  | `'boundary-in-ignore-holes'` | Like `'boundary-in'` but the polygon is treated as solid (holes are not subtracted), so the band can cross a hole. |
+  | `'hole-in'` | Fills each hole inward from its edge, up to `k` steps. |
+  | `'hole-out'` | Band in the solid around each hole, up to `k` steps, bounded by the outer geometry. |
+  | `'hole-out-ignore-geom'` | Band outward from each hole, up to `k` steps, **not** bounded by the outer geometry. |
 
 - **New `gbx_quadbin_geomkring`, `gbx_quadbin_geomkloop`, `gbx_quadbin_geomkringexplode`, `gbx_quadbin_geomkloopexplode` — geometry-aware expansion for quadbin.** These four functions follow the same contract as the BNG variants: polyfill a WGS84 geometry into quadbin cells at a given zoom level, then expand by `k` dilation steps using the optional `mode` parameter. Cell IDs are `BIGINT` (quadbin format). Available in both the heavyweight and lightweight tiers. See [GridX Functions](./api/gridx-functions).
 
@@ -97,6 +97,24 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 - **`boundary-out` and `boundary-in` modes no longer treat polygon holes as boundaries.** In the initial v0.5.1 release, the `boundary-*` mode seed was derived from cells that straddled the geometry outline — a set that included cells along hole rims. As a result, holes were incorrectly treated as inner boundaries: `boundary-out` expanded outward from hole edges, and `boundary-in` ringed the hole interior. The seed is now the **outer perimeter of the covering set** — cells whose neighborhood includes at least one cell outside the cover — which excludes hole-rim cells by construction. Holes are unaffected by `boundary-*` modes; use `hole-in` / `hole-out` to work with holes explicitly. This fix applies to all four grid systems (BNG, quadbin, custom, H3) and both tiers (heavyweight and lightweight), which now agree.
 
 - **`boundary-out` and `boundary-in` now produce correct results for grid-aligned geometries.** The initial v0.5.1 implementation produced an empty expansion for polygons whose edges fall exactly on cell boundaries (no straddling cells → empty seed → no outward ring). This no longer occurs: the covering-set perimeter is non-empty for any non-empty cover, aligned or not.
+
+- **`boundary-out` now returns only the outward band; the geometry's own cells are excluded.** Previously `boundary-out` included the geometry's covering cells in its result. It now returns strictly the cells reached by expanding *outward* from the boundary — the geometry (its interior and boundary ring) is not part of the result. Use the covering set (`k=0` of the other modes) or a grid `polyfill`/`cover` function if you need the geometry's own cells.
+
+- **`hole-*` modes are now alignment-robust too.** `hole-in`/`hole-out`/`hole-out-ignore-geom` previously produced nothing on a grid-aligned hole (the same empty-seed issue). Their seed is now the hole-edge perimeter, so they behave correctly regardless of alignment. Applies to all grids and both tiers.
+
+- **Point and line geometries are now supported.** `geomkring`/`geomkloop` accept `POINT`/`LINESTRING` (and their `MULTI*` forms), not just polygons — a point covers its containing cell, a line the cells it crosses, and `boundary-out` expands outward from there. (Supported under the default `coverage='coveras'`; see the `coverage` note below.)
+
+### Geometry-aware kring/kloop — new `coverage` parameter
+
+- **All `gbx_{h3,bng,quadbin,custom}_geomkring`/`geomkloop`/`*explode` functions gain an optional trailing `coverage` parameter** (after `mode`), controlling how a cell is judged to belong to a region:
+
+  | `coverage` | Meaning |
+  |---|---|
+  | `'coveras'` | **Default.** A cell belongs if it *overlaps* the region — inclusive, so boundary cells are kept (no false negatives). |
+  | `'polyfill'` | A cell belongs if its *centre* is inside the region (standard polyfill). |
+  | `'core'` | A cell belongs only if it is *entirely* inside the region (strictest; no false positives). |
+
+  The nesting is `coveras ⊇ polyfill ⊇ core`. The default `'coveras'` is more inclusive than the initial v0.5.1 behavior, so default results may include more cells. Point/line geometries are covered only under `'coveras'` (a 0-/1-dimensional geometry has no cell whose centre is inside it or that fully contains it, so `'polyfill'` and `'core'` return empty for them). Available in both tiers; heavy and light agree across all `coverage` × `mode` combinations.
 
 
 ### Covering assignment performance improvement
