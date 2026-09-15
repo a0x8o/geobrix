@@ -524,7 +524,7 @@ Geometry-aware functions polyfill a geometry into the grid and then expand outwa
 
 | Mode | Behaviour |
 |------|-----------|
-| `'boundary-out'` | Default. The outward band only — cells within `k` steps **outside** the geometry; the geometry's own cells (interior + boundary ring) are excluded. Works on aligned and non-aligned geometries alike. |
+| `'boundary-out'` | Default. The geometry's outer **boundary ring** (`k=0`) plus the outward band — cells within `k` steps **outside** the boundary; the geometry's **interior** is excluded. Symmetric with `'boundary-in'` (same `k=0` ring, opposite direction). Works on aligned and non-aligned geometries alike. |
 | `'boundary-in'` | Inward setback band from the outer boundary, stopping at holes. |
 | `'boundary-in-ignore-holes'` | Like `'boundary-in'` but treats the polygon as solid — the band can cross holes. |
 | `'hole-in'` | Fills each hole inward from its edge. |

@@ -10,15 +10,19 @@ class GeomDilationSuite extends AnyFunSuite {
   private val grid = Quadbin
   private val res = 12
 
-  test("boundary-out ring EXCLUDES the geom (LOCKED design: k0 = ∅)") {
-    // Corrected semantics: boundary-out returns ONLY the outward k-step band; the covering
-    // set / geom is EXCLUDED (k0 = ∅). Previously this test asserted pCore/pCover ⊆ ring;
-    // now the ring must be disjoint from pCover and still non-empty (outward expansion).
+  test("boundary-out: k0 is the boundary ring (== boundary-in k0); interior EXCLUDED") {
+    // Corrected semantics: boundary-out and boundary-in share the same k0 anchor (the
+    // boundary covering ring) and differ only in direction. boundary-out returns the
+    // boundary ring (k0) + the outward band; the geom INTERIOR is excluded, so any
+    // covering-set cell in the ring must be on the boundary ring k0.
     val g = wkt.read("POLYGON((-1 -1, -1 1, 1 1, 1 -1, -1 -1))")
     val cls = GeomDilation.classify(grid, g, res)
+    val k0Out = GeomDilation.expand("loop", 0, "boundary-out", grid, g, res)
+    val k0In  = GeomDilation.expand("loop", 0, "boundary-in", grid, g, res)
+    assert(k0Out == k0In && k0Out.nonEmpty, "boundary-out k0 = boundary-in k0 (boundary ring)")
     val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
-    assert(ring.nonEmpty, "boundary-out k=1 must produce a non-empty outward band")
-    assert(ring.intersect(cls.pCover).isEmpty, "boundary-out must EXCLUDE the covering set (geom)")
+    assert(ring.nonEmpty, "boundary-out k=1 must be non-empty (boundary ring + outward band)")
+    assert(ring.intersect(cls.pCover).subsetOf(k0Out), "boundary-out must EXCLUDE the interior")
   }
 
   test("hole modes empty when no holes") {
@@ -53,19 +57,18 @@ class GeomDilationSuite extends AnyFunSuite {
     assert(r.intersect(cls.pCore).isEmpty, "hole-in must not enter the solid")
   }
 
-  test("boundary-out is alignment-robust — outward band non-empty for grid-aligned solid") {
+  test("boundary-out is alignment-robust — non-empty for grid-aligned solid") {
     // A polygon whose corners snap exactly to Quadbin cell boundaries has zero straddling
-    // cells (pBorder = ∅).  The old pBorder seed produced no outward expansion.
-    // With the perimeter fix, the outer band must be strictly larger than pCover.
+    // cells (pBorder = ∅).  The old pBorder seed produced no expansion; the perimeter fix
+    // makes the boundary ring (k0) and the outward band non-empty regardless of alignment.
     val g = wkt.read("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))")
     val cls  = GeomDilation.classify(grid, g, res)
+    val k0   = GeomDilation.expand("loop", 0, "boundary-out", grid, g, res)
     val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
-    // Alignment-robust: an aligned polygon has an empty pBorder but a non-empty outer perimeter,
-    // so boundary-out still expands. Under the LOCKED design the geom is EXCLUDED, so we assert a
-    // non-empty outward band that is disjoint from pCover (not "larger than pCover").
-    assert(ring.nonEmpty,
-      "boundary-out must expand outward even when pBorder is empty (alignment-robustness)")
-    assert(ring.intersect(cls.pCover).isEmpty, "boundary-out outward band must exclude the geom")
+    assert(k0.nonEmpty,
+      "boundary-out k0 (boundary ring) must be non-empty even when pBorder is empty")
+    assert(ring.nonEmpty, "boundary-out must expand outward (alignment-robustness)")
+    assert(ring.intersect(cls.pCover).subsetOf(k0), "boundary-out excludes the interior")
   }
 
   test("boundary-out hole is excluded — perimeter seed never includes hole-rim cells") {

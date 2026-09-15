@@ -209,28 +209,32 @@ def test_chipop_both_noncore_same_cell_intersection_clips():
 
 def test_line_fill_chips_follow_line():
     # Line geometry: the classify engine uses intersection.length > 0 for dim=1
-    # geometries and a point_to_cell_fn fallback to generate candidates.  Under the
-    # LOCKED design, boundary-out k0=∅ EXCLUDES the covering set, so the line's
-    # crossing cells surface at boundary-in k=0 (the perimeter of a 1-D covering set
-    # is every crossing cell).  boundary-out k=1 is the outward buffer around the line.
+    # geometries and a point_to_cell_fn fallback to generate candidates.  boundary-out
+    # and boundary-in share the same k0 anchor: the line's crossing cells (the
+    # perimeter of a 1-D covering set is every crossing cell).  boundary-out k>=1 is
+    # the outward buffer around the line.
     #
     # REVERSED from the 6dc1efe8 "empty" assertion: line support is now required.
     line = _towkb(
         shapely.geometry.LineString([(530100.0, 180500.0), (532900.0, 180500.0)])
     )
     res = _bng.get_resolution("1km")
-    # Covering set (the crossing cells) via boundary-in k=0.
+    # Covering set (the crossing cells) = boundary-in k=0 == boundary-out k=0.
     cover = _bng.geometry_k_ring_str(line, res, 0, "boundary-in")
     assert cover, "line covering set (boundary-in k=0) must be non-empty"
     assert (
         len(cover) >= 2
     ), f"a 2.8 km line at 1km resolution must cross at least 2 cells; got {len(cover)}"
-    # boundary-out k=1 is the outward buffer, EXCLUDING the crossing cells (k0=∅).
-    band = _bng.geometry_k_ring_str(line, res, 1)  # default boundary-out
-    assert band, "boundary-out k=1 on a BNG line must be a non-empty outward buffer"
+    k0_out = _bng.geometry_k_ring_str(line, res, 0)  # default boundary-out
+    assert set(k0_out) == set(cover), "boundary-out k0 = the line's crossing cells"
+    # boundary-out k=1 loop is the outward buffer, EXCLUDING the crossing cells.
+    band = _bng.geometry_k_loop_str(line, res, 1)  # outward ring only
+    assert (
+        band
+    ), "boundary-out k=1 loop on a BNG line must be a non-empty outward buffer"
     assert set(band).isdisjoint(
         set(cover)
-    ), "boundary-out excludes the line's own cells"
+    ), "the outward buffer excludes the line's own cells"
     # All returned IDs must be valid BNG string cell IDs.
     for cid in list(cover) + list(band):
         assert _bng.format(_bng.parse(cid)) == cid
@@ -255,24 +259,26 @@ def test_geomkring_boundary_out_grid_aligned_expands_outward():
     geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
     res = _bng.get_resolution("1km")
     cover = set(_bng.polyfill_str(geom, res))  # 9 covering cells
-    gkr_1 = set(_bng.geometry_k_ring_str(geom, res, 1))  # outward band (geom excluded)
+    k0 = set(_bng.geometry_k_ring_str(geom, res, 0))  # boundary ring
+    band = set(_bng.geometry_k_loop_str(geom, res, 1))  # outward ring only
 
-    # boundary-out k=1 is the outward band ONLY (k0=∅): non-empty and DISJOINT from
-    # the covering set.  The perimeter model still makes it non-empty for an aligned
-    # polygon (outer_perimeter of a non-empty covering set is always non-empty).
-    assert gkr_1, "boundary-out k=1 on aligned polygon must be a non-empty outward band"
-    assert gkr_1.isdisjoint(
-        cover
-    ), "boundary-out excludes the covering set (geom excluded)"
+    # The perimeter model makes boundary-out non-empty even for an aligned polygon
+    # (outer_perimeter of a non-empty covering set is always non-empty).  k0 is the
+    # boundary ring; the k=1 loop is the outward band, disjoint from the covering set.
+    assert k0, "boundary-out k0 (boundary ring) on aligned polygon must be non-empty"
+    assert band, "boundary-out k=1 loop on aligned polygon must be a non-empty band"
+    assert band.isdisjoint(cover), "the outward band excludes the covering set"
 
 
-def test_geomkring_boundary_out_grid_aligned_excludes_polyfill():
-    """boundary-out k=1 is disjoint from polyfill (geom excluded, k0=∅) for aligned polygons."""
+def test_geomkring_boundary_out_grid_aligned_excludes_interior():
+    """boundary-out excludes the INTERIOR for aligned polygons: any covering cell in
+    the k=1 ring is on the boundary ring (k0)."""
     geom = _towkb(_box2(530000.0, 180000.0, 533000.0, 183000.0))
     res = _bng.get_resolution("1km")
     fill = set(_bng.polyfill_str(geom, res))
+    k0 = set(_bng.geometry_k_ring_str(geom, res, 0))
     gkr = set(_bng.geometry_k_ring_str(geom, res, 1))
-    assert gkr and gkr.isdisjoint(fill)
+    assert gkr and (gkr & fill) <= k0
 
 
 # ---------------------------------------------------------------------------

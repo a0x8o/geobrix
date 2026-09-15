@@ -84,12 +84,17 @@ def test_classify_partitions_cover_core_holes(holed_cls):
     assert c.p_border == (c.p_cover - c.p_core)
 
 
-def test_boundary_out_ring_excludes_geom_and_expands_outward(holed_cls):
-    """boundary-out k=1: the covering set / geom is EXCLUDED (k0=∅); the result is
-    the outward band ONLY (LOCKED design correction)."""
+def test_boundary_out_ring_is_boundary_ring_plus_outward_band(holed_cls):
+    """boundary-out: k0 = the boundary covering ring (== boundary-in k0); the geom
+    INTERIOR is excluded; k>=1 adds the outward band."""
+    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
+    k0 = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors)
+    assert k0 == op, "boundary-out k0 must be the boundary covering ring"
     r = D.geom_expand("ring", 1, "boundary-out", holed_cls, _neighbors)
-    assert r, "outward band must be non-empty"
-    assert r.isdisjoint(holed_cls.p_cover), "boundary-out excludes the geom (p_cover)"
+    assert r, "boundary ring + outward band must be non-empty"
+    # interior excluded: any p_cover cell in the result is on the boundary ring
+    assert (r & holed_cls.p_cover) <= op, "boundary-out excludes the geom interior"
+    assert r - holed_cls.s_cover, "boundary-out k=1 must add an outward band"
 
 
 def test_boundary_in_ring_stays_inside_geom(holed_cls):
@@ -126,9 +131,14 @@ def test_loop_is_ring_difference(holed_cls):
         assert loop_k == (ring_k - ring_km1)
 
 
-def test_k0_loop_boundary_out_is_empty(holed_cls):
-    """boundary-out loop(0) == ∅: the covering set is EXCLUDED (k0=∅)."""
-    assert D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors) == set()
+def test_k0_loop_boundary_out_is_boundary_ring(holed_cls):
+    """boundary-out loop(0) == the boundary covering ring (== boundary-in loop(0))."""
+    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
+    k0_out = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors)
+    k0_in = D.geom_expand("loop", 0, "boundary-in", holed_cls, _neighbors)
+    assert (
+        k0_out == op == k0_in
+    ), "boundary-out loop(0) = boundary ring = boundary-in k0"
 
 
 def test_boundary_in_ignore_holes_crosses_hole_interior(holed_cls):
@@ -185,11 +195,13 @@ def test_boundary_out_holed_does_not_fill_hole(holed_cls):
     assert r.isdisjoint(
         holed_cls.h_core
     ), "boundary-out must not fill the hole; h_core cells found in result"
-    # Outward-only band (k0=∅): the geom itself is excluded, and the band is non-empty.
-    assert r, "boundary-out k=2 must be a non-empty outward band"
-    assert r.isdisjoint(
-        holed_cls.p_cover
-    ), "boundary-out excludes the geom (k0=∅); result is the outward band only"
+    # boundary ring (k0) + outward band; the INTERIOR is excluded (any p_cover cell in
+    # the result is on the boundary ring op).
+    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
+    assert r, "boundary-out k=2 must be a non-empty (boundary ring + outward band)"
+    assert (
+        r & holed_cls.p_cover
+    ) <= op, "boundary-out excludes the geom interior; only the boundary ring is in P"
 
 
 def test_boundary_in_holed_k0_excludes_hole_rim(holed_cls):
@@ -232,7 +244,7 @@ def test_boundary_modes_holeless_classification_and_perimeter():
 
     Under the Layer-2 perimeter fix, boundary-in/ignore-holes k=0 is the outer
     perimeter of s_cover (not s_border / p_border, which may be empty for grid-aligned
-    polygons).  boundary-out k=0 is still p_cover (unchanged).
+    polygons).  boundary-out k=0 is the same boundary ring (symmetric with boundary-in).
     """
     solid = box(0, 0, 10, 10)
 
@@ -248,9 +260,11 @@ def test_boundary_modes_holeless_classification_and_perimeter():
     assert (
         cls.s_border == cls.p_border
     ), "no-hole polygon: s_border must equal p_border (S = P when no holes)"
-    # boundary-out k=0 is ∅: the covering set / geom is EXCLUDED (LOCKED design).
+    # boundary-out k=0 is the boundary covering ring (== boundary-in k0).
     k0_bo = D.geom_expand("loop", 0, "boundary-out", cls, _neighbors)
-    assert k0_bo == set(), "boundary-out k=0 must be ∅ (geom excluded)"
+    assert k0_bo == D.outer_perimeter(
+        cls.s_cover, _neighbors
+    ), "boundary-out k=0 must be the boundary covering ring"
     # Under the perimeter fix, boundary-in k=0 = outer_perimeter(s_cover, neighbors).
     # For a grid-aligned polygon s_border may be empty, but the perimeter is always
     # non-empty — this is the alignment-robustness the perimeter fix delivers.
@@ -541,15 +555,18 @@ def test_classify_line_fallback_cover_crossing_cells(line_cls_fallback):
 
 
 def test_point_boundary_out_expands_outward(point_cls_candidates):
-    """boundary-out k=1 on a point = the outward ring around the containing cell,
-    EXCLUDING the cell itself (k0=∅)."""
-    r1 = D.geom_expand("ring", 1, "boundary-out", point_cls_candidates, _neighbors)
-    assert r1, "boundary-out k=1 on a point must be non-empty (outward ring)"
-    # The point's own cell is EXCLUDED (geom excluded); the 8 neighbours form the ring.
-    assert r1.isdisjoint(
+    """boundary-out on a point: k0 = the containing cell (boundary ring), and the
+    k=1 loop is the 8-neighbour outward ring."""
+    k0 = D.geom_expand("loop", 0, "boundary-out", point_cls_candidates, _neighbors)
+    assert k0 == point_cls_candidates.p_cover, "boundary-out k0 = the point's cell"
+    loop1 = D.geom_expand("loop", 1, "boundary-out", point_cls_candidates, _neighbors)
+    assert loop1, "boundary-out k=1 loop on a point must be non-empty (outward ring)"
+    assert loop1.isdisjoint(
         point_cls_candidates.p_cover
-    ), "boundary-out excludes the point's own cell"
-    assert len(r1) == 8, "boundary-out k=1 on a single-cell point = its 8 neighbours"
+    ), "the outward ring excludes the point's own cell"
+    assert (
+        len(loop1) == 8
+    ), "boundary-out k=1 loop on a single-cell point = 8 neighbours"
 
 
 def test_point_boundary_in_stays_within_cover(point_cls_candidates):
@@ -561,13 +578,15 @@ def test_point_boundary_in_stays_within_cover(point_cls_candidates):
 
 
 def test_line_boundary_out_expands_outward(line_cls_candidates):
-    """boundary-out k=1 on a line = one outward band around the line, EXCLUDING the
-    line's own crossing cells (k0=∅)."""
-    r1 = D.geom_expand("ring", 1, "boundary-out", line_cls_candidates, _neighbors)
-    assert r1, "boundary-out k=1 on a line must be a non-empty outward band"
-    assert r1.isdisjoint(
+    """boundary-out on a line: k0 = the crossing cells (boundary ring), and the k=1
+    loop is one outward band around the line."""
+    k0 = D.geom_expand("loop", 0, "boundary-out", line_cls_candidates, _neighbors)
+    assert k0 == line_cls_candidates.p_cover, "boundary-out k0 = the line's cells"
+    loop1 = D.geom_expand("loop", 1, "boundary-out", line_cls_candidates, _neighbors)
+    assert loop1, "boundary-out k=1 loop on a line must be a non-empty outward band"
+    assert loop1.isdisjoint(
         line_cls_candidates.p_cover
-    ), "boundary-out excludes the line's own crossing cells (geom excluded)"
+    ), "the outward band excludes the line's own crossing cells"
 
 
 def test_line_boundary_in_stays_within_cover(line_cls_candidates):

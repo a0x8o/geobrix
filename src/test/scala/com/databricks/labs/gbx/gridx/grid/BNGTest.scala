@@ -24,33 +24,38 @@ class BNGTest extends AnyFunSuite {
         assert(BNG.geometryKRing(g, 3, 1, "boundary-out") == BNG.geometryKRing(g, 3, 1))
     }
 
-    test("bng geometryKRing boundary-in stays inside the covering set and is disjoint from boundary-out") {
+    test("bng geometryKRing boundary-in/-out share the boundary ring and diverge in direction") {
         val wkt = new WKTReader()
         val g = wkt.read("POLYGON((528000 178000,528000 184000,534000 184000,534000 178000,528000 178000))")
         val cls = GeomDilation.classify(BNG, g, 3)
         val out = BNG.geometryKRing(g, 3, 1, "boundary-out")
         val inn = BNG.geometryKRing(g, 3, 1, "boundary-in")
-        // LOCKED design: boundary-out returns the OUTWARD band (geom excluded); boundary-in returns
-        // the INWARD band inside the covering set. They are now DISJOINT (previously boundary-out
-        // included the geom, so boundary-in was a subset of it).
+        val k0  = BNG.geometryKRing(g, 3, 0, "boundary-out")
+        // 0.5.1 re-cut: boundary-out and boundary-in share the same k0 anchor (the boundary
+        // covering ring) and diverge in direction. Their k=1 rings therefore intersect EXACTLY
+        // in that boundary ring; boundary-in stays within the covering set.
         assert(inn.nonEmpty, "boundary-in must be non-empty")
         assert(inn.subsetOf(cls.pCover), "boundary-in must stay within the covering set")
-        assert(inn.intersect(out).isEmpty, "inward band must be disjoint from the outward band")
+        assert(k0.nonEmpty && k0 == BNG.geometryKRing(g, 3, 0, "boundary-in"),
+          "boundary-out k0 must equal boundary-in k0 (the boundary ring)")
+        assert(inn.intersect(out) == k0, "inward/outward rings intersect exactly in the boundary ring")
     }
 
     test("bng geometryKRing boundary-out expands outward for aligned geom (alignment-robustness)") {
         val wkt = new WKTReader()
         // 3 km × 3 km box with corners exactly on 1 km BNG grid lines → no straddling cells.
         // The old straddling-cell (pBorder) seed produced no outward expansion for such geoms.
-        // With the perimeter fix boundary-out expands; and under the LOCKED design the geom is
-        // EXCLUDED, so the k=1 band is non-empty and disjoint from pCover.
+        // With the perimeter fix boundary-out expands; the boundary ring (k0) is non-empty and the
+        // geom INTERIOR is excluded (any covering cell in the ring is on the boundary ring k0).
         val g   = wkt.read("POLYGON((529000 179000,529000 182000,532000 182000,532000 179000,529000 179000))")
         val cls = GeomDilation.classify(BNG, g, 3)
         assert(cls.pBorder.isEmpty, "test precondition: aligned polygon must have no straddling cells (pBorder empty)")
+        val k0   = BNG.geometryKRing(g, 3, 0)
         val ring = BNG.geometryKRing(g, 3, 1)
+        assert(k0.nonEmpty, "boundary-out k0 (boundary ring) must be non-empty even when pBorder is empty")
         assert(ring.nonEmpty,
           "boundary-out must expand outward even when pBorder is empty (alignment-robustness)")
-        assert(ring.intersect(cls.pCover).isEmpty, "boundary-out outward band must exclude the geom")
+        assert(ring.intersect(cls.pCover).subsetOf(k0), "boundary-out excludes the geom interior")
     }
 
     test("bng geometryKLoop boundary-out outward shell for aligned geom") {

@@ -172,9 +172,10 @@ object GeomDilation {
       val op = outerPerimeter(sX, grid)
       mode match {
         // boundary-out: OUTWARD from op; visited (pX ∪ op) blocks any inward path (the hole is
-        // never reached — op is outer-only). k0 = ∅: the geom / covering set is EXCLUDED —
-        // boundary-out returns ONLY the outward k-step band (LOCKED design correction).
-        case "boundary-out"             => (op, pX ++ op, (_: Long) => true, Set.empty[Long])
+        // never reached — op is outer-only). k0 = op: the boundary covering RING is the step-0
+        // anchor, symmetric with boundary-in (both seed k0=op, differ only in direction). The geom
+        // INTERIOR (pX core) is still excluded (op ⊆ sBorder) — result = boundary ring + outward band.
+        case "boundary-out"             => (op, pX ++ op, (_: Long) => true, op)
         // boundary-in: INWARD from op; admit pX (respect holes); k0 = op (boundary ring included).
         case "boundary-in"              => (op, op, pX.contains, op)
         // boundary-in-ignore-holes: INWARD from op; admit sX (marches across the hole interior).

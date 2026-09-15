@@ -74,7 +74,7 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
   | Mode | Behaviour |
   |------|-----------|
-  | `'boundary-out'` | Default. The outward band only — cells within `k` steps **outside** the geometry's outer boundary. The geometry's own cells (its interior and boundary ring) are **not** in the result. |
+  | `'boundary-out'` | Default. The geometry's outer **boundary ring** (`k=0`) plus the outward band — cells within `k` steps **outside** the boundary. The geometry's **interior** is not in the result. (`boundary-out` and `boundary-in` share the same `k=0` boundary ring and differ only in direction.) |
   | `'boundary-in'` | Inward setback band — cells within `k` steps inside the outer boundary, stopping at holes. |
   | `'boundary-in-ignore-holes'` | Like `'boundary-in'` but the polygon is treated as solid (holes are not subtracted), so the band can cross a hole. |
   | `'hole-in'` | Fills each hole inward from its edge, up to `k` steps. |
@@ -98,7 +98,7 @@ Extends the raster-grid family with coverage and assignment controls, on top of 
 
 - **`boundary-out` and `boundary-in` now produce correct results for grid-aligned geometries.** The initial v0.5.1 implementation produced an empty expansion for polygons whose edges fall exactly on cell boundaries (no straddling cells → empty seed → no outward ring). This no longer occurs: the covering-set perimeter is non-empty for any non-empty cover, aligned or not.
 
-- **`boundary-out` now returns only the outward band; the geometry's own cells are excluded.** Previously `boundary-out` included the geometry's covering cells in its result. It now returns strictly the cells reached by expanding *outward* from the boundary — the geometry (its interior and boundary ring) is not part of the result. Use the covering set (`k=0` of the other modes) or a grid `polyfill`/`cover` function if you need the geometry's own cells.
+- **`boundary-out` is anchored at the boundary ring and excludes the interior.** Previously `boundary-out` included the geometry's *entire* covering set (interior + boundary) in its result. It now returns the geometry's outer **boundary ring** at `k=0` plus the cells reached by expanding *outward* from it — the geometry's **interior** is excluded. This makes `boundary-out` and `boundary-in` symmetric: both share the same `k=0` boundary ring and differ only in direction (outward vs. inward). Use a grid `polyfill`/`cover` function, or `boundary-in` at a large `k`, if you need the geometry's interior cells.
 
 - **`hole-*` modes are now alignment-robust too.** `hole-in`/`hole-out`/`hole-out-ignore-geom` previously produced nothing on a grid-aligned hole (the same empty-seed issue). Their seed is now the hole-edge perimeter, so they behave correctly regardless of alignment. Applies to all grids and both tiers.
 

@@ -57,22 +57,25 @@ class Custom_GeometrySuite extends AnyFunSuite {
     // Basic properties on the simple fixture
     // ------------------------------------------------------------------
 
-    test("Custom_GeometryKRing — boundary-out k=0 is empty (LOCKED design: geom excluded, k0 = ∅)") {
-        // Previously boundary-out k=0 returned the covering set (== polyfill). Under the LOCKED
-        // design the geom is EXCLUDED (k0 = ∅), so boundary-out at k=0 yields no cells.
-        val geom = JTS.fromWKB(SIMPLE_WKB)
-        val k0   = SYS.geometryKRing(geom, SIMPLE_RES, 0, GeomDilation.DEFAULT_MODE)
-        k0 shouldBe empty
+    test("Custom_GeometryKRing — boundary-out k=0 is the boundary ring (== boundary-in k0)") {
+        // boundary-out and boundary-in share the same k0 anchor: the boundary covering ring.
+        // (Previously boundary-out k=0 was ∅; the geom INTERIOR is still excluded.)
+        val geom  = JTS.fromWKB(SIMPLE_WKB)
+        val k0Out = SYS.geometryKRing(geom, SIMPLE_RES, 0, GeomDilation.DEFAULT_MODE)
+        val k0In  = SYS.geometryKRing(geom, SIMPLE_RES, 0, "boundary-in")
+        k0Out.nonEmpty shouldBe true
+        k0Out shouldBe k0In
     }
 
-    test("Custom_GeometryKRing — boundary-out k=1 is a non-empty outward band disjoint from the geom") {
-        // boundary-out excludes the covering set (k0 = ∅); the k=1 band is the outward ring only,
-        // so it is disjoint from the covering set (previously fill ⊆ k1 with the geom included).
+    test("Custom_GeometryKRing — boundary-out k=1 excludes the interior (any cover cell is on k0)") {
+        // boundary-out = boundary ring (k0) + outward band; the geom INTERIOR is excluded,
+        // so any covering-set cell in k=1 must be on the boundary ring k0.
         val geom = JTS.fromWKB(SIMPLE_WKB)
+        val k0   = SYS.geometryKRing(geom, SIMPLE_RES, 0, GeomDilation.DEFAULT_MODE)
         val k1   = SYS.geometryKRing(geom, SIMPLE_RES, 1, GeomDilation.DEFAULT_MODE)
         val cls  = GeomDilation.classify(SYS, geom, SIMPLE_RES)
         k1.size should be > 0
-        k1.intersect(cls.pCover) shouldBe empty
+        k1.intersect(cls.pCover).subsetOf(k0) shouldBe true
     }
 
     test("Custom_GeometryKLoop — loop == ring diff") {

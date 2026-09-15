@@ -174,13 +174,17 @@ class BNG_ExpressionExecuteTest extends AnyFunSuite {
 
     test("BNG_GeometryKRing should return the geometry based K-Ring") {
         val triangle = JTS.fromWKT("POLYGON ((10000 10000, 20000 10000, 20000 20000, 10000 10000))")
-        val geomKLoop = BNG_GeometryKRing.execute(triangle, 3, 2).toSeq
-        // LOCKED design (0.5.1 re-cut): boundary-out EXCLUDES the covering set (k0 = ∅) and routes
-        // through the shared GeomDilation engine (blocked outward BFS), matching the light tier.
-        // The ring is now ONLY the first two outward shells from the covering-set perimeter — the
-        // geom itself is not returned. 88 = the prior 133 minus the 45-cell covering set (see the
-        // BNG_Polyfill test: polyfill at res 3 is 45 cells).
-        geomKLoop.length shouldBe 88
+        // boundary-out (0.5.1 re-cut) = the boundary ring (k0) + the outward k-shells, via the
+        // shared GeomDilation engine (blocked outward BFS), matching the light tier. ring(k) is
+        // the disjoint union of loops 0..k; the geom INTERIOR is excluded (verified in
+        // GeomDilationSuite).  k0 (the boundary ring) is non-empty even for an aligned geom.
+        val ring2 = BNG_GeometryKRing.execute(triangle, 3, 2).toSet
+        val k0    = BNG_GeometryKLoop.execute(triangle, 3, 0).toSet
+        val l1    = BNG_GeometryKLoop.execute(triangle, 3, 1).toSet
+        val l2    = BNG_GeometryKLoop.execute(triangle, 3, 2).toSet
+        k0.nonEmpty shouldBe true
+        ring2 shouldBe (k0 union l1 union l2)
+        ring2.size shouldBe (k0.size + l1.size + l2.size)  // loops are disjoint
     }
 
     test("BNG_GeometryKRing/KLoop eval accept a string resolution equal to the int index") {

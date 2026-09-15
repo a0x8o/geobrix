@@ -324,9 +324,11 @@ def mode_setup(mode, cls, neighbors=None, coverage=DEFAULT_COVERAGE):
     if mode == "boundary-out":
         # OUTWARD from the outer perimeter; visited (P_X ∪ op) blocks any inward
         # path (the hole is never reached — op is outer-only).  admit: True.
-        # k0 = ∅: the geom / covering set is EXCLUDED — boundary-out returns ONLY
-        # the outward k-step band (LOCKED design correction).
-        return op, frozenset(p_x) | op, (lambda n: True), frozenset()
+        # k0 = op: the boundary covering RING is the step-0 anchor, symmetric with
+        # boundary-in (both seed k0=op and differ only in direction).  The geom
+        # INTERIOR (P_X core) is still excluded — op ⊆ s_border, never the core —
+        # so boundary-out returns the boundary ring (k0) + the outward k-step band.
+        return op, frozenset(p_x) | op, (lambda n: True), op
     if mode == "boundary-in":
         # frontier/visited/k0: op; admit: P_X only (respect holes)
         return op, op, (lambda n: n in p_x), op
@@ -377,10 +379,20 @@ def mode_setup(mode, cls, neighbors=None, coverage=DEFAULT_COVERAGE):
         # Seed from solid-side (P_X cells adjacent to the hole).
         # Expand outward into solid (admit P_X); visited = H_X ∪ solid_edge so
         # the seed cannot reappear in shell 1 (disjoint-loop invariant).
-        return solid_edge, frozenset(h_x) | frozenset(solid_edge), (lambda n: n in p_x), solid_edge
+        return (
+            solid_edge,
+            frozenset(h_x) | frozenset(solid_edge),
+            (lambda n: n in p_x),
+            solid_edge,
+        )
     # hole-out-ignore-geom: solid-side seed, expand unbounded (admit not-in-H_X).
     # Same visited0 fix: include solid_edge so shell 1 is disjoint from the seed.
-    return solid_edge, frozenset(h_x) | frozenset(solid_edge), (lambda n: n not in h_x), solid_edge
+    return (
+        solid_edge,
+        frozenset(h_x) | frozenset(solid_edge),
+        (lambda n: n not in h_x),
+        solid_edge,
+    )
 
 
 def geom_expand(kind, k, mode, cls, neighbors, coverage=DEFAULT_COVERAGE):
