@@ -84,16 +84,15 @@ def test_classify_partitions_cover_core_holes(holed_cls):
     assert c.p_border == (c.p_cover - c.p_core)
 
 
-def test_boundary_out_ring_is_boundary_ring_plus_outward_band(holed_cls):
-    """boundary-out: k0 = the boundary covering ring (== boundary-in k0); the geom
-    INTERIOR is excluded; k>=1 adds the outward band."""
-    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
+def test_boundary_out_ring_is_full_band_plus_outward_band(holed_cls):
+    """boundary-out (coveras default): k0 = the FULL straddling band (s_cover - s_core);
+    the geom INTERIOR (s_core) is excluded; k>=1 adds the outward band."""
+    full_band = frozenset(holed_cls.s_cover) - frozenset(holed_cls.s_core)
     k0 = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors)
-    assert k0 == op, "boundary-out k0 must be the boundary covering ring"
+    assert k0 == full_band, "boundary-out k0 must be the full coveras straddling band"
     r = D.geom_expand("ring", 1, "boundary-out", holed_cls, _neighbors)
-    assert r, "boundary ring + outward band must be non-empty"
-    # interior excluded: any p_cover cell in the result is on the boundary ring
-    assert (r & holed_cls.p_cover) <= op, "boundary-out excludes the geom interior"
+    assert r, "full band + outward band must be non-empty"
+    assert r.isdisjoint(holed_cls.s_core), "boundary-out excludes the geom interior"
     assert r - holed_cls.s_cover, "boundary-out k=1 must add an outward band"
 
 
@@ -131,14 +130,14 @@ def test_loop_is_ring_difference(holed_cls):
         assert loop_k == (ring_k - ring_km1)
 
 
-def test_k0_loop_boundary_out_is_boundary_ring(holed_cls):
-    """boundary-out loop(0) == the boundary covering ring (== boundary-in loop(0))."""
-    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
+def test_k0_loop_boundary_out_is_full_band(holed_cls):
+    """boundary-out loop(0) == the full coveras straddling band (s_cover - s_core).
+    boundary-in loop(0) is the op ∩ p_x ring (⊆ the band) — they differ now."""
+    full_band = frozenset(holed_cls.s_cover) - frozenset(holed_cls.s_core)
     k0_out = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors)
+    assert k0_out == full_band, "boundary-out loop(0) = full coveras band"
     k0_in = D.geom_expand("loop", 0, "boundary-in", holed_cls, _neighbors)
-    assert (
-        k0_out == op == k0_in
-    ), "boundary-out loop(0) = boundary ring = boundary-in k0"
+    assert k0_in <= full_band, "boundary-in k0 (op ∩ p_x) ⊆ the boundary band"
 
 
 def test_boundary_in_ignore_holes_crosses_hole_interior(holed_cls):
@@ -195,13 +194,11 @@ def test_boundary_out_holed_does_not_fill_hole(holed_cls):
     assert r.isdisjoint(
         holed_cls.h_core
     ), "boundary-out must not fill the hole; h_core cells found in result"
-    # boundary ring (k0) + outward band; the INTERIOR is excluded (any p_cover cell in
-    # the result is on the boundary ring op).
-    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
-    assert r, "boundary-out k=2 must be a non-empty (boundary ring + outward band)"
-    assert (
-        r & holed_cls.p_cover
-    ) <= op, "boundary-out excludes the geom interior; only the boundary ring is in P"
+    # full band (k0) + outward band; the INTERIOR (fully-contained s_core) is excluded.
+    assert r, "boundary-out k=2 must be non-empty (full band + outward band)"
+    assert r.isdisjoint(
+        holed_cls.s_core
+    ), "boundary-out excludes the geom interior (s_core)"
 
 
 def test_boundary_in_holed_k0_excludes_hole_rim(holed_cls):

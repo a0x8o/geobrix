@@ -165,37 +165,46 @@ object GeomDilation {
       : (Set[Long], Set[Long], Long => Boolean, Set[Long]) = {
     if (!MODES.contains(mode))
       throw new IllegalArgumentException(s"unknown mode '$mode'; expected ${MODES.mkString(", ")}")
+    // LOCKED model (see spec "LOCKED SEMANTICS"): SEEDS/frontier are the coveras (overlap)
+    // topology — physical, non-empty, correctly placed (a fully-contained "core" cell can
+    // never sit on a boundary).  Coverage governs only the ADMIT predicate (k>=1) and the
+    // RETURNED k0 (= frontier ∩ admit, with two exceptions noted below).  Expanding from the
+    // full coveras frontier keeps the k>=1 rings gap-free and identical across coverages.
     val (pX, sX, hX) = cls.basisSets(coverage) // validates coverage
+    val sCov = cls.sCover; val pCov = cls.pCover; val hCov = cls.hCover
 
     if (mode.startsWith("boundary-")) {
-      // boundary-* seed from the region-X outer perimeter (alignment-robust; excludes hole rim).
-      val op = outerPerimeter(sX, grid)
+      val op = outerPerimeter(sCov, grid) // coveras outer ring (alignment-robust fallback)
       mode match {
-        // boundary-out: OUTWARD from op; visited (pX ∪ op) blocks any inward path (the hole is
-        // never reached — op is outer-only). k0 = op: the boundary covering RING is the step-0
-        // anchor, symmetric with boundary-in (both seed k0=op, differ only in direction). The geom
-        // INTERIOR (pX core) is still excluded (op ⊆ sBorder) — result = boundary ring + outward band.
-        case "boundary-out"             => (op, pX ++ op, (_: Long) => true, op)
-        // boundary-in: INWARD from op; admit pX (respect holes); k0 = op (boundary ring included).
-        case "boundary-in"              => (op, op, pX.contains, op)
-        // boundary-in-ignore-holes: INWARD from op; admit sX (marches across the hole interior).
-        case "boundary-in-ignore-holes" => (op, op, sX.contains, op)
+        case "boundary-out" =>
+          // frontier = FULL coveras straddling band (expand OUTWARD, gap-free); visited = S ∪ band.
+          // k0 = full band for coveras/core; polyfill returns only the centroid-OUT cells.
+          val fullBand = sCov -- cls.sCore
+          val frontier = if (fullBand.nonEmpty) fullBand else op
+          val k0 =
+            if (coverage == "polyfill") { val co = sCov -- sX; if (co.nonEmpty) co else op }
+            else frontier
+          (frontier, sCov ++ frontier, (_: Long) => true, k0)
+        // boundary-in: INWARD from the coveras ring; admit pX (respect holes); k0 = op ∩ pX.
+        case "boundary-in"              => (op, op, pX.contains, op.filter(pX.contains))
+        // boundary-in-ignore-holes: INWARD; admit sX (crosses holes); k0 = op ∩ sX.
+        case "boundary-in-ignore-holes" => (op, op, sX.contains, op.filter(sX.contains))
       }
     } else {
-      // hole-* modes — alignment-robust hole-edge perimeter seeds (symmetric to outerPerimeter):
-      //   voidEdge  = { c ∈ H_X : ∃ n ∉ H_X }   (hole-side cells adjacent to non-hole)
-      //   solidEdge = { c ∈ P_X : ∃ n ∈ H_X }   (solid cells adjacent to the hole region)
-      // Both are non-empty for a non-empty hole region regardless of grid alignment.
-      val voidEdge  = hX.filter(c => grid.kLoop(c, 1).exists(n => !hX.contains(n)))
-      val solidEdge = pX.filter(c => grid.kLoop(c, 1).exists(n => hX.contains(n)))
+      // hole-* modes — coveras hole-edge seeds (alignment-robust), coverage as admit:
+      //   voidEdge  = { c ∈ h_cover : ∃ n ∉ h_cover }  (hole-side edge)
+      //   solidEdge = { c ∈ p_cover : ∃ n ∈ h_cover }  (solid-side edge)
+      val voidEdge  = hCov.filter(c => grid.kLoop(c, 1).exists(n => !hCov.contains(n)))
+      val solidEdge = pCov.filter(c => grid.kLoop(c, 1).exists(n => hCov.contains(n)))
       mode match {
-        // hole-in: seed void-side; expand INTO the hole interior (admit hX); visited = seed.
-        case "hole-in"              => (voidEdge, voidEdge, hX.contains, voidEdge)
-        // hole-out: seed solid-side; expand outward into solid (admit pX); visited = hX ∪ solidEdge
-        // so the seed cannot reappear in shell 1 (disjoint-loop invariant / visited0 loop fix).
-        case "hole-out"             => (solidEdge, hX ++ solidEdge, pX.contains, solidEdge)
-        // hole-out-ignore-geom: solid-side seed; expand unbounded (admit not-in-hX). Same visited0 fix.
-        case "hole-out-ignore-geom" => (solidEdge, hX ++ solidEdge, (n: Long) => !hX.contains(n), solidEdge)
+        // hole-in: expand INTO the hole (admit hX); k0 = voidEdge ∩ hX (core drops the straddling edge).
+        case "hole-in"              => (voidEdge, voidEdge, hX.contains, voidEdge.filter(hX.contains))
+        // hole-out: expand INTO the solid (admit pX); visited = h_cover ∪ seed; k0 = solidEdge ∩ pX
+        // (core ⇒ solid CORE band around the hole, straddling boundary dropped).
+        case "hole-out"             => (solidEdge, hCov ++ solidEdge, pX.contains, solidEdge.filter(pX.contains))
+        // hole-out-ignore-geom: expand unbounded away from the hole (admit not-in-hX).  admit is
+        // exclusionary (not a belongs-to region), so k0 = the full coveras solid edge (not filtered).
+        case "hole-out-ignore-geom" => (solidEdge, hCov ++ solidEdge, (n: Long) => !hX.contains(n), solidEdge)
       }
     }
   }

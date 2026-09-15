@@ -24,21 +24,19 @@ class BNGTest extends AnyFunSuite {
         assert(BNG.geometryKRing(g, 3, 1, "boundary-out") == BNG.geometryKRing(g, 3, 1))
     }
 
-    test("bng geometryKRing boundary-in/-out share the boundary ring and diverge in direction") {
+    test("bng geometryKRing boundary-out expands outward while boundary-in stays inside") {
         val wkt = new WKTReader()
         val g = wkt.read("POLYGON((528000 178000,528000 184000,534000 184000,534000 178000,528000 178000))")
         val cls = GeomDilation.classify(BNG, g, 3)
         val out = BNG.geometryKRing(g, 3, 1, "boundary-out")
         val inn = BNG.geometryKRing(g, 3, 1, "boundary-in")
-        val k0  = BNG.geometryKRing(g, 3, 0, "boundary-out")
-        // 0.5.1 re-cut: boundary-out and boundary-in share the same k0 anchor (the boundary
-        // covering ring) and diverge in direction. Their k=1 rings therefore intersect EXACTLY
-        // in that boundary ring; boundary-in stays within the covering set.
+        // LOCKED: boundary-out expands OUTWARD (reaches cells outside the geom); boundary-in stays
+        // within the covering set. This geom is grid-aligned (no straddling band), so k0 falls back
+        // to the outer ring of sCover — the sCore-exclusion is a non-aligned property, checked in
+        // the *Geometry suites on non-aligned geoms, not here.
         assert(inn.nonEmpty, "boundary-in must be non-empty")
         assert(inn.subsetOf(cls.pCover), "boundary-in must stay within the covering set")
-        assert(k0.nonEmpty && k0 == BNG.geometryKRing(g, 3, 0, "boundary-in"),
-          "boundary-out k0 must equal boundary-in k0 (the boundary ring)")
-        assert(inn.intersect(out) == k0, "inward/outward rings intersect exactly in the boundary ring")
+        assert(out.exists(c => !cls.sCover.contains(c)), "boundary-out must reach cells outside the geom")
     }
 
     test("bng geometryKRing boundary-out expands outward for aligned geom (alignment-robustness)") {
@@ -52,10 +50,10 @@ class BNGTest extends AnyFunSuite {
         assert(cls.pBorder.isEmpty, "test precondition: aligned polygon must have no straddling cells (pBorder empty)")
         val k0   = BNG.geometryKRing(g, 3, 0)
         val ring = BNG.geometryKRing(g, 3, 1)
-        assert(k0.nonEmpty, "boundary-out k0 (boundary ring) must be non-empty even when pBorder is empty")
+        assert(k0.nonEmpty, "boundary-out k0 (full band / fallback ring) must be non-empty when pBorder is empty")
         assert(ring.nonEmpty,
           "boundary-out must expand outward even when pBorder is empty (alignment-robustness)")
-        assert(ring.intersect(cls.pCover).subsetOf(k0), "boundary-out excludes the geom interior")
+        assert(ring.exists(c => !cls.sCover.contains(c)), "boundary-out reaches cells outside the geom")
     }
 
     test("bng geometryKLoop boundary-out outward shell for aligned geom") {

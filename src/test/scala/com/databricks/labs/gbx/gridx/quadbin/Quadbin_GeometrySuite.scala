@@ -30,25 +30,26 @@ class Quadbin_GeometrySuite extends AnyFunSuite {
     private val HOLED_WKB = JTS.toWKB(JTS.fromWKT(HOLED_WKT))
     private val HOLED_RES = 10  // cells ≈0.35°; 2°×3° hole spans ~6×9 tiles → hCore non-empty
 
-    test("Quadbin_GeometryKRing — boundary-out k=0 is the boundary ring (== boundary-in k0)") {
-        // boundary-out and boundary-in share the same k0 anchor: the boundary covering ring.
-        // (Previously boundary-out k=0 was ∅; the geom INTERIOR is still excluded.)
+    test("Quadbin_GeometryKRing — boundary-out (coveras) k=0 is the full straddling band") {
+        // LOCKED: coveras boundary-out k0 = the full coveras band (sCover - sCore), with the
+        // outer-perimeter fallback when the band is empty (grid-aligned geom).
         val geom   = JTS.fromWKB(NYC_WKB)
+        val cls    = GeomDilation.classify(Quadbin, geom, RES)
+        val band   = cls.sCover -- cls.sCore
+        val expect = if (band.nonEmpty) band else GeomDilation.outerPerimeter(cls.sCover, Quadbin)
         val k0Out  = Quadbin_GeometryKRing.execute(geom, RES, 0, GeomDilation.DEFAULT_MODE)
-        val k0In   = Quadbin_GeometryKRing.execute(geom, RES, 0, "boundary-in")
         k0Out.nonEmpty shouldBe true
-        k0Out shouldBe k0In
+        k0Out shouldBe expect
     }
 
-    test("Quadbin_GeometryKRing — boundary-out k=1 excludes the interior (any cover cell is on k0)") {
-        // boundary-out = boundary ring (k0) + outward band; the geom INTERIOR is excluded,
-        // so any covering-set cell in k=1 must be on the boundary ring k0.
+    test("Quadbin_GeometryKRing — boundary-out excludes the interior (sCore)") {
+        // boundary-out = full band (k0) + outward band; the geom INTERIOR (fully-contained
+        // sCore) is never returned.
         val geom = JTS.fromWKB(NYC_WKB)
-        val k0   = Quadbin_GeometryKRing.execute(geom, RES, 0, GeomDilation.DEFAULT_MODE)
         val k1   = Quadbin_GeometryKRing.execute(geom, RES, 1, GeomDilation.DEFAULT_MODE)
         val cls  = GeomDilation.classify(Quadbin, geom, RES)
         k1.size should be > 0
-        k1.intersect(cls.pCover).subsetOf(k0) shouldBe true
+        k1.intersect(cls.sCore).isEmpty shouldBe true
     }
 
     test("Quadbin_GeometryKLoop — loop == ring diff") {

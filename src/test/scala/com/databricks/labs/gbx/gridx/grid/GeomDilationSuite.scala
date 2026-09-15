@@ -10,19 +10,17 @@ class GeomDilationSuite extends AnyFunSuite {
   private val grid = Quadbin
   private val res = 12
 
-  test("boundary-out: k0 is the boundary ring (== boundary-in k0); interior EXCLUDED") {
-    // Corrected semantics: boundary-out and boundary-in share the same k0 anchor (the
-    // boundary covering ring) and differ only in direction. boundary-out returns the
-    // boundary ring (k0) + the outward band; the geom INTERIOR is excluded, so any
-    // covering-set cell in the ring must be on the boundary ring k0.
+  test("boundary-out (coveras): k0 is the full straddling band; interior EXCLUDED") {
+    // LOCKED: coveras boundary-out k0 = the full coveras straddling band (sCover - sCore).
+    // The geom INTERIOR (fully-contained sCore) is never returned; k>=1 adds the outward band.
     val g = wkt.read("POLYGON((-1 -1, -1 1, 1 1, 1 -1, -1 -1))")
     val cls = GeomDilation.classify(grid, g, res)
+    val fullBand = cls.sCover -- cls.sCore
     val k0Out = GeomDilation.expand("loop", 0, "boundary-out", grid, g, res)
-    val k0In  = GeomDilation.expand("loop", 0, "boundary-in", grid, g, res)
-    assert(k0Out == k0In && k0Out.nonEmpty, "boundary-out k0 = boundary-in k0 (boundary ring)")
+    assert(k0Out == fullBand && k0Out.nonEmpty, "boundary-out k0 = full coveras straddling band")
     val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
-    assert(ring.nonEmpty, "boundary-out k=1 must be non-empty (boundary ring + outward band)")
-    assert(ring.intersect(cls.pCover).subsetOf(k0Out), "boundary-out must EXCLUDE the interior")
+    assert(ring.nonEmpty, "boundary-out k=1 must be non-empty (full band + outward band)")
+    assert(ring.intersect(cls.sCore).isEmpty, "boundary-out must EXCLUDE the interior (sCore)")
   }
 
   test("hole modes empty when no holes") {
@@ -66,9 +64,9 @@ class GeomDilationSuite extends AnyFunSuite {
     val k0   = GeomDilation.expand("loop", 0, "boundary-out", grid, g, res)
     val ring = GeomDilation.expand("ring", 1, "boundary-out", grid, g, res)
     assert(k0.nonEmpty,
-      "boundary-out k0 (boundary ring) must be non-empty even when pBorder is empty")
+      "boundary-out k0 (full band / fallback ring) must be non-empty even when pBorder is empty")
     assert(ring.nonEmpty, "boundary-out must expand outward (alignment-robustness)")
-    assert(ring.intersect(cls.pCover).subsetOf(k0), "boundary-out excludes the interior")
+    assert(ring.intersect(cls.sCore).isEmpty, "boundary-out excludes the interior (sCore)")
   }
 
   test("boundary-out hole is excluded — perimeter seed never includes hole-rim cells") {

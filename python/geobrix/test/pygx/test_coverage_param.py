@@ -9,15 +9,13 @@ Three classify bases per region P/S/H:
   - core     (``*_core``)     — cell fully contained          -> coverage="core"
 Nested: cover ⊇ centroid ⊇ core.
 
-The ``coverage`` value selects which basis drives the seed (perimeter), the admit
-bound, and boundary-ring inclusion.  boundary-out and boundary-in both seed
-k0 = outer_perimeter(S) (the boundary covering ring) and differ only in direction;
-boundary-out's geom INTERIOR is excluded — it returns the boundary ring (k0) plus
-the outward k-step band.
+LOCKED model: SEEDS are always the coveras (overlap) topology; ``coverage`` governs
+only the ADMIT predicate (k>=1) and which frontier cells are RETURNED at k0.
+boundary-out k0 = the full coveras straddling band under coveras/core, the centroid-
+out cells under polyfill; the outward k>=1 rings are identical across coverages.
 
 Exercised at the engine level (synthetic grid) and on two real grids (custom,
-quadbin).  h3 is covered by the geom_expand signature; heavy parity diverges until
-the heavy mirror lands (out of scope for this pass).
+quadbin); full light-vs-heavy parity lives in test_parity_*_geomk.py.
 """
 
 import pytest
@@ -139,46 +137,58 @@ def test_coverage_invalid_raises(holed_cls):
 
 
 # ---------------------------------------------------------------------------
-# boundary-out — k0 = boundary covering ring (== boundary-in k0); interior EXCLUDED
+# boundary-out (LOCKED) — coveras/core k0 = full coveras band; polyfill k0 =
+# centroid-out; frontier = full band for all ⇒ outward rings identical.
 # ---------------------------------------------------------------------------
 
 
-def test_boundary_out_k0_is_boundary_ring_every_coverage(holed_cls):
-    # boundary-out and boundary-in share the same k0 anchor: the boundary covering
-    # ring outer_perimeter(S_X).  They differ only in direction.
-    for cov in D.COVERAGE:
-        region_s = _region(holed_cls, cov, "s")
-        expected = D.outer_perimeter(region_s, _neighbors)
-        for kind in ("loop", "ring"):
-            k0 = D.geom_expand(kind, 0, "boundary-out", holed_cls, _neighbors, cov)
-            assert k0 == expected, (
-                f"boundary-out {kind}(0) must equal the boundary ring "
-                f"outer_perimeter(S_{cov})"
-            )
-        k0_in = D.geom_expand("loop", 0, "boundary-in", holed_cls, _neighbors, cov)
+def test_boundary_out_k0_coverage_dependent(holed_cls):
+    s_cover = frozenset(holed_cls.s_cover)
+    full_band = s_cover - frozenset(holed_cls.s_core)
+    k0_cov = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors, "coveras")
+    k0_core = D.geom_expand("loop", 0, "boundary-out", holed_cls, _neighbors, "core")
+    k0_poly = D.geom_expand(
+        "loop", 0, "boundary-out", holed_cls, _neighbors, "polyfill"
+    )
+    assert k0_cov == full_band, "coveras boundary-out k0 = full straddling band"
+    assert k0_core == full_band, "core boundary-out k0 = full band (== coveras)"
+    assert k0_poly <= k0_cov, "polyfill boundary-out k0 ⊆ coveras k0"
+
+
+def test_boundary_out_polyfill_is_centroid_out():
+    # A disk has a fuzzy 2-ring boundary over the unit grid: an outer ring centroid-OUT
+    # and an inner ring centroid-in-but-not-core ⇒ strict s_core ⊂ s_centroid ⊂ s_cover.
+    # So polyfill boundary-out k0 is the strict centroid-out subset of the coveras band.
+    disk = Point(6.5, 6.5).buffer(5.0)
+    cls = D.classify(disk, 1, _wide_polyfill, _cell_geom)
+    assert cls.s_core < cls.s_centroid < cls.s_cover, "fixture must nest strictly"
+    centroid_out = frozenset(cls.s_cover) - frozenset(cls.s_centroid)
+    k0_poly = D.geom_expand("loop", 0, "boundary-out", cls, _neighbors, "polyfill")
+    k0_cov = D.geom_expand("loop", 0, "boundary-out", cls, _neighbors, "coveras")
+    assert k0_poly == centroid_out, "polyfill boundary-out k0 = centroid-out cells"
+    assert k0_poly < k0_cov, "polyfill k0 is a strict subset of the coveras full band"
+
+
+def test_boundary_out_outward_identical_across_coverage(holed_cls):
+    # Frontier = full coveras band for every coverage ⇒ the outward rings (k>=1) are
+    # byte-identical; only k0 differs.  Guards the "no gaps at k=1 for polyfill" fix.
+    for k in (1, 2, 3):
+        rings = {
+            cov: D.geom_expand("loop", k, "boundary-out", holed_cls, _neighbors, cov)
+            for cov in D.COVERAGE
+        }
         assert (
-            expected == k0_in
-        ), f"boundary-out k0 must equal boundary-in k0 under coverage={cov}"
+            rings["coveras"] == rings["polyfill"] == rings["core"]
+        ), f"boundary-out k={k} outward ring must be identical across coverages"
 
 
 def test_boundary_out_excludes_interior_every_coverage(holed_cls):
-    # boundary-out returns the boundary ring (k0) + the outward band; the geom
-    # INTERIOR (region-P cells that are not on the boundary ring) is never returned.
+    # The geom INTERIOR (fully-contained s_core) is never returned by boundary-out.
     for cov in D.COVERAGE:
-        region_p = _region(holed_cls, cov, "p")
-        region_s = _region(holed_cls, cov, "s")
-        op = D.outer_perimeter(region_s, _neighbors)
         r = D.geom_expand("ring", 3, "boundary-out", holed_cls, _neighbors, cov)
-        assert (r & region_p) <= op, (
-            f"boundary-out must exclude the interior under coverage={cov}; "
-            f"interior leak={sorted((r & region_p) - op)[:5]}"
-        )
-        # coveras: the ring anchors k0 and an outward band lies strictly outside S.
-        if cov == "coveras":
-            assert r - op, "boundary-out under coveras must add an outward band"
-            assert (r - op).isdisjoint(
-                region_s
-            ), "the outward band must lie strictly outside S"
+        assert r.isdisjoint(
+            holed_cls.s_core
+        ), f"boundary-out leaked interior (s_core) under coverage={cov}"
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +196,19 @@ def test_boundary_out_excludes_interior_every_coverage(holed_cls):
 # ---------------------------------------------------------------------------
 
 
-def test_boundary_in_k0_is_region_perimeter_every_coverage(holed_cls):
+def test_boundary_in_k0_is_ring_intersect_region_every_coverage(holed_cls):
+    # LOCKED: boundary-* seed from the coveras outer ring op; k0 = op ∩ region_X
+    # (so core drops the straddling ring when it has no core cells).
+    op = D.outer_perimeter(holed_cls.s_cover, _neighbors)
     for cov in D.COVERAGE:
-        region_s = _region(holed_cls, cov, "s")
-        expected = D.outer_perimeter(region_s, _neighbors)
-        for mode in ("boundary-in", "boundary-in-ignore-holes"):
-            k0 = D.geom_expand("loop", 0, mode, holed_cls, _neighbors, cov)
-            assert k0 == expected, f"{mode} k0 must equal outer_perimeter(S_{cov})"
+        p_x = frozenset(_region(holed_cls, cov, "p"))
+        s_x = frozenset(_region(holed_cls, cov, "s"))
+        k0_in = D.geom_expand("loop", 0, "boundary-in", holed_cls, _neighbors, cov)
+        k0_ign = D.geom_expand(
+            "loop", 0, "boundary-in-ignore-holes", holed_cls, _neighbors, cov
+        )
+        assert k0_in == (op & p_x), f"boundary-in k0 must equal op ∩ P_{cov}"
+        assert k0_ign == (op & s_x), f"ignore-holes k0 must equal op ∩ S_{cov}"
 
 
 def test_boundary_in_respects_holes_coveras(holed_cls):
@@ -219,9 +235,10 @@ def test_coverage_mode_matrix_envelopes(holed_cls):
             assert loop3 == (r3 - r2), f"cov={cov} mode={mode}: loop != ring diff"
             # per-mode envelope
             if mode == "boundary-out":
-                # interior excluded: any region-P cell in the result is the boundary ring
-                op = D.outer_perimeter(region_s, _neighbors)
-                assert (r & region_p) <= op, f"cov={cov} boundary-out leaked interior"
+                # interior (fully-contained s_core) excluded
+                assert r.isdisjoint(
+                    holed_cls.s_core
+                ), f"cov={cov} boundary-out leaked interior"
             elif mode == "boundary-in":
                 assert r <= region_p, f"cov={cov} boundary-in escaped region P"
             elif mode == "boundary-in-ignore-holes":
@@ -255,11 +272,17 @@ def test_point_coveras_supported(point_cls):
     assert loop1.isdisjoint(point_cls.p_cover), "outward ring excludes the point's cell"
 
 
-def test_point_polyfill_core_empty(point_cls):
+def test_point_polyfill_core_boundary_out_nonempty_rest_empty(point_cls):
+    # A point has no 2D interior (p_centroid = p_core = ∅).  boundary-out's frontier is
+    # the coveras band (the point's cell — all-boundary, never core), so boundary-out is
+    # non-empty (cell + outward) under EVERY coverage; the belonging-inward modes are empty.
     assert point_cls.p_centroid == set()
     assert point_cls.p_core == set()
     for cov in ("polyfill", "core"):
-        for mode in D.MODES:
+        bo = D.geom_expand("ring", 2, "boundary-out", point_cls, _neighbors, cov)
+        assert bo, f"point boundary-out cov={cov} must be non-empty (cell + outward)"
+        assert point_cls.p_cover <= bo, "the point's cell is present at k0"
+        for mode in (m for m in D.MODES if m != "boundary-out"):
             r = D.geom_expand("ring", 2, mode, point_cls, _neighbors, cov)
             assert r == set(), f"point coverage={cov} mode={mode} must be empty"
 
@@ -278,11 +301,17 @@ def test_line_coveras_supported(line_cls):
     assert loop1.isdisjoint(line_cls.p_cover), "outward band excludes the line's cells"
 
 
-def test_line_polyfill_core_empty(line_cls):
+def test_line_polyfill_core_boundary_out_nonempty_rest_empty(line_cls):
+    # Like a point: a line has no 2D interior; boundary-out's coveras frontier is the
+    # crossed cells (all-boundary), so boundary-out is non-empty under every coverage;
+    # the belonging-inward modes are empty.
     assert line_cls.p_centroid == set()
     assert line_cls.p_core == set()
     for cov in ("polyfill", "core"):
-        for mode in D.MODES:
+        bo = D.geom_expand("ring", 2, "boundary-out", line_cls, _neighbors, cov)
+        assert bo, f"line boundary-out cov={cov} must be non-empty (cells + outward)"
+        assert line_cls.p_cover <= bo, "the line's crossed cells are present at k0"
+        for mode in (m for m in D.MODES if m != "boundary-out"):
             r = D.geom_expand("ring", 2, mode, line_cls, _neighbors, cov)
             assert r == set(), f"line coverage={cov} mode={mode} must be empty"
 
@@ -331,37 +360,35 @@ def test_custom_coverage_default_is_coveras():
         assert default == coveras, f"custom mode={mode}: default != coveras"
 
 
-def test_custom_boundary_out_k0_is_boundary_ring_every_coverage():
+def test_custom_boundary_out_k0_coverage():
     conf, g = _custom_conf(), bytes(to_wkb(_CUSTOM_GEOM))
-    for cov in D.COVERAGE:
-        k0_out = set(
+
+    def k0(cov):
+        return set(
             _custom.geometry_k_ring(
                 conf, g, _CUSTOM_RES, 0, mode="boundary-out", coverage=cov
             )
         )
-        k0_in = set(
-            _custom.geometry_k_ring(
-                conf, g, _CUSTOM_RES, 0, mode="boundary-in", coverage=cov
-            )
-        )
-        assert (
-            k0_out == k0_in
-        ), f"custom boundary-out k0 must equal boundary-in k0 under coverage={cov}"
-        # coveras always has a non-empty boundary ring for a real solid; polyfill/core
-        # can be empty when no cell's centroid-in / is fully contained (geom-dependent).
-        if cov == "coveras":
-            assert k0_out, "custom boundary-out k0 (boundary ring) must be non-empty"
+
+    assert k0("coveras") == k0("core"), "coveras & core boundary-out k0 identical"
+    assert k0("polyfill") <= k0("coveras"), "polyfill boundary-out k0 ⊆ coveras k0"
+    assert k0("coveras"), "coveras boundary-out k0 must be non-empty"
 
 
-def test_custom_boundary_out_excludes_interior():
+def test_custom_boundary_out_outward_identical_across_coverage():
     conf, g = _custom_conf(), bytes(to_wkb(_CUSTOM_GEOM))
-    cover = set(_custom.polyfill(conf, _CUSTOM_GEOM, _CUSTOM_RES))
-    k0 = set(_custom.geometry_k_ring(conf, g, _CUSTOM_RES, 0, mode="boundary-out"))
-    r1 = set(_custom.geometry_k_ring(conf, g, _CUSTOM_RES, 1, mode="boundary-out"))
-    assert r1, "boundary-out k=1 must be a non-empty outward band"
-    # any covering-set cell in the result is on the boundary ring (interior excluded)
-    assert (r1 & cover) <= k0, "boundary-out must exclude the interior"
-    assert r1 - cover, "boundary-out k=1 must add an outward band beyond the cover"
+    for k in (1, 2):
+        rings = {
+            cov: set(
+                _custom.geometry_k_loop(
+                    conf, g, _CUSTOM_RES, k, mode="boundary-out", coverage=cov
+                )
+            )
+            for cov in D.COVERAGE
+        }
+        assert (
+            rings["coveras"] == rings["polyfill"] == rings["core"]
+        ), f"custom boundary-out k={k} outward ring must be identical across coverages"
 
 
 def test_custom_matrix_no_crash_all_coverage():
@@ -374,17 +401,18 @@ def test_custom_matrix_no_crash_all_coverage():
             assert all(isinstance(c, int) for c in cells)
 
 
-def test_custom_point_coveras_vs_polyfill_core():
+def test_custom_point_coverage():
     conf = _custom_conf()
     pt = bytes(to_wkb(Point(530500, 180500)))
-    # coveras: boundary-out k=1 outward ring is non-empty
-    r_cov = _custom.geometry_k_ring(
-        conf, pt, _CUSTOM_RES, 1, mode="boundary-out", coverage="coveras"
-    )
-    assert r_cov, "custom point under coveras (boundary-out k=1) must be non-empty"
-    # polyfill/core: point has no centroid-in / contained cell → empty
+    # boundary-out on a point = its cell + outward, coverage-independent (the cell is
+    # all-boundary / never core), so non-empty under every coverage.  The belonging-
+    # inward modes have no centroid-in / contained cell → empty under polyfill/core.
+    for cov in D.COVERAGE:
+        assert _custom.geometry_k_ring(
+            conf, pt, _CUSTOM_RES, 1, mode="boundary-out", coverage=cov
+        ), f"custom point boundary-out cov={cov} must be non-empty"
     for cov in ("polyfill", "core"):
-        for mode in D.MODES:
+        for mode in (m for m in D.MODES if m != "boundary-out"):
             assert (
                 _custom.geometry_k_ring(
                     conf, pt, _CUSTOM_RES, 2, mode=mode, coverage=cov
@@ -406,36 +434,35 @@ def test_quadbin_coverage_default_is_coveras():
         assert default == coveras, f"quadbin mode={mode}: default != coveras"
 
 
-def test_quadbin_boundary_out_k0_is_boundary_ring_every_coverage():
+def test_quadbin_boundary_out_k0_coverage():
     g = bytes(to_wkb(_QUADBIN_GEOM))
-    for cov in D.COVERAGE:
-        k0_out = set(
+
+    def k0(cov):
+        return set(
             _quadbin.geometry_k_ring(
                 g, _QUADBIN_RES, 0, mode="boundary-out", coverage=cov
             )
         )
-        k0_in = set(
-            _quadbin.geometry_k_ring(
-                g, _QUADBIN_RES, 0, mode="boundary-in", coverage=cov
-            )
-        )
-        assert (
-            k0_out == k0_in
-        ), f"quadbin boundary-out k0 must equal boundary-in k0 under coverage={cov}"
-        # coveras always has a non-empty boundary ring for a real solid; polyfill/core
-        # can be empty when no cell's centroid-in / is fully contained (geom-dependent).
-        if cov == "coveras":
-            assert k0_out, "quadbin boundary-out k0 (boundary ring) must be non-empty"
+
+    assert k0("coveras") == k0("core"), "coveras & core boundary-out k0 identical"
+    assert k0("polyfill") <= k0("coveras"), "polyfill boundary-out k0 ⊆ coveras k0"
+    assert k0("coveras"), "coveras boundary-out k0 must be non-empty"
 
 
-def test_quadbin_boundary_out_excludes_interior():
+def test_quadbin_boundary_out_outward_identical_across_coverage():
     g = bytes(to_wkb(_QUADBIN_GEOM))
-    cover = set(_quadbin.polyfill(g, _QUADBIN_RES))
-    k0 = set(_quadbin.geometry_k_ring(g, _QUADBIN_RES, 0, mode="boundary-out"))
-    r1 = set(_quadbin.geometry_k_ring(g, _QUADBIN_RES, 1, mode="boundary-out"))
-    assert r1, "quadbin boundary-out k=1 must be a non-empty outward band"
-    assert (r1 & cover) <= k0, "quadbin boundary-out must exclude the interior"
-    assert r1 - cover, "quadbin boundary-out k=1 must add an outward band"
+    for k in (1, 2):
+        rings = {
+            cov: set(
+                _quadbin.geometry_k_loop(
+                    g, _QUADBIN_RES, k, mode="boundary-out", coverage=cov
+                )
+            )
+            for cov in D.COVERAGE
+        }
+        assert (
+            rings["coveras"] == rings["polyfill"] == rings["core"]
+        ), f"quadbin boundary-out k={k} outward ring identical across coverages"
 
 
 def test_quadbin_matrix_no_crash_all_coverage():

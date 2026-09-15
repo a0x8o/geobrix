@@ -307,89 +307,78 @@ def mode_setup(mode, cls, neighbors=None, coverage=DEFAULT_COVERAGE):
     """
     if mode not in MODES:
         raise ValueError(f"unknown mode {mode!r}; expected one of {MODES}")
-    # Select the belongs-to basis (validates `coverage`).
-    p_x, s_x, h_x = _basis_sets(cls, coverage)
-    # boundary-* modes seed from the region-X perimeter (topological outer ring).
-    # outer_perimeter is alignment-robust: a grid-aligned polygon has no straddling
-    # cells but always has perimeter cells.  For a holed polygon, hole-rim cells lie
-    # inside S (all their S-neighbours are in S_X) → excluded from the perimeter →
-    # boundary-* never seeds from the hole rim.
-    if mode.startswith("boundary-"):
-        if neighbors is None:
-            raise ValueError(
-                f"mode {mode!r} requires `neighbors` to compute outer_perimeter"
-            )
-        op = outer_perimeter(s_x, neighbors)
-
-    if mode == "boundary-out":
-        # OUTWARD from the outer perimeter; visited (P_X ∪ op) blocks any inward
-        # path (the hole is never reached — op is outer-only).  admit: True.
-        # k0 = op: the boundary covering RING is the step-0 anchor, symmetric with
-        # boundary-in (both seed k0=op and differ only in direction).  The geom
-        # INTERIOR (P_X core) is still excluded — op ⊆ s_border, never the core —
-        # so boundary-out returns the boundary ring (k0) + the outward k-step band.
-        return op, frozenset(p_x) | op, (lambda n: True), op
-    if mode == "boundary-in":
-        # frontier/visited/k0: op; admit: P_X only (respect holes)
-        return op, op, (lambda n: n in p_x), op
-    if mode == "boundary-in-ignore-holes":
-        # frontier/visited/k0: op; admit: S_X (marches across hole interior)
-        return op, op, (lambda n: n in s_x), op
-
-    # ------------------------------------------------------------------
-    # hole-* modes — alignment-robust perimeter seeds
-    #
-    # Old approach (h_border = h_cover - h_core) fails for grid-ALIGNED holes:
-    # when the hole boundary exactly coincides with cell boundaries every cell is
-    # either fully inside or fully outside → h_cover == h_core → h_border empty
-    # → frontier empty → all three hole modes return nothing.
-    #
-    # Fix: replace h_border with topological perimeter seeds derived from
-    # neighbor-adjacency, symmetric to outer_perimeter for boundary-* modes:
-    #
-    #   void_hole_edge  = { c ∈ h_cover : ∃ n ∉ h_cover }
-    #       (hole-side cells adjacent to non-hole-region cells — always non-empty
-    #        when h_core is non-empty, whether or not the hole is grid-aligned)
-    #
-    #   solid_hole_edge = { c ∈ p_core : ∃ n ∈ h_cover }
-    #       (solid cells adjacent to the hole region — always non-empty when h_core
-    #        is non-empty and there is solid material around the hole)
-    #
-    # Direction / admit semantics are UNCHANGED; only the seed changes.
-    # ------------------------------------------------------------------
     if neighbors is None:
-        raise ValueError(
-            f"mode {mode!r} requires `neighbors` to compute hole-edge perimeters"
-        )
+        raise ValueError(f"mode {mode!r} requires `neighbors`")
 
-    # Hole-edge perimeters computed on the chosen basis X (symmetric to
-    # outer_perimeter for boundary-*).  Both are alignment-robust: non-empty for a
-    # non-empty hole region regardless of grid alignment.
-    #
-    #   void_edge  = { c ∈ H_X : ∃ n ∉ H_X }  (hole-side cells adjacent to non-hole)
-    #   solid_edge = { c ∈ P_X : ∃ n ∈ H_X }  (solid cells adjacent to the hole)
-    void_edge = frozenset(c for c in h_x if any(n not in h_x for n in neighbors(c)))
-    solid_edge = frozenset(c for c in p_x if any(n in h_x for n in neighbors(c)))
+    # Coverage governs which cells are ADMITTED (the k>=1 expansion) and RETURNED
+    # (the k0 filter) — NOT where the seed sits.  A fully-contained ("core") cell can
+    # never lie on a boundary, so seeding on the narrow basis would misplace the ring
+    # (boundary-out landed one cell inside under polyfill) or make it vanish
+    # (hole-out/-ignore-geom returned nothing under core).  So SEEDS are always the
+    # coveras (overlap) topology — the physical boundary/hole edge — and a boundary
+    # cell is RETURNED at k0 only if it also belongs under the coverage basis
+    # (k0 = seed ∩ admit).  Under coveras every seed cell belongs, so behaviour is
+    # unchanged; under core the straddling boundary drops out and only core cells
+    # (reached at k>=1, plus any core cells already on the seed) are returned.
+    p_x, s_x, h_x = (frozenset(x) for x in _basis_sets(cls, coverage))  # validates
+    s_cov, p_cov, h_cov = cls.s_cover, cls.p_cover, cls.h_cover
+
+    if mode.startswith("boundary-"):
+        # Coveras outer boundary ring (alignment-robust: non-empty for any non-empty
+        # cover; excludes hole-rim cells, which lie inside the filled solid).
+        op = outer_perimeter(s_cov, neighbors)
+        if mode == "boundary-out":
+            # TRAVERSAL frontier = the FULL coveras straddling band (cells overlapping
+            # S but not fully contained).  We always expand OUTWARD from the full band
+            # so the k>=1 outward ring has NO GAPS (outward cells reachable only from a
+            # centroid-in band cell would otherwise be missed under polyfill).  The
+            # RETURNED k0 is then narrowed by the coverage: coveras & core return the
+            # whole band; polyfill subtracts the centroid-IN cells (returns only the
+            # centroid-OUT boundary cells).  Fall back to the outer perimeter when a set
+            # is empty (grid-aligned geom: no straddling cells, non-empty outer ring).
+            full_band = frozenset(s_cov) - frozenset(cls.s_core)
+            frontier = full_band if full_band else op
+            if coverage == "polyfill":
+                centroid_out = frozenset(s_cov) - s_x  # s_x == s_centroid
+                k0 = centroid_out if centroid_out else op
+            else:  # coveras / core → the full physical boundary band
+                k0 = frontier
+            return frontier, frozenset(s_cov) | frontier, (lambda n: True), k0
+        if mode == "boundary-in":
+            # INWARD, admit P_X (respect holes).  k0 = op ∩ P_X (core drops the ring).
+            admit = lambda n: n in p_x  # noqa: E731
+            return op, op, admit, frozenset(c for c in op if c in p_x)
+        # boundary-in-ignore-holes: INWARD, admit S_X (marches across the hole).
+        admit = lambda n: n in s_x  # noqa: E731
+        return op, op, admit, frozenset(c for c in op if c in s_x)
+
+    # ------------------------------------------------------------------
+    # hole-* modes — coveras hole-edge seeds (alignment-robust), coverage as admit.
+    #   void_edge  = { c ∈ h_cover : ∃ n ∉ h_cover }  (hole-side edge)
+    #   solid_edge = { c ∈ p_cover : ∃ n ∈ h_cover }  (solid-side edge)
+    # Both are non-empty for a non-empty hole region regardless of grid alignment.
+    # ------------------------------------------------------------------
+    void_edge = frozenset(c for c in h_cov if any(n not in h_cov for n in neighbors(c)))
+    solid_edge = frozenset(c for c in p_cov if any(n in h_cov for n in neighbors(c)))
 
     if mode == "hole-in":
-        # Seed from void-side (VOID-side hole edge).
-        # Expand INTO the hole interior (admit H_X); visited = seed (blocks exit).
-        return void_edge, void_edge, (lambda n: n in h_x), void_edge
+        # Seed void-side; expand INTO the hole (admit H_X).  k0 = void_edge ∩ H_X.
+        admit = lambda n: n in h_x  # noqa: E731
+        return void_edge, void_edge, admit, frozenset(c for c in void_edge if c in h_x)
     if mode == "hole-out":
-        # Seed from solid-side (P_X cells adjacent to the hole).
-        # Expand outward into solid (admit P_X); visited = H_X ∪ solid_edge so
-        # the seed cannot reappear in shell 1 (disjoint-loop invariant).
-        return (
-            solid_edge,
-            frozenset(h_x) | frozenset(solid_edge),
-            (lambda n: n in p_x),
-            solid_edge,
-        )
-    # hole-out-ignore-geom: solid-side seed, expand unbounded (admit not-in-H_X).
-    # Same visited0 fix: include solid_edge so shell 1 is disjoint from the seed.
+        # Seed solid-side; expand into the solid (admit P_X).  visited = H ∪ seed.
+        # k0 = solid_edge ∩ P_X → under core the straddling boundary drops, leaving
+        # the solid CORE band around the hole.
+        admit = lambda n: n in p_x  # noqa: E731
+        vis = frozenset(h_cov) | solid_edge
+        return solid_edge, vis, admit, frozenset(c for c in solid_edge if c in p_x)
+    # hole-out-ignore-geom: solid-side seed, expand unbounded away from the hole
+    # (admit not-in-H_X).  visited = H_cover ∪ seed blocks the WHOLE hole (topological)
+    # so the band never leaks inward regardless of coverage.  admit is exclusionary
+    # (not a belongs-to region), so k0 = the full coveras solid edge (not filtered).
     return (
         solid_edge,
-        frozenset(h_x) | frozenset(solid_edge),
+        frozenset(h_cov) | solid_edge,
         (lambda n: n not in h_x),
         solid_edge,
     )

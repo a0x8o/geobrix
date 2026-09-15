@@ -21,7 +21,7 @@ from shapely.geometry.polygon import Polygon
 
 pytest.importorskip("quadbin")
 
-from databricks.labs.gbx.pygx import _bng, _custom, _dilate as D, _h3 as _h3mod, _quadbin  # noqa: E402
+from databricks.labs.gbx.pygx import _bng, _custom, _h3 as _h3mod, _quadbin  # noqa: E402
 from databricks.labs.gbx.pygx._custom import CustomGridConf  # noqa: E402
 from databricks.labs.gbx.pygx import functions as gx  # noqa: E402
 
@@ -233,7 +233,7 @@ def test_quadbin_geomkring_coveras_vs_core_differ():
         _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="core")
     )
     assert k0_coveras, "quadbin coveras hole-in k=0 must be non-empty on a holed polygon"
-    assert k0_core, "quadbin core hole-in k=0 must be non-empty on a holed polygon"
+    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "quadbin coveras and core must produce distinct hole-in seeds "
         "(h_cover != h_core for non-grid-aligned hole)"
@@ -255,7 +255,7 @@ def test_bng_geomkring_coveras_vs_core_differ():
     k0_coveras = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="coveras"))
     k0_core = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="core"))
     assert k0_coveras, "bng coveras hole-in k=0 must be non-empty"
-    assert k0_core, "bng core hole-in k=0 must be non-empty"
+    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "bng coveras and core must produce distinct hole-in seeds "
         "for a non-grid-aligned holed polygon"
@@ -280,7 +280,7 @@ def test_custom_geomkring_coveras_vs_core_differ():
         _custom.geometry_k_ring(_CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="core")
     )
     assert k0_coveras, "custom coveras hole-in k=0 must be non-empty"
-    assert k0_core, "custom core hole-in k=0 must be non-empty"
+    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "custom coveras and core must produce distinct hole-in seeds "
         "for a non-grid-aligned holed polygon"
@@ -297,7 +297,7 @@ def test_h3_geomkring_coveras_vs_core_differ():
     k0_coveras = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "coveras")
     k0_core = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "core")
     assert k0_coveras, "h3 coveras hole-in k=0 must be non-empty on the donut polygon"
-    assert k0_core, "h3 core hole-in k=0 must be non-empty on the donut polygon"
+    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "h3 coveras and core must produce distinct hole-in seeds "
         "(hexagonal cells don't align with degree boundaries → h_cover != h_core)"

@@ -683,7 +683,7 @@ object BNG extends GridSystem {
       * [[GeomDilation.expand]] engine, then drop out-of-bounds ids via [[isValid]] — matching the
       * light tier (`_bng.geometry_k_ring`) exactly. The old boundary-out flatMap fast-path is
       * retired: it included the whole covering set (interior + boundary; boundary-out now returns
-      * the boundary ring at k0=op + the outward band, interior excluded) and could not reproduce the
+      * the full coveras straddling band at k0 + the outward band, interior excluded) and could not reproduce the
       * engine's blocked BFS across a holed solid, so it diverged from light for holes at k ≥ 2. */
     override def geometryKRing(geometry: Geometry, resolution: Int, k: Int, mode: String, coverage: String): Set[Long] =
         GeomDilation.expand("ring", k, mode, BNG, geometry, resolution, coverage).filter(BNG.isValid)
