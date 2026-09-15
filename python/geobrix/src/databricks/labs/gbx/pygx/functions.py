@@ -455,8 +455,11 @@ def _bng_geomkring(geom, res, k, mode="boundary-out", coverage="coveras"):
     try:
         return sorted(
             _bng.geometry_k_ring_str(
-                geom, _norm_res(res), k_int, mode or "boundary-out",
-                coverage or "coveras"
+                geom,
+                _norm_res(res),
+                k_int,
+                mode or "boundary-out",
+                coverage or "coveras",
             )
         )
     except ValueError:
@@ -474,8 +477,11 @@ def _bng_geomkloop(geom, res, k, mode="boundary-out", coverage="coveras"):
     try:
         return sorted(
             _bng.geometry_k_loop_str(
-                geom, _norm_res(res), k_int, mode or "boundary-out",
-                coverage or "coveras"
+                geom,
+                _norm_res(res),
+                k_int,
+                mode or "boundary-out",
+                coverage or "coveras",
             )
         )
     except ValueError:
@@ -538,8 +544,11 @@ class _BngGeomKRingExplode:
         try:
             for c in sorted(
                 _bng.geometry_k_ring_str(
-                    geom, _norm_res(res), k_int, mode or "boundary-out",
-                    coverage or "coveras"
+                    geom,
+                    _norm_res(res),
+                    k_int,
+                    mode or "boundary-out",
+                    coverage or "coveras",
                 )
             ):
                 yield (c,)
@@ -560,8 +569,11 @@ class _BngGeomKLoopExplode:
         try:
             for c in sorted(
                 _bng.geometry_k_loop_str(
-                    geom, _norm_res(res), k_int, mode or "boundary-out",
-                    coverage or "coveras"
+                    geom,
+                    _norm_res(res),
+                    k_int,
+                    mode or "boundary-out",
+                    coverage or "coveras",
                 )
             ):
                 yield (c,)
@@ -810,8 +822,12 @@ def _custom_geomkring(geom, grid, res, k, mode="boundary-out", coverage="coveras
     _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
     try:
         return _custom.geometry_k_ring(
-            _custom.conf_from_row(grid), geom, int(res), int(k),
-            mode or "boundary-out", coverage or "coveras"
+            _custom.conf_from_row(grid),
+            geom,
+            int(res),
+            int(k),
+            mode or "boundary-out",
+            coverage or "coveras",
         )
     except ValueError:
         raise  # re-raise param errors
@@ -825,8 +841,12 @@ def _custom_geomkloop(geom, grid, res, k, mode="boundary-out", coverage="coveras
     _dilate_check_mode(mode)  # bad mode PARAMETER -> raises ValueError
     try:
         return _custom.geometry_k_loop(
-            _custom.conf_from_row(grid), geom, int(res), int(k),
-            mode or "boundary-out", coverage or "coveras"
+            _custom.conf_from_row(grid),
+            geom,
+            int(res),
+            int(k),
+            mode or "boundary-out",
+            coverage or "coveras",
         )
     except ValueError:
         raise  # re-raise param errors
@@ -1108,8 +1128,12 @@ def _h3_geomkring(geom, resolution, k, mode="boundary-out", coverage="coveras"):
     try:
         return sorted(
             _h3mod.geom_expand(
-                "ring", geom, int(resolution), int(k), mode or "boundary-out",
-                coverage or "coveras"
+                "ring",
+                geom,
+                int(resolution),
+                int(k),
+                mode or "boundary-out",
+                coverage or "coveras",
             )
         )
     except ValueError:
@@ -1126,8 +1150,12 @@ def _h3_geomkloop(geom, resolution, k, mode="boundary-out", coverage="coveras"):
     try:
         return sorted(
             _h3mod.geom_expand(
-                "loop", geom, int(resolution), int(k), mode or "boundary-out",
-                coverage or "coveras"
+                "loop",
+                geom,
+                int(resolution),
+                int(k),
+                mode or "boundary-out",
+                coverage or "coveras",
             )
         )
     except ValueError:
@@ -1147,8 +1175,12 @@ class _H3GeomKRingExplode:
         try:
             for c in sorted(
                 _h3mod.geom_expand(
-                    "ring", geom, int(resolution), int(k), mode or "boundary-out",
-                    coverage or "coveras"
+                    "ring",
+                    geom,
+                    int(resolution),
+                    int(k),
+                    mode or "boundary-out",
+                    coverage or "coveras",
                 )
             ):
                 yield (c,)
@@ -1169,8 +1201,12 @@ class _H3GeomKLoopExplode:
         try:
             for c in sorted(
                 _h3mod.geom_expand(
-                    "loop", geom, int(resolution), int(k), mode or "boundary-out",
-                    coverage or "coveras"
+                    "loop",
+                    geom,
+                    int(resolution),
+                    int(k),
+                    mode or "boundary-out",
+                    coverage or "coveras",
                 )
             ):
                 yield (c,)
@@ -1465,7 +1501,12 @@ def quadbin_geomkring(
     mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     cov_arg = coverage if isinstance(coverage, Column) else f.lit(coverage)
     return f.call_function(
-        "gbx_quadbin_geomkring", _col(geom), _col(resolution), _col(k), mode_arg, cov_arg
+        "gbx_quadbin_geomkring",
+        _col(geom),
+        _col(resolution),
+        _col(k),
+        mode_arg,
+        cov_arg,
     )
 
 
@@ -1484,7 +1525,12 @@ def quadbin_geomkloop(
     mode_arg = mode if isinstance(mode, Column) else f.lit(mode)
     cov_arg = coverage if isinstance(coverage, Column) else f.lit(coverage)
     return f.call_function(
-        "gbx_quadbin_geomkloop", _col(geom), _col(resolution), _col(k), mode_arg, cov_arg
+        "gbx_quadbin_geomkloop",
+        _col(geom),
+        _col(resolution),
+        _col(k),
+        mode_arg,
+        cov_arg,
     )
 
 

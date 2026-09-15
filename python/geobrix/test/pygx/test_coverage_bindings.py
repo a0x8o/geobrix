@@ -14,6 +14,9 @@ For hole-out (and hole-out-ignore-geom) on a holed polygon,
 ``geomkloop(k=1)`` must be DISJOINT from ``geomkloop(k=0)`` (the seed).
 """
 
+# isort: skip_file  — imports below are intentionally ordered around the
+# pytest.importorskip("quadbin") guard; let isort leave this file alone.
+
 import pytest
 from shapely import to_wkb
 from shapely.geometry import box
@@ -21,9 +24,11 @@ from shapely.geometry.polygon import Polygon
 
 pytest.importorskip("quadbin")
 
-from databricks.labs.gbx.pygx import _bng, _custom, _h3 as _h3mod, _quadbin  # noqa: E402
-from databricks.labs.gbx.pygx._custom import CustomGridConf  # noqa: E402
+from databricks.labs.gbx.pygx import _bng, _custom  # noqa: E402
+from databricks.labs.gbx.pygx import _h3 as _h3mod  # noqa: E402
+from databricks.labs.gbx.pygx import _quadbin  # noqa: E402
 from databricks.labs.gbx.pygx import functions as gx  # noqa: E402
+from databricks.labs.gbx.pygx._custom import CustomGridConf  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Shared holed polygon fixtures
@@ -48,12 +53,16 @@ _H3_COARSE_RES_DONUT = 5  # edge ~61 km; hole diameter ~7 cells → h_core non-e
 
 # BNG — EPSG:27700 box with interior hole; res=3 → 1 km cells
 _HOLED_OUTER_BNG = [
-    (530000, 180000), (540000, 180000),
-    (540000, 190000), (530000, 190000),
+    (530000, 180000),
+    (540000, 180000),
+    (540000, 190000),
+    (530000, 190000),
 ]
 _HOLED_HOLE_BNG = [
-    (533000, 183000), (537000, 183000),
-    (537000, 187000), (533000, 187000),
+    (533000, 183000),
+    (537000, 183000),
+    (537000, 187000),
+    (533000, 187000),
 ]
 _HOLED_POLY_BNG = Polygon(_HOLED_OUTER_BNG, [_HOLED_HOLE_BNG])
 _HOLED_WKB_BNG = bytes(to_wkb(_HOLED_POLY_BNG))
@@ -70,8 +79,18 @@ _CUSTOM_CONF = CustomGridConf(
     root_cell_size_y=1000,
     srid=-1,
 )
-_HOLED_OUTER_CU = [(530000, 180000), (540000, 180000), (540000, 190000), (530000, 190000)]
-_HOLED_HOLE_CU = [(533000, 183000), (537000, 183000), (537000, 187000), (533000, 187000)]
+_HOLED_OUTER_CU = [
+    (530000, 180000),
+    (540000, 180000),
+    (540000, 190000),
+    (530000, 190000),
+]
+_HOLED_HOLE_CU = [
+    (533000, 183000),
+    (537000, 183000),
+    (537000, 187000),
+    (533000, 187000),
+]
 _HOLED_POLY_CU = Polygon(_HOLED_OUTER_CU, [_HOLED_HOLE_CU])
 _HOLED_WKB_CU = bytes(to_wkb(_HOLED_POLY_CU))
 _RES_CU = 0  # coarsest custom resolution
@@ -97,7 +116,9 @@ def test_hole_out_loop_k1_disjoint_from_k0_quadbin(mode):
     k0 = set(_quadbin.geometry_k_loop(_HOLED_WKB_QB, _RES_QB, 0, mode=mode))
     k1 = set(_quadbin.geometry_k_loop(_HOLED_WKB_QB, _RES_QB, 1, mode=mode))
     if not k0:
-        pytest.skip(f"quadbin hole-out k0 empty at res {_RES_QB} — no hole cells to test")
+        pytest.skip(
+            f"quadbin hole-out k0 empty at res {_RES_QB} — no hole cells to test"
+        )
     assert k0.isdisjoint(k1), (
         f"quadbin {mode}: geomkloop(k=1) re-emits seed cells "
         f"(overlap={sorted(k0 & k1)[:3]}). visited0 fix not applied."
@@ -107,14 +128,16 @@ def test_hole_out_loop_k1_disjoint_from_k0_quadbin(mode):
 @pytest.mark.parametrize("mode", ["hole-out", "hole-out-ignore-geom"])
 def test_hole_out_loop_k1_disjoint_from_k0_custom(mode):
     """geomkloop(k=1) must be disjoint from geomkloop(k=0) for hole-out modes (custom)."""
-    k0 = set(_custom.geometry_k_loop(
-        _CUSTOM_CONF, _HOLED_WKB_CU, _RES_CU, 0, mode=mode
-    ))
-    k1 = set(_custom.geometry_k_loop(
-        _CUSTOM_CONF, _HOLED_WKB_CU, _RES_CU, 1, mode=mode
-    ))
+    k0 = set(
+        _custom.geometry_k_loop(_CUSTOM_CONF, _HOLED_WKB_CU, _RES_CU, 0, mode=mode)
+    )
+    k1 = set(
+        _custom.geometry_k_loop(_CUSTOM_CONF, _HOLED_WKB_CU, _RES_CU, 1, mode=mode)
+    )
     if not k0:
-        pytest.skip(f"custom hole-out k0 empty at res {_RES_CU} — no hole cells to test")
+        pytest.skip(
+            f"custom hole-out k0 empty at res {_RES_CU} — no hole cells to test"
+        )
     assert k0.isdisjoint(k1), (
         f"custom {mode}: geomkloop(k=1) re-emits seed cells "
         f"(overlap={sorted(k0 & k1)[:3]}). visited0 fix not applied."
@@ -124,12 +147,8 @@ def test_hole_out_loop_k1_disjoint_from_k0_custom(mode):
 @pytest.mark.parametrize("mode", ["hole-out", "hole-out-ignore-geom"])
 def test_hole_out_loop_k1_disjoint_from_k0_bng(mode):
     """geomkloop(k=1) must be disjoint from geomkloop(k=0) for hole-out modes (BNG)."""
-    k0 = set(_bng.geometry_k_loop(
-        _HOLED_POLY_BNG, _RES_BNG, 0, mode=mode
-    ))
-    k1 = set(_bng.geometry_k_loop(
-        _HOLED_POLY_BNG, _RES_BNG, 1, mode=mode
-    ))
+    k0 = set(_bng.geometry_k_loop(_HOLED_POLY_BNG, _RES_BNG, 0, mode=mode))
+    k1 = set(_bng.geometry_k_loop(_HOLED_POLY_BNG, _RES_BNG, 1, mode=mode))
     if not k0:
         pytest.skip(f"bng hole-out k0 empty at res {_RES_BNG} — no hole cells to test")
     assert k0.isdisjoint(k1), (
@@ -182,17 +201,13 @@ def test_quadbin_geomkloop_coverage_param_accepted(coverage):
 
 @pytest.mark.parametrize("coverage", ["polyfill", "core"])
 def test_bng_geomkring_coverage_param_accepted(coverage):
-    result = _bng.geometry_k_ring_str(
-        _HOLED_WKB_BNG, _RES_BNG, 1, coverage=coverage
-    )
+    result = _bng.geometry_k_ring_str(_HOLED_WKB_BNG, _RES_BNG, 1, coverage=coverage)
     assert all(isinstance(c, str) for c in result)
 
 
 @pytest.mark.parametrize("coverage", ["polyfill", "core"])
 def test_bng_geomkloop_coverage_param_accepted(coverage):
-    result = _bng.geometry_k_loop_str(
-        _HOLED_WKB_BNG, _RES_BNG, 1, coverage=coverage
-    )
+    result = _bng.geometry_k_loop_str(_HOLED_WKB_BNG, _RES_BNG, 1, coverage=coverage)
     assert all(isinstance(c, str) for c in result)
 
 
@@ -227,13 +242,21 @@ def test_quadbin_geomkring_coveras_vs_core_differ():
     hole-in k=0 (= outer_perimeter(h_{basis})) differs between the two coverages.
     """
     k0_coveras = set(
-        _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="coveras")
+        _quadbin.geometry_k_ring(
+            _HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="coveras"
+        )
     )
     k0_core = set(
-        _quadbin.geometry_k_ring(_HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="core")
+        _quadbin.geometry_k_ring(
+            _HOLED_WKB_QB, _RES_QB, 0, mode="hole-in", coverage="core"
+        )
     )
-    assert k0_coveras, "quadbin coveras hole-in k=0 must be non-empty on a holed polygon"
-    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
+    assert (
+        k0_coveras
+    ), "quadbin coveras hole-in k=0 must be non-empty on a holed polygon"
+    assert (
+        not k0_core
+    ), "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "quadbin coveras and core must produce distinct hole-in seeds "
         "(h_cover != h_core for non-grid-aligned hole)"
@@ -252,10 +275,16 @@ def test_bng_geomkring_coveras_vs_core_differ():
     poly = Polygon(outer, [hole])
     wkb = bytes(to_wkb(poly))
     res = 3  # 1 km cells
-    k0_coveras = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="coveras"))
-    k0_core = set(_bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="core"))
+    k0_coveras = set(
+        _bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="coveras")
+    )
+    k0_core = set(
+        _bng.geometry_k_ring_str(wkb, res, 0, mode="hole-in", coverage="core")
+    )
     assert k0_coveras, "bng coveras hole-in k=0 must be non-empty"
-    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
+    assert (
+        not k0_core
+    ), "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "bng coveras and core must produce distinct hole-in seeds "
         "for a non-grid-aligned holed polygon"
@@ -274,13 +303,19 @@ def test_custom_geomkring_coveras_vs_core_differ():
     poly = Polygon(outer, [hole])
     wkb = bytes(to_wkb(poly))
     k0_coveras = set(
-        _custom.geometry_k_ring(_CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="coveras")
+        _custom.geometry_k_ring(
+            _CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="coveras"
+        )
     )
     k0_core = set(
-        _custom.geometry_k_ring(_CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="core")
+        _custom.geometry_k_ring(
+            _CUSTOM_CONF, wkb, _RES_CU, 0, mode="hole-in", coverage="core"
+        )
     )
     assert k0_coveras, "custom coveras hole-in k=0 must be non-empty"
-    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
+    assert (
+        not k0_core
+    ), "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "custom coveras and core must produce distinct hole-in seeds "
         "for a non-grid-aligned holed polygon"
@@ -294,17 +329,25 @@ def test_h3_geomkring_coveras_vs_core_differ():
     4°×4° hole at res-5 → hole-in k=0 (= outer_perimeter(h_{basis})) differs.
     """
     h3 = pytest.importorskip("h3")  # noqa: F841
-    k0_coveras = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "coveras")
-    k0_core = _h3mod.geom_expand("ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "core")
+    k0_coveras = _h3mod.geom_expand(
+        "ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "coveras"
+    )
+    k0_core = _h3mod.geom_expand(
+        "ring", _H3_DONUT_WKB, _H3_COARSE_RES_DONUT, 0, "hole-in", "core"
+    )
     assert k0_coveras, "h3 coveras hole-in k=0 must be non-empty on the donut polygon"
-    assert not k0_core, "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
+    assert (
+        not k0_core
+    ), "core hole-in k=0 is empty — a straddling rim cell is never fully-in-hole (core fills at k>=1)"
     assert k0_coveras != k0_core, (
         "h3 coveras and core must produce distinct hole-in seeds "
         "(hexagonal cells don't align with degree boundaries → h_cover != h_core)"
     )
 
 
-_H3_COARSE_RES = 5  # H3 res-5 edge ~61 km; small NYC box (~4 km) at res-9 is fine for ring
+_H3_COARSE_RES = (
+    5  # H3 res-5 edge ~61 km; small NYC box (~4 km) at res-9 is fine for ring
+)
 # Small NYC box — fast at any reasonable resolution.
 _NYC_WKB_H3 = bytes(to_wkb(box(-73.99, 40.71, -73.95, 40.75)))
 
@@ -330,7 +373,10 @@ def test_h3_geomkloop_coverage_param_accepted(coverage):
 
 # coverage default = coveras matches no-coverage call
 def test_quadbin_coverage_default_is_coveras_via_udf_impl():
-    from databricks.labs.gbx.pygx.functions import _quadbin_geomkring, _quadbin_geomkloop
+    from databricks.labs.gbx.pygx.functions import (
+        _quadbin_geomkloop,
+        _quadbin_geomkring,
+    )
 
     geom = bytes(to_wkb(box(-73.99, 40.71, -73.95, 40.75)))
     assert set(_quadbin_geomkring(geom, 12, 1)) == set(
@@ -375,6 +421,6 @@ def test_sql_quadbin_geomkring_polyfill_differs_from_coveras(spark):
     # The two bases use different seeds and produce different outward bands.
     # (Subset nesting holds for the belongs-to SETS P_x, but not for the k-ring
     # outward bands whose seeds differ between coveras and polyfill.)
-    assert set(r_coveras) != set(r_polyfill), (
-        "coveras and polyfill must produce distinct k=1 bands on a holed polygon"
-    )
+    assert set(r_coveras) != set(
+        r_polyfill
+    ), "coveras and polyfill must produce distinct k=1 bands on a holed polygon"

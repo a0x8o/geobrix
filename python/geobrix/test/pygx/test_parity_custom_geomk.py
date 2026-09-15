@@ -121,13 +121,17 @@ def _collect_light(conf, geom, res, k, mode, coverage="coveras"):
     """Collect light result for one (geom, res, k, mode, coverage) combination."""
     from databricks.labs.gbx.pygx import _custom
 
-    return set(_custom.geometry_k_ring(conf, _wkb(geom), res, k, mode, coverage=coverage))
+    return set(
+        _custom.geometry_k_ring(conf, _wkb(geom), res, k, mode, coverage=coverage)
+    )
 
 
 def _collect_light_loop(conf, geom, res, k, mode, coverage="coveras"):
     from databricks.labs.gbx.pygx import _custom
 
-    return set(_custom.geometry_k_loop(conf, _wkb(geom), res, k, mode, coverage=coverage))
+    return set(
+        _custom.geometry_k_loop(conf, _wkb(geom), res, k, mode, coverage=coverage)
+    )
 
 
 def _collect_heavy(spark, geom, res, k, mode, fn_name, coverage="coveras"):
@@ -252,7 +256,8 @@ def test_parity_custom_geomkring_holed_all_modes(spark_with_jar, coverage):
 
     gx.register(spark)
     light_results = {
-        mode: _collect_light(conf, _HOLED_POLY, _RES_HOLED, 1, mode, coverage) for mode in _MODES
+        mode: _collect_light(conf, _HOLED_POLY, _RES_HOLED, 1, mode, coverage)
+        for mode in _MODES
     }
 
     hx.register(spark)

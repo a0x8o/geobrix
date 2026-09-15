@@ -181,7 +181,9 @@ def test_parity_quadbin_geomkloop_simple_all_modes(spark_with_jar, coverage):
     gx.register(spark)
     light_results = {}
     for mode in _MODES:
-        light_results[mode] = _collect_light_loop(_NYC_BOX, _RES_SIMPLE, 1, mode, coverage)
+        light_results[mode] = _collect_light_loop(
+            _NYC_BOX, _RES_SIMPLE, 1, mode, coverage
+        )
 
     hx.register(spark)
     for mode in _MODES:
@@ -233,7 +235,9 @@ def test_parity_quadbin_geomkloop_holed_all_modes(spark_with_jar, coverage):
     gx.register(spark)
     light_results = {}
     for mode in _MODES:
-        light_results[mode] = _collect_light_loop(_HOLED_POLY, _RES_HOLED, 1, mode, coverage)
+        light_results[mode] = _collect_light_loop(
+            _HOLED_POLY, _RES_HOLED, 1, mode, coverage
+        )
 
     hx.register(spark)
     for mode in _MODES:

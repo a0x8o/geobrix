@@ -42,8 +42,18 @@ _RES_SIMPLE = 3  # 1km resolution
 # Holed polygon: larger BNG box with a 20km×20km interior hole.
 # At res 3 (1km cells) the hole spans ~20 cells wide × ~20 cells tall.
 # Cells fully inside the hole polygon are in hCore → hole-in/hole-out exercise inward fill.
-_OUTER_H = [(500000.0, 150000.0), (560000.0, 150000.0), (560000.0, 210000.0), (500000.0, 210000.0)]
-_HOLE_H = [(520000.0, 170000.0), (540000.0, 170000.0), (540000.0, 190000.0), (520000.0, 190000.0)]
+_OUTER_H = [
+    (500000.0, 150000.0),
+    (560000.0, 150000.0),
+    (560000.0, 210000.0),
+    (500000.0, 210000.0),
+]
+_HOLE_H = [
+    (520000.0, 170000.0),
+    (540000.0, 170000.0),
+    (540000.0, 190000.0),
+    (520000.0, 190000.0),
+]
 _HOLED_POLY = Polygon(_OUTER_H, [_HOLE_H])
 _RES_HOLED = 3  # 1km resolution
 
@@ -154,7 +164,9 @@ def test_parity_bng_geomkring_simple_all_modes(spark_with_jar, coverage):
     gx.register(spark)
     light_results = {}
     for mode in _MODES:
-        light_results[mode] = _collect_light(_LONDON_BOX, _RES_SIMPLE, 1, mode, coverage)
+        light_results[mode] = _collect_light(
+            _LONDON_BOX, _RES_SIMPLE, 1, mode, coverage
+        )
 
     # Now register heavy (overwrites light SQL names).
     hx.register(spark)
@@ -181,7 +193,9 @@ def test_parity_bng_geomkloop_simple_all_modes(spark_with_jar, coverage):
     gx.register(spark)
     light_results = {}
     for mode in _MODES:
-        light_results[mode] = _collect_light_loop(_LONDON_BOX, _RES_SIMPLE, 1, mode, coverage)
+        light_results[mode] = _collect_light_loop(
+            _LONDON_BOX, _RES_SIMPLE, 1, mode, coverage
+        )
 
     hx.register(spark)
     for mode in _MODES:
@@ -233,7 +247,9 @@ def test_parity_bng_geomkloop_holed_all_modes(spark_with_jar, coverage):
     gx.register(spark)
     light_results = {}
     for mode in _MODES:
-        light_results[mode] = _collect_light_loop(_HOLED_POLY, _RES_HOLED, 1, mode, coverage)
+        light_results[mode] = _collect_light_loop(
+            _HOLED_POLY, _RES_HOLED, 1, mode, coverage
+        )
 
     hx.register(spark)
     for mode in _MODES:
