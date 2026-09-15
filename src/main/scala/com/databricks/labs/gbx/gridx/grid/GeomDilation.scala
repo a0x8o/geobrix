@@ -95,9 +95,11 @@ object GeomDilation {
     val dim = geomDimension(geom)
     // polyfill the SOLID so hole-interior cells are classified (hole modes need hCore).
     val cands = mutable.Set.empty[Long] ++ grid.polyfill(solid, res)
-    if (dim != 2 && cands.isEmpty) {
-      // Non-polygon (point/line) fallback: BNG/custom centroid polyfill returns nothing, so
-      // sample representative coordinates and map each to its containing cell (matches light).
+    if (cands.isEmpty) {
+      // Fallback when the polyfill yields no candidates: BNG/custom centroid-membership
+      // polyfill returns nothing for (a) points/lines and (b) a SUB-CELL polygon (smaller
+      // than a cell — its interior holds no cell centroid) even though it overlaps a cell.
+      // Sample representative coordinates and map each to its containing cell (matches light).
       val seen = mutable.Set.empty[(Double, Double)]
       sampleCoords(geom).foreach { case (x, y) =>
         if (!seen.contains((x, y))) {

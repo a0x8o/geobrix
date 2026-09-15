@@ -322,3 +322,19 @@ def test_bng_geomkring_bad_mode_raises_via_str_wrapper():
     res = _bng.get_resolution("1km")
     with pytest.raises(ValueError):
         _bng.geometry_k_ring_str(geom, res, 1, "sideways")
+
+
+def test_bng_geomkring_sub_cell_polygon_coarse_res_nonempty():
+    """A polygon smaller than a cell (100m box at res=1 / 100km cells) still expands.
+
+    BNG's centroid-membership polyfill returns nothing for a sub-cell polygon (no
+    cell centroid falls inside it), but the classify point_to_cell fallback seeds the
+    containing cell, so boundary-out returns that cell's neighbourhood (regression
+    guard for the perimeter-engine routing — heavy test_bng_functions covers the
+    heavy tier).
+    """
+    geom = _towkb(_box2(530000.0, 180000.0, 530100.0, 180100.0))  # 100m box
+    ring = set(_bng.geometry_k_ring_str(geom, 1, 1))  # res=1 → 100km cells
+    loop = set(_bng.geometry_k_loop_str(geom, 1, 1))
+    assert ring, "sub-cell polygon boundary-out ring must be non-empty at coarse res"
+    assert loop, "sub-cell polygon boundary-out loop must be non-empty at coarse res"

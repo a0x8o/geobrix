@@ -162,10 +162,20 @@ def _sample_coords(geom, n_samples: int = 16):
     # Single geometry: centroid first (always available)
     c = geom.centroid
     yield (c.x, c.y)
-    # Explicit vertex coordinates (Point has .coords; LineString has .coords)
-    if hasattr(geom, "coords"):
+    # Explicit vertex coordinates for 0-/1-dim types (a Polygon's `.coords` raises,
+    # so it is handled separately below).
+    if geom.geom_type in ("Point", "LineString", "LinearRing"):
         for xy in geom.coords:
             yield (xy[0], xy[1])
+    # Polygon: sample the boundary vertices (a Polygon has no .coords). Lets a
+    # sub-cell polygon — one whose centroid-membership polyfill is empty — still
+    # seed candidate cells from its containing cell(s).
+    if geom.geom_type == "Polygon":
+        for xy in geom.exterior.coords:
+            yield (xy[0], xy[1])
+        for ring in geom.interiors:
+            for xy in ring.coords:
+                yield (xy[0], xy[1])
     # Densify lines with n_samples-1 interior fractions
     if geom.geom_type in ("LineString", "LinearRing") and n_samples > 0:
         ln = geom.length
@@ -212,29 +222,28 @@ def classify(geom, res, polyfill_fn, cell_geom_fn, point_to_cell_fn=None):
     S, H = _solid_and_holes(geom)
     dim = _geom_dimension(geom)
 
-    if dim == 2:
-        # Polygon path: unchanged.  Polyfill the filled SOLID so hole-interior
-        # cells are candidates for hole-* mode classification.
-        cands = set(polyfill_fn(S, res))
-    else:
-        # Non-polygon (point or line): try polyfill first.
-        # Quadbin uses a bbox-based polyfill that returns cells for any input;
-        # BNG/custom use centroid-containment and return nothing for points/lines.
-        cands = set(polyfill_fn(S, res))
-        if not cands and point_to_cell_fn is not None:
-            # Fallback: sample representative coordinates along the geometry and
-            # map each to its containing cell via the per-grid hook.
-            seen: set = set()
-            for x, y in _sample_coords(geom):
-                if (x, y) in seen:
-                    continue
-                seen.add((x, y))
-                try:
-                    c = point_to_cell_fn(x, y)
-                    if c is not None:
-                        cands.add(c)
-                except Exception:
-                    pass
+    # Polyfill the filled SOLID so hole-interior cells are candidates for hole-*
+    # modes.  Quadbin uses a bbox polyfill (returns cells for any input); BNG/custom
+    # use centroid-membership, which returns NOTHING for (a) points/lines and (b) a
+    # sub-cell polygon — one smaller than a cell, whose interior contains no cell
+    # centroid — even though it overlaps a cell.  In both cases fall back to the
+    # per-grid point_to_cell hook: sample representative coordinates and map each to
+    # its containing cell.  classify then assigns cover/centroid/core as usual, so
+    # this only adds candidates the polyfill missed (it never fires when polyfill
+    # already returned cells).
+    cands = set(polyfill_fn(S, res))
+    if not cands and point_to_cell_fn is not None:
+        seen: set = set()
+        for x, y in _sample_coords(geom):
+            if (x, y) in seen:
+                continue
+            seen.add((x, y))
+            try:
+                c = point_to_cell_fn(x, y)
+                if c is not None:
+                    cands.add(c)
+            except Exception:
+                pass
 
     p_cover, p_core, s_cover, s_core, h_cover, h_core = (set() for _ in range(6))
     p_centroid, s_centroid, h_centroid = set(), set(), set()
