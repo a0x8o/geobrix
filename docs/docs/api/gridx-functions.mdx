@@ -1092,6 +1092,7 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the 
 - `k` - Integer ring distance
 - `mode` *(optional, default `'boundary-out'`)* — expansion direction & hole handling; see [Dilation modes](#dilation-modes) for all six values.
 - `coverage` *(optional, default `'coveras'`)* — how a cell is judged to belong to a region; see [Coverage](#coverage) for the three values.
+- _`mode` and `coverage` were added in **v0.5.1**; on v0.2.0–v0.5.0 these functions accept only `(geom, resolution, k)`._
 
 **Returns:**
 - `ARRAY<STRING>` of BNG cell references
@@ -1125,6 +1126,7 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely**. Polyfills the 
 - `k` - Integer ring distance
 - `mode` *(optional, default `'boundary-out'`)* — expansion direction & hole handling; see [Dilation modes](#dilation-modes) for all six values.
 - `coverage` *(optional, default `'coveras'`)* — how a cell is judged to belong to a region; see [Coverage](#coverage) for the three values.
+- _`mode` and `coverage` were added in **v0.5.1**; on v0.2.0–v0.5.0 these functions accept only `(geom, resolution, k)`._
 
 **Returns:**
 - `ARRAY<STRING>` of BNG cell references at exactly distance k
@@ -1410,6 +1412,7 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming 
 - `k` - Integer ring distance
 - `mode` *(optional, default `'boundary-out'`)* — expansion direction & hole handling; see [Dilation modes](#dilation-modes) for all six values.
 - `coverage` *(optional, default `'coveras'`)* — how a cell is judged to belong to a region; see [Coverage](#coverage) for the three values.
+- _`mode` and `coverage` were added in **v0.5.1**; on v0.2.0–v0.5.0 these functions accept only `(geom, resolution, k)`._
 
 **Returns:**
 - Exploded rows, one per cell (`STRING` BNG cell reference)
@@ -1441,6 +1444,7 @@ Powered by the **pure-Python port of `BNG.scala`** + **shapely** as a streaming 
 - `k` - Integer ring distance
 - `mode` *(optional, default `'boundary-out'`)* — expansion direction & hole handling; see [Dilation modes](#dilation-modes) for all six values.
 - `coverage` *(optional, default `'coveras'`)* — how a cell is judged to belong to a region; see [Coverage](#coverage) for the three values.
+- _`mode` and `coverage` were added in **v0.5.1**; on v0.2.0–v0.5.0 these functions accept only `(geom, resolution, k)`._
 
 **Returns:**
 - Exploded rows, one per cell at distance k (`STRING` BNG cell reference)
